@@ -1,0 +1,15 @@
+SAVE YOUR LOGO HERE
+===================
+
+1. Right-click on the SECOND logo image (transparent/white version)
+2. Save it as: logo.png
+3. Place it in this folder: resident_app/assets/logo.png
+
+The path should be:
+D:\Resident_App\resident_app\assets\logo.png
+
+Then run:
+flutter pub get
+flutter run
+
+The splash screen will automatically use your logo!

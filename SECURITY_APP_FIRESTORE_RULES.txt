@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is security staff
+    function isSecurity() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'security';
+    }
+    
+    // ============================================================================
+    // USERS COLLECTION - Security can read users in their building
+    // ============================================================================
+    match /users/{userId} {
+      allow read: if request.auth != null && 
+                     (request.auth.uid == userId ||
+                      (isSecurity() && 
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId == 
+                       resource.data.buildingId));
+      allow write: if request.auth.uid == userId;
+    }
+    
+    // ============================================================================
+    // VISITORS COLLECTION - Security can read/write/update visitors
+    // ============================================================================
+    match /visitors/{visitorId} {
+      allow read: if request.auth != null && 
+                     (isSecurity() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow create: if request.auth != null && 
+                       (isSecurity() || request.auth.uid == resource.data.residentId);
+      allow update: if request.auth != null && 
+                       (isSecurity() && 
+                        resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow delete: if isSecurity() && 
+                       resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    // ============================================================================
+    // BUILDINGS COLLECTION - Security can read their building
+    // ============================================================================
+    match /buildings/{buildingId} {
+      allow read: if request.auth != null && 
+                     (isSecurity() && 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId == buildingId);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // FLATS COLLECTION - Security can read flats in their building
+    // ============================================================================
+    match /flats/{flatId} {
+      allow read: if request.auth != null && 
+                     (isSecurity() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // ACCESS LOGS COLLECTION - Security can read/write access logs
+    // ============================================================================
+    match /access_logs/{logId} {
+      allow read: if request.auth != null && 
+                     (isSecurity() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow create: if request.auth != null && 
+                       (isSecurity() && 
+                        request.resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // COMPLAINTS COLLECTION - Security can read complaints
+    // ============================================================================
+    match /complaints/{complaintId} {
+      allow read: if request.auth != null && 
+                     (isSecurity() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // NOTIFICATIONS COLLECTION - Security can read notifications
+    // ============================================================================
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && 
+                     (isSecurity() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if false;
+    }
+  }
+}

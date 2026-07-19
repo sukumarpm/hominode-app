@@ -1,0 +1,143 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // ============================================================================
+    // USERS COLLECTION - Admins can read all users in their building
+    // ============================================================================
+    match /users/{userId} {
+      allow read: if request.auth != null && 
+                     (request.auth.uid == userId ||
+                      (isAdmin() && 
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId == 
+                       resource.data.buildingId));
+      allow write: if request.auth.uid == userId;
+    }
+    
+    // ============================================================================
+    // BUILDINGS COLLECTION - Admins can read/write their building
+    // ============================================================================
+    match /buildings/{buildingId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId == buildingId);
+      allow write: if isAdmin() && 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId == buildingId;
+    }
+    
+    // ============================================================================
+    // FLATS COLLECTION - Admins can read/write flats in their building
+    // ============================================================================
+    match /flats/{flatId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    // ============================================================================
+    // AMENITIES COLLECTION - Admins can read/write amenities in their building
+    // ============================================================================
+    match /amenities/{amenityId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    // ============================================================================
+    // BOOKINGS COLLECTION - Admins can read bookings for their building
+    // ============================================================================
+    match /bookings/{bookingId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // COMPLAINTS COLLECTION - Admins can read/write complaints in their building
+    // ============================================================================
+    match /complaints/{complaintId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    // ============================================================================
+    // ANNOUNCEMENTS COLLECTION - Admins can read/write announcements
+    // ============================================================================
+    match /announcements/{announcementId} {
+      allow read: if request.auth != null && isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // EVENTS COLLECTION - Admins can read/write events
+    // ============================================================================
+    match /events/{eventId} {
+      allow read: if request.auth != null && isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // BILLS COLLECTION - Admins can read/write bills for their building
+    // ============================================================================
+    match /bills/{billId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    // ============================================================================
+    // VISITORS COLLECTION - Admins can read visitors in their building
+    // ============================================================================
+    match /visitors/{visitorId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // COMMUNITY WALL COLLECTION - Admins can moderate posts
+    // ============================================================================
+    match /community_wall/{postId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow delete: if isAdmin() && 
+                       resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    // ============================================================================
+    // NOTIFICATIONS COLLECTION - Admins can read/write notifications
+    // ============================================================================
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // STAFF COLLECTION - Admins can read/write staff
+    // ============================================================================
+    match /staff/{staffId} {
+      allow read: if request.auth != null && 
+                     (isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId);
+      allow write: if isAdmin() && 
+                      resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+  }
+}

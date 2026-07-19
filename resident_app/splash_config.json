@@ -1,0 +1,113 @@
+{
+  "splash_screen_config": {
+    "description": "Quick reference for splash screen timing and animation values",
+    "total_duration_ms": 2200,
+    
+    "animations": {
+      "logo_entry": {
+        "start_ms": 0,
+        "end_ms": 600,
+        "initial_scale": 0.6,
+        "final_scale": 1.05,
+        "initial_rotation_deg": -3,
+        "initial_y_offset": 20,
+        "curve": "easeOutBack"
+      },
+      "shadow_depth": {
+        "start_ms": 350,
+        "end_ms": 900,
+        "initial_blur": 8,
+        "final_blur": 24,
+        "opacity": 0.35,
+        "curve": "easeOut"
+      },
+      "squash_bounce": {
+        "start_ms": 600,
+        "duration_ms": 90,
+        "scale_x": 1.08,
+        "scale_y": 0.94
+      },
+      "tagline": {
+        "start_ms": 850,
+        "end_ms": 1250,
+        "initial_y_offset": 12,
+        "opacity": 0.9,
+        "curve": "easeOut"
+      },
+      "hold": {
+        "start_ms": 1250,
+        "end_ms": 1900
+      },
+      "transition": {
+        "start_ms": 1900,
+        "end_ms": 2200,
+        "final_scale": 0.98,
+        "curve": "easeInOut"
+      }
+    },
+    
+    "colors": {
+      "gradient_start": "#2F80ED",
+      "gradient_end": "#2563EB",
+      "text_white": "#FFFFFF",
+      "shadow": "rgba(0,0,0,0.35)"
+    },
+    
+    "typography": {
+      "app_name": {
+        "text": "Lyvo",
+        "size": 32,
+        "weight": "semibold"
+      },
+      "tagline": {
+        "text": "Your Community, Connected",
+        "size": 16,
+        "weight": "regular",
+        "opacity": 0.9
+      }
+    },
+    
+    "assets": {
+      "logo": "assets/logo.png",
+      "logo_width": 120,
+      "logo_height": 120,
+      "hero_tag": "appLogoHero"
+    },
+    
+    "performance": {
+      "enable_particles": false,
+      "particle_count": 4,
+      "target_fps": 60,
+      "respect_reduced_motion": true
+    },
+    
+    "device_target": {
+      "primary": "iPhone 13",
+      "width_px": 390,
+      "responsive": true
+    }
+  },
+  
+  "quick_tweaks": {
+    "make_faster": {
+      "total_duration_ms": 1500,
+      "logo_entry_end_ms": 400,
+      "transition_start_ms": 1200
+    },
+    "make_slower": {
+      "total_duration_ms": 3000,
+      "logo_entry_end_ms": 800,
+      "transition_start_ms": 2500
+    },
+    "minimal_motion": {
+      "reduce_motion": true,
+      "enable_particles": false,
+      "disable_bounce": true
+    },
+    "performance_mode": {
+      "enable_particles": false,
+      "shadow_blur_max": 16,
+      "simulate_slow_device": true
+    }
+  }
+}

@@ -1,0 +1,228 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================================
+    // HELPER FUNCTIONS
+    // ============================================================================
+    
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isSecurity() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'security';
+    }
+    
+    function isResident() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'resident';
+    }
+    
+    function userBuildingId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+    }
+    
+    function sameBuilding() {
+      return resource.data.buildingId == userBuildingId();
+    }
+    
+    // ============================================================================
+    // USERS COLLECTION - All roles can read/write their own data
+    // ============================================================================
+    match /users/{userId} {
+      allow read: if request.auth != null && 
+                     (request.auth.uid == userId ||
+                      (isAdmin() && sameBuilding()) ||
+                      (isSecurity() && sameBuilding()));
+      allow write: if request.auth.uid == userId;
+      
+      match /{document=**} {
+        allow read, write: if request.auth.uid == userId;
+      }
+    }
+    
+    // ============================================================================
+    // BUILDINGS COLLECTION - Admins and Security can read their building
+    // ============================================================================
+    match /buildings/{buildingId} {
+      allow read: if request.auth != null && 
+                     ((isAdmin() || isSecurity()) && userBuildingId() == buildingId);
+      allow write: if isAdmin() && userBuildingId() == buildingId;
+    }
+    
+    // ============================================================================
+    // FLATS COLLECTION - All roles can read flats in their building
+    // ============================================================================
+    match /flats/{flatId} {
+      allow read: if request.auth != null && sameBuilding();
+      allow write: if isAdmin() && sameBuilding();
+    }
+    
+    // ============================================================================
+    // BILLS COLLECTION - Residents read own bills, Admins read all in building
+    // ============================================================================
+    match /bills/{billId} {
+      allow read: if request.auth != null && 
+                     ((isResident() && 
+                       (resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId ||
+                        resource.data.userId == request.auth.uid)) ||
+                      (isAdmin() && sameBuilding()));
+      allow write: if isAdmin() && sameBuilding();
+    }
+    
+    // ============================================================================
+    // ANNOUNCEMENTS COLLECTION - All authenticated users can read
+    // ============================================================================
+    match /announcements/{announcementId} {
+      allow read: if request.auth != null && resource.data.status == 'active';
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // EVENTS COLLECTION - All authenticated users can read
+    // ============================================================================
+    match /events/{eventId} {
+      allow read: if request.auth != null && resource.data.status == 'published';
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // AMENITIES COLLECTION - All roles can read amenities in their building
+    // ============================================================================
+    match /amenities/{amenityId} {
+      allow read: if request.auth != null && sameBuilding();
+      allow write: if isAdmin() && sameBuilding();
+    }
+    
+    // ============================================================================
+    // BOOKINGS COLLECTION - Residents manage own, Admins read all
+    // ============================================================================
+    match /bookings/{bookingId} {
+      allow read: if request.auth != null && 
+                     ((isResident() && resource.data.userId == request.auth.uid) ||
+                      (isAdmin() && sameBuilding()));
+      allow create: if isResident() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isResident() && resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // MESSAGES COLLECTION - Residents manage own, Admins read all
+    // ============================================================================
+    match /messages/{messageId} {
+      allow read: if request.auth != null && 
+                     ((isResident() && 
+                       (resource.data.senderId == request.auth.uid ||
+                        resource.data.recipientId == request.auth.uid ||
+                        resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId)) ||
+                      (isAdmin() && sameBuilding()));
+      allow create: if isResident() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isResident() && resource.data.senderId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // COMPLAINTS COLLECTION - Residents manage own, Admins manage all
+    // ============================================================================
+    match /complaints/{complaintId} {
+      allow read: if request.auth != null && 
+                     ((isResident() && 
+                       (resource.data.userId == request.auth.uid ||
+                        resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId)) ||
+                      (isAdmin() && sameBuilding()) ||
+                      (isSecurity() && sameBuilding()));
+      allow create: if isResident() && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && 
+                       ((isResident() && resource.data.userId == request.auth.uid) ||
+                        (isAdmin() && sameBuilding()));
+      allow delete: if isResident() && resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // VISITORS COLLECTION - Residents manage own, Security manages all, Admins read
+    // ============================================================================
+    match /visitors/{visitorId} {
+      allow read: if request.auth != null && 
+                     ((isResident() && 
+                       (resource.data.residentId == request.auth.uid ||
+                        resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId)) ||
+                      (isSecurity() && sameBuilding()) ||
+                      (isAdmin() && sameBuilding()));
+      allow create: if request.auth != null && 
+                       ((isResident() && request.resource.data.residentId == request.auth.uid) ||
+                        (isSecurity()));
+      allow update: if request.auth != null && 
+                       ((isResident() && resource.data.residentId == request.auth.uid) ||
+                        (isSecurity() && sameBuilding()));
+      allow delete: if request.auth != null && 
+                       ((isResident() && resource.data.residentId == request.auth.uid) ||
+                        (isSecurity() && sameBuilding()));
+    }
+    
+    // ============================================================================
+    // COMMUNITY WALL COLLECTION - All residents can read/write posts
+    // ============================================================================
+    match /community_wall/{postId} {
+      allow read: if request.auth != null && sameBuilding();
+      allow create: if isResident() && 
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.buildingId == userBuildingId();
+      allow update, delete: if isResident() && resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() && sameBuilding();
+      
+      match /comments/{commentId} {
+        allow read: if request.auth != null && sameBuilding();
+        allow create: if isResident() && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if isResident() && resource.data.userId == request.auth.uid;
+      }
+    }
+    
+    // ============================================================================
+    // MARKETPLACE COLLECTION - All residents can read/write listings
+    // ============================================================================
+    match /marketplace/{listingId} {
+      allow read: if request.auth != null && sameBuilding();
+      allow create: if isResident() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isResident() && resource.data.userId == request.auth.uid;
+      
+      match /phone_requests/{requestId} {
+        allow read: if request.auth != null && 
+                       (resource.data.buyerId == request.auth.uid ||
+                        resource.data.sellerId == request.auth.uid);
+        allow create: if isResident() && request.resource.data.buyerId == request.auth.uid;
+      }
+    }
+    
+    // ============================================================================
+    // NOTIFICATIONS COLLECTION - Users read their own, Admins manage all
+    // ============================================================================
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && 
+                     ((isResident() && 
+                       (resource.data.userId == request.auth.uid ||
+                        resource.data.targetFlats.contains(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId))) ||
+                      (isAdmin() && sameBuilding()) ||
+                      (isSecurity() && sameBuilding()));
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // STAFF COLLECTION - Admins manage staff in their building
+    // ============================================================================
+    match /staff/{staffId} {
+      allow read: if request.auth != null && 
+                     ((isAdmin() && sameBuilding()) ||
+                      (isSecurity() && sameBuilding()));
+      allow write: if isAdmin() && sameBuilding();
+    }
+    
+    // ============================================================================
+    // ACCESS LOGS COLLECTION - Security creates/reads, Admins read
+    // ============================================================================
+    match /access_logs/{logId} {
+      allow read: if request.auth != null && 
+                     ((isSecurity() && sameBuilding()) ||
+                      (isAdmin() && sameBuilding()));
+      allow create: if isSecurity() && request.resource.data.buildingId == userBuildingId();
+      allow write: if false;
+    }
+  }
+}

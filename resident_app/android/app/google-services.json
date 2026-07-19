@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "519479302451",
+    "project_id": "lyvo-app-9f0ca",
+    "storage_bucket": "lyvo-app-9f0ca.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519479302451:android:2c33bd215708610ba54646",
+        "android_client_info": {
+          "package_name": "com.marantrix.lyvo.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAX_f489KaZv8TLKheJGhTOiebRn5X3l2w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519479302451:android:0ffb7c8575c1bd7ca54646",
+        "android_client_info": {
+          "package_name": "com.marantrix.lyvo.resident"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAX_f489KaZv8TLKheJGhTOiebRn5X3l2w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

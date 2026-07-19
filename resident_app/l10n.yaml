@@ -1,0 +1,18 @@
+# l10n.yaml - Flutter Localization Configuration
+
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+output-dir: lib/gen/l10n
+
+# Supported locales
+locales:
+  - en
+  - ta
+  - hi
+  - es
+  - ar
+
+# Use deferred loading
+use-deferred-loading: false

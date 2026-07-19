@@ -1,0 +1,177 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================================
+    // USERS COLLECTION - Each user can read/write their own document
+    // ============================================================================
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || request.auth != null;
+      allow write: if request.auth.uid == userId;
+      
+      // User subcollections
+      match /{document=**} {
+        allow read, write: if request.auth.uid == userId;
+      }
+    }
+    
+    // ============================================================================
+    // BILLS COLLECTION - Residents can read bills for their flat
+    // ============================================================================
+    match /bills/{billId} {
+      allow read: if request.auth != null && 
+                     (resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId ||
+                      resource.data.userId == request.auth.uid);
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // ANNOUNCEMENTS COLLECTION - All authenticated users can read
+    // ============================================================================
+    match /announcements/{announcementId} {
+      allow read: if request.auth != null && resource.data.status == 'active';
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // EVENTS COLLECTION - All authenticated users can read
+    // ============================================================================
+    match /events/{eventId} {
+      allow read: if request.auth != null && resource.data.status == 'published';
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // AMENITIES COLLECTION - Residents can read amenities for their building
+    // ============================================================================
+    match /amenities/{amenityId} {
+      allow read: if request.auth != null && 
+                     resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // BOOKINGS COLLECTION - Residents can read/write their own bookings
+    // ============================================================================
+    match /bookings/{bookingId} {
+      allow read: if request.auth != null && 
+                     (resource.data.userId == request.auth.uid ||
+                      resource.data.userId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userId);
+      allow create: if request.auth != null && 
+                       request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && 
+                               resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // MESSAGES COLLECTION - Residents can read/write messages for their flat
+    // ============================================================================
+    match /messages/{messageId} {
+      allow read: if request.auth != null && 
+                     (resource.data.senderId == request.auth.uid ||
+                      resource.data.recipientId == request.auth.uid ||
+                      resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId);
+      allow create: if request.auth != null && 
+                       request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if request.auth != null && 
+                               resource.data.senderId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // COMPLAINTS COLLECTION - Residents can read/write their own complaints
+    // ============================================================================
+    match /complaints/{complaintId} {
+      allow read: if request.auth != null && 
+                     (resource.data.userId == request.auth.uid ||
+                      resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId);
+      allow create: if request.auth != null && 
+                       request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && 
+                       (resource.data.userId == request.auth.uid ||
+                        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+      allow delete: if request.auth != null && 
+                       resource.data.userId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // VISITORS COLLECTION - Residents can read/write their own visitors
+    // ============================================================================
+    match /visitors/{visitorId} {
+      allow read: if request.auth != null && 
+                     (resource.data.residentId == request.auth.uid ||
+                      resource.data.flatId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId);
+      allow create: if request.auth != null && 
+                       request.resource.data.residentId == request.auth.uid;
+      allow update, delete: if request.auth != null && 
+                               resource.data.residentId == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // COMMUNITY WALL COLLECTION - All residents can read/write posts
+    // ============================================================================
+    match /community_wall/{postId} {
+      allow read: if request.auth != null && 
+                     resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+      allow create: if request.auth != null && 
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+      allow update, delete: if request.auth != null && 
+                               resource.data.userId == request.auth.uid;
+      
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null && 
+                         request.resource.data.userId == request.auth.uid;
+        allow update, delete: if request.auth != null && 
+                                 resource.data.userId == request.auth.uid;
+      }
+    }
+    
+    // ============================================================================
+    // MARKETPLACE COLLECTION - All residents can read/write listings
+    // ============================================================================
+    match /marketplace/{listingId} {
+      allow read: if request.auth != null && 
+                     resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+      allow create: if request.auth != null && 
+                       request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && 
+                               resource.data.userId == request.auth.uid;
+      
+      match /phone_requests/{requestId} {
+        allow read: if request.auth != null && 
+                       (resource.data.buyerId == request.auth.uid ||
+                        resource.data.sellerId == request.auth.uid);
+        allow create: if request.auth != null && 
+                         request.resource.data.buyerId == request.auth.uid;
+      }
+    }
+    
+    // ============================================================================
+    // NOTIFICATIONS COLLECTION - Users can read their own notifications
+    // ============================================================================
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && 
+                     (resource.data.userId == request.auth.uid ||
+                      resource.data.targetFlats.contains(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.flatId));
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // BUILDINGS COLLECTION - All authenticated users can read
+    // ============================================================================
+    match /buildings/{buildingId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+    
+    // ============================================================================
+    // FLATS COLLECTION - Residents can read flats in their building
+    // ============================================================================
+    match /flats/{flatId} {
+      allow read: if request.auth != null && 
+                     resource.data.buildingId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId;
+      allow write: if false;
+    }
+  }
+}
