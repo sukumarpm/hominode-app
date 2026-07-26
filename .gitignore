@@ -1,0 +1,102 @@
+# ============================================================
+# Flutter / Dart
+# ============================================================
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/pubspec.lock
+
+# Generated files
+**/*.g.dart
+**/*.freezed.dart
+**/*.gr.dart
+**/*.gen.dart
+
+# ============================================================
+# Android
+# ============================================================
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+**/android/captures/
+**/android/.externalNativeBuild/
+**/android/.cxx/
+
+# Keystore & signing files — NEVER commit these
+**/*.jks
+**/*.keystore
+**/upload-keystore.jks
+**/release-key.keystore
+**/debug.keystore
+
+# ============================================================
+# iOS / macOS
+# ============================================================
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Runner.xcworkspace/
+**/*.xcworkspace
+**/*.xcodeproj/project.xcworkspace/
+**/Podfile.lock
+**/macos/Pods/
+
+# ============================================================
+# IDE & Editor
+# ============================================================
+**/.idea/
+**/.vscode/
+**/*.iml
+**/*.ipr
+**/*.iws
+**/.DS_Store
+**/Thumbs.db
+
+# ============================================================
+# Firebase & Secrets
+# ============================================================
+# Service account keys — NEVER commit
+**/*service-account*.json
+**/*serviceAccount*.json
+**/*service_account*.json
+**/*firebase-adminsdk*.json
+**/firebase-debug.log
+**/firestore-debug.log
+**/ui-debug.log
+**/database-debug.log
+
+# Environment files — NEVER commit
+**/.env
+**/.env.*
+**/.env.local
+**/.env.production
+**/.env.development
+**/secrets.dart
+**/api_keys.dart
+
+# ============================================================
+# Node.js (Firebase Functions / tools)
+# ============================================================
+**/node_modules/
+**/npm-debug.log
+**/yarn-error.log
+**/.npm/
+
+# ============================================================
+# Firebase CLI
+# ============================================================
+**/.firebase/
+**/firebase-export-*/
+**/firestore-debug.log
+
+# ============================================================
+# Misc
+# ============================================================
+**/*.log
+**/.DS_Store
+**/coverage/
+**/.cache/
