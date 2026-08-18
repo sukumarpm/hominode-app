@@ -4,7 +4,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/booking.dart';
 import 'booking_firestore_service.dart';
 import 'user_data_service.dart';
@@ -24,7 +24,9 @@ class AmenitiesBookingFlowFunction {
         debugPrint('❌ AmenitiesFlow: User not authenticated');
         return null;
       }
-      debugPrint('✅ AmenitiesFlow STEP 1: Authentication validated - UID: ${user.uid}');
+      debugPrint(
+        '✅ AmenitiesFlow STEP 1: Authentication validated - UID: ${user.uid}',
+      );
       return user.uid;
     } catch (e) {
       debugPrint('❌ AmenitiesFlow STEP 1 Error: $e');
@@ -37,7 +39,7 @@ class AmenitiesBookingFlowFunction {
   Future<String?> _getUserBuildingId(String userId) async {
     try {
       final userDoc = await _firestore.collection('users').doc(userId).get();
-      
+
       if (!userDoc.exists) {
         debugPrint('❌ AmenitiesFlow STEP 2: User document not found');
         return null;
@@ -61,7 +63,9 @@ class AmenitiesBookingFlowFunction {
   /// Query amenities collection filtered by buildingId and isAvailable = true
   Future<List<AmenityModel>> _fetchAvailableAmenities(String buildingId) async {
     try {
-      debugPrint('📋 AmenitiesFlow STEP 3: Fetching amenities for buildingId: $buildingId');
+      debugPrint(
+        '📋 AmenitiesFlow STEP 3: Fetching amenities for buildingId: $buildingId',
+      );
 
       final snapshot = await _firestore
           .collection('amenities')
@@ -69,16 +73,23 @@ class AmenitiesBookingFlowFunction {
           .where('isAvailable', isEqualTo: true)
           .get();
 
-      debugPrint('✅ AmenitiesFlow STEP 3: Found ${snapshot.docs.length} amenities');
+      debugPrint(
+        '✅ AmenitiesFlow STEP 3: Found ${snapshot.docs.length} amenities',
+      );
 
-      final amenities = snapshot.docs.map((doc) {
-        try {
-          return AmenityModel.fromFirestore(doc);
-        } catch (e) {
-          debugPrint('⚠️ AmenitiesFlow: Error parsing amenity ${doc.id}: $e');
-          return null;
-        }
-      }).whereType<AmenityModel>().toList();
+      final amenities = snapshot.docs
+          .map((doc) {
+            try {
+              return AmenityModel.fromFirestore(doc);
+            } catch (e) {
+              debugPrint(
+                '⚠️ AmenitiesFlow: Error parsing amenity ${doc.id}: $e',
+              );
+              return null;
+            }
+          })
+          .whereType<AmenityModel>()
+          .toList();
 
       return amenities;
     } catch (e) {
@@ -91,24 +102,33 @@ class AmenitiesBookingFlowFunction {
   /// Query bookings collection filtered by userId
   Future<List<BookingModel>> _fetchUserBookings(String userId) async {
     try {
-      debugPrint('📋 AmenitiesFlow STEP 4: Fetching bookings for userId: $userId');
+      debugPrint(
+        '📋 AmenitiesFlow STEP 4: Fetching bookings for userId: $userId',
+      );
 
       final snapshot = await _firestore
           .collection('bookings')
           .where('userId', isEqualTo: userId)
           .get();
 
-      debugPrint('✅ AmenitiesFlow STEP 4: Found ${snapshot.docs.length} bookings');
+      debugPrint(
+        '✅ AmenitiesFlow STEP 4: Found ${snapshot.docs.length} bookings',
+      );
 
-      final bookings = snapshot.docs.map((doc) {
-        try {
-          final data = doc.data();
-          return _bookingFromFirestore(doc);
-        } catch (e) {
-          debugPrint('⚠️ AmenitiesFlow: Error parsing booking ${doc.id}: $e');
-          return null;
-        }
-      }).whereType<BookingModel>().toList();
+      final bookings = snapshot.docs
+          .map((doc) {
+            try {
+              final data = doc.data();
+              return _bookingFromFirestore(doc);
+            } catch (e) {
+              debugPrint(
+                '⚠️ AmenitiesFlow: Error parsing booking ${doc.id}: $e',
+              );
+              return null;
+            }
+          })
+          .whereType<BookingModel>()
+          .toList();
 
       return bookings;
     } catch (e) {
@@ -140,7 +160,9 @@ class AmenitiesBookingFlowFunction {
         return b.status == 'confirmed' && b.date.isBefore(now);
       }).toList();
 
-      debugPrint('✅ AmenitiesFlow STEP 5: ${activeBookings.length} active, ${pastBookings.length} past bookings');
+      debugPrint(
+        '✅ AmenitiesFlow STEP 5: ${activeBookings.length} active, ${pastBookings.length} past bookings',
+      );
 
       return {
         'amenities': amenities,
@@ -209,7 +231,9 @@ class AmenitiesBookingFlowFunction {
         bookings: bookings,
       );
 
-      debugPrint('✅ AmenitiesFlow: Complete - Returning ${amenities.length} amenities and ${bookings.length} bookings');
+      debugPrint(
+        '✅ AmenitiesFlow: Complete - Returning ${amenities.length} amenities and ${bookings.length} bookings',
+      );
       return processedData;
     } catch (e) {
       debugPrint('❌ AmenitiesFlow: Fatal error - $e');
@@ -242,7 +266,7 @@ class AmenitiesBookingFlowFunction {
       // Get user's building ID
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       final buildingId = userDoc.data()?['buildingId'] as String?;
-      
+
       if (buildingId == null) {
         debugPrint('❌ AmenitiesFlow Stream: No buildingId found');
         yield [];
@@ -256,18 +280,25 @@ class AmenitiesBookingFlowFunction {
           .where('isAvailable', isEqualTo: true)
           .snapshots()
           .map((snapshot) {
-        final amenities = snapshot.docs.map((doc) {
-          try {
-            return AmenityModel.fromFirestore(doc);
-          } catch (e) {
-            debugPrint('⚠️ AmenitiesFlow: Error parsing amenity ${doc.id}: $e');
-            return null;
-          }
-        }).whereType<AmenityModel>().toList();
+            final amenities = snapshot.docs
+                .map((doc) {
+                  try {
+                    return AmenityModel.fromFirestore(doc);
+                  } catch (e) {
+                    debugPrint(
+                      '⚠️ AmenitiesFlow: Error parsing amenity ${doc.id}: $e',
+                    );
+                    return null;
+                  }
+                })
+                .whereType<AmenityModel>()
+                .toList();
 
-        debugPrint('📡 AmenitiesFlow: Streamed ${amenities.length} amenities');
-        return amenities;
-      });
+            debugPrint(
+              '📡 AmenitiesFlow: Streamed ${amenities.length} amenities',
+            );
+            return amenities;
+          });
     } catch (e) {
       debugPrint('❌ AmenitiesFlow Stream Error: $e');
       yield [];
@@ -298,21 +329,28 @@ class AmenitiesBookingFlowFunction {
           .where('userId', isEqualTo: userId)
           .snapshots()
           .map((snapshot) {
-        final bookings = snapshot.docs.map((doc) {
-          try {
-            return _bookingFromFirestore(doc);
-          } catch (e) {
-            debugPrint('⚠️ AmenitiesFlow: Error parsing booking ${doc.id}: $e');
-            return null;
-          }
-        }).whereType<BookingModel>().toList();
+            final bookings = snapshot.docs
+                .map((doc) {
+                  try {
+                    return _bookingFromFirestore(doc);
+                  } catch (e) {
+                    debugPrint(
+                      '⚠️ AmenitiesFlow: Error parsing booking ${doc.id}: $e',
+                    );
+                    return null;
+                  }
+                })
+                .whereType<BookingModel>()
+                .toList();
 
-        // Sort by date (newest first)
-        bookings.sort((a, b) => b.date.compareTo(a.date));
+            // Sort by date (newest first)
+            bookings.sort((a, b) => b.date.compareTo(a.date));
 
-        debugPrint('📡 AmenitiesFlow: Streamed ${bookings.length} bookings');
-        return bookings;
-      });
+            debugPrint(
+              '📡 AmenitiesFlow: Streamed ${bookings.length} bookings',
+            );
+            return bookings;
+          });
     } catch (e) {
       debugPrint('❌ AmenitiesFlow Stream Error: $e');
       yield [];
@@ -357,7 +395,9 @@ class AmenitiesBookingFlowFunction {
       if (buildingId == null) return 0;
 
       final amenities = await _fetchAvailableAmenities(buildingId);
-      debugPrint('📊 AmenitiesFlow: Total amenities count: ${amenities.length}');
+      debugPrint(
+        '📊 AmenitiesFlow: Total amenities count: ${amenities.length}',
+      );
       return amenities.length;
     } catch (e) {
       debugPrint('❌ AmenitiesFlow: Error getting amenities count - $e');
@@ -368,7 +408,7 @@ class AmenitiesBookingFlowFunction {
   /// Helper: Convert Firestore document to BookingModel
   BookingModel _bookingFromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     // Parse date timestamp
     DateTime date;
     try {
@@ -389,10 +429,12 @@ class AmenitiesBookingFlowFunction {
     DateTime? subscriptionEndDate;
     try {
       if (data['subscriptionStartDate'] is Timestamp) {
-        subscriptionStartDate = (data['subscriptionStartDate'] as Timestamp).toDate();
+        subscriptionStartDate = (data['subscriptionStartDate'] as Timestamp)
+            .toDate();
       }
       if (data['subscriptionEndDate'] is Timestamp) {
-        subscriptionEndDate = (data['subscriptionEndDate'] as Timestamp).toDate();
+        subscriptionEndDate = (data['subscriptionEndDate'] as Timestamp)
+            .toDate();
       }
     } catch (e) {
       // Ignore parsing errors
@@ -401,7 +443,6 @@ class AmenitiesBookingFlowFunction {
     return BookingModel(
       id: doc.id,
       userId: data['userId'] ?? '',
-      userName: data['userName'] ?? 'Unknown',
       amenityId: data['amenityId'] ?? '',
       amenityName: data['amenityName'] ?? 'Unknown Amenity',
       date: date,
@@ -414,7 +455,6 @@ class AmenitiesBookingFlowFunction {
       subscriptionStartDate: subscriptionStartDate,
       subscriptionEndDate: subscriptionEndDate,
       validityDays: data['validityDays'] as int? ?? 1,
-      familyMembers: List<String>.from(data['familyMembers'] ?? []),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -462,11 +502,11 @@ class AmenityModel {
 
   factory AmenityModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>?;
-    
+
     if (data == null) {
       throw Exception('Amenity document data is null');
     }
-    
+
     // Parse timeSlots safely
     List<String> timeSlots = [];
     try {
@@ -478,15 +518,16 @@ class AmenityModel {
       debugPrint('⚠️ Error parsing timeSlots: $e');
       timeSlots = [];
     }
-    
+
     // Parse subscription packages
     Map<String, double>? packages;
     if (data['subscriptionPackages'] != null) {
       try {
-        final packagesData = data['subscriptionPackages'] as Map<String, dynamic>?;
+        final packagesData =
+            data['subscriptionPackages'] as Map<String, dynamic>?;
         if (packagesData != null) {
-          packages = packagesData.map((key, value) => 
-            MapEntry(key, (value as num).toDouble())
+          packages = packagesData.map(
+            (key, value) => MapEntry(key, (value as num).toDouble()),
           );
         }
       } catch (e) {
@@ -494,7 +535,7 @@ class AmenityModel {
         packages = null;
       }
     }
-    
+
     // Parse bookingDurations safely
     List<String> bookingDurations = ['1 hour'];
     try {
@@ -506,7 +547,7 @@ class AmenityModel {
       debugPrint('⚠️ Error parsing bookingDurations: $e');
       bookingDurations = ['1 hour'];
     }
-    
+
     return AmenityModel(
       id: doc.id,
       name: (data['name'] as String?)?.trim() ?? 'Unknown Amenity',
@@ -539,11 +580,14 @@ class AmenityModel {
     if (timeSlots.length == 1) return timeSlots.first;
     return '${timeSlots.length} slots available';
   }
-  
+
   String get capacityDisplay {
     if (!allowMultipleBookings) return 'Single booking';
     return 'Up to $maxCapacity users';
   }
-  
-  bool get hasPackages => hasSubscriptionPackages && subscriptionPackages != null && subscriptionPackages!.isNotEmpty;
+
+  bool get hasPackages =>
+      hasSubscriptionPackages &&
+      subscriptionPackages != null &&
+      subscriptionPackages!.isNotEmpty;
 }
