@@ -3,15 +3,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ComplaintModel {
   final String id;
+  final String communityId;
   final String flatId;
   final String? flatLabel;
   final String? adminId;
   final String userId;
   final String title;
   final String description;
-  final String category; // 'maintenance', 'security', 'noise', 'parking', 'other'
+  final String
+  category; // 'maintenance', 'security', 'noise', 'parking', 'other'
   final String priority; // 'low', 'medium', 'high', 'urgent'
-  final String status; // 'open', 'in_progress', 'resolved', 'closed', 'rejected'
+  final String
+  status; // 'open', 'in_progress', 'resolved', 'closed', 'rejected'
   final List<String> attachments;
   final String? assignedTo;
   final String? resolution;
@@ -21,6 +24,7 @@ class ComplaintModel {
 
   ComplaintModel({
     required this.id,
+    this.communityId = '',
     required this.flatId,
     this.flatLabel,
     this.adminId,
@@ -41,6 +45,7 @@ class ComplaintModel {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'communityId': communityId,
       'flatId': flatId,
       'flatLabel': flatLabel,
       'adminId': adminId,
@@ -65,6 +70,7 @@ class ComplaintModel {
   factory ComplaintModel.fromJson(Map<String, dynamic> json) {
     return ComplaintModel(
       id: json['id'] as String? ?? '',
+      communityId: json['communityId'] as String? ?? '',
       flatId: json['flatId'] as String? ?? '',
       flatLabel: json['flatLabel'] as String?,
       adminId: json['adminId'] as String?,
@@ -74,7 +80,8 @@ class ComplaintModel {
       category: json['category'] as String? ?? '',
       priority: json['priority'] as String? ?? 'medium',
       status: json['status'] as String? ?? 'open',
-      attachments: (json['attachments'] as List<dynamic>?)
+      attachments:
+          (json['attachments'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
@@ -89,6 +96,7 @@ class ComplaintModel {
   factory ComplaintModel.fromMap(Map<String, dynamic> map, String documentId) {
     return ComplaintModel(
       id: documentId,
+      communityId: map['communityId'] as String? ?? '',
       flatId: map['flatId'] ?? '',
       flatLabel: map['flatLabel'],
       adminId: map['adminId'],
@@ -108,7 +116,10 @@ class ComplaintModel {
   }
 
   factory ComplaintModel.fromSnapshot(DocumentSnapshot snapshot) {
-    return ComplaintModel.fromMap(snapshot.data() as Map<String, dynamic>, snapshot.id);
+    return ComplaintModel.fromMap(
+      snapshot.data() as Map<String, dynamic>,
+      snapshot.id,
+    );
   }
 
   factory ComplaintModel.fromFirestore(DocumentSnapshot doc) {
@@ -122,6 +133,7 @@ class ComplaintModel {
 
   ComplaintModel copyWith({
     String? id,
+    String? communityId,
     String? flatId,
     String? flatLabel,
     String? adminId,
@@ -140,6 +152,7 @@ class ComplaintModel {
   }) {
     return ComplaintModel(
       id: id ?? this.id,
+      communityId: communityId ?? this.communityId,
       flatId: flatId ?? this.flatId,
       flatLabel: flatLabel ?? this.flatLabel,
       adminId: adminId ?? this.adminId,

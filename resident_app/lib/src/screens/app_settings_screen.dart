@@ -37,31 +37,31 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 // Language Settings Section
                 _buildSectionHeader(context, 'language'),
                 _buildLanguageSection(context),
-                
+
                 const Divider(height: 32),
-                
+
                 // Notification Settings Section
                 _buildSectionHeader(context, 'notifications'),
                 _buildNotificationSettings(context),
-                
+
                 const Divider(height: 32),
-                
+
                 // Security Settings Section
                 _buildSectionHeader(context, 'settings_security'),
                 _buildSecuritySettings(context),
-                
+
                 const Divider(height: 32),
-                
+
                 // Privacy Settings Section
                 _buildSectionHeader(context, 'settings_privacy'),
                 _buildPrivacySettings(context),
-                
+
                 const Divider(height: 32),
-                
+
                 // About Section
                 _buildSectionHeader(context, 'about'),
                 _buildAboutSection(context),
-                
+
                 const SizedBox(height: 32),
               ],
             ),
@@ -91,7 +91,8 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             itemCount: languageProvider.supportedLanguages.length,
             itemBuilder: (context, index) {
               final language = languageProvider.supportedLanguages[index];
-              final isSelected = languageProvider.currentLanguageCode == language;
+              final isSelected =
+                  languageProvider.currentLanguageCode == language;
 
               return GestureDetector(
                 onTap: () async {
@@ -203,14 +204,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       child: Column(
         children: [
           _buildSettingsTile(
-            icon: Icons.lock,
-            title: 'change_password'.tr(),
-            subtitle: 'change_password'.tr(),
-            onTap: () {
-              _showChangePasswordDialog(context);
-            },
-          ),
-          _buildSettingsTile(
             icon: Icons.security,
             title: 'two_factor_auth'.tr(),
             subtitle: 'two_factor_auth'.tr(),
@@ -309,10 +302,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   // ========================================================================
   // HELPER WIDGETS
   // ========================================================================
-  Widget _buildSectionHeader(
-    BuildContext context,
-    String titleKey,
-  ) {
+  Widget _buildSectionHeader(BuildContext context, String titleKey) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
       child: Align(
@@ -340,17 +330,11 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       leading: Icon(icon, color: const Color(0xFF2563EB)),
       title: Text(
         title,
-        style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
       ),
       subtitle: Text(
         subtitle,
-        style: TextStyle(
-          fontSize: 12,
-          color: Colors.grey[600],
-        ),
+        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
       ),
       trailing: trailing,
       onTap: onTap,
@@ -361,62 +345,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   // ========================================================================
   // DIALOGS
   // ========================================================================
-  void _showChangePasswordDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('change_password'.tr()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'password'.tr(),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              obscureText: true,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'password'.tr(),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              obscureText: true,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'password'.tr(),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('cancel'.tr()),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2563EB),
-            ),
-            child: Text('update'.tr()),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showActiveSessionsDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -455,9 +383,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('privacy_policy'.tr()),
-        content: SingleChildScrollView(
-          child: Text('privacy_policy'.tr()),
-        ),
+        content: SingleChildScrollView(child: Text('privacy_policy'.tr())),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -473,9 +399,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('terms_conditions'.tr()),
-        content: SingleChildScrollView(
-          child: Text('terms_conditions'.tr()),
-        ),
+        content: SingleChildScrollView(child: Text('terms_conditions'.tr())),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -499,9 +423,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: Text('delete'.tr()),
           ),
         ],

@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// Chat model - represents a conversation
 class ChatModel {
   final String id;
+  final String communityId;
   final String title;
   final String? subtitle;
   final List<String> participantIds;
@@ -25,6 +26,7 @@ class ChatModel {
 
   ChatModel({
     required this.id,
+    this.communityId = '',
     required this.title,
     this.subtitle,
     required this.participantIds,
@@ -45,13 +47,14 @@ class ChatModel {
 
   factory ChatModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     return ChatModel(
       id: doc.id,
+      communityId: data['communityId'] as String? ?? '',
       title: data['title'] ?? 'Unknown',
       subtitle: data['subtitle'],
       participantIds: List<String>.from(data['participantIds'] ?? []),
-      participantNames: data['participantNames'] != null 
+      participantNames: data['participantNames'] != null
           ? Map<String, String>.from(data['participantNames'] as Map)
           : null,
       lastMessage: data['lastMessage'],
@@ -72,11 +75,14 @@ class ChatModel {
   Map<String, dynamic> toMap() {
     return {
       'title': title,
+      'communityId': communityId,
       'subtitle': subtitle,
       'participantIds': participantIds,
       'participantNames': participantNames,
       'lastMessage': lastMessage,
-      'lastMessageTime': lastMessageTime != null ? Timestamp.fromDate(lastMessageTime!) : null,
+      'lastMessageTime': lastMessageTime != null
+          ? Timestamp.fromDate(lastMessageTime!)
+          : null,
       'unreadCount': unreadCount,
       'iconUrl': iconUrl,
       'iconName': iconName,
@@ -94,6 +100,7 @@ class ChatModel {
 /// Message model - represents a single message in a chat
 class MessageModel {
   final String id;
+  final String communityId;
   final String chatId;
   final String senderId;
   final String senderName;
@@ -108,6 +115,7 @@ class MessageModel {
 
   MessageModel({
     required this.id,
+    this.communityId = '',
     required this.chatId,
     required this.senderId,
     required this.senderName,
@@ -123,9 +131,10 @@ class MessageModel {
 
   factory MessageModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     return MessageModel(
       id: doc.id,
+      communityId: data['communityId'] as String? ?? '',
       chatId: data['chatId'] ?? '',
       senderId: data['senderId'] ?? '',
       senderName: data['senderName'] ?? 'Unknown',
@@ -146,6 +155,7 @@ class MessageModel {
   Map<String, dynamic> toMap() {
     return {
       'chatId': chatId,
+      'communityId': communityId,
       'senderId': senderId,
       'senderName': senderName,
       'senderPhotoUrl': senderPhotoUrl,
@@ -159,10 +169,7 @@ class MessageModel {
     };
   }
 
-  MessageModel copyWith({
-    MessageStatus? status,
-    List<String>? readBy,
-  }) {
+  MessageModel copyWith({MessageStatus? status, List<String>? readBy}) {
     return MessageModel(
       id: id,
       chatId: chatId,
@@ -181,20 +188,10 @@ class MessageModel {
 }
 
 /// Message status enum
-enum MessageStatus {
-  sending,
-  sent,
-  delivered,
-  read,
-  failed,
-}
+enum MessageStatus { sending, sent, delivered, read, failed }
 
 /// Chat request status enum
-enum ChatRequestStatus {
-  pending,
-  accepted,
-  rejected,
-}
+enum ChatRequestStatus { pending, accepted, rejected }
 
 /// Chat request model
 class ChatRequestModel {
@@ -226,7 +223,7 @@ class ChatRequestModel {
 
   factory ChatRequestModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     return ChatRequestModel(
       id: doc.id,
       senderId: data['senderId'] ?? '',
@@ -256,7 +253,9 @@ class ChatRequestModel {
       'flatId': flatId,
       'status': status.toString().split('.').last,
       'createdAt': Timestamp.fromDate(createdAt),
-      'respondedAt': respondedAt != null ? Timestamp.fromDate(respondedAt!) : null,
+      'respondedAt': respondedAt != null
+          ? Timestamp.fromDate(respondedAt!)
+          : null,
     };
   }
 }

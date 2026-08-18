@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:easy_localization/easy_localization.dart';
+import 'package:provider/provider.dart';
 import '../services/firebase_auth_service.dart';
+import '../services/tenant_resolution_service.dart';
 import '../components/standard_screen.dart';
-import 'loading_screen.dart';
 
 /// OTP Screen with Single TextField Input
 /// Firebase Phone Authentication OTP Verification
@@ -18,22 +18,26 @@ class VerifyOTPScreenSingleField extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  State<VerifyOTPScreenSingleField> createState() => _VerifyOTPScreenSingleFieldState();
+  State<VerifyOTPScreenSingleField> createState() =>
+      _VerifyOTPScreenSingleFieldState();
 }
 
-class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField> {
+class _VerifyOTPScreenSingleFieldState
+    extends State<VerifyOTPScreenSingleField> {
   final TextEditingController _otpController = TextEditingController();
   final FocusNode _otpFocusNode = FocusNode();
   final FirebaseAuthService _authService = FirebaseAuthService();
   bool _isLoading = false;
+  late String? _verificationId;
 
   @override
   void initState() {
     super.initState();
+    _verificationId = widget.verificationId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _otpFocusNode.requestFocus();
     });
-    
+
     _otpController.addListener(() {
       setState(() {});
     });
@@ -52,7 +56,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
   void _onChanged(String value) {
     // Only allow digits
     final digitsOnly = value.replaceAll(RegExp(r'[^\d]'), '');
-    
+
     // Limit to 6 digits
     if (digitsOnly.length <= 6) {
       _otpController.value = TextEditingValue(
@@ -60,7 +64,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
         selection: TextSelection.collapsed(offset: digitsOnly.length),
       );
     }
-    
+
     setState(() {});
   }
 
@@ -72,19 +76,18 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
     try {
       final result = await _authService.verifyOtp(
         smsCode: _otp,
-        verificationId: widget.verificationId,
+        verificationId: _verificationId,
+        tenantResolver: context.read<TenantResolutionService>(),
       );
-      
+
       if (!mounted) return;
       setState(() => _isLoading = false);
-      
+
       if (result.success) {
         _showSnackBar('Phone verified successfully!', isError: false);
         await Future.delayed(const Duration(milliseconds: 500));
         if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const LoadingScreen()),
-          );
+          Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
         }
       } else {
         _showSnackBar(result.message ?? 'Invalid OTP', isError: true);
@@ -99,29 +102,45 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
 
   Future<void> _handleResend() async {
     final mobile = widget.mobileNumber ?? '';
-    
+
     if (mobile.isEmpty) {
       _showSnackBar('Mobile number not found', isError: true);
       return;
     }
-    
+
     setState(() => _isLoading = true);
-    
+
     final formattedPhone = _authService.formatPhoneNumber(mobile);
-    
-    await _authService.resendOtp(
+
+    await _authService.sendOtp(
       phoneNumber: formattedPhone,
+      tenantResolver: context.read<TenantResolutionService>(),
+      forceResend: true,
       onCodeSent: (verificationId) {
+        _verificationId = verificationId;
         setState(() => _isLoading = false);
         _showSnackBar('OTP resent successfully', isError: false);
       },
-      onError: (error) {
+      onVerificationCompleted: (result) {
+        if (!mounted) return;
         setState(() => _isLoading = false);
-        _showSnackBar(error, isError: true);
+        if (result.success) {
+          Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+        } else {
+          _showSnackBar(
+            result.message ?? 'Phone verification failed.',
+            isError: true,
+          );
+        }
+      },
+      onError: (result) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(result.message ?? 'Unable to resend OTP.', isError: true);
       },
     );
   }
-  
+
   void _clearOTP() {
     _otpController.clear();
     _otpFocusNode.requestFocus();
@@ -133,7 +152,9 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? const Color(0xFFEF4444) : const Color(0xFF10B981),
+        backgroundColor: isError
+            ? const Color(0xFFEF4444)
+            : const Color(0xFF10B981),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         margin: const EdgeInsets.all(16),
@@ -150,7 +171,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
       body: Column(
         children: [
           const SizedBox(height: 40),
-          
+
           // Main Headline
           const Text(
             'Enter OTP',
@@ -162,7 +183,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
             ),
           ),
           const SizedBox(height: 12),
-          
+
           // Subtext with phone number
           Text(
             "We've sent a verification code to",
@@ -187,20 +208,20 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
             ),
           ),
           const SizedBox(height: 48),
-          
+
           // OTP INPUT - Single Field with Visual Separation
           _buildOTPInput(),
-          
+
           const SizedBox(height: 48),
-          
+
           // Verify Button
           _buildVerifyButton(),
-          
+
           const SizedBox(height: 20),
-          
+
           // Resend Link
           _buildResendLink(),
-          
+
           const SizedBox(height: 40),
         ],
       ),
@@ -216,8 +237,8 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: _otpFocusNode.hasFocus 
-                ? const Color(0xFF2563EB) 
+            color: _otpFocusNode.hasFocus
+                ? const Color(0xFF2563EB)
                 : const Color(0xFFD1D5DB),
             width: 2,
           ),
@@ -239,14 +260,14 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
               children: List.generate(6, (index) {
                 final hasDigit = index < _otp.length;
                 final digit = hasDigit ? _otp[index] : '';
-                
+
                 return Container(
                   width: 38,
                   height: 48,
                   decoration: BoxDecoration(
                     border: Border(
                       bottom: BorderSide(
-                        color: hasDigit 
+                        color: hasDigit
                             ? const Color(0xFF2563EB)
                             : const Color(0xFFD1D5DB),
                         width: 2.5,
@@ -267,7 +288,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
                 );
               }),
             ),
-            
+
             // Hidden TextField for actual input
             Positioned.fill(
               child: Opacity(
@@ -299,7 +320,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
 
   Widget _buildVerifyButton() {
     final isEnabled = _isComplete && !_isLoading;
-    
+
     return SizedBox(
       width: double.infinity,
       height: 54,
@@ -342,9 +363,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
         onPressed: _isLoading ? null : _handleResend,
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
         child: RichText(
           text: const TextSpan(

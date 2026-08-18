@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PaymentModel {
   final String id;
+  final String communityId;
   final String billId;
   final String flatId;
   final String userId;
@@ -17,6 +18,7 @@ class PaymentModel {
 
   PaymentModel({
     required this.id,
+    this.communityId = '',
     required this.billId,
     required this.flatId,
     required this.userId,
@@ -33,6 +35,7 @@ class PaymentModel {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'communityId': communityId,
       'billId': billId,
       'flatId': flatId,
       'userId': userId,
@@ -53,6 +56,7 @@ class PaymentModel {
   factory PaymentModel.fromJson(Map<String, dynamic> json) {
     return PaymentModel(
       id: json['id'] as String? ?? '',
+      communityId: json['communityId'] as String? ?? '',
       billId: json['billId'] as String? ?? '',
       flatId: json['flatId'] as String? ?? '',
       userId: json['userId'] as String? ?? '',
@@ -61,7 +65,8 @@ class PaymentModel {
       status: json['status'] as String? ?? 'pending',
       transactionId: json['transactionId'] as String?,
       receiptUrl: json['receiptUrl'] as String?,
-      paymentDate: (json['paymentDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      paymentDate:
+          (json['paymentDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       createdAt: (json['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (json['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
@@ -70,6 +75,7 @@ class PaymentModel {
   factory PaymentModel.fromMap(Map<String, dynamic> map, String documentId) {
     return PaymentModel(
       id: documentId,
+      communityId: map['communityId'] as String? ?? '',
       billId: map['billId'] ?? '',
       flatId: map['flatId'] ?? '',
       userId: map['userId'] ?? '',
@@ -78,14 +84,18 @@ class PaymentModel {
       status: map['status'] ?? 'pending',
       transactionId: map['transactionId'],
       receiptUrl: map['receiptUrl'],
-      paymentDate: (map['paymentDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      paymentDate:
+          (map['paymentDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
   factory PaymentModel.fromSnapshot(DocumentSnapshot snapshot) {
-    return PaymentModel.fromMap(snapshot.data() as Map<String, dynamic>, snapshot.id);
+    return PaymentModel.fromMap(
+      snapshot.data() as Map<String, dynamic>,
+      snapshot.id,
+    );
   }
 
   factory PaymentModel.fromFirestore(DocumentSnapshot doc) {
@@ -99,6 +109,7 @@ class PaymentModel {
 
   PaymentModel copyWith({
     String? id,
+    String? communityId,
     String? billId,
     String? flatId,
     String? userId,
@@ -113,6 +124,7 @@ class PaymentModel {
   }) {
     return PaymentModel(
       id: id ?? this.id,
+      communityId: communityId ?? this.communityId,
       billId: billId ?? this.billId,
       flatId: flatId ?? this.flatId,
       userId: userId ?? this.userId,

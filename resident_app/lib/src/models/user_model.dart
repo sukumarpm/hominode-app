@@ -10,6 +10,7 @@ class UserModel {
   final String? phoneNumber;
   final String? photoURL;
   final String role; // 'resident', 'admin', 'security'
+  final String communityId;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isActive;
@@ -21,6 +22,7 @@ class UserModel {
     this.phoneNumber,
     this.photoURL,
     this.role = 'resident',
+    this.communityId = '',
     required this.createdAt,
     required this.updatedAt,
     this.isActive = true,
@@ -35,6 +37,7 @@ class UserModel {
       'phoneNumber': phoneNumber,
       'photoURL': photoURL,
       'role': role,
+      'communityId': communityId,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
       'isActive': isActive,
@@ -52,6 +55,7 @@ class UserModel {
       phoneNumber: json['phoneNumber'] as String?,
       photoURL: json['photoURL'] as String?,
       role: json['role'] as String? ?? 'resident',
+      communityId: json['communityId'] as String? ?? '',
       createdAt: (json['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (json['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isActive: json['isActive'] as bool? ?? true,
@@ -67,6 +71,7 @@ class UserModel {
       phoneNumber: map['phoneNumber'],
       photoURL: map['photoURL'],
       role: map['role'] ?? 'resident',
+      communityId: map['communityId'] ?? '',
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isActive: map['isActive'] ?? true,
@@ -92,6 +97,7 @@ class UserModel {
     String? phoneNumber,
     String? photoURL,
     String? role,
+    String? communityId,
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? isActive,
@@ -103,6 +109,7 @@ class UserModel {
       phoneNumber: phoneNumber ?? this.phoneNumber,
       photoURL: photoURL ?? this.photoURL,
       role: role ?? this.role,
+      communityId: communityId ?? this.communityId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isActive: isActive ?? this.isActive,

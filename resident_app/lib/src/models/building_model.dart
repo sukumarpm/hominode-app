@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class BuildingModel {
   final String id;
   final String name;
+  final String communityId;
   final String address;
   final String? description;
   final int totalFloors;
@@ -17,6 +18,7 @@ class BuildingModel {
   BuildingModel({
     required this.id,
     required this.name,
+    this.communityId = '',
     required this.address,
     this.description,
     required this.totalFloors,
@@ -30,6 +32,7 @@ class BuildingModel {
     return {
       'id': id,
       'name': name,
+      'communityId': communityId,
       'address': address,
       'description': description,
       'totalFloors': totalFloors,
@@ -44,6 +47,7 @@ class BuildingModel {
     return BuildingModel(
       id: documentId,
       name: map['name'] ?? '',
+      communityId: map['communityId'] ?? '',
       address: map['address'] ?? '',
       description: map['description'],
       totalFloors: map['totalFloors'] ?? 0,
@@ -62,6 +66,7 @@ class BuildingModel {
   BuildingModel copyWith({
     String? id,
     String? name,
+    String? communityId,
     String? address,
     String? description,
     int? totalFloors,
@@ -73,6 +78,7 @@ class BuildingModel {
     return BuildingModel(
       id: id ?? this.id,
       name: name ?? this.name,
+      communityId: communityId ?? this.communityId,
       address: address ?? this.address,
       description: description ?? this.description,
       totalFloors: totalFloors ?? this.totalFloors,

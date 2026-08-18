@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function adminPath() {
+      return /databases/$(database)/documents/admins/$(request.auth.uid);
+    }
+
+    function hasUserProfile() {
+      return signedIn() && exists(userPath());
+    }
+
+    function hasAdminProfile() {
+      return signedIn() && exists(adminPath());
+    }
+
+    function profile() {
+      return hasAdminProfile() ? get(adminPath()).data : get(userPath()).data;
+    }
+
+    function profileIsActive() {
+      return (hasAdminProfile() || hasUserProfile()) && profile().isActive == true;
+    }
+
+    function communityId() {
+      return profile().communityId;
+    }
+
+    function isAdmin() {
+      return hasAdminProfile() &&
+        (profile().role == 'admin' || profile().role == 'superAdmin');
+    }
+
+    function adminCanAccess(tenantId) {
+      return isAdmin() && profileIsActive() &&
+        (communityId() == tenantId ||
+         (profile().authorizedCommunityIds is list &&
+          tenantId in profile().authorizedCommunityIds));
+    }
+
+    function belongsToCurrentTenant(data) {
+      return profileIsActive() && data.communityId is string &&
+        data.communityId == communityId();
+    }
+
+    function canAccessTenant(tenantId) {
+      return profileIsActive() &&
+        (communityId() == tenantId || adminCanAccess(tenantId));
+    }
+
+    function tenantFieldsUnchanged() {
+      return request.resource.data.communityId == resource.data.communityId &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.isActive == resource.data.isActive;
+    }
+
+    match /communities/{tenantId} {
+      allow read: if canAccessTenant(tenantId);
+      allow create, update, delete: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() &&
+        (request.auth.uid == userId ||
+         (isAdmin() && belongsToCurrentTenant(resource.data)));
+      allow create: if isAdmin() && belongsToCurrentTenant(request.resource.data);
+      allow update: if signedIn() &&
+        ((request.auth.uid == userId && tenantFieldsUnchanged()) ||
+         (isAdmin() && belongsToCurrentTenant(resource.data) &&
+          request.resource.data.communityId == resource.data.communityId));
+      allow delete: if isAdmin() && belongsToCurrentTenant(resource.data);
+
+      match /{subdocument=**} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /admins/{adminId} {
+      allow read: if signedIn() &&
+        (request.auth.uid == adminId ||
+         (isAdmin() && belongsToCurrentTenant(resource.data)));
+      allow create, delete: if false;
+      allow update: if signedIn() && request.auth.uid == adminId &&
+        tenantFieldsUnchanged() &&
+        request.resource.data.authorizedCommunityIds ==
+          resource.data.authorizedCommunityIds;
+    }
+
+    // Root collection paths are retained for backward compatibility. Every
+    // migrated document must carry communityId, and every query must include
+    // where('communityId', isEqualTo: resolvedCommunityId).
+    match /buildings/{id} {
+      allow read: if belongsToCurrentTenant(resource.data);
+      allow create: if isAdmin() && belongsToCurrentTenant(request.resource.data);
+      allow update, delete: if isAdmin() && belongsToCurrentTenant(resource.data) &&
+        request.resource.data.communityId == resource.data.communityId;
+    }
+
+    match /flats/{id} {
+      allow read: if belongsToCurrentTenant(resource.data);
+      allow create: if isAdmin() && belongsToCurrentTenant(request.resource.data);
+      allow update, delete: if isAdmin() && belongsToCurrentTenant(resource.data) &&
+        request.resource.data.communityId == resource.data.communityId;
+    }
+
+    match /residents/{id} {
+      allow read: if belongsToCurrentTenant(resource.data) &&
+        (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() && belongsToCurrentTenant(request.resource.data);
+      allow update: if isAdmin() && belongsToCurrentTenant(resource.data) &&
+        request.resource.data.communityId == resource.data.communityId;
+      allow delete: if isAdmin() && belongsToCurrentTenant(resource.data);
+    }
+
+    match /visitors/{id} {
+      allow read: if belongsToCurrentTenant(resource.data);
+      allow create: if belongsToCurrentTenant(request.resource.data) &&
+        (isAdmin() || request.resource.data.hostUserId == request.auth.uid ||
+         request.resource.data.residentId == request.auth.uid);
+      allow update: if belongsToCurrentTenant(resource.data) &&
+        (isAdmin() || resource.data.hostUserId == request.auth.uid ||
+         resource.data.residentId == request.auth.uid) &&
+        request.resource.data.communityId == resource.data.communityId;
+      allow delete: if belongsToCurrentTenant(resource.data) &&
+        (isAdmin() || resource.data.hostUserId == request.auth.uid ||
+         resource.data.residentId == request.auth.uid);
+    }
+
+    match /{collectionName}/{id} {
+      allow read: if collectionName in [
+          'amenities', 'bookings', 'amenityBookings', 'complaints', 'notices',
+          'announcements', 'events', 'maintenance', 'bills', 'payments',
+          'marketplace', 'listings', 'chats', 'adminChats', 'chatRequests',
+          'community_wall', 'posts', 'notifications', 'staff', 'domesticStaff'
+        ] && belongsToCurrentTenant(resource.data);
+      allow create: if collectionName in [
+          'bookings', 'amenityBookings', 'complaints', 'payments', 'marketplace',
+          'listings', 'chats', 'adminChats', 'chatRequests', 'community_wall',
+          'posts'
+        ] && belongsToCurrentTenant(request.resource.data);
+      allow create: if collectionName in [
+          'amenities', 'notices', 'announcements', 'events', 'maintenance',
+          'bills', 'notifications', 'staff', 'domesticStaff'
+        ] && isAdmin() && belongsToCurrentTenant(request.resource.data);
+      allow update: if belongsToCurrentTenant(resource.data) &&
+        request.resource.data.communityId == resource.data.communityId &&
+        (isAdmin() || resource.data.userId == request.auth.uid ||
+         resource.data.ownerId == request.auth.uid ||
+         resource.data.authorId == request.auth.uid ||
+         resource.data.sellerId == request.auth.uid);
+      allow delete: if belongsToCurrentTenant(resource.data) &&
+        (isAdmin() || resource.data.userId == request.auth.uid ||
+         resource.data.ownerId == request.auth.uid ||
+         resource.data.authorId == request.auth.uid ||
+         resource.data.sellerId == request.auth.uid);
+
+      match /{subcollection}/{subId} {
+        allow read: if belongsToCurrentTenant(resource.data);
+        allow create: if belongsToCurrentTenant(request.resource.data);
+        allow update: if belongsToCurrentTenant(resource.data) &&
+          request.resource.data.communityId == resource.data.communityId &&
+          (isAdmin() || resource.data.userId == request.auth.uid ||
+           resource.data.senderId == request.auth.uid ||
+           resource.data.authorId == request.auth.uid);
+        allow delete: if belongsToCurrentTenant(resource.data) &&
+          (isAdmin() || resource.data.userId == request.auth.uid ||
+           resource.data.senderId == request.auth.uid ||
+           resource.data.authorId == request.auth.uid);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

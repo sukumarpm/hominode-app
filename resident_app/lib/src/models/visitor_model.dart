@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class VisitorModel {
   final String id;
+  final String communityId;
   final String flatId;
   final String? flatLabel;
   final String? adminId;
@@ -22,6 +23,7 @@ class VisitorModel {
 
   VisitorModel({
     required this.id,
+    this.communityId = '',
     required this.flatId,
     this.flatLabel,
     this.adminId,
@@ -43,6 +45,7 @@ class VisitorModel {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'communityId': communityId,
       'flatId': flatId,
       'flatLabel': flatLabel,
       'adminId': adminId,
@@ -51,7 +54,9 @@ class VisitorModel {
       'visitorPhone': visitorPhone,
       'purpose': purpose,
       'expectedArrival': Timestamp.fromDate(expectedArrival),
-      'actualArrival': actualArrival != null ? Timestamp.fromDate(actualArrival!) : null,
+      'actualArrival': actualArrival != null
+          ? Timestamp.fromDate(actualArrival!)
+          : null,
       'departure': departure != null ? Timestamp.fromDate(departure!) : null,
       'status': status,
       'vehicleNumber': vehicleNumber,
@@ -68,6 +73,7 @@ class VisitorModel {
   factory VisitorModel.fromJson(Map<String, dynamic> json) {
     return VisitorModel(
       id: json['id'] as String? ?? '',
+      communityId: json['communityId'] as String? ?? '',
       flatId: json['flatId'] as String? ?? '',
       flatLabel: json['flatLabel'] as String?,
       adminId: json['adminId'] as String?,
@@ -75,7 +81,8 @@ class VisitorModel {
       visitorName: json['visitorName'] as String? ?? '',
       visitorPhone: json['visitorPhone'] as String?,
       purpose: json['purpose'] as String? ?? '',
-      expectedArrival: (json['expectedArrival'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      expectedArrival:
+          (json['expectedArrival'] as Timestamp?)?.toDate() ?? DateTime.now(),
       actualArrival: (json['actualArrival'] as Timestamp?)?.toDate(),
       departure: (json['departure'] as Timestamp?)?.toDate(),
       status: json['status'] as String? ?? 'expected',
@@ -90,6 +97,7 @@ class VisitorModel {
   factory VisitorModel.fromMap(Map<String, dynamic> map, String documentId) {
     return VisitorModel(
       id: documentId,
+      communityId: map['communityId'] as String? ?? '',
       flatId: map['flatId'] ?? '',
       flatLabel: map['flatLabel'],
       adminId: map['adminId'],
@@ -97,7 +105,8 @@ class VisitorModel {
       visitorName: map['visitorName'] ?? '',
       visitorPhone: map['visitorPhone'],
       purpose: map['purpose'] ?? '',
-      expectedArrival: (map['expectedArrival'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      expectedArrival:
+          (map['expectedArrival'] as Timestamp?)?.toDate() ?? DateTime.now(),
       actualArrival: (map['actualArrival'] as Timestamp?)?.toDate(),
       departure: (map['departure'] as Timestamp?)?.toDate(),
       status: map['status'] ?? 'expected',
@@ -110,7 +119,10 @@ class VisitorModel {
   }
 
   factory VisitorModel.fromSnapshot(DocumentSnapshot snapshot) {
-    return VisitorModel.fromMap(snapshot.data() as Map<String, dynamic>, snapshot.id);
+    return VisitorModel.fromMap(
+      snapshot.data() as Map<String, dynamic>,
+      snapshot.id,
+    );
   }
 
   factory VisitorModel.fromFirestore(DocumentSnapshot doc) {
@@ -124,6 +136,7 @@ class VisitorModel {
 
   VisitorModel copyWith({
     String? id,
+    String? communityId,
     String? flatId,
     String? flatLabel,
     String? adminId,
@@ -143,6 +156,7 @@ class VisitorModel {
   }) {
     return VisitorModel(
       id: id ?? this.id,
+      communityId: communityId ?? this.communityId,
       flatId: flatId ?? this.flatId,
       flatLabel: flatLabel ?? this.flatLabel,
       adminId: adminId ?? this.adminId,

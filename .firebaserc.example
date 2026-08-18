@@ -1,0 +1,5 @@
+{
+  "projects": {
+    "default": "REPLACE_WITH_SHARED_HOMINODE_FIREBASE_PROJECT_ID"
+  }
+}

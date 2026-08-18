@@ -10,19 +10,18 @@ import 'src/providers/language_provider.dart';
 import 'src/providers/localization_provider.dart';
 import 'src/screens/splash_screen_clean.dart';
 import 'src/screens/simple_login_screen.dart';
-import 'src/screens/create_account_screen.dart';
-import 'src/screens/setup_profile_screen.dart';
-import 'src/services/auth_service.dart';
+import 'src/services/firebase_auth_service.dart';
+import 'src/services/tenant_resolution_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize Firebase
   await Firebase.initializeApp();
-  
+
   // Initialize EasyLocalization
   await EasyLocalization.ensureInitialized();
-  
+
   // Set system UI to light mode
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -31,7 +30,7 @@ void main() async {
       statusBarBrightness: Brightness.light,
     ),
   );
-  
+
   runApp(
     EasyLocalization(
       supportedLocales: const [
@@ -48,6 +47,7 @@ void main() async {
         providers: [
           ChangeNotifierProvider(create: (_) => LanguageProvider()),
           ChangeNotifierProvider(create: (_) => LocalizationProvider()),
+          ChangeNotifierProvider(create: (_) => TenantResolutionService()),
         ],
         child: const MyApp(),
       ),
@@ -63,7 +63,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'app_title'.tr(),
       debugShowCheckedModeBanner: false,
-      
+
       // Localization configuration
       localizationsDelegates: [
         GlobalMaterialLocalizations.delegate,
@@ -73,11 +73,11 @@ class MyApp extends StatelessWidget {
       ],
       supportedLocales: EasyLocalization.of(context)!.supportedLocales,
       locale: context.locale,
-      
+
       // Apply light theme only
       theme: AppTheme.lightTheme,
       themeMode: ThemeMode.light,
-      
+
       home: const AuthCheckScreen(),
       onGenerateRoute: (settings) {
         switch (settings.name) {
@@ -89,10 +89,12 @@ class MyApp extends StatelessWidget {
                 tagline: 'Your Community, Connected',
                 duration: const Duration(milliseconds: 3000),
                 onFinish: () async {
-                  final authService = AuthService();
-                  final isLoggedIn = await authService.isLoggedIn();
+                  final result = await FirebaseAuthService()
+                      .restoreResidentSession(
+                        context.read<TenantResolutionService>(),
+                      );
                   if (context.mounted) {
-                    if (isLoggedIn) {
+                    if (result.success) {
                       Navigator.of(context).pushReplacementNamed('/home');
                     } else {
                       Navigator.of(context).pushReplacementNamed('/login');
@@ -104,14 +106,6 @@ class MyApp extends StatelessWidget {
           case '/login':
             return MaterialPageRoute(
               builder: (context) => const SimpleLoginScreen(),
-            );
-          case '/register':
-            return MaterialPageRoute(
-              builder: (context) => const CreateAccountScreen(),
-            );
-          case '/setup-profile':
-            return MaterialPageRoute(
-              builder: (context) => const SetupProfileScreen(),
             );
           case '/home':
             return MaterialPageRoute(
@@ -144,13 +138,14 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   Future<void> _checkAuthStatus() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    
+
     if (mounted) {
-      final authService = AuthService();
-      final isLoggedIn = await authService.isLoggedIn();
-      
+      final result = await FirebaseAuthService().restoreResidentSession(
+        context.read<TenantResolutionService>(),
+      );
+
       if (mounted) {
-        if (isLoggedIn) {
+        if (result.success) {
           Navigator.of(context).pushReplacementNamed('/home');
         } else {
           Navigator.of(context).pushReplacementNamed('/login');
@@ -166,11 +161,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              'assets/logo1.png',
-              width: 100,
-              height: 100,
-            ),
+            Image.asset('assets/logo1.png', width: 100, height: 100),
             const SizedBox(height: 24),
             const CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),

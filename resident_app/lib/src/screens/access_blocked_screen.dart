@@ -2,15 +2,17 @@
 // Access Blocked Screen - Shown when user has no flat assignment
 
 import 'package:flutter/material.dart';
-import 'package:easy_localization/easy_localization.dart';
-import '../services/firestore_auth_service.dart';
+import 'package:provider/provider.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/tenant_resolution_service.dart';
 
 class AccessBlockedScreen extends StatelessWidget {
   final String message;
 
   const AccessBlockedScreen({
     Key? key,
-    this.message = 'Your account is not yet assigned to a flat. Please contact admin.',
+    this.message =
+        'Your account is not yet assigned to a flat. Please contact admin.',
   }) : super(key: key);
 
   @override
@@ -37,9 +39,9 @@ class AccessBlockedScreen extends StatelessWidget {
                   color: Colors.orange.shade700,
                 ),
               ),
-              
+
               const SizedBox(height: 32),
-              
+
               // Title
               Text(
                 'Access Restricted',
@@ -50,9 +52,9 @@ class AccessBlockedScreen extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
-              
+
               const SizedBox(height: 16),
-              
+
               // Message
               Text(
                 message,
@@ -63,9 +65,9 @@ class AccessBlockedScreen extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
-              
+
               const SizedBox(height: 48),
-              
+
               // Contact Admin Button
               SizedBox(
                 width: double.infinity,
@@ -75,7 +77,9 @@ class AccessBlockedScreen extends StatelessWidget {
                     // TODO: Add contact admin functionality
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Please contact your building administrator'),
+                        content: Text(
+                          'Please contact your building administrator',
+                        ),
                         backgroundColor: Colors.blue,
                       ),
                     );
@@ -83,10 +87,7 @@ class AccessBlockedScreen extends StatelessWidget {
                   icon: const Icon(Icons.support_agent),
                   label: const Text(
                     'Contact Admin',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF2563EB),
@@ -98,9 +99,9 @@ class AccessBlockedScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              
+
               const SizedBox(height: 16),
-              
+
               // Logout Button
               SizedBox(
                 width: double.infinity,
@@ -108,23 +109,21 @@ class AccessBlockedScreen extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: () async {
                     // Sign out
-                    await FirestoreAuthService.instance.signOut();
-                    
+                    await FirebaseAuthService.instance.signOut(
+                      context.read<TenantResolutionService>(),
+                    );
+
                     if (context.mounted) {
                       // Navigate to login
-                      Navigator.of(context).pushNamedAndRemoveUntil(
-                        '/login',
-                        (route) => false,
-                      );
+                      Navigator.of(
+                        context,
+                      ).pushNamedAndRemoveUntil('/login', (route) => false);
                     }
                   },
                   icon: const Icon(Icons.logout),
                   label: const Text(
                     'Sign Out',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.grey.shade700,
@@ -135,9 +134,9 @@ class AccessBlockedScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              
+
               const SizedBox(height: 32),
-              
+
               // Info text
               Container(
                 padding: const EdgeInsets.all(16),

@@ -18,7 +18,8 @@ import 'src/screens/edit_profile_screen.dart';
 import 'src/screens/my_bookings_screen.dart';
 import 'src/screens/documents_circulars_screen.dart';
 import 'src/services/user_data_service.dart';
-import 'src/services/firestore_auth_service.dart';
+import 'src/services/firebase_auth_service.dart';
+import 'src/services/tenant_resolution_service.dart';
 import 'src/services/organization_service.dart';
 import 'src/services/profile_image_service.dart';
 import 'src/providers/language_provider.dart';
@@ -52,7 +53,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final _userDataService = UserDataService();
-  final _authService = FirestoreAuthService();
+  final _authService = FirebaseAuthService();
   final _organizationService = OrganizationService();
   Map<String, dynamic>? _userProfile;
   String _organizationName = 'Your Apartment'; // Default fallback
@@ -68,18 +69,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadUserProfile() async {
     print('🔵 PROFILE SCREEN LOAD FLOW: Starting...');
     setState(() => _isLoading = true);
-    
+
     try {
       // STEP 1: Fetch user data from Firestore
       print('📥 STEP 1: Fetching user data from Firestore...');
-      var userData = await _userDataService.getCurrentUserData(forceRefresh: true);
-      
+      var userData = await _userDataService.getCurrentUserData(
+        forceRefresh: true,
+      );
+
       // If first attempt fails, try getting from SharedPreferences user_id
       if (userData == null) {
         print('⚠️  First attempt failed, trying alternative method...');
         final prefs = await SharedPreferences.getInstance();
         final userId = prefs.getString('user_id');
-        
+
         if (userId != null) {
           print('   Trying to fetch with user_id: $userId');
           userData = await FirebaseFirestore.instance
@@ -96,14 +99,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               });
         }
       }
-      
+
       if (userData == null) {
         print('❌ STEP 1 FAILED: No user data found');
         if (mounted) {
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('User profile not found. Please contact administrator.'),
+              content: Text(
+                'User profile not found. Please contact administrator.',
+              ),
               backgroundColor: Colors.red,
               duration: Duration(seconds: 3),
             ),
@@ -117,13 +122,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       print('   Email: ${userData?['email']}');
       print('   Phone: ${userData?['phone']}');
       print('   Flat: ${userData?['flatLabel'] ?? userData?['flatId']}');
-      
+
       // STEP 2: Get user ID for organization and image streaming
       print('🔍 STEP 2: Getting user ID for organization lookup...');
       String? userId;
       final prefs = await SharedPreferences.getInstance();
       userId = prefs.getString('user_id');
-      
+
       if (userId == null) {
         // Try to get from Firebase Auth
         final firebaseUser = FirebaseAuth.instance.currentUser;
@@ -132,22 +137,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
           await prefs.setString('user_id', userId);
         }
       }
-      
+
       print('✅ STEP 2 PASSED: User ID: $userId');
-      
+
       // STEP 3: Fetch organization name
       print('🏢 STEP 3: Fetching organization name...');
       String organizationName = 'Your Apartment'; // Default
       if (userId != null) {
         try {
-          organizationName = await _organizationService.getOrganizationNameForUser(userId);
+          organizationName = await _organizationService
+              .getOrganizationNameForUser(userId);
           print('✅ STEP 3 PASSED: Organization name: $organizationName');
         } catch (e) {
           print('⚠️  STEP 3 WARNING: Could not fetch organization name: $e');
           print('   Using default: $organizationName');
         }
       }
-      
+
       // STEP 4: Update UI with data
       print('🎨 STEP 4: Updating UI with profile data...');
       if (mounted) {
@@ -157,12 +163,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             'name': userData?['name'] ?? 'User',
             'email': userData?['email'] ?? '',
             'phone': userData?['phone'] ?? '',
-            'flatNumber': userData?['flatLabel'] ?? userData?['flatId'] ?? 'Not Set',
+            'flatNumber':
+                userData?['flatLabel'] ?? userData?['flatId'] ?? 'Not Set',
           };
           _organizationName = organizationName;
           _isLoading = false;
         });
-        
+
         print('✅ STEP 4 PASSED: UI updated with data');
         print('');
         print('✅ PROFILE SCREEN LOAD FLOW: COMPLETE');
@@ -236,7 +243,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const FamilyVehiclesScreen(),
+                                              builder: (context) =>
+                                                  const FamilyVehiclesScreen(),
                                             ),
                                           );
                                         },
@@ -251,7 +259,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const FamilyVehiclesScreen(),
+                                              builder: (context) =>
+                                                  const FamilyVehiclesScreen(),
                                             ),
                                           );
                                         },
@@ -266,7 +275,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const DomesticStaffScreen(),
+                                              builder: (context) =>
+                                                  const DomesticStaffScreen(),
                                             ),
                                           );
                                         },
@@ -281,7 +291,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const MyBookingsScreen(),
+                                              builder: (context) =>
+                                                  const MyBookingsScreen(),
                                             ),
                                           );
                                         },
@@ -296,7 +307,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const DocumentsCircularsScreen(),
+                                              builder: (context) =>
+                                                  const DocumentsCircularsScreen(),
                                             ),
                                           );
                                         },
@@ -311,7 +323,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const CommunityWallScreen(),
+                                              builder: (context) =>
+                                                  const CommunityWallScreen(),
                                             ),
                                           );
                                         },
@@ -326,7 +339,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const MarketplaceScreen(),
+                                              builder: (context) =>
+                                                  const MarketplaceScreen(),
                                             ),
                                           );
                                         },
@@ -341,7 +355,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const NotificationsSettingsScreen(),
+                                              builder: (context) =>
+                                                  const NotificationsSettingsScreen(),
                                             ),
                                           );
                                         },
@@ -356,13 +371,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) => const AppSettingsScreen(),
+                                              builder: (context) =>
+                                                  const AppSettingsScreen(),
                                             ),
                                           );
                                         },
                                       ),
                                       const SizedBox(height: 24),
-                                      _buildLogoutButton(context, languageProvider),
+                                      _buildLogoutButton(
+                                        context,
+                                        languageProvider,
+                                      ),
                                       const SizedBox(height: 100),
                                     ],
                                   ),
@@ -412,9 +431,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         builder: (context, snapshot) {
                           print('🔵 ProfileScreen: Image stream update');
-                          
+
                           // Loading state
-                          if (snapshot.connectionState == ConnectionState.waiting) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
                             print('⏳ ProfileScreen: Image stream loading...');
                             return CircleAvatar(
                               radius: 28,
@@ -450,7 +470,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                           // Success state - image found
                           if (result.success && result.imageUrl != null) {
-                            print('✅ ProfileScreen: Image URL received: ${result.imageUrl}');
+                            print(
+                              '✅ ProfileScreen: Image URL received: ${result.imageUrl}',
+                            );
                             return CircleAvatar(
                               radius: 28,
                               backgroundColor: Colors.white,
@@ -670,11 +692,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
               ),
-              const Icon(
-                Icons.chevron_right,
-                color: kTextMuted,
-                size: 24,
-              ),
+              const Icon(Icons.chevron_right, color: kTextMuted, size: 24),
             ],
           ),
         ),
@@ -682,7 +700,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildLogoutButton(BuildContext context, LanguageProvider languageProvider) {
+  Widget _buildLogoutButton(
+    BuildContext context,
+    LanguageProvider languageProvider,
+  ) {
     return SizedBox(
       width: double.infinity,
       height: 52,
@@ -697,10 +718,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         child: Text(
           'logout'.tr(),
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
       ),
     );
@@ -712,9 +730,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Logout'),
         content: const Text('Are you sure you want to logout?'),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -731,14 +747,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (confirmed == true) {
       // Clear login state using Firestore auth service
-      await _authService.signOut();
+      await _authService.signOut(context.read<TenantResolutionService>());
 
       if (context.mounted) {
         // Navigate to login screen and clear all previous routes
-        Navigator.of(context).pushNamedAndRemoveUntil(
-          '/login',
-          (route) => false,
-        );
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/login', (route) => false);
       }
     }
   }
@@ -747,9 +762,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // Navigate to Edit Profile screen
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const EditProfileScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const EditProfileScreen()),
     );
 
     // Reload profile if changes were made

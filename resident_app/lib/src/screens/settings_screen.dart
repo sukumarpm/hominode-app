@@ -2,7 +2,6 @@
 // Main Settings screen
 
 import 'package:flutter/material.dart';
-import 'package:easy_localization/easy_localization.dart';
 import '../models/setting_item.dart';
 import '../components/setting_tile.dart';
 import '../components/standard_screen.dart';
@@ -10,8 +9,6 @@ import '../models/user_profile_model.dart';
 import '../modals/edit_profile_modal.dart';
 import 'notifications_settings_screen.dart';
 import 'language_settings_screen.dart';
-import 'change_password_screen.dart';
-import 'two_factor_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -63,8 +60,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               IconButton(
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back_ios,
-                    color: Colors.white, size: 20),
+                icon: const Icon(
+                  Icons.arrow_back_ios,
+                  color: Colors.white,
+                  size: 20,
+                ),
                 padding: const EdgeInsets.all(12),
               ),
               const Text(
@@ -82,7 +82,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
 
   List<Widget> _buildSections() {
     final sections = _getSettingSections();
@@ -119,11 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (i < sections.length - 1) {
         widgets.add(const SizedBox(height: 24));
         widgets.add(
-          const Divider(
-            color: Color(0xFFECEFF3),
-            thickness: 1,
-            height: 1,
-          ),
+          const Divider(color: Color(0xFFECEFF3), thickness: 1, height: 1),
         );
         widgets.add(const SizedBox(height: 24));
       }
@@ -131,7 +126,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return widgets;
   }
-
 
   List<SettingSection> _getSettingSections() {
     return [
@@ -186,18 +180,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
 
-
       // Security Section
       SettingSection(
         title: 'SECURITY',
         items: [
-          SettingItem(
-            id: 'change_password',
-            title: 'Change Password',
-            type: SettingType.navigation,
-            icon: Icons.lock_outline,
-            onTap: () => _navigateToChangePassword(),
-          ),
           SettingItem(
             id: 'biometric',
             title: 'Biometric Login',
@@ -287,7 +273,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-
   Widget _buildLogoutButton() {
     return SizedBox(
       width: double.infinity,
@@ -324,7 +309,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onSaved: (updatedProfile) {
         // TODO: Update your state management or sync to backend
         print('Profile updated: ${updatedProfile.toJson()}');
-        
+
         // Show success message (already shown by modal)
         // You can also update local state here
       },
@@ -333,18 +318,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _navigateToFamilyMembers() {
     // TODO: Navigate to Family & Vehicles screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Navigate to Family Members')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Navigate to Family Members')));
   }
 
   void _navigateToVehicles() {
     // TODO: Navigate to Vehicles screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Navigate to My Vehicles')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Navigate to My Vehicles')));
   }
-
 
   void _navigateToNotifications() {
     Navigator.push(
@@ -358,18 +342,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showLanguageSelector() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const LanguageSettingsScreen(),
-      ),
-    );
-  }
-
-  void _navigateToChangePassword() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ChangePasswordScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const LanguageSettingsScreen()),
     );
   }
 
@@ -398,9 +371,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _navigateToHelp() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Navigate to Help & Support')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Navigate to Help & Support')));
   }
 
   void _navigateToTerms() {
@@ -408,7 +381,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SnackBar(content: Text('Navigate to Terms & Privacy')),
     );
   }
-
 
   void _showReportIssue() {
     showModalBottomSheet(
@@ -431,10 +403,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               const Text(
                 'Report an Issue',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -493,14 +462,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SnackBar(content: Text('Logged out successfully')),
               );
             },
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFF2F6AF6)),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF2F6AF6),
+            ),
             child: const Text('Logout'),
           ),
         ],
       ),
     );
   }
-
 
   void _showDeleteAccountConfirmation() {
     showDialog(
@@ -527,7 +497,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               );
             },
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFFEF4444)),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFEF4444),
+            ),
             child: const Text('Delete'),
           ),
         ],

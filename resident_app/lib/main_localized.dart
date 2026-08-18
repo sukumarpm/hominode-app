@@ -15,21 +15,20 @@ import 'src/providers/localization_provider.dart';
 import 'src/screens/splash_screen_clean.dart';
 import 'src/screens/onboarding_flow.dart';
 import 'src/screens/simple_login_screen.dart';
-import 'src/screens/create_account_screen.dart';
-import 'src/screens/setup_profile_screen.dart';
-import 'src/services/auth_service.dart';
+import 'src/services/firebase_auth_service.dart';
+import 'src/services/tenant_resolution_service.dart';
 import 'src/services/localization_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize Firebase
   await Firebase.initializeApp();
-  
+
   // Initialize Localization Service
   final localizationService = LocalizationService();
   await localizationService.initialize();
-  
+
   // Set system UI to light mode
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -38,7 +37,7 @@ void main() async {
       statusBarBrightness: Brightness.light,
     ),
   );
-  
+
   runApp(const MyApp());
 }
 
@@ -52,13 +51,14 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(
           create: (_) => LocalizationProvider()..initialize(),
         ),
+        ChangeNotifierProvider(create: (_) => TenantResolutionService()),
       ],
       child: Consumer<LocalizationProvider>(
         builder: (context, localizationProvider, _) {
           return MaterialApp(
             title: 'Lyvo - Your Community, Connected',
             debugShowCheckedModeBanner: false,
-            
+
             // Localization configuration
             locale: localizationProvider.currentLocale,
             localizationsDelegates: const [
@@ -70,7 +70,7 @@ class MyApp extends StatelessWidget {
             supportedLocales: LocalizationService.getSupportedLocales(),
             localeResolutionCallback:
                 LocalizationService.localeResolutionCallback,
-            
+
             // RTL support for Arabic
             builder: (context, child) {
               return Directionality(
@@ -80,11 +80,11 @@ class MyApp extends StatelessWidget {
                 child: child!,
               );
             },
-            
+
             // Apply light theme only
             theme: AppTheme.lightTheme,
             themeMode: ThemeMode.light,
-            
+
             home: const AuthCheckScreen(),
             onGenerateRoute: (settings) {
               switch (settings.name) {
@@ -96,15 +96,17 @@ class MyApp extends StatelessWidget {
                       tagline: 'Your Community, Connected',
                       duration: const Duration(milliseconds: 3000),
                       onFinish: () async {
-                        final authService = AuthService();
-                        final isLoggedIn = await authService.isLoggedIn();
+                        final result = await FirebaseAuthService()
+                            .restoreResidentSession(
+                              context.read<TenantResolutionService>(),
+                            );
                         if (context.mounted) {
-                          if (isLoggedIn) {
-                            Navigator.of(context)
-                                .pushReplacementNamed('/home');
+                          if (result.success) {
+                            Navigator.of(context).pushReplacementNamed('/home');
                           } else {
-                            Navigator.of(context)
-                                .pushReplacementNamed('/login');
+                            Navigator.of(
+                              context,
+                            ).pushReplacementNamed('/login');
                           }
                         }
                       },
@@ -117,14 +119,6 @@ class MyApp extends StatelessWidget {
                 case '/login':
                   return MaterialPageRoute(
                     builder: (context) => const SimpleLoginScreen(),
-                  );
-                case '/create-account':
-                  return MaterialPageRoute(
-                    builder: (context) => const CreateAccountScreen(),
-                  );
-                case '/setup-profile':
-                  return MaterialPageRoute(
-                    builder: (context) => const SetupProfileScreen(),
                   );
                 case '/home':
                   return MaterialPageRoute(
@@ -158,13 +152,14 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   Future<void> _checkAuthStatus() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    
+
     if (mounted) {
-      final authService = AuthService();
-      final isLoggedIn = await authService.isLoggedIn();
-      
+      final result = await FirebaseAuthService().restoreResidentSession(
+        context.read<TenantResolutionService>(),
+      );
+
       if (mounted) {
-        if (isLoggedIn) {
+        if (result.success) {
           Navigator.of(context).pushReplacementNamed('/home');
         } else {
           Navigator.of(context).pushReplacementNamed('/login');
@@ -180,11 +175,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              'assets/logo1.png',
-              width: 100,
-              height: 100,
-            ),
+            Image.asset('assets/logo1.png', width: 100, height: 100),
             const SizedBox(height: 24),
             const CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),

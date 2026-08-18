@@ -1,5 +1,6 @@
 class Amenity {
   final String id;
+  final String communityId;
   final String name;
   final String price;
   final bool isAvailable;
@@ -11,6 +12,7 @@ class Amenity {
 
   Amenity({
     required this.id,
+    this.communityId = '',
     required this.name,
     required this.price,
     required this.isAvailable,
@@ -24,6 +26,7 @@ class Amenity {
   factory Amenity.fromJson(Map<String, dynamic> json) {
     return Amenity(
       id: json['id'],
+      communityId: json['communityId'] as String? ?? '',
       name: json['name'],
       price: json['price'],
       isAvailable: json['isAvailable'],
@@ -36,6 +39,7 @@ class Amenity {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'communityId': communityId,
       'name': name,
       'price': price,
       'isAvailable': isAvailable,
@@ -48,6 +52,7 @@ class Amenity {
 
 class AmenityBooking {
   final String id;
+  final String communityId;
   final String amenityName;
   final DateTime bookingDate;
   final String startTime;
@@ -57,6 +62,7 @@ class AmenityBooking {
 
   AmenityBooking({
     required this.id,
+    this.communityId = '',
     required this.amenityName,
     required this.bookingDate,
     required this.startTime,
@@ -68,6 +74,7 @@ class AmenityBooking {
   factory AmenityBooking.fromJson(Map<String, dynamic> json) {
     return AmenityBooking(
       id: json['id'],
+      communityId: json['communityId'] as String? ?? '',
       amenityName: json['amenityName'],
       bookingDate: DateTime.parse(json['bookingDate']),
       startTime: json['startTime'],
@@ -80,6 +87,7 @@ class AmenityBooking {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'communityId': communityId,
       'amenityName': amenityName,
       'bookingDate': bookingDate.toIso8601String(),
       'startTime': startTime,
@@ -91,8 +99,18 @@ class AmenityBooking {
 
   String get formattedDate {
     final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${months[bookingDate.month - 1]} ${bookingDate.day}, ${bookingDate.year}';
   }

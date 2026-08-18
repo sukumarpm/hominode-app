@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class FlatModel {
   final String id;
   final String buildingId;
+  final String communityId;
   final String flatNumber;
   final String block;
   final int floor;
@@ -21,6 +22,7 @@ class FlatModel {
   FlatModel({
     required this.id,
     required this.buildingId,
+    this.communityId = '',
     required this.flatNumber,
     required this.block,
     required this.floor,
@@ -38,6 +40,7 @@ class FlatModel {
     return {
       'id': id,
       'buildingId': buildingId,
+      'communityId': communityId,
       'flatNumber': flatNumber,
       'block': block,
       'floor': floor,
@@ -59,11 +62,13 @@ class FlatModel {
     return FlatModel(
       id: json['id'] as String? ?? '',
       buildingId: json['buildingId'] as String? ?? '',
+      communityId: json['communityId'] as String? ?? '',
       flatNumber: json['flatNumber'] as String? ?? '',
       block: json['block'] as String? ?? '',
       floor: json['floor'] as int? ?? 0,
       ownerId: json['ownerId'] as String?,
-      residentIds: (json['residentIds'] as List<dynamic>?)
+      residentIds:
+          (json['residentIds'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
@@ -80,6 +85,7 @@ class FlatModel {
     return FlatModel(
       id: documentId,
       buildingId: map['buildingId'] ?? '',
+      communityId: map['communityId'] ?? '',
       flatNumber: map['flatNumber'] ?? '',
       block: map['block'] ?? '',
       floor: map['floor'] ?? 0,
@@ -107,6 +113,7 @@ class FlatModel {
   FlatModel copyWith({
     String? id,
     String? buildingId,
+    String? communityId,
     String? flatNumber,
     String? block,
     int? floor,
@@ -122,6 +129,7 @@ class FlatModel {
     return FlatModel(
       id: id ?? this.id,
       buildingId: buildingId ?? this.buildingId,
+      communityId: communityId ?? this.communityId,
       flatNumber: flatNumber ?? this.flatNumber,
       block: block ?? this.block,
       floor: floor ?? this.floor,

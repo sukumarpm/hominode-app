@@ -3,6 +3,9 @@
 
 class UserProfile {
   final String id;
+  final String communityId;
+  final String role;
+  final bool isActive;
   final String fullName;
   final String phone;
   final String? email;
@@ -11,6 +14,9 @@ class UserProfile {
 
   UserProfile({
     required this.id,
+    this.communityId = '',
+    this.role = 'resident',
+    this.isActive = true,
     required this.fullName,
     required this.phone,
     this.email,
@@ -20,6 +26,9 @@ class UserProfile {
 
   UserProfile copyWith({
     String? id,
+    String? communityId,
+    String? role,
+    bool? isActive,
     String? fullName,
     String? phone,
     String? email,
@@ -28,6 +37,9 @@ class UserProfile {
   }) {
     return UserProfile(
       id: id ?? this.id,
+      communityId: communityId ?? this.communityId,
+      role: role ?? this.role,
+      isActive: isActive ?? this.isActive,
       fullName: fullName ?? this.fullName,
       phone: phone ?? this.phone,
       email: email ?? this.email,
@@ -39,6 +51,9 @@ class UserProfile {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'communityId': communityId,
+      'role': role,
+      'isActive': isActive,
       'fullName': fullName,
       'phone': phone,
       'email': email,
@@ -50,6 +65,9 @@ class UserProfile {
   factory UserProfile.fromJson(Map<String, dynamic> json) {
     return UserProfile(
       id: json['id'] as String,
+      communityId: json['communityId'] as String? ?? '',
+      role: json['role'] as String? ?? 'resident',
+      isActive: json['isActive'] as bool? ?? true,
       fullName: json['fullName'] as String,
       phone: json['phone'] as String,
       email: json['email'] as String?,

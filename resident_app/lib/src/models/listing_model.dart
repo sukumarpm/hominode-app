@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ListingModel {
   final String? id;
+  final String communityId;
   final String title;
   final int price;
   final String category;
@@ -20,6 +21,7 @@ class ListingModel {
 
   ListingModel({
     this.id,
+    this.communityId = '',
     required this.title,
     required this.price,
     required this.category,
@@ -40,9 +42,10 @@ class ListingModel {
 
   factory ListingModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     return ListingModel(
       id: doc.id,
+      communityId: data['communityId'] as String? ?? '',
       title: data['title'] as String? ?? '',
       price: data['price'] as int? ?? 0,
       category: data['category'] as String? ?? '',
@@ -64,6 +67,7 @@ class ListingModel {
   Map<String, dynamic> toFirestore() {
     return {
       'title': title,
+      'communityId': communityId,
       'price': price,
       'category': category,
       'condition': condition,
@@ -85,8 +89,18 @@ class ListingModel {
 
   String get formattedDate {
     final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${months[createdAt.month - 1]} ${createdAt.day}, ${createdAt.year}';
   }

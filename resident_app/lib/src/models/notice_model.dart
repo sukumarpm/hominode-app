@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class NoticeModel {
   final String id;
+  final String communityId;
   final String title;
   final String content;
   final String category; // 'general', 'maintenance', 'event', 'urgent'
@@ -19,6 +20,7 @@ class NoticeModel {
 
   NoticeModel({
     required this.id,
+    this.communityId = '',
     required this.title,
     required this.content,
     this.category = 'general',
@@ -37,6 +39,7 @@ class NoticeModel {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'communityId': communityId,
       'title': title,
       'content': content,
       'category': category,
@@ -59,20 +62,24 @@ class NoticeModel {
   factory NoticeModel.fromJson(Map<String, dynamic> json) {
     return NoticeModel(
       id: json['id'] as String? ?? '',
+      communityId: json['communityId'] as String? ?? '',
       title: json['title'] as String? ?? '',
       content: json['content'] as String? ?? '',
       category: json['category'] as String? ?? 'general',
       priority: json['priority'] as String? ?? 'medium',
       authorId: json['authorId'] as String? ?? '',
       authorName: json['authorName'] as String? ?? '',
-      attachments: (json['attachments'] as List<dynamic>?)
+      attachments:
+          (json['attachments'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
-      publishDate: (json['publishDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      publishDate:
+          (json['publishDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       expiryDate: (json['expiryDate'] as Timestamp?)?.toDate(),
       isActive: json['isActive'] as bool? ?? true,
-      targetFlats: (json['targetFlats'] as List<dynamic>?)
+      targetFlats:
+          (json['targetFlats'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
           [],
@@ -84,6 +91,7 @@ class NoticeModel {
   factory NoticeModel.fromMap(Map<String, dynamic> map, String documentId) {
     return NoticeModel(
       id: documentId,
+      communityId: map['communityId'] as String? ?? '',
       title: map['title'] ?? '',
       content: map['content'] ?? '',
       category: map['category'] ?? 'general',
@@ -91,7 +99,8 @@ class NoticeModel {
       authorId: map['authorId'] ?? '',
       authorName: map['authorName'] ?? '',
       attachments: List<String>.from(map['attachments'] ?? []),
-      publishDate: (map['publishDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      publishDate:
+          (map['publishDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       expiryDate: (map['expiryDate'] as Timestamp?)?.toDate(),
       isActive: map['isActive'] ?? true,
       targetFlats: List<String>.from(map['targetFlats'] ?? []),
@@ -101,7 +110,10 @@ class NoticeModel {
   }
 
   factory NoticeModel.fromSnapshot(DocumentSnapshot snapshot) {
-    return NoticeModel.fromMap(snapshot.data() as Map<String, dynamic>, snapshot.id);
+    return NoticeModel.fromMap(
+      snapshot.data() as Map<String, dynamic>,
+      snapshot.id,
+    );
   }
 
   factory NoticeModel.fromFirestore(DocumentSnapshot doc) {
@@ -115,6 +127,7 @@ class NoticeModel {
 
   NoticeModel copyWith({
     String? id,
+    String? communityId,
     String? title,
     String? content,
     String? category,
@@ -131,6 +144,7 @@ class NoticeModel {
   }) {
     return NoticeModel(
       id: id ?? this.id,
+      communityId: communityId ?? this.communityId,
       title: title ?? this.title,
       content: content ?? this.content,
       category: category ?? this.category,
