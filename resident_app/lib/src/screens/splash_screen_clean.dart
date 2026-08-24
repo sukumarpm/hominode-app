@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
-import 'package:easy_localization/easy_localization.dart';
 
 /// Clean, Modern Splash Screen
-/// 
+///
 /// Features:
 /// - Simple gradient background
 /// - Logo fade-in with scale animation
@@ -21,15 +21,15 @@ class CleanSplashScreen extends StatefulWidget {
   final Color secondaryColor;
 
   const CleanSplashScreen({
-    Key? key,
+    super.key,
     this.logoAssetPath = 'assets/logo1.png',
-    this.appName = 'Lyvo',
+    this.appName = 'Hominode',
     this.tagline = 'Your Community, Connected',
     this.duration = const Duration(milliseconds: 3000),
     this.onFinish,
-    this.primaryColor = const Color(0xFF2563EB),
-    this.secondaryColor = const Color(0xFF1E40AF),
-  }) : super(key: key);
+    this.primaryColor = const Color(0xFF0E4778),
+    this.secondaryColor = const Color(0xFF061C4C),
+  });
 
   @override
   State<CleanSplashScreen> createState() => _CleanSplashScreenState();
@@ -60,10 +60,7 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
     );
 
     _logoScale = Tween<double>(begin: 0.7, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _logoController,
-        curve: Curves.easeOutBack,
-      ),
+      CurvedAnimation(parent: _logoController, curve: Curves.easeOutBack),
     );
 
     _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -79,12 +76,10 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
       duration: const Duration(milliseconds: 600),
     );
 
-    _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _textController,
-        curve: Curves.easeIn,
-      ),
-    );
+    _textOpacity = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _textController, curve: Curves.easeIn));
 
     // Loader animation (continuous)
     _loaderController = AnimationController(
@@ -133,10 +128,7 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [
-                widget.primaryColor,
-                widget.secondaryColor,
-              ],
+              colors: [widget.primaryColor, widget.secondaryColor],
             ),
           ),
           child: SafeArea(
@@ -157,11 +149,11 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
                               child: Transform.scale(
                                 scale: _logoScale.value,
                                 child: Container(
-                                  width: 140,
-                                  height: 140,
+                                  width: 140.w,
+                                  height: 140.h,
                                   decoration: BoxDecoration(
                                     color: Colors.white.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(28),
+                                    borderRadius: BorderRadius.circular(28.r),
                                     boxShadow: [
                                       BoxShadow(
                                         color: Colors.black.withOpacity(0.15),
@@ -170,7 +162,7 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
                                       ),
                                     ],
                                   ),
-                                  padding: const EdgeInsets.all(24),
+                                  padding: EdgeInsets.all(24.w),
                                   child: Image.asset(
                                     widget.logoAssetPath,
                                     fit: BoxFit.contain,
@@ -181,7 +173,7 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
                           },
                         ),
 
-                        const SizedBox(height: 32),
+                        SizedBox(height: 32.h),
 
                         // App Name
                         AnimatedBuilder(
@@ -192,19 +184,20 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
                               child: Column(
                                 children: [
                                   Text(
-                                    widget.appName ?? 'Lyvo',
-                                    style: const TextStyle(
-                                      fontSize: 32,
+                                    widget.appName ?? 'Hominode',
+                                    style: TextStyle(
+                                      fontSize: 32.sp,
                                       fontWeight: FontWeight.w700,
                                       color: Colors.white,
                                       letterSpacing: 0.5,
                                     ),
                                   ),
-                                  const SizedBox(height: 8),
+                                  SizedBox(height: 8.h),
                                   Text(
-                                    widget.tagline ?? 'Your Community, Connected',
+                                    widget.tagline ??
+                                        'Your Community, Connected',
                                     style: TextStyle(
-                                      fontSize: 16,
+                                      fontSize: 16.sp,
                                       fontWeight: FontWeight.w400,
                                       color: Colors.white.withOpacity(0.9),
                                       letterSpacing: 0.3,
@@ -222,7 +215,7 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
 
                 // Bottom loading indicator
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 60),
+                  padding: EdgeInsets.only(bottom: 60.h),
                   child: _buildLoadingIndicator(),
                 ),
               ],
@@ -250,12 +243,12 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
                     : 1.3 - ((animValue - 0.5) * 0.6);
 
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: EdgeInsets.symmetric(horizontal: 4.w),
                   child: Transform.scale(
                     scale: scale,
                     child: Container(
-                      width: 8,
-                      height: 8,
+                      width: 8.w,
+                      height: 8.h,
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.9),
                         shape: BoxShape.circle,
@@ -265,11 +258,11 @@ class _CleanSplashScreenState extends State<CleanSplashScreen>
                 );
               }),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: 16.h),
             Text(
               'Loading...',
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 14.sp,
                 color: Colors.white.withOpacity(0.8),
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0.5,

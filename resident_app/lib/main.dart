@@ -1,28 +1,210 @@
+// import 'package:flutter/material.dart';
+// import 'package:flutter/services.dart';
+// import 'package:flutter_localizations/flutter_localizations.dart';
+// import 'package:firebase_core/firebase_core.dart';
+// import 'package:provider/provider.dart';
+// import 'package:easy_localization/easy_localization.dart';
+// import 'main_navigation.dart';
+// import 'src/providers/theme_provider.dart';
+// import 'src/providers/language_provider.dart';
+// import 'src/providers/localization_provider.dart';
+// import 'src/screens/splash_screen_clean.dart';
+// import 'src/screens/simple_login_screen.dart';
+// import 'src/services/firebase_auth_service.dart';
+// import 'src/services/tenant_resolution_service.dart';
+
+// void main() async {
+//   WidgetsFlutterBinding.ensureInitialized();
+
+//   // Initialize Firebase
+//   await Firebase.initializeApp();
+
+//   // Initialize EasyLocalization
+//   await EasyLocalization.ensureInitialized();
+
+//   // Set system UI to light mode
+//   SystemChrome.setSystemUIOverlayStyle(
+//     const SystemUiOverlayStyle(
+//       statusBarColor: Colors.transparent,
+//       statusBarIconBrightness: Brightness.dark,
+//       statusBarBrightness: Brightness.light,
+//     ),
+//   );
+
+//   runApp(
+//     EasyLocalization(
+//       supportedLocales: const [
+//         Locale('en'),
+//         Locale('ta'),
+//         Locale('hi'),
+//         Locale('es'),
+//         Locale('ar'),
+//       ],
+//       path: 'assets/translations',
+//       fallbackLocale: const Locale('en'),
+//       startLocale: const Locale('en'),
+//       child: MultiProvider(
+//         providers: [
+//           ChangeNotifierProvider(create: (_) => LanguageProvider()),
+//           ChangeNotifierProvider(create: (_) => LocalizationProvider()),
+//           ChangeNotifierProvider(create: (_) => TenantResolutionService()),
+//         ],
+//         child: const MyApp(),
+//       ),
+//     ),
+//   );
+// }
+
+// class MyApp extends StatelessWidget {
+//   const MyApp({super.key});
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return MaterialApp(
+//       title: 'app_title'.tr(),
+//       debugShowCheckedModeBanner: false,
+
+//       // Localization configuration
+//       localizationsDelegates: [
+//         GlobalMaterialLocalizations.delegate,
+//         GlobalWidgetsLocalizations.delegate,
+//         GlobalCupertinoLocalizations.delegate,
+//         EasyLocalization.of(context)!.delegate,
+//       ],
+//       supportedLocales: EasyLocalization.of(context)!.supportedLocales,
+//       locale: context.locale,
+
+//       // Apply light theme only
+//       theme: AppTheme.lightTheme,
+//       themeMode: ThemeMode.light,
+
+//       home: const AuthCheckScreen(),
+//       onGenerateRoute: (settings) {
+//         switch (settings.name) {
+//           case '/splash':
+//             return MaterialPageRoute(
+//               builder: (context) => CleanSplashScreen(
+//                 logoAssetPath: 'assets/logo1.png',
+//                 appName: 'Lyvo',
+//                 tagline: 'Your Community, Connected',
+//                 duration: const Duration(milliseconds: 3000),
+//                 onFinish: () async {
+//                   final result = await FirebaseAuthService()
+//                       .restoreResidentSession(
+//                         context.read<TenantResolutionService>(),
+//                       );
+//                   if (context.mounted) {
+//                     if (result.success) {
+//                       Navigator.of(context).pushReplacementNamed('/home');
+//                     } else {
+//                       Navigator.of(context).pushReplacementNamed('/login');
+//                     }
+//                   }
+//                 },
+//               ),
+//             );
+//           case '/login':
+//             return MaterialPageRoute(
+//               builder: (context) => const SimpleLoginScreen(),
+//             );
+//           case '/home':
+//             return MaterialPageRoute(
+//               builder: (context) => const MainNavigation(),
+//             );
+//           default:
+//             return MaterialPageRoute(
+//               builder: (context) => const MainNavigation(),
+//             );
+//         }
+//       },
+//     );
+//   }
+// }
+
+// // Auth Check Screen - Determines initial route based on login state
+// class AuthCheckScreen extends StatefulWidget {
+//   const AuthCheckScreen({super.key});
+
+//   @override
+//   State<AuthCheckScreen> createState() => _AuthCheckScreenState();
+// }
+
+// class _AuthCheckScreenState extends State<AuthCheckScreen> {
+//   @override
+//   void initState() {
+//     super.initState();
+//     _checkAuthStatus();
+//   }
+
+//   Future<void> _checkAuthStatus() async {
+//     await Future.delayed(const Duration(milliseconds: 500));
+
+//     if (mounted) {
+//       final result = await FirebaseAuthService().restoreResidentSession(
+//         context.read<TenantResolutionService>(),
+//       );
+
+//       if (mounted) {
+//         if (result.success) {
+//           Navigator.of(context).pushReplacementNamed('/home');
+//         } else {
+//           Navigator.of(context).pushReplacementNamed('/login');
+//         }
+//       }
+//     }
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       body: Center(
+//         child: Column(
+//           mainAxisAlignment: MainAxisAlignment.center,
+//           children: [
+//             Image.asset('assets/logo1.png', width: 100, height: 100),
+//             const SizedBox(height: 24),
+//             const CircularProgressIndicator(
+//               valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),
+//             ),
+//           ],
+//         ),
+//       ),
+//     );
+//   }
+// }
+import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
-import 'package:easy_localization/easy_localization.dart';
+
 import 'main_navigation.dart';
-import 'src/providers/theme_provider.dart';
 import 'src/providers/language_provider.dart';
 import 'src/providers/localization_provider.dart';
-import 'src/screens/splash_screen_clean.dart';
+import 'src/providers/theme_provider.dart';
 import 'src/screens/simple_login_screen.dart';
+import 'src/screens/splash_screen_clean.dart';
 import 'src/services/firebase_auth_service.dart';
 import 'src/services/tenant_resolution_service.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
+  // ------------------------------------------------------------
+  // Firebase
+  // ------------------------------------------------------------
   await Firebase.initializeApp();
 
-  // Initialize EasyLocalization
+  // ------------------------------------------------------------
+  // Localization
+  // ------------------------------------------------------------
   await EasyLocalization.ensureInitialized();
 
-  // Set system UI to light mode
+  // ------------------------------------------------------------
+  // System UI
+  // ------------------------------------------------------------
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -31,6 +213,9 @@ void main() async {
     ),
   );
 
+  // ------------------------------------------------------------
+  // App
+  // ------------------------------------------------------------
   runApp(
     EasyLocalization(
       supportedLocales: const [
@@ -60,70 +245,106 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'app_title'.tr(),
-      debugShowCheckedModeBanner: false,
+    return ScreenUtilInit(
+      // Base design size used by .w, .h, .r and .sp.
+      //
+      // ScreenUtil will automatically adapt this to different
+      // Android/iPhone screen sizes.
+      designSize: const Size(390, 844),
 
-      // Localization configuration
-      localizationsDelegates: [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        EasyLocalization.of(context)!.delegate,
-      ],
-      supportedLocales: EasyLocalization.of(context)!.supportedLocales,
-      locale: context.locale,
+      minTextAdapt: true,
+      splitScreenMode: true,
 
-      // Apply light theme only
-      theme: AppTheme.lightTheme,
-      themeMode: ThemeMode.light,
+      builder: (context, child) {
+        return MaterialApp(
+          title: 'app_title'.tr(),
+          debugShowCheckedModeBanner: false,
 
-      home: const AuthCheckScreen(),
-      onGenerateRoute: (settings) {
-        switch (settings.name) {
-          case '/splash':
-            return MaterialPageRoute(
-              builder: (context) => CleanSplashScreen(
-                logoAssetPath: 'assets/logo1.png',
-                appName: 'Lyvo',
-                tagline: 'Your Community, Connected',
-                duration: const Duration(milliseconds: 3000),
-                onFinish: () async {
-                  final result = await FirebaseAuthService()
-                      .restoreResidentSession(
-                        context.read<TenantResolutionService>(),
-                      );
-                  if (context.mounted) {
-                    if (result.success) {
-                      Navigator.of(context).pushReplacementNamed('/home');
-                    } else {
-                      Navigator.of(context).pushReplacementNamed('/login');
-                    }
-                  }
-                },
-              ),
-            );
-          case '/login':
-            return MaterialPageRoute(
-              builder: (context) => const SimpleLoginScreen(),
-            );
-          case '/home':
-            return MaterialPageRoute(
-              builder: (context) => const MainNavigation(),
-            );
-          default:
-            return MaterialPageRoute(
-              builder: (context) => const MainNavigation(),
-            );
-        }
+          // ------------------------------------------------------
+          // Localization
+          // ------------------------------------------------------
+          localizationsDelegates: [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            EasyLocalization.of(context)!.delegate,
+          ],
+          supportedLocales: EasyLocalization.of(context)!.supportedLocales,
+          locale: context.locale,
+
+          // ------------------------------------------------------
+          // Theme
+          // ------------------------------------------------------
+          theme: AppTheme.lightTheme,
+          themeMode: ThemeMode.light,
+
+          // ------------------------------------------------------
+          // Initial screen
+          // ------------------------------------------------------
+          home: child,
+
+          // ------------------------------------------------------
+          // Routes
+          // ------------------------------------------------------
+          onGenerateRoute: (settings) {
+            switch (settings.name) {
+              case '/splash':
+                return MaterialPageRoute(
+                  builder: (context) => CleanSplashScreen(
+                    logoAssetPath: 'assets/logo1.png',
+                    appName: 'Hominode',
+                    tagline: 'Your Community, Connected',
+                    duration: const Duration(milliseconds: 3000),
+                    onFinish: () async {
+                      final result = await FirebaseAuthService()
+                          .restoreResidentSession(
+                            context.read<TenantResolutionService>(),
+                          );
+
+                      if (!context.mounted) {
+                        return;
+                      }
+
+                      if (result.success) {
+                        Navigator.of(context).pushReplacementNamed('/home');
+                      } else {
+                        Navigator.of(context).pushReplacementNamed('/login');
+                      }
+                    },
+                  ),
+                );
+
+              case '/login':
+                return MaterialPageRoute(
+                  builder: (context) => const SimpleLoginScreen(),
+                );
+
+              case '/home':
+                return MaterialPageRoute(
+                  builder: (context) => const MainNavigation(),
+                );
+
+              default:
+                return MaterialPageRoute(
+                  builder: (context) => const MainNavigation(),
+                );
+            }
+          },
+        );
       },
+
+      child: const AuthCheckScreen(),
     );
   }
 }
 
-// Auth Check Screen - Determines initial route based on login state
+// ============================================================================
+// AUTH CHECK SCREEN
+// Determines whether an existing resident session can be restored.
+// ============================================================================
+
 class AuthCheckScreen extends StatefulWidget {
-  const AuthCheckScreen({Key? key}) : super(key: key);
+  const AuthCheckScreen({super.key});
 
   @override
   State<AuthCheckScreen> createState() => _AuthCheckScreenState();
@@ -137,26 +358,32 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   }
 
   Future<void> _checkAuthStatus() async {
+    // Small delay to allow initial app setup / UI rendering.
     await Future.delayed(const Duration(milliseconds: 500));
 
-    if (mounted) {
-      final result = await FirebaseAuthService().restoreResidentSession(
-        context.read<TenantResolutionService>(),
-      );
+    if (!mounted) {
+      return;
+    }
 
-      if (mounted) {
-        if (result.success) {
-          Navigator.of(context).pushReplacementNamed('/home');
-        } else {
-          Navigator.of(context).pushReplacementNamed('/login');
-        }
-      }
+    final result = await FirebaseAuthService().restoreResidentSession(
+      context.read<TenantResolutionService>(),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (result.success) {
+      Navigator.of(context).pushReplacementNamed('/home');
+    } else {
+      Navigator.of(context).pushReplacementNamed('/login');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -164,7 +391,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
             Image.asset('assets/logo1.png', width: 100, height: 100),
             const SizedBox(height: 24),
             const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4F46E5)),
             ),
           ],
         ),

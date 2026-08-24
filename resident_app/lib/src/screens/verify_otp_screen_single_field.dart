@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../services/firebase_auth_service.dart';
-import '../services/tenant_resolution_service.dart';
+
 import '../components/standard_screen.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/resident_auth_routing.dart';
+import '../services/tenant_resolution_service.dart';
 
 /// OTP Screen with Single TextField Input
 /// Firebase Phone Authentication OTP Verification
@@ -12,10 +15,10 @@ class VerifyOTPScreenSingleField extends StatefulWidget {
   final String? verificationId;
 
   const VerifyOTPScreenSingleField({
-    Key? key,
+    super.key,
     this.mobileNumber,
     this.verificationId,
-  }) : super(key: key);
+  });
 
   @override
   State<VerifyOTPScreenSingleField> createState() =>
@@ -81,17 +84,18 @@ class _VerifyOTPScreenSingleFieldState
       );
 
       if (!mounted) return;
-      setState(() => _isLoading = false);
 
       if (result.success) {
-        _showSnackBar('Phone verified successfully!', isError: false);
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (mounted) {
-          Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
-        }
+        ResidentAuthRouting.navigateToResult(context, result);
       } else {
-        _showSnackBar(result.message ?? 'Invalid OTP', isError: true);
-        _clearOTP();
+        setState(() => _isLoading = false);
+        _showSnackBar(
+          result.message ?? 'Unable to complete authentication.',
+          isError: true,
+        );
+        if (result.errorCode == 'invalid-verification-code') {
+          _clearOTP();
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -114,24 +118,11 @@ class _VerifyOTPScreenSingleFieldState
 
     await _authService.sendOtp(
       phoneNumber: formattedPhone,
-      tenantResolver: context.read<TenantResolutionService>(),
       forceResend: true,
       onCodeSent: (verificationId) {
         _verificationId = verificationId;
         setState(() => _isLoading = false);
         _showSnackBar('OTP resent successfully', isError: false);
-      },
-      onVerificationCompleted: (result) {
-        if (!mounted) return;
-        setState(() => _isLoading = false);
-        if (result.success) {
-          Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
-        } else {
-          _showSnackBar(
-            result.message ?? 'Phone verification failed.',
-            isError: true,
-          );
-        }
       },
       onError: (result) {
         if (!mounted) return;
@@ -156,8 +147,8 @@ class _VerifyOTPScreenSingleFieldState
             ? const Color(0xFFEF4444)
             : const Color(0xFF10B981),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.r)),
+        margin: EdgeInsets.all(16.w),
       ),
     );
   }
@@ -167,62 +158,62 @@ class _VerifyOTPScreenSingleFieldState
     return StandardScreen(
       title: 'Verify OTP',
       isScrollable: true,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: EdgeInsets.symmetric(horizontal: 24.w),
       body: Column(
         children: [
-          const SizedBox(height: 40),
+          SizedBox(height: 40.h),
 
           // Main Headline
-          const Text(
+          Text(
             'Enter OTP',
             style: TextStyle(
-              fontSize: 28,
+              fontSize: 28.sp,
               fontWeight: FontWeight.w600,
               color: Color(0xFF111111),
               letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12.h),
 
           // Subtext with phone number
           Text(
             "We've sent a verification code to",
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 16.sp,
               fontWeight: FontWeight.w400,
-              color: const Color(0xFF111111).withOpacity(0.7),
+              color: const Color(0xFF111111).withValues(alpha: 0.7),
               height: 1.5,
               letterSpacing: 0.2,
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: 4.h),
           Text(
             widget.mobileNumber ?? '',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 17,
+            style: TextStyle(
+              fontSize: 17.sp,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF2563EB),
+              color: Color(0xFF0E4778),
               letterSpacing: 0.5,
             ),
           ),
-          const SizedBox(height: 48),
+          SizedBox(height: 48.h),
 
           // OTP INPUT - Single Field with Visual Separation
           _buildOTPInput(),
 
-          const SizedBox(height: 48),
+          SizedBox(height: 48.h),
 
           // Verify Button
           _buildVerifyButton(),
 
-          const SizedBox(height: 20),
+          SizedBox(height: 20.h),
 
           // Resend Link
           _buildResendLink(),
 
-          const SizedBox(height: 40),
+          SizedBox(height: 40.h),
         ],
       ),
     );
@@ -232,21 +223,21 @@ class _VerifyOTPScreenSingleFieldState
     return GestureDetector(
       onTap: () => _otpFocusNode.requestFocus(),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 16.h),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(14.r),
           border: Border.all(
             color: _otpFocusNode.hasFocus
-                ? const Color(0xFF2563EB)
+                ? const Color(0xFF0E4778)
                 : const Color(0xFFD1D5DB),
             width: 2,
           ),
           boxShadow: [
             BoxShadow(
               color: _otpFocusNode.hasFocus
-                  ? const Color(0xFF2563EB).withOpacity(0.12)
-                  : Colors.black.withOpacity(0.04),
+                  ? const Color(0xFF0E4778).withValues(alpha: 0.12)
+                  : Colors.black.withValues(alpha: 0.04),
               blurRadius: _otpFocusNode.hasFocus ? 10 : 6,
               offset: const Offset(0, 3),
             ),
@@ -254,7 +245,6 @@ class _VerifyOTPScreenSingleFieldState
         ),
         child: Stack(
           children: [
-            // Visual representation of OTP digits
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: List.generate(6, (index) {
@@ -262,13 +252,13 @@ class _VerifyOTPScreenSingleFieldState
                 final digit = hasDigit ? _otp[index] : '';
 
                 return Container(
-                  width: 38,
-                  height: 48,
+                  width: 38.w,
+                  height: 48.h,
                   decoration: BoxDecoration(
                     border: Border(
                       bottom: BorderSide(
                         color: hasDigit
-                            ? const Color(0xFF2563EB)
+                            ? const Color(0xFF0E4778)
                             : const Color(0xFFD1D5DB),
                         width: 2.5,
                       ),
@@ -277,8 +267,8 @@ class _VerifyOTPScreenSingleFieldState
                   child: Center(
                     child: Text(
                       digit,
-                      style: const TextStyle(
-                        fontSize: 28,
+                      style: TextStyle(
+                        fontSize: 28.sp,
                         fontWeight: FontWeight.w700,
                         color: Color(0xFF111827),
                         letterSpacing: 0,
@@ -289,7 +279,6 @@ class _VerifyOTPScreenSingleFieldState
               }),
             ),
 
-            // Hidden TextField for actual input
             Positioned.fill(
               child: Opacity(
                 opacity: 0.01,
@@ -323,31 +312,31 @@ class _VerifyOTPScreenSingleFieldState
 
     return SizedBox(
       width: double.infinity,
-      height: 54,
+      height: 54.h,
       child: ElevatedButton(
         onPressed: isEnabled ? _handleVerify : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF2563EB),
+          backgroundColor: const Color(0xFF0E4778),
           disabledBackgroundColor: const Color(0xFFE5E7EB),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(12.r),
           ),
           elevation: 0,
           shadowColor: Colors.transparent,
         ),
         child: _isLoading
-            ? const SizedBox(
-                height: 20,
-                width: 20,
+            ? SizedBox(
+                height: 20.h,
+                width: 20.w,
                 child: CircularProgressIndicator(
                   strokeWidth: 2.5,
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
-            : const Text(
+            : Text(
                 'Verify & Continue',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 16.sp,
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                   letterSpacing: 0.3,
@@ -362,13 +351,15 @@ class _VerifyOTPScreenSingleFieldState
       child: TextButton(
         onPressed: _isLoading ? null : _handleResend,
         style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8.r),
+          ),
         ),
         child: RichText(
-          text: const TextSpan(
+          text: TextSpan(
             style: TextStyle(
-              fontSize: 15,
+              fontSize: 15.sp,
               fontWeight: FontWeight.w500,
               color: Color(0xFF6B7280),
               letterSpacing: 0.1,
@@ -378,7 +369,7 @@ class _VerifyOTPScreenSingleFieldState
               TextSpan(
                 text: 'Resend',
                 style: TextStyle(
-                  color: Color(0xFF2563EB),
+                  color: Color(0xFF0E4778),
                   fontWeight: FontWeight.w600,
                 ),
               ),

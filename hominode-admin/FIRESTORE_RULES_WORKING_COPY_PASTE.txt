@@ -1,0 +1,146 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    match /admins/{adminId} {
+      allow read, write: if request.auth.uid == adminId;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /buildings/{buildingId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /flats/{flatId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /users/{userId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && (request.auth.uid == userId || resource.data.adminId == request.auth.uid);
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /security_staff/{staffId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /bills/{billId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /notices/{noticeId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /complaints/{complaintId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /visitors/{visitorId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /parking/{parkingId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /vehicles/{vehicleId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /attendance/{attendanceId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /security_work_assignments/{assignmentId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /gates/{gateId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /chat/{chatId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /notifications/{notificationId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /amenities/{amenityId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /amenity_bookings/{bookingId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /events_announcements/{eventId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && (resource.data.adminId == request.auth.uid || request.resource.data.adminId == request.auth.uid);
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /posters/{posterId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && (resource.data.adminId == request.auth.uid || request.resource.data.adminId == request.auth.uid);
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /apartment_images/{imageId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && (resource.data.adminId == request.auth.uid || request.resource.data.adminId == request.auth.uid);
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /staff_vendors/{staffVendorId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /broadcast_messages/{messageId} {
+      allow read: if request.auth.uid != null;
+      allow write: if request.auth.uid != null && resource.data.adminId == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -10,7 +10,8 @@ class ActivityItem {
   final String title;
   final String subtitle;
   final String statusText;
-  final String activityType; // 'booking', 'package', 'visitor', 'complaint', 'payment'
+  final String
+  activityType; // 'booking', 'package', 'visitor', 'complaint', 'payment'
   final DateTime timestamp;
   final Map<String, dynamic> data;
 
@@ -25,11 +26,12 @@ class ActivityItem {
   });
 
   factory ActivityItem.fromBooking(Map<String, dynamic> data, String docId) {
-    final timestamp = (data['bookingDate'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final timestamp =
+        (data['bookingDate'] as Timestamp?)?.toDate() ?? DateTime.now();
     return ActivityItem(
       id: docId,
       title: '${data['amenityName'] ?? 'Amenity'} Booked',
-      subtitle: '${_formatDate(timestamp)}',
+      subtitle: _formatDate(timestamp),
       statusText: data['status'] ?? 'Pending',
       activityType: 'booking',
       timestamp: timestamp,
@@ -38,7 +40,8 @@ class ActivityItem {
   }
 
   factory ActivityItem.fromVisitor(Map<String, dynamic> data, String docId) {
-    final timestamp = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final timestamp =
+        (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
     return ActivityItem(
       id: docId,
       title: 'Visitor - ${data['visitorName'] ?? 'Unknown'}',
@@ -51,11 +54,13 @@ class ActivityItem {
   }
 
   factory ActivityItem.fromComplaint(Map<String, dynamic> data, String docId) {
-    final timestamp = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final timestamp =
+        (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
     return ActivityItem(
       id: docId,
       title: 'Complaint - ${data['category'] ?? 'General'}',
-      subtitle: '${data['description']?.substring(0, 30) ?? ''} - ${_formatDate(timestamp)}',
+      subtitle:
+          '${data['description']?.substring(0, 30) ?? ''} - ${_formatDate(timestamp)}',
       statusText: data['status'] ?? 'Open',
       activityType: 'complaint',
       timestamp: timestamp,
@@ -142,9 +147,7 @@ class RecentActivityFlowFunction {
   /// Step 5: Fetch complaints from Firestore
   /// Step 6: Combine and sort by timestamp
   /// Step 7: Return recent activities (limit 5)
-  Future<RecentActivityResult> fetchRecentActivities({
-    int limit = 5,
-  }) async {
+  Future<RecentActivityResult> fetchRecentActivities({int limit = 5}) async {
     try {
       print('🔵 RECENT ACTIVITY FLOW: Starting fetch...');
 
@@ -182,8 +185,12 @@ class RecentActivityFlowFunction {
       final userData = userDoc.data() as Map<String, dynamic>;
       final flatId = userData['flatId'] as String?;
       final buildingId = userData['buildingId'] as String?;
+      final communityId = userData['communityId'] as String?;
 
-      if (flatId == null || buildingId == null) {
+      if (flatId == null ||
+          buildingId == null ||
+          communityId == null ||
+          communityId.isEmpty) {
         print('❌ STEP 2 FAILED: Flat ID or Building ID not found');
         return RecentActivityResult.failure(
           message: 'Flat ID or Building ID not found in user document',
@@ -205,6 +212,7 @@ class RecentActivityFlowFunction {
       try {
         final bookingsQuery = await _firestore
             .collection('bookings')
+            .where('communityId', isEqualTo: communityId)
             .where('flatId', isEqualTo: flatId)
             .orderBy('bookingDate', descending: true)
             .limit(10)
@@ -230,6 +238,7 @@ class RecentActivityFlowFunction {
       try {
         final visitorsQuery = await _firestore
             .collection('visitors')
+            .where('communityId', isEqualTo: communityId)
             .where('flatId', isEqualTo: flatId)
             .orderBy('createdAt', descending: true)
             .limit(10)
@@ -255,6 +264,7 @@ class RecentActivityFlowFunction {
       try {
         final complaintsQuery = await _firestore
             .collection('complaints')
+            .where('communityId', isEqualTo: communityId)
             .where('flatId', isEqualTo: flatId)
             .orderBy('createdAt', descending: true)
             .limit(10)
@@ -312,9 +322,7 @@ class RecentActivityFlowFunction {
   // ============================================================================
 
   /// Stream recent activities in real-time
-  Stream<RecentActivityResult> streamRecentActivities({
-    int limit = 5,
-  }) async* {
+  Stream<RecentActivityResult> streamRecentActivities({int limit = 5}) async* {
     try {
       print('🔵 Setting up recent activities stream...');
 
@@ -338,8 +346,9 @@ class RecentActivityFlowFunction {
 
       final userData = userDoc.data() as Map<String, dynamic>;
       final flatId = userData['flatId'] as String?;
+      final communityId = userData['communityId'] as String?;
 
-      if (flatId == null) {
+      if (flatId == null || communityId == null || communityId.isEmpty) {
         yield RecentActivityResult.failure(
           message: 'Flat ID not found',
           errorCode: 'FLAT_ID_NOT_FOUND',
@@ -353,6 +362,7 @@ class RecentActivityFlowFunction {
       // Combine streams from multiple collections
       final bookingsStream = _firestore
           .collection('bookings')
+          .where('communityId', isEqualTo: communityId)
           .where('flatId', isEqualTo: flatId)
           .orderBy('bookingDate', descending: true)
           .limit(10)
@@ -360,6 +370,7 @@ class RecentActivityFlowFunction {
 
       final visitorsStream = _firestore
           .collection('visitors')
+          .where('communityId', isEqualTo: communityId)
           .where('flatId', isEqualTo: flatId)
           .orderBy('createdAt', descending: true)
           .limit(10)
@@ -367,6 +378,7 @@ class RecentActivityFlowFunction {
 
       final complaintsStream = _firestore
           .collection('complaints')
+          .where('communityId', isEqualTo: communityId)
           .where('flatId', isEqualTo: flatId)
           .orderBy('createdAt', descending: true)
           .limit(10)

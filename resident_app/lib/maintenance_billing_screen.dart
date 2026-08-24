@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'receipt_screen.dart';
 import 'payment_method_modal.dart';
 import 'src/components/standard_screen.dart';
 import 'src/services/bill_firestore_service.dart';
+import 'src/services/payment_service.dart';
 import 'src/providers/language_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Design Constants
-const kPrimaryBlue = Color(0xFF2563EB);
+const kPrimaryBlue = Color(0xFF0E4778);
 const kBackground = Color(0xFFFFFFFF);
 const kDivider = Color(0xFFE6E6E6);
 const kOrangeStart = Color(0xFFFF7A30);
@@ -27,46 +29,57 @@ const kRadius = 16.0;
 
 /// Maintenance & Billing Screen - Real-time Firestore Integration
 class MaintenanceBillingScreen extends StatefulWidget {
-  const MaintenanceBillingScreen({Key? key}) : super(key: key);
+  const MaintenanceBillingScreen({super.key});
 
   @override
-  State<MaintenanceBillingScreen> createState() => _MaintenanceBillingScreenState();
+  State<MaintenanceBillingScreen> createState() =>
+      _MaintenanceBillingScreenState();
 }
 
 class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   final _billService = BillFirestoreService();
+  final PaymentService _paymentService = PaymentServiceFactory.create();
+  bool _isProcessingPayment = false;
 
-  Future<void> _handlePayment(PaymentMethod paymentMethod, String billId, LanguageProvider languageProvider) async {
-    // Convert PaymentMethod enum to string
-    String methodStr = '';
-    switch (paymentMethod) {
-      case PaymentMethod.upi:
-        methodStr = 'UPI';
-        break;
-      case PaymentMethod.card:
-        methodStr = 'card'.tr();
-        break;
-      case PaymentMethod.netBanking:
-        methodStr = 'net_banking'.tr();
-        break;
-    }
+  Future<void> _handlePayment(
+    PaymentMethod paymentMethod,
+    String billId,
+    LanguageProvider languageProvider,
+  ) async {
+    if (_isProcessingPayment) return;
+    _isProcessingPayment = true;
 
-    // Generate transaction ID (in real app, this would come from payment gateway)
-    final transactionId = 'TXN${DateTime.now().millisecondsSinceEpoch}';
-
-    final success = await _billService.payBill(
+    final result = await _paymentService.processPayment(
+      paymentMethod: paymentMethod,
       billId: billId,
-      paymentMethod: methodStr,
-      transactionId: transactionId,
     );
+
+    final methodStr = switch (result.paymentMethod) {
+      PaymentMethod.upi => 'UPI',
+      PaymentMethod.card => 'card'.tr(),
+      PaymentMethod.netBanking => 'net_banking'.tr(),
+    };
+
+    final success = result.success && result.transactionId != null
+        ? await _billService.payBill(
+            billId: billId,
+            paymentMethod: methodStr,
+            transactionId: result.transactionId!,
+            paymentMode: _paymentService.mode.name,
+          )
+        : false;
+
+    _isProcessingPayment = false;
 
     if (success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('payment_successful'.tr()),
+          content: Text('${result.message} (mock transaction)'),
           backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10.r),
+          ),
         ),
       );
     } else if (mounted) {
@@ -75,7 +88,9 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
           content: Text('payment_failed'.tr()),
           backgroundColor: const Color(0xFFEF4444),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10.r),
+          ),
         ),
       );
     }
@@ -108,26 +123,22 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(
-                        Icons.error_outline,
-                        size: 64,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(height: 16),
+                      Icon(Icons.error_outline, size: 64.w, color: Colors.red),
+                      SizedBox(height: 16.h),
                       Text(
                         'error_loading_bills'.tr(),
                         style: TextStyle(
-                          fontSize: 18,
+                          fontSize: 18.sp,
                           fontWeight: FontWeight.w600,
                           color: Colors.grey[700],
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      SizedBox(height: 8.h),
                       Text(
                         snapshot.error.toString(),
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 14,
+                          fontSize: 14.sp,
                           color: Colors.grey[500],
                         ),
                       ),
@@ -137,13 +148,19 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
               }
 
               final bills = snapshot.data ?? [];
-              
+
               // Separate pending and paid bills
-              final pendingBills = bills.where((bill) => bill['status'] == 'pending').toList();
-              final paidBills = bills.where((bill) => bill['status'] == 'paid').toList();
-              
+              final pendingBills = bills
+                  .where((bill) => bill['status'] == 'pending')
+                  .toList();
+              final paidBills = bills
+                  .where((bill) => bill['status'] == 'paid')
+                  .toList();
+
               // Get current pending bill (most recent)
-              final currentBill = pendingBills.isNotEmpty ? pendingBills.first : null;
+              final currentBill = pendingBills.isNotEmpty
+                  ? pendingBills.first
+                  : null;
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -153,16 +170,14 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                     _buildCurrentBillCard(currentBill, languageProvider)
                   else
                     _buildNoBillCard(),
-                  
-                  const SizedBox(height: 20),
-                  
+
+                  SizedBox(height: 20.h),
+
                   // Bill Breakdown Card
-                  if (currentBill != null)
-                    _buildBillBreakdownCard(currentBill),
-                  
-                  if (currentBill != null)
-                    const SizedBox(height: 24),
-                  
+                  if (currentBill != null) _buildBillBreakdownCard(currentBill),
+
+                  if (currentBill != null) SizedBox(height: 24.h),
+
                   // Payment History Section
                   if (paidBills.isNotEmpty)
                     _buildPaymentHistorySection(paidBills)
@@ -178,7 +193,10 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   }
 
   /// Current Bill Card with orange gradient
-  Widget _buildCurrentBillCard(Map<String, dynamic> bill, LanguageProvider languageProvider) {
+  Widget _buildCurrentBillCard(
+    Map<String, dynamic> bill,
+    LanguageProvider languageProvider,
+  ) {
     final amount = (bill['amount'] as num?)?.toDouble() ?? 0;
     final dueDate = (bill['dueDate'] as Timestamp?)?.toDate();
     final status = bill['status'] as String? ?? 'pending';
@@ -188,13 +206,27 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     // Format due date
     String dueDateStr = 'Due Date: Not Set';
     if (dueDate != null) {
-      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      dueDateStr = 'Due Date: ${months[dueDate.month - 1]} ${dueDate.day}, ${dueDate.year}';
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      dueDateStr =
+          'Due Date: ${months[dueDate.month - 1]} ${dueDate.day}, ${dueDate.year}';
     }
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(24.w),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
@@ -219,84 +251,90 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
             children: [
               Text(
                 '$month Bill',
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 18,
+                  fontSize: 18.sp,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 6.h),
                 decoration: BoxDecoration(
                   color: kPendingBg,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(20.r),
                 ),
                 child: Text(
-                  status == 'pending' ? 'Pending' : status == 'overdue' ? 'Overdue' : 'Paid',
-                  style: const TextStyle(
+                  status == 'pending'
+                      ? 'Pending'
+                      : status == 'overdue'
+                      ? 'Overdue'
+                      : 'Paid',
+                  style: TextStyle(
                     color: kPendingText,
-                    fontSize: 13,
+                    fontSize: 13.sp,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
             ],
           ),
-          
-          const SizedBox(height: 16),
-          
+
+          SizedBox(height: 16.h),
+
           // Amount
           Text(
             '₹${amount.toStringAsFixed(0)}',
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 48,
+              fontSize: 48.sp,
               fontWeight: FontWeight.w700,
               height: 1.2,
             ),
           ),
-          
-          const SizedBox(height: 8),
-          
+
+          SizedBox(height: 8.h),
+
           // Due Date
           Text(
             dueDateStr,
-            style: const TextStyle(
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 15,
+              fontSize: 15.sp,
               fontWeight: FontWeight.w400,
             ),
           ),
-          
-          const SizedBox(height: 20),
-          
+
+          SizedBox(height: 20.h),
+
           // Pay Now Button
           if (status == 'pending' || status == 'overdue')
             Builder(
               builder: (context) {
                 return Container(
                   width: double.infinity,
-                  height: 50,
+                  height: 50.h,
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(12.r),
                   ),
                   child: Material(
                     color: Colors.transparent,
                     child: InkWell(
                       onTap: () {
                         // Show payment method modal
-                        showPaymentMethodModal(context, (method) {
-                          _handlePayment(method, billId, languageProvider);
-                        });
+                        showPaymentMethodModal(
+                          context,
+                          (method) =>
+                              _handlePayment(method, billId, languageProvider),
+                        );
                       },
-                      borderRadius: BorderRadius.circular(12),
-                      child: const Center(
+                      borderRadius: BorderRadius.circular(12.r),
+                      child: Center(
                         child: Text(
                           'Pay Now',
                           style: TextStyle(
                             color: kOrangeEnd,
-                            fontSize: 16,
+                            fontSize: 16.sp,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -304,7 +342,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                     ),
                   ),
                 );
-              }
+              },
             ),
         ],
       ),
@@ -315,7 +353,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   Widget _buildNoBillCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(32),
+      padding: EdgeInsets.all(32.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(kRadius),
@@ -323,27 +361,20 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
       ),
       child: Column(
         children: [
-          Icon(
-            Icons.check_circle_outline,
-            size: 64,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 16),
+          Icon(Icons.check_circle_outline, size: 64.w, color: Colors.grey[400]),
+          SizedBox(height: 16.h),
           Text(
             'No Pending Bills',
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 18.sp,
               fontWeight: FontWeight.w600,
               color: Colors.grey[700],
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           Text(
             'You\'re all caught up!',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
+            style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
           ),
         ],
       ),
@@ -357,14 +388,11 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(20.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(kRadius),
-        border: Border.all(
-          color: kDivider,
-          width: 1,
-        ),
+        border: Border.all(color: kDivider, width: 1),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.04),
@@ -377,61 +405,64 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Title
-          const Text(
+          Text(
             'Bill Breakdown',
             style: TextStyle(
               color: kDarkTitle,
-              fontSize: 18,
+              fontSize: 18.sp,
               fontWeight: FontWeight.w600,
             ),
           ),
-          
-          const SizedBox(height: 20),
-          
+
+          SizedBox(height: 20.h),
+
           // Breakdown items - only show non-zero values
           ...breakdown.entries.where((entry) => entry.value > 0).map((entry) {
             return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: _buildBreakdownItem(entry.key, '₹${entry.value.toStringAsFixed(0)}'),
+              padding: EdgeInsets.only(bottom: 16.h),
+              child: _buildBreakdownItem(
+                entry.key,
+                '₹${entry.value.toStringAsFixed(0)}',
+              ),
             );
-          }).toList(),
-          
+          }),
+
           // Show message if no breakdown available
           if (breakdown.values.every((value) => value == 0))
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: 16.h),
               child: Text(
                 'No breakdown available',
                 style: TextStyle(
                   color: kSubtext,
-                  fontSize: 14,
+                  fontSize: 14.sp,
                   fontStyle: FontStyle.italic,
                 ),
               ),
             ),
-          
+
           // Divider
           const Divider(color: kDivider, thickness: 1),
-          
-          const SizedBox(height: 16),
-          
+
+          SizedBox(height: 16.h),
+
           // Total Amount
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Total Amount',
                 style: TextStyle(
                   color: kSubtext,
-                  fontSize: 16,
+                  fontSize: 16.sp,
                   fontWeight: FontWeight.w500,
                 ),
               ),
               Text(
                 '₹${total.toStringAsFixed(0)}',
-                style: const TextStyle(
+                style: TextStyle(
                   color: kPrimaryBlue,
-                  fontSize: 18,
+                  fontSize: 18.sp,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -449,17 +480,17 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: kSubtext,
-            fontSize: 15,
+            fontSize: 15.sp,
             fontWeight: FontWeight.w400,
           ),
         ),
         Text(
           amount,
-          style: const TextStyle(
+          style: TextStyle(
             color: kBlackText,
-            fontSize: 16,
+            fontSize: 16.sp,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -476,11 +507,11 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
+            Text(
               'Payment History',
               style: TextStyle(
                 color: kDarkTitle,
-                fontSize: 18,
+                fontSize: 18.sp,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -491,27 +522,27 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                 minimumSize: const Size(0, 0),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: const Text(
+              child: Text(
                 'View All',
                 style: TextStyle(
                   color: kPrimaryBlue,
-                  fontSize: 15,
+                  fontSize: 15.sp,
                   fontWeight: FontWeight.w600,
                 ),
               ),
             ),
           ],
         ),
-        
-        const SizedBox(height: 16),
-        
+
+        SizedBox(height: 16.h),
+
         // Payment history items (show first 3)
         ...paidBills.take(3).map((payment) {
           return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: EdgeInsets.only(bottom: 12.h),
             child: _buildPaymentHistoryItem(payment),
           );
-        }).toList(),
+        }),
       ],
     );
   }
@@ -520,7 +551,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   Widget _buildNoHistoryCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(32),
+      padding: EdgeInsets.all(32.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(kRadius),
@@ -528,27 +559,20 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
       ),
       child: Column(
         children: [
-          Icon(
-            Icons.history,
-            size: 64,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 16),
+          Icon(Icons.history, size: 64.w, color: Colors.grey[400]),
+          SizedBox(height: 16.h),
           Text(
             'No Payment History',
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 18.sp,
               fontWeight: FontWeight.w600,
               color: Colors.grey[700],
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           Text(
             'Your payment history will appear here',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
+            style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
           ),
         ],
       ),
@@ -565,17 +589,31 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     // Format paid date
     String paidDateStr = 'Paid';
     if (paidAt != null) {
-      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      paidDateStr = 'Paid on ${months[paidAt.month - 1]} ${paidAt.day}, ${paidAt.year}';
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      paidDateStr =
+          'Paid on ${months[paidAt.month - 1]} ${paidAt.day}, ${paidAt.year}';
     }
 
     return Builder(
       builder: (context) {
         return Container(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(16.w),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(12.r),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.04),
@@ -588,21 +626,17 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
             children: [
               // Success icon
               Container(
-                width: 48,
-                height: 48,
+                width: 48.w,
+                height: 48.h,
                 decoration: BoxDecoration(
                   color: kSuccessBg,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.check,
-                  color: kSuccessIcon,
-                  size: 28,
-                ),
+                child: Icon(Icons.check, color: kSuccessIcon, size: 28.w),
               ),
-              
-              const SizedBox(width: 12),
-              
+
+              SizedBox(width: 12.w),
+
               // Month and date
               Expanded(
                 child: Column(
@@ -610,63 +644,62 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                   children: [
                     Text(
                       month,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: kDarkTitle,
-                        fontSize: 16,
+                        fontSize: 16.sp,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    SizedBox(height: 4.h),
                     Text(
                       paidDateStr,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: kSubtext,
-                        fontSize: 13,
+                        fontSize: 13.sp,
                         fontWeight: FontWeight.w400,
                       ),
                     ),
                   ],
                 ),
               ),
-              
+
               // Amount and receipt
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
                     '₹${amount.toStringAsFixed(0)}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: kDarkTitle,
-                      fontSize: 16,
+                      fontSize: 16.sp,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: 4.h),
                   InkWell(
                     onTap: () {
                       // Navigate to Receipt Screen
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => ReceiptScreen(
-                            receipt: Receipt.fromBill(payment),
-                          ),
+                          builder: (context) =>
+                              ReceiptScreen(receipt: Receipt.fromBill(payment)),
                         ),
                       );
                     },
                     child: Row(
-                      children: const [
+                      children: [
                         Icon(
                           Icons.download_outlined,
                           color: kPrimaryBlue,
-                          size: 16,
+                          size: 16.w,
                         ),
-                        SizedBox(width: 4),
+                        SizedBox(width: 4.w),
                         Text(
                           'Receipt',
                           style: TextStyle(
                             color: kPrimaryBlue,
-                            fontSize: 14,
+                            fontSize: 14.sp,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -678,7 +711,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
             ],
           ),
         );
-      }
+      },
     );
   }
 
@@ -697,23 +730,23 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
           Navigator.pop(context);
         }
       },
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(12.r),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 8.h),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               icon,
               color: isActive ? kPrimaryBlue : const Color(0xFF94A3B8),
-              size: 24,
+              size: 24.w,
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: 4.h),
             Text(
               label,
               style: TextStyle(
                 color: isActive ? kPrimaryBlue : const Color(0xFF94A3B8),
-                fontSize: 11,
+                fontSize: 11.sp,
                 fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
               ),
             ),

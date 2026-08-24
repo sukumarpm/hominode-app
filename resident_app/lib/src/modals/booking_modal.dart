@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../models/amenity.dart';
 import '../services/amenities_booking_flow_function.dart' hide AmenityModel;
@@ -484,12 +485,12 @@ class _BookingModalState extends State<BookingModal> {
         child: Container(
           width: modalWidth,
           constraints: BoxConstraints(
-            maxWidth: 500,
+            maxWidth: 500.w,
             maxHeight: screenHeight - 48,
           ),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(18.r),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.2),
@@ -504,7 +505,7 @@ class _BookingModalState extends State<BookingModal> {
               _buildHeader(context),
               Flexible(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
+                  padding: EdgeInsets.all(20.w),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -512,32 +513,32 @@ class _BookingModalState extends State<BookingModal> {
 
                       // Booking Type Selector (if packages available)
                       if (_amenityDetails?.hasPackages ?? false) ...[
-                        const SizedBox(height: 24),
+                        SizedBox(height: 24.h),
                         _buildBookingTypeSelector(),
                       ],
 
                       // Number of People Selector (NEW)
                       if (_amenityDetails?.allowMultipleBookings ?? false) ...[
-                        const SizedBox(height: 24),
+                        SizedBox(height: 24.h),
                         _buildPeopleSelector(),
                       ],
 
                       // Package Summary (NEW)
                       if (_bookingType != 'daily' && _selectedDate != null) ...[
-                        const SizedBox(height: 24),
+                        SizedBox(height: 24.h),
                         _buildPackageSummary(),
                       ],
 
-                      const SizedBox(height: 24),
-                      const Text(
+                      SizedBox(height: 24.h),
+                      Text(
                         'Select Date',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 16.sp,
                           fontWeight: FontWeight.w600,
                           color: Colors.black,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      SizedBox(height: 12.h),
                       CalendarGrid(
                         selectedDate: _selectedDate,
                         onDateSelected: (date) {
@@ -550,38 +551,38 @@ class _BookingModalState extends State<BookingModal> {
                         },
                         blockedDates: _blockedDates,
                       ),
-                      const SizedBox(height: 24),
-                      const Text(
+                      SizedBox(height: 24.h),
+                      Text(
                         'Select Time Slot',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 16.sp,
                           fontWeight: FontWeight.w600,
                           color: Colors.black,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      SizedBox(height: 12.h),
                       _isLoadingTimeSlots
-                          ? const Center(
+                          ? Center(
                               child: Padding(
-                                padding: EdgeInsets.all(24),
+                                padding: EdgeInsets.all(24.w),
                                 child: CircularProgressIndicator(),
                               ),
                             )
                           : _timeSlots.isEmpty
                           ? Center(
                               child: Padding(
-                                padding: const EdgeInsets.all(24),
+                                padding: EdgeInsets.all(24.w),
                                 child: Text(
                                   'No time slots available',
                                   style: TextStyle(
-                                    fontSize: 14,
+                                    fontSize: 14.sp,
                                     color: Colors.grey[600],
                                   ),
                                 ),
                               ),
                             )
                           : _buildTimeSlotSelector(),
-                      const SizedBox(height: 24),
+                      SizedBox(height: 24.h),
                       _buildConfirmButton(),
                     ],
                   ),
@@ -596,7 +597,7 @@ class _BookingModalState extends State<BookingModal> {
 
   Widget _buildHeader(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(20.w),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFFF0F0F0))),
       ),
@@ -606,8 +607,8 @@ class _BookingModalState extends State<BookingModal> {
             child: Text(
               'Book ${widget.amenity.name}',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 20,
+              style: TextStyle(
+                fontSize: 20.sp,
                 fontWeight: FontWeight.w700,
                 color: Color(0xFF1E293B),
               ),
@@ -616,17 +617,13 @@ class _BookingModalState extends State<BookingModal> {
           GestureDetector(
             onTap: () => Navigator.of(context).pop(),
             child: Container(
-              width: 32,
-              height: 32,
+              width: 32.w,
+              height: 32.h,
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.close,
-                size: 18,
-                color: Color(0xFF6B7280),
-              ),
+              child: Icon(Icons.close, size: 18.w, color: Color(0xFF6B7280)),
             ),
           ),
         ],
@@ -636,54 +633,51 @@ class _BookingModalState extends State<BookingModal> {
 
   Widget _buildInfoCard() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
         color: const Color(0xFFF6F7F9),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(12.r),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              const Icon(Icons.access_time, size: 18, color: Color(0xFF9B9B9B)),
-              const SizedBox(width: 8),
+              Icon(Icons.access_time, size: 18.w, color: Color(0xFF9B9B9B)),
+              SizedBox(width: 8.w),
               Text(
                 'Timings: ${widget.amenity.openTime} - ${widget.amenity.closeTime}',
-                style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+                style: TextStyle(fontSize: 14.sp, color: Color(0xFF6B7280)),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.payments_outlined,
-                size: 18,
+                size: 18.w,
                 color: Color(0xFF9B9B9B),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: 8.w),
               Text(
                 'Price: ${widget.amenity.price}',
-                style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+                style: TextStyle(fontSize: 14.sp, color: Color(0xFF6B7280)),
               ),
             ],
           ),
           if (_amenityDetails?.allowMultipleBookings ?? false) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: 8.h),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.people_outline,
-                  size: 18,
+                  size: 18.w,
                   color: Color(0xFF9B9B9B),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 8.w),
                 Text(
                   'Capacity: Up to ${_amenityDetails!.maxCapacity} users',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280),
-                  ),
+                  style: TextStyle(fontSize: 14.sp, color: Color(0xFF6B7280)),
                 ),
               ],
             ),
@@ -697,19 +691,19 @@ class _BookingModalState extends State<BookingModal> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Booking Type',
           style: TextStyle(
-            fontSize: 16,
+            fontSize: 16.sp,
             fontWeight: FontWeight.w600,
             color: Colors.black,
           ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: 12.h),
         Container(
           decoration: BoxDecoration(
             color: const Color(0xFFF6F7F9),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(12.r),
           ),
           child: Column(
             children: [
@@ -766,38 +760,42 @@ class _BookingModalState extends State<BookingModal> {
         });
       },
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: EdgeInsets.all(14.w),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(10.r),
           border: isSelected
-              ? Border.all(color: const Color(0xFF2563EB), width: 2)
+              ? Border.all(color: const Color(0xFF0E4778), width: 2)
               : null,
         ),
         child: Row(
           children: [
             Container(
-              width: 20,
-              height: 20,
+              width: 20.w,
+              height: 20.h,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: isSelected
-                      ? const Color(0xFF2563EB)
+                      ? const Color(0xFF0E4778)
                       : const Color(0xFFD1D5DB),
                   width: 2,
                 ),
                 color: isSelected
-                    ? const Color(0xFF2563EB)
+                    ? const Color(0xFF0E4778)
                     : Colors.transparent,
               ),
               child: isSelected
-                  ? const Center(
-                      child: Icon(Icons.circle, size: 10, color: Colors.white),
+                  ? Center(
+                      child: Icon(
+                        Icons.circle,
+                        size: 10.w,
+                        color: Colors.white,
+                      ),
                     )
                   : null,
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: 12.w),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -805,20 +803,20 @@ class _BookingModalState extends State<BookingModal> {
                   Text(
                     label,
                     style: TextStyle(
-                      fontSize: 15,
+                      fontSize: 15.sp,
                       fontWeight: FontWeight.w600,
                       color: isSelected
                           ? Colors.black
                           : const Color(0xFF6B7280),
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  SizedBox(height: 2.h),
                   Text(
                     price,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 13.sp,
                       color: isSelected
-                          ? const Color(0xFF2563EB)
+                          ? const Color(0xFF0E4778)
                           : const Color(0xFF9CA3AF),
                       fontWeight: FontWeight.w500,
                     ),
@@ -837,53 +835,49 @@ class _BookingModalState extends State<BookingModal> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Number of People',
           style: TextStyle(
-            fontSize: 16,
+            fontSize: 16.sp,
             fontWeight: FontWeight.w600,
             color: Colors.black,
           ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: 12.h),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(16.w),
           decoration: BoxDecoration(
             color: const Color(0xFFF6F7F9),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(12.r),
           ),
           child: Row(
             children: [
-              const Icon(
-                Icons.people_outline,
-                size: 24,
-                color: Color(0xFF6B7280),
-              ),
-              const SizedBox(width: 12),
+              Icon(Icons.people_outline, size: 24.w, color: Color(0xFF6B7280)),
+              SizedBox(width: 12.w),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       '$_numberOfPeople ${_numberOfPeople == 1 ? "Person" : "People"}',
-                      style: const TextStyle(
-                        fontSize: 16,
+                      style: TextStyle(
+                        fontSize: 16.sp,
                         fontWeight: FontWeight.w600,
                         color: Colors.black,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    SizedBox(height: 2.h),
                     Text(
                       'Each person counts toward capacity',
-                      style: const TextStyle(
-                        fontSize: 12,
+                      style: TextStyle(
+                        fontSize: 12.sp,
                         color: Color(0xFF9CA3AF),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: 12.w),
               Row(
                 children: [
                   GestureDetector(
@@ -899,29 +893,29 @@ class _BookingModalState extends State<BookingModal> {
                       }
                     },
                     child: Container(
-                      width: 36,
-                      height: 36,
+                      width: 36.w,
+                      height: 36.h,
                       decoration: BoxDecoration(
                         color: _numberOfPeople > 1
                             ? Colors.white
                             : const Color(0xFFE5E7EB),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(8.r),
                         border: Border.all(
                           color: _numberOfPeople > 1
-                              ? const Color(0xFF2563EB)
+                              ? const Color(0xFF0E4778)
                               : const Color(0xFFD1D5DB),
                         ),
                       ),
                       child: Icon(
                         Icons.remove,
-                        size: 20,
+                        size: 20.w,
                         color: _numberOfPeople > 1
-                            ? const Color(0xFF2563EB)
+                            ? const Color(0xFF0E4778)
                             : const Color(0xFF9CA3AF),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: 12.w),
                   GestureDetector(
                     onTap: () {
                       final maxCapacity = _amenityDetails?.maxCapacity ?? 10;
@@ -936,17 +930,17 @@ class _BookingModalState extends State<BookingModal> {
                       }
                     },
                     child: Container(
-                      width: 36,
-                      height: 36,
+                      width: 36.w,
+                      height: 36.h,
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFF2563EB)),
+                        borderRadius: BorderRadius.circular(8.r),
+                        border: Border.all(color: const Color(0xFF0E4778)),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.add,
-                        size: 20,
-                        color: Color(0xFF2563EB),
+                        size: 20.w,
+                        color: Color(0xFF0E4778),
                       ),
                     ),
                   ),
@@ -966,38 +960,38 @@ class _BookingModalState extends State<BookingModal> {
     final packageType = _getPackageType();
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
         color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: const Color(0xFF0E4778).withOpacity(0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            children: const [
-              Icon(Icons.card_membership, size: 20, color: Color(0xFF2563EB)),
-              SizedBox(width: 8),
+            children: [
+              Icon(Icons.card_membership, size: 20.w, color: Color(0xFF0E4778)),
+              SizedBox(width: 8.w),
               Text(
                 'Package Details',
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 15.sp,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF2563EB),
+                  color: Color(0xFF0E4778),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12.h),
           _buildPackageDetailRow('Package Type', packageType ?? 'N/A'),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           _buildPackageDetailRow('Start Date', _formatDate(_selectedDate!)),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           _buildPackageDetailRow('End Date', _formatDate(endDate)),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           _buildPackageDetailRow('Validity', '$validityDays days'),
-          const SizedBox(height: 8),
+          SizedBox(height: 8.h),
           _buildPackageDetailRow(
             'Price',
             '₹${_selectedPrice.toStringAsFixed(0)}',
@@ -1013,12 +1007,12 @@ class _BookingModalState extends State<BookingModal> {
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+          style: TextStyle(fontSize: 13.sp, color: Color(0xFF6B7280)),
         ),
         Text(
           value,
-          style: const TextStyle(
-            fontSize: 13,
+          style: TextStyle(
+            fontSize: 13.sp,
             fontWeight: FontWeight.w600,
             color: Colors.black,
           ),
@@ -1049,26 +1043,26 @@ class _BookingModalState extends State<BookingModal> {
     if (_selectedDate == null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(24.w),
           child: Text(
             'Please select a date first',
-            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            style: TextStyle(fontSize: 14.sp, color: Colors.grey[600]),
           ),
         ),
       );
     }
 
     if (_isCheckingAvailability) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: EdgeInsets.all(24.w),
           child: Column(
             children: [
               CircularProgressIndicator(),
-              SizedBox(height: 12),
+              SizedBox(height: 12.h),
               Text(
                 'Checking availability...',
-                style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                style: TextStyle(fontSize: 13.sp, color: Color(0xFF6B7280)),
               ),
             ],
           ),
@@ -1095,19 +1089,19 @@ class _BookingModalState extends State<BookingModal> {
                 }
               : null,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
             decoration: BoxDecoration(
               color: !isAvailable
                   ? const Color(0xFFF3F4F6)
                   : isSelected
-                  ? const Color(0xFF2563EB)
+                  ? const Color(0xFF0E4778)
                   : Colors.white,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(10.r),
               border: Border.all(
                 color: !isAvailable
                     ? const Color(0xFFE5E7EB)
                     : isSelected
-                    ? const Color(0xFF2563EB)
+                    ? const Color(0xFF0E4778)
                     : const Color(0xFFD1D5DB),
                 width: isSelected ? 2 : 1,
               ),
@@ -1118,7 +1112,7 @@ class _BookingModalState extends State<BookingModal> {
                 Text(
                   slot,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 14.sp,
                     fontWeight: FontWeight.w600,
                     color: !isAvailable
                         ? const Color(0xFF9CA3AF)
@@ -1128,13 +1122,13 @@ class _BookingModalState extends State<BookingModal> {
                   ),
                 ),
                 if (showCapacity) ...[
-                  const SizedBox(height: 4),
+                  SizedBox(height: 4.h),
                   Text(
                     isAvailable
                         ? '$remainingSpots/$totalCapacity spots booked'
                         : 'Slot Full',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 11.sp,
                       color: !isAvailable
                           ? const Color(0xFF9CA3AF)
                           : isSelected
@@ -1154,31 +1148,31 @@ class _BookingModalState extends State<BookingModal> {
   Widget _buildConfirmButton() {
     return SizedBox(
       width: double.infinity,
-      height: 56,
+      height: 56.h,
       child: ElevatedButton(
         onPressed: _canConfirm ? _handleConfirm : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF2563EB),
+          backgroundColor: const Color(0xFF0E4778),
           foregroundColor: Colors.white,
           disabledBackgroundColor: const Color(0xFFE6E6E6),
           disabledForegroundColor: const Color(0xFF9B9B9B),
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(12.r),
           ),
         ),
         child: _isSubmitting
-            ? const SizedBox(
-                width: 20,
-                height: 20,
+            ? SizedBox(
+                width: 20.w,
+                height: 20.h,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
-            : const Text(
+            : Text(
                 'Confirm Booking',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
               ),
       ),
     );

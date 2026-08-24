@@ -1,5 +1,5 @@
 name: resident_app
-description: "Lyvo - Your Community, Connected. A comprehensive resident community management app."
+description: "Hominode - Your Community, Connected. A comprehensive resident community management app."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -30,6 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_screenutil: any
   flutter_localizations:
     sdk: flutter
 
@@ -64,6 +65,7 @@ dependencies:
   firebase_analytics: ^11.3.5
   firebase_auth: ^5.3.3
   cloud_firestore: ^5.4.4
+  cloud_functions: ^5.6.2
   
   # QR Code Generation
   qr_flutter: ^4.1.0
@@ -81,6 +83,7 @@ dependencies:
   # Easy Localization for multi-language support
   easy_localization: ^3.0.7
 
+  mobile_scanner: any
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -153,12 +156,29 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/Android.png"
-  min_sdk_android: 21
-  
-  # Android Adaptive Icon
-  adaptive_icon_background: "#2563EB"
-  adaptive_icon_foreground: "assets/Android.png"
-  
-  # iOS Settings
+
+  image_path: "lib/assets/Resident.png"
+
+  adaptive_icon_background: "#4F46E5"
+  adaptive_icon_foreground: "lib/assets/Resident.png"
+
   remove_alpha_ios: true
+  min_sdk_android: 21
+
+  # Web
+  web:
+    generate: true
+    image_path: "lib/assets/Resident.png"
+    background_color: "#4F46E5"
+    theme_color: "#4F46E5"
+
+  # Windows
+  windows:
+    generate: true
+    image_path: "lib/assets/Resident.png"
+    icon_size: 48
+
+  # macOS
+  macos:
+    generate: true
+    image_path: "lib/assets/Resident.png"

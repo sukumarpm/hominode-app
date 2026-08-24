@@ -10,6 +10,8 @@ enum TenantResolutionFailure {
   unauthenticated,
   profileMissing,
   profileInactive,
+  profileNotApproved,
+  wrongRole,
   communityMissing,
   communityInactive,
 }
@@ -31,6 +33,14 @@ class TenantContext {
   const TenantContext({required this.profile, required this.community});
 
   String get communityId => community.id;
+  String get name => community.name;
+  String get slug => community.slug;
+  String get websitePath => community.websitePath;
+  String get databaseId => community.databaseId;
+  String? get logoUrl => community.logoUrl;
+  String get brandName => community.brandName;
+  String? get primaryColor => community.primaryColor;
+  bool get isActive => community.isActive;
   CommunityFeatureFlags get featureFlags => community.features;
 }
 
@@ -48,6 +58,13 @@ class TenantResolutionService extends ChangeNotifier {
   CommunityModel? get community => _current?.community;
   String? get communityId => _current?.communityId;
 
+  Future<TenantProfile?> loadAuthenticatedProfile() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+    final data = await _loadProfile(user.uid);
+    return data == null ? null : TenantProfile.fromMap(user.uid, data);
+  }
+
   Future<TenantContext> resolve() async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -61,23 +78,11 @@ class TenantResolutionService extends ChangeNotifier {
     if (profileDocument == null) {
       throw const TenantResolutionException(
         TenantResolutionFailure.profileMissing,
-        'No resident or admin profile exists for this account.',
+        'No resident profile exists for this account.',
       );
     }
 
-    final profile = TenantProfile.fromMap(user.uid, profileDocument);
-    if (!profile.isActive) {
-      throw const TenantResolutionException(
-        TenantResolutionFailure.profileInactive,
-        'This account is inactive.',
-      );
-    }
-    if (profile.communityId.trim().isEmpty) {
-      throw const TenantResolutionException(
-        TenantResolutionFailure.profileMissing,
-        'This account is not assigned to a community.',
-      );
-    }
+    final profile = requireApprovedResident(user.uid, profileDocument);
 
     final communityDocument = await _firestore
         .collection('communities')
@@ -90,13 +95,10 @@ class TenantResolutionService extends ChangeNotifier {
       );
     }
 
-    final community = CommunityModel.fromFirestore(communityDocument);
-    if (!community.isActive) {
-      throw const TenantResolutionException(
-        TenantResolutionFailure.communityInactive,
-        'The assigned community is inactive.',
-      );
-    }
+    final community = requireActiveCommunity(
+      profile,
+      CommunityModel.fromFirestore(communityDocument),
+    );
 
     _current = TenantContext(profile: profile, community: community);
     notifyListeners();
@@ -105,10 +107,60 @@ class TenantResolutionService extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> _loadProfile(String uid) async {
     final user = await _firestore.collection('users').doc(uid).get();
-    if (user.exists) return user.data();
+    return user.data();
+  }
 
-    final admin = await _firestore.collection('admins').doc(uid).get();
-    return admin.data();
+  @visibleForTesting
+  static TenantProfile requireApprovedResident(
+    String uid,
+    Map<String, dynamic> data,
+  ) {
+    final profile = TenantProfile.fromMap(uid, data);
+    if (profile.role != 'resident') {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.wrongRole,
+        'This app is available to resident accounts only.',
+      );
+    }
+    if (profile.approvalStatus != 'approved') {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.profileNotApproved,
+        'This resident account is not approved.',
+      );
+    }
+    if (!profile.isActive) {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.profileInactive,
+        'This account is inactive.',
+      );
+    }
+    if (profile.communityId.trim().isEmpty) {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.profileMissing,
+        'This account is not assigned to a community.',
+      );
+    }
+    return profile;
+  }
+
+  @visibleForTesting
+  static CommunityModel requireActiveCommunity(
+    TenantProfile profile,
+    CommunityModel? community,
+  ) {
+    if (community == null || community.id != profile.communityId) {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.communityMissing,
+        'The assigned community does not exist.',
+      );
+    }
+    if (!community.isActive) {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.communityInactive,
+        'The assigned community is inactive.',
+      );
+    }
+    return community;
   }
 
   void clear() {

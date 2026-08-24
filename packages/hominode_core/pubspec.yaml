@@ -1,0 +1,10 @@
+name: hominode_core
+description: Canonical Hominode identity and tenant models.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dev_dependencies:
+  test: ^1.25.0

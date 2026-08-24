@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasUserProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasAdminProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function adminProfile() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+    }
+
+    function validAdmin() {
+      return signedIn()
+        && adminProfile().uid == request.auth.uid
+        && adminProfile().role == 'admin'
+        && adminProfile().isActive == true
+        && adminProfile().authorizedCommunityIds is list
+        && adminProfile().authorizedCommunityIds.size() > 0;
+    }
+
+    function canAccessCommunity(communityId) {
+      return validAdmin()
+        && communityId is string
+        && communityId in adminProfile().authorizedCommunityIds;
+    }
+
+    match /admins/{adminId} {
+      allow read: if signedIn() && request.auth.uid == adminId;
+      allow write: if false;
+    }
+
+    match /communities/{communityId} {
+      allow get: if canAccessCommunity(communityId)
+        || (signedIn() && !hasUserProfile() && !hasAdminProfile());
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /communityInvites/{inviteCode} {
+      // Profile-less, phone-authenticated residents can fetch a known document
+      // ID during registration, but can never enumerate or mutate invites.
+      allow get: if (signedIn() && !hasUserProfile() && !hasAdminProfile())
+        || canAccessCommunity(resource.data.communityId);
+      allow list: if canAccessCommunity(resource.data.communityId);
+      allow create: if canAccessCommunity(request.resource.data.communityId)
+        && request.resource.data.code == inviteCode
+        && request.resource.data.isActive == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.useCount == 0
+        && request.resource.data.usedCount == 0;
+      allow update: if canAccessCommunity(resource.data.communityId)
+        && request.resource.data.communityId == resource.data.communityId
+        && request.resource.data.code == resource.data.code;
+      allow delete: if false;
+    }
+
+    match /chats/{chatId}/messages/{messageId} {
+      allow create: if canAccessCommunity(request.resource.data.communityId)
+        && canAccessCommunity(get(/databases/$(database)/documents/chats/$(chatId)).data.communityId);
+      allow read, update, delete: if canAccessCommunity(
+        get(/databases/$(database)/documents/chats/$(chatId)).data.communityId
+      );
+    }
+
+    match /users/{userId} {
+      // Resident creation is performed only by the trusted callable function.
+      allow create: if canAccessCommunity(request.resource.data.communityId);
+
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow read: if canAccessCommunity(resource.data.communityId);
+
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'fullName', 'email', 'buildingReference',
+          'unitReference', 'updatedAt'
+        ]);
+      allow update: if canAccessCommunity(resource.data.communityId)
+        && request.resource.data.communityId == resource.data.communityId;
+    }
+
+    match /{collectionName}/{documentId} {
+      allow create: if collectionName in [
+          'buildings', 'flats', 'complaints', 'bills',
+          'notifications', 'visitors', 'parcels', 'staff',
+          'staffAttendance', 'amenities', 'amenity_bookings', 'gates',
+          'parkingSlots', 'vehicles', 'parking_violations', 'vendors',
+          'broadcasts', 'chats', 'messages', 'events_announcements', 'notices',
+          'posters', 'pinnedPosts', 'apartmentImages'
+        ] && canAccessCommunity(request.resource.data.communityId);
+
+      allow read, delete: if collectionName in [
+          'buildings', 'flats', 'complaints', 'bills',
+          'notifications', 'visitors', 'parcels', 'staff',
+          'staffAttendance', 'amenities', 'amenity_bookings', 'gates',
+          'parkingSlots', 'vehicles', 'parking_violations', 'vendors',
+          'broadcasts', 'chats', 'messages', 'events_announcements', 'notices',
+          'posters', 'pinnedPosts', 'apartmentImages'
+        ] && canAccessCommunity(resource.data.communityId);
+
+      allow update: if collectionName in [
+          'buildings', 'flats', 'complaints', 'bills',
+          'notifications', 'visitors', 'parcels', 'staff',
+          'staffAttendance', 'amenities', 'amenity_bookings', 'gates',
+          'parkingSlots', 'vehicles', 'parking_violations', 'vendors',
+          'broadcasts', 'chats', 'messages', 'events_announcements', 'notices',
+          'posters', 'pinnedPosts', 'apartmentImages'
+        ]
+        && canAccessCommunity(resource.data.communityId)
+        && request.resource.data.communityId == resource.data.communityId;
+    }
+  }
+}

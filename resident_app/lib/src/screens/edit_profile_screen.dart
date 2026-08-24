@@ -1,7 +1,7 @@
 // lib/src/screens/edit_profile_screen.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:easy_localization/easy_localization.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,7 +11,7 @@ import '../services/user_data_service.dart';
 import '../services/profile_image_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({Key? key}) : super(key: key);
+  const EditProfileScreen({super.key});
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -20,7 +20,7 @@ class EditProfileScreen extends StatefulWidget {
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   final _userDataService = UserDataService();
-  
+
   late TextEditingController _nameController;
   late TextEditingController _emailController;
   late TextEditingController _phoneController;
@@ -45,18 +45,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _loadUserProfile() async {
     print('🔵 EDIT PROFILE LOAD FLOW: Starting...');
     setState(() => _isLoading = true);
-    
+
     try {
       // STEP 1: Fetch user data from Firestore
       print('📥 STEP 1: Fetching user data from Firestore...');
-      var userData = await _userDataService.getCurrentUserData(forceRefresh: true);
-      
+      var userData = await _userDataService.getCurrentUserData(
+        forceRefresh: true,
+      );
+
       // If first attempt fails, try getting from SharedPreferences user_id
       if (userData == null) {
         print('⚠️  First attempt failed, trying alternative method...');
         final prefs = await SharedPreferences.getInstance();
         final userId = prefs.getString('user_id');
-        
+
         if (userId != null) {
           print('   Trying to fetch with user_id: $userId');
           userData = await FirebaseFirestore.instance
@@ -73,15 +75,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               });
         }
       }
-      
+
       if (userData == null) {
         print('❌ STEP 1 FAILED: No user data found');
         setState(() => _isLoading = false);
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('User profile not found. Please contact administrator.'),
+              content: Text(
+                'User profile not found. Please contact administrator.',
+              ),
               backgroundColor: Colors.red,
               duration: Duration(seconds: 3),
             ),
@@ -91,11 +95,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
 
       print('✅ STEP 1 PASSED: User data loaded');
-      print('   Name: ${userData?['name']}');
-      print('   Email: ${userData?['email']}');
-      print('   Phone: ${userData?['phone']}');
-      print('   Flat: ${userData?['flatLabel'] ?? userData?['flatId']}');
-      
+      print('   Name: ${userData['name']}');
+      print('   Email: ${userData['email']}');
+      print('   Phone: ${userData['phone']}');
+      print('   Flat: ${userData['flatLabel'] ?? userData['flatId']}');
+
       // STEP 2: Populate form fields
       print('🎨 STEP 2: Populating form fields...');
       if (mounted) {
@@ -103,11 +107,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _nameController.text = userData?['name'] ?? '';
           _emailController.text = userData?['email'] ?? '';
           _phoneController.text = userData?['phone'] ?? '';
-          _flatNumberController.text = userData?['flatLabel'] ?? userData?['flatId'] ?? '';
+          _flatNumberController.text =
+              userData?['flatLabel'] ?? userData?['flatId'] ?? '';
           _photoUrl = userData?['profileImage'] ?? userData?['photoURL'];
           _isLoading = false;
         });
-        
+
         print('✅ STEP 2 PASSED: Form fields populated');
         print('');
         print('✅ EDIT PROFILE LOAD FLOW: COMPLETE');
@@ -115,10 +120,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (e, stackTrace) {
       print('❌ ERROR in EDIT PROFILE LOAD FLOW: $e');
       print('   Stack trace: $stackTrace');
-      
+
       if (mounted) {
         setState(() => _isLoading = false);
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error loading profile: $e'),
@@ -144,7 +149,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return StandardScreen(
       title: 'Edit Profile',
       isScrollable: true,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(16.w),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Form(
@@ -152,14 +157,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: Column(
                 children: [
                   _buildPhotoSection(),
-                  const SizedBox(height: 24),
+                  SizedBox(height: 24.h),
                   _buildTextField(
                     label: 'Full Name',
                     controller: _nameController,
                     hint: 'Enter your name',
                     icon: Icons.person_outline,
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16.h),
                   _buildTextField(
                     label: 'Email',
                     controller: _emailController,
@@ -168,7 +173,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     keyboardType: TextInputType.emailAddress,
                     enabled: false, // Email cannot be changed
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16.h),
                   _buildTextField(
                     label: 'Phone',
                     controller: _phoneController,
@@ -176,16 +181,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     icon: Icons.phone_outlined,
                     keyboardType: TextInputType.phone,
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16.h),
                   _buildTextField(
                     label: 'Flat Number',
                     controller: _flatNumberController,
                     hint: 'e.g., A-101',
                     icon: Icons.home_outlined,
                   ),
-                  const SizedBox(height: 32),
+                  SizedBox(height: 32.h),
                   _buildSaveButton(),
-                  const SizedBox(height: 20),
+                  SizedBox(height: 20.h),
                 ],
               ),
             ),
@@ -195,33 +200,37 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget _buildOldHeader() {
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF2563EB), Color(0xFF1E40AF)],
+          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
         ),
         borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24),
-          bottomRight: Radius.circular(24),
+          bottomLeft: Radius.circular(24.r),
+          bottomRight: Radius.circular(24.r),
         ),
       ),
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 12, 16, 24),
+          padding: EdgeInsets.fromLTRB(4.w, 12.h, 16.w, 24.h),
           child: Row(
             children: [
               IconButton(
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
-                padding: const EdgeInsets.all(12),
+                icon: Icon(
+                  Icons.arrow_back_ios,
+                  color: Colors.white,
+                  size: 20.w,
+                ),
+                padding: EdgeInsets.all(12.w),
               ),
-              const Text(
+              Text(
                 'Edit Profile',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 20,
+                  fontSize: 20.sp,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -239,8 +248,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           Stack(
             children: [
               Container(
-                width: 100,
-                height: 100,
+                width: 100.w,
+                height: 100.h,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: const Color(0xFFE0E7FF),
@@ -250,8 +259,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   child: _photoFile != null
                       ? Image.file(_photoFile!, fit: BoxFit.cover)
                       : _photoUrl != null
-                          ? Image.network(_photoUrl!, fit: BoxFit.cover)
-                          : const Icon(Icons.person, size: 50, color: Color(0xFF2563EB)),
+                      ? Image.network(_photoUrl!, fit: BoxFit.cover)
+                      : Icon(
+                          Icons.person,
+                          size: 50.w,
+                          color: Color(0xFF0E4778),
+                        ),
                 ),
               ),
               Positioned(
@@ -260,26 +273,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: GestureDetector(
                   onTap: _pickPhoto,
                   child: Container(
-                    width: 36,
-                    height: 36,
+                    width: 36.w,
+                    height: 36.h,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB),
+                      color: const Color(0xFF0E4778),
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                     ),
-                    child: const Icon(Icons.camera_alt, color: Colors.white, size: 18),
+                    child: Icon(
+                      Icons.camera_alt,
+                      color: Colors.white,
+                      size: 18.w,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12.h),
           Text(
             'Tap to change photo',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
+            style: TextStyle(fontSize: 14.sp, color: Colors.grey[600]),
           ),
         ],
       ),
@@ -300,13 +314,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 15,
+          style: TextStyle(
+            fontSize: 15.sp,
             fontWeight: FontWeight.w600,
             color: Color(0xFF111827),
           ),
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: 8.h),
         TextFormField(
           controller: controller,
           keyboardType: keyboardType,
@@ -318,22 +332,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             filled: true,
             fillColor: enabled ? Colors.white : const Color(0xFFF3F4F6),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(12.r),
               borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(12.r),
               borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
             ),
             disabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(12.r),
               borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFF2563EB), width: 2),
+              borderRadius: BorderRadius.circular(12.r),
+              borderSide: const BorderSide(color: Color(0xFF0E4778), width: 2),
             ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: 16.w,
+              vertical: 14.h,
+            ),
           ),
           validator: (value) {
             if (!enabled) return null; // Skip validation for disabled fields
@@ -350,28 +367,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget _buildSaveButton() {
     return SizedBox(
       width: double.infinity,
-      height: 54,
+      height: 54.h,
       child: ElevatedButton(
         onPressed: _isSaving ? null : _handleSave,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF2563EB),
+          backgroundColor: const Color(0xFF0E4778),
           disabledBackgroundColor: const Color(0xFF93C5FD),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12.r),
+          ),
           elevation: 0,
         ),
         child: _isSaving
-            ? const SizedBox(
-                height: 20,
-                width: 20,
+            ? SizedBox(
+                height: 20.h,
+                width: 20.w,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
-            : const Text(
+            : Text(
                 'Save Changes',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 16.sp,
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                 ),
@@ -385,53 +404,62 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final ImageSource? source = await showModalBottomSheet<ImageSource>(
         context: context,
         backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20.r)),
         ),
         builder: (context) => SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: EdgeInsets.all(20.w),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 40,
-                  height: 4,
+                  width: 40.w,
+                  height: 4.h,
                   decoration: BoxDecoration(
                     color: const Color(0xFFE5E7EB),
-                    borderRadius: BorderRadius.circular(2),
+                    borderRadius: BorderRadius.circular(2.r),
                   ),
                 ),
-                const SizedBox(height: 20),
-                const Text(
+                SizedBox(height: 20.h),
+                Text(
                   'Select Photo Source',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontSize: 18.sp,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                const SizedBox(height: 20),
+                SizedBox(height: 20.h),
                 ListTile(
                   leading: Container(
-                    width: 48,
-                    height: 48,
+                    width: 48.w,
+                    height: 48.h,
                     decoration: BoxDecoration(
                       color: const Color(0xFFDBEAFE),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(12.r),
                     ),
-                    child: const Icon(Icons.camera_alt, color: Color(0xFF2563EB)),
+                    child: const Icon(
+                      Icons.camera_alt,
+                      color: Color(0xFF0E4778),
+                    ),
                   ),
                   title: const Text('Camera'),
                   subtitle: const Text('Take a new photo'),
                   onTap: () => Navigator.pop(context, ImageSource.camera),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: 8.h),
                 ListTile(
                   leading: Container(
-                    width: 48,
-                    height: 48,
+                    width: 48.w,
+                    height: 48.h,
                     decoration: BoxDecoration(
                       color: const Color(0xFFDCFCE7),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(12.r),
                     ),
-                    child: const Icon(Icons.photo_library, color: Color(0xFF16A34A)),
+                    child: const Icon(
+                      Icons.photo_library,
+                      color: Color(0xFF16A34A),
+                    ),
                   ),
                   title: const Text('Gallery'),
                   subtitle: const Text('Choose from gallery'),
@@ -459,9 +487,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString()}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
     }
   }
 
@@ -480,15 +508,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'flatLabel': _flatNumberController.text.trim(),
       };
       print('✅ STEP 1 PASSED: Updates prepared');
-      
+
       // STEP 2: Upload image if selected
       print('📸 STEP 2: Checking for image upload...');
       String? uploadedImageUrl;
       if (_photoFile != null) {
         print('   Image selected, uploading to Cloudinary...');
-        final imageResult = await ProfileImageService.instance.uploadProfileImage(
-          imagePath: _photoFile!.path,
-        );
+        final imageResult = await ProfileImageService.instance
+            .uploadProfileImage(imagePath: _photoFile!.path);
 
         if (imageResult.success && imageResult.imageUrl != null) {
           print('✅ STEP 2 PASSED: Image uploaded successfully');
@@ -497,7 +524,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           updates['profileImage'] = imageResult.imageUrl;
           _photoUrl = imageResult.imageUrl;
         } else {
-          print('⚠️  STEP 2 WARNING: Image upload failed: ${imageResult.message}');
+          print(
+            '⚠️  STEP 2 WARNING: Image upload failed: ${imageResult.message}',
+          );
           // Don't fail the entire save if image upload fails
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -523,19 +552,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
 
       print('✅ STEP 3 PASSED: User data updated in Firestore');
-      
+
       // STEP 4: Force refresh image cache if image was uploaded
       if (uploadedImageUrl != null) {
         print('🔄 STEP 4: Force refreshing image cache...');
         final userId = await _getUserId();
         if (userId != null) {
-          await ProfileImageService.instance.forceRefreshProfileImage(userId: userId);
+          await ProfileImageService.instance.forceRefreshProfileImage(
+            userId: userId,
+          );
           print('✅ STEP 4 PASSED: Image cache invalidated');
         }
       } else {
         print('✅ STEP 4 PASSED: No image cache refresh needed');
       }
-      
+
       // STEP 5: Return and show success
       print('✅ STEP 5: Returning to profile screen...');
       setState(() => _isSaving = false);
@@ -550,15 +581,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         );
       }
-      
+
       print('');
       print('✅ EDIT PROFILE SAVE FLOW: COMPLETE');
     } catch (e, stackTrace) {
       print('❌ ERROR in EDIT PROFILE SAVE FLOW: $e');
       print('   Stack trace: $stackTrace');
-      
+
       setState(() => _isSaving = false);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -576,7 +607,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       var userId = prefs.getString('user_id');
-      
+
       if (userId == null) {
         final firebaseUser = FirebaseAuth.instance.currentUser;
         if (firebaseUser != null) {
@@ -584,7 +615,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           await prefs.setString('user_id', userId);
         }
       }
-      
+
       return userId;
     } catch (e) {
       print('⚠️  Error getting user ID: $e');

@@ -1,0 +1,343 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    function isAuthenticated() {
+      return request.auth.uid != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isResident() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'resident';
+    }
+    
+    function isSecurity() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/security_staff/$(request.auth.uid)).data.role == 'security';
+    }
+    
+    function getUserAdminId() {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return userDoc.adminId;
+    }
+    
+    function getSecurityAdminId() {
+      let securityDoc = get(/databases/$(database)/documents/security_staff/$(request.auth.uid)).data;
+      return securityDoc.adminId;
+    }
+    
+    function adminOwnsBuild(buildingId) {
+      return isAdmin() && 
+             get(/databases/$(database)/documents/buildings/$(buildingId)).data.adminId == request.auth.uid;
+    }
+    
+    function adminOwnsFlat(flatId) {
+      let flatDoc = get(/databases/$(database)/documents/flats/$(flatId)).data;
+      return isAdmin() && flatDoc.adminId == request.auth.uid;
+    }
+    
+    function residentAssignedToFlat(flatId) {
+      let flatDoc = get(/databases/$(database)/documents/flats/$(flatId)).data;
+      return isResident() && flatDoc.residentUserId == request.auth.uid;
+    }
+    
+    function securityAssignedToBuilding(buildingId) {
+      let securityDoc = get(/databases/$(database)/documents/security_staff/$(request.auth.uid)).data;
+      return isSecurity() && 
+             securityDoc.buildingIds != null && 
+             buildingId in securityDoc.buildingIds;
+    }
+    
+    // ============================================
+    // ADMINS COLLECTION
+    // ============================================
+    match /admins/{adminId} {
+      allow read: if isAuthenticated() && request.auth.uid == adminId;
+      allow write: if isAuthenticated() && request.auth.uid == adminId;
+      allow create: if isAuthenticated();
+    }
+    
+    // ============================================
+    // BUILDINGS COLLECTION
+    // ============================================
+    match /buildings/{buildingId} {
+      allow read: if (isAdmin() && resource.data.adminId == request.auth.uid) ||
+                     (isResident() && resource.data.adminId == getUserAdminId()) ||
+                     (isSecurity() && securityAssignedToBuilding(buildingId));
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // FLATS COLLECTION
+    // ============================================
+    match /flats/{flatId} {
+      allow read: if (isAdmin() && resource.data.adminId == request.auth.uid) ||
+                     (isResident() && resource.data.residentUserId == request.auth.uid) ||
+                     (isSecurity() && securityAssignedToBuilding(resource.data.buildingId));
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // USERS COLLECTION (Residents)
+    // ============================================
+    match /users/{userId} {
+      allow read: if (isResident() && request.auth.uid == userId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if (isResident() && request.auth.uid == userId) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow create: if isAdmin() || isResident();
+    }
+    
+    // ============================================
+    // SECURITY_STAFF COLLECTION
+    // ============================================
+    match /security_staff/{staffId} {
+      allow read: if (isSecurity() && request.auth.uid == staffId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // BILLS COLLECTION
+    // ============================================
+    match /bills/{billId} {
+      allow read: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // NOTICES COLLECTION
+    // ============================================
+    match /notices/{noticeId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // COMPLAINTS COLLECTION
+    // ============================================
+    match /complaints/{complaintId} {
+      allow read: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow create: if isResident() || isAdmin();
+    }
+    
+    // ============================================
+    // VISITORS COLLECTION
+    // ============================================
+    match /visitors/{visitorId} {
+      allow read: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid) ||
+                     (isSecurity() && securityAssignedToBuilding(resource.data.buildingId));
+      
+      allow write: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid) ||
+                      (isSecurity() && securityAssignedToBuilding(resource.data.buildingId));
+      
+      allow create: if isResident() || isAdmin() || isSecurity();
+    }
+    
+    // ============================================
+    // PARKING COLLECTION
+    // ============================================
+    match /parking/{parkingId} {
+      allow read: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // VEHICLES COLLECTION
+    // ============================================
+    match /vehicles/{vehicleId} {
+      allow read: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow create: if isResident() || isAdmin();
+    }
+    
+    // ============================================
+    // ATTENDANCE COLLECTION
+    // ============================================
+    match /attendance/{attendanceId} {
+      allow read: if (isSecurity() && resource.data.staffId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if (isSecurity() && resource.data.staffId == request.auth.uid) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow create: if isSecurity() || isAdmin();
+    }
+    
+    // ============================================
+    // SECURITY_WORK_ASSIGNMENTS COLLECTION
+    // ============================================
+    match /security_work_assignments/{assignmentId} {
+      allow read: if (isSecurity() && resource.data.staffId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // GATES COLLECTION
+    // ============================================
+    match /gates/{gateId} {
+      allow read: if (isAdmin() && resource.data.adminId == request.auth.uid) ||
+                     (isSecurity() && securityAssignedToBuilding(resource.data.buildingId));
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // CHAT COLLECTION
+    // ============================================
+    match /chat/{chatId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if (isResident() && resource.data.buildingId == 
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow create: if isResident() || isAdmin();
+    }
+    
+    // ============================================
+    // NOTIFICATIONS COLLECTION
+    // ============================================
+    match /notifications/{notificationId} {
+      allow read: if (isResident() && resource.data.userId == request.auth.uid) ||
+                     (isSecurity() && resource.data.userId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() || isSecurity();
+      allow create: if isAdmin() || isSecurity();
+    }
+    
+    // ============================================
+    // AMENITIES COLLECTION
+    // ============================================
+    match /amenities/{amenityId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // AMENITY_BOOKINGS COLLECTION
+    // ============================================
+    match /amenity_bookings/{bookingId} {
+      allow read: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if (isResident() && resource.data.residentId == request.auth.uid) ||
+                      (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow create: if isResident() || isAdmin();
+    }
+    
+    // ============================================
+    // EVENTS_ANNOUNCEMENTS COLLECTION
+    // ============================================
+    match /events_announcements/{eventId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // POSTERS COLLECTION
+    // ============================================
+    match /posters/{posterId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // APARTMENT_IMAGES COLLECTION
+    // ============================================
+    match /apartment_images/{imageId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // STAFF_VENDORS COLLECTION
+    // ============================================
+    match /staff_vendors/{staffVendorId} {
+      allow read: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // BROADCAST_MESSAGES COLLECTION
+    // ============================================
+    match /broadcast_messages/{messageId} {
+      allow read: if (isResident() && resource.data.buildingId == 
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.buildingId) ||
+                     (isAdmin() && resource.data.adminId == request.auth.uid);
+      
+      allow write: if isAdmin() && resource.data.adminId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+    
+    // ============================================
+    // DENY ALL OTHER COLLECTIONS
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

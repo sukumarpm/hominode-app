@@ -1,78 +1,47 @@
-// lib/src/widgets/flat_access_wrapper.dart
-// Flat Access Wrapper - Wraps app content with access control
-
 import 'package:flutter/material.dart';
-import '../services/flat_access_control_service.dart';
 import '../screens/access_blocked_screen.dart';
+import '../screens/simple_login_screen.dart';
+import '../services/flat_access_control_service.dart';
 
+/// Wraps child widgets to enforce flat/resident access control.
 class FlatAccessWrapper extends StatelessWidget {
   final Widget child;
 
-  const FlatAccessWrapper({
-    Key? key,
-    required this.child,
-  }) : super(key: key);
+  const FlatAccessWrapper({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<AccessControlResult>(
       stream: FlatAccessControlService.instance.streamFlatAccess(),
       builder: (context, snapshot) {
-        // Loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(
-              child: CircularProgressIndicator(),
-            ),
-          );
-        }
-
-        // Error state
-        if (snapshot.hasError) {
-          return Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 64,
-                    color: Colors.red.shade300,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Error checking access',
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Please try again',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0E4778)),
               ),
             ),
           );
         }
 
-        // Check access result
-        final accessResult = snapshot.data;
-
-        if (accessResult == null || !accessResult.hasAccess) {
-          // Access denied - show blocked screen
+        final result = snapshot.data;
+        if (result == null || result.state == FlatAccessState.error) {
+          return Scaffold(
+            body: Center(
+              child: Text(result?.message ?? 'Unable to check flat access.'),
+            ),
+          );
+        }
+        if (result.state == FlatAccessState.unauthenticated) {
+          return const SimpleLoginScreen();
+        }
+        if (result.state == FlatAccessState.denied) {
           return AccessBlockedScreen(
-            message: accessResult?.message ?? 
+            message:
+                result.message ??
                 'Your account is not yet assigned to a flat. Please contact admin.',
           );
         }
-
-        // Access granted - show app content
         return child;
       },
     );

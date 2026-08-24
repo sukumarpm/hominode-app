@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/amenity.dart';
 import '../models/booking.dart';
 import '../modals/booking_modal.dart';
@@ -7,7 +7,7 @@ import '../components/standard_screen.dart';
 import '../services/booking_firestore_service.dart';
 
 class AmenitiesBookingScreen extends StatefulWidget {
-  const AmenitiesBookingScreen({Key? key}) : super(key: key);
+  const AmenitiesBookingScreen({super.key});
 
   @override
   State<AmenitiesBookingScreen> createState() => _AmenitiesBookingScreenState();
@@ -21,7 +21,9 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Cancel Booking'),
-        content: Text('Are you sure you want to cancel the booking for ${booking.amenityName}?'),
+        content: Text(
+          'Are you sure you want to cancel the booking for ${booking.amenityName}?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -59,10 +61,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
           );
         }
       }
@@ -73,50 +72,50 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
   Widget build(BuildContext context) {
     return StandardScreen(
       title: 'Amenities Booking',
-      showBackButton: false,
+      onBackPressed: () => Navigator.maybePop(context),
       isScrollable: true,
       padding: EdgeInsets.zero,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Available Amenities Section
-          const SizedBox(height: 20),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
+          SizedBox(height: 20.h),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20.w),
             child: Text(
               'Available Amenities',
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 18.sp,
                 fontWeight: FontWeight.w700,
                 color: Colors.black,
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16.h),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: EdgeInsets.symmetric(horizontal: 20.w),
             child: _buildAmenitiesStream(),
           ),
-          
+
           // My Bookings Section
-          const SizedBox(height: 32),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
+          SizedBox(height: 32.h),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20.w),
             child: Text(
               'My Bookings',
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 18.sp,
                 fontWeight: FontWeight.w700,
                 color: Colors.black,
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16.h),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: EdgeInsets.symmetric(horizontal: 20.w),
             child: _buildBookingsStream(),
           ),
-          const SizedBox(height: 20),
+          SizedBox(height: 20.h),
         ],
       ),
     );
@@ -128,9 +127,9 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
       builder: (context, snapshot) {
         // Loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(32),
+              padding: EdgeInsets.all(32.w),
               child: CircularProgressIndicator(),
             ),
           );
@@ -140,30 +139,27 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
         if (snapshot.hasError) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(32),
+              padding: EdgeInsets.all(32.w),
               child: Column(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.error_outline,
-                    size: 48,
+                    size: 48.w,
                     color: Color(0xFFFF5757),
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16.h),
                   Text(
                     'Error loading amenities',
-                    style: const TextStyle(
-                      fontSize: 16,
+                    style: TextStyle(
+                      fontSize: 16.sp,
                       fontWeight: FontWeight.w600,
                       color: Colors.black,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: 8.h),
                   Text(
                     snapshot.error.toString(),
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF9CA3AF),
-                    ),
+                    style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -176,30 +172,23 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(32),
+              padding: EdgeInsets.all(32.w),
               child: Column(
                 children: [
-                  Icon(
-                    Icons.apartment,
-                    size: 64,
-                    color: Colors.grey[300],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
+                  Icon(Icons.apartment, size: 64.w, color: Colors.grey[300]),
+                  SizedBox(height: 16.h),
+                  Text(
                     'No amenities available',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 16.sp,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF9CA3AF),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
+                  SizedBox(height: 8.h),
+                  Text(
                     'Check back later for available amenities',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF9CA3AF),
-                    ),
+                    style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -238,9 +227,9 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
       builder: (context, snapshot) {
         // Loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: Padding(
-              padding: EdgeInsets.all(32),
+              padding: EdgeInsets.all(32.w),
               child: CircularProgressIndicator(),
             ),
           );
@@ -250,30 +239,27 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
         if (snapshot.hasError) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(32),
+              padding: EdgeInsets.all(32.w),
               child: Column(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.error_outline,
-                    size: 48,
+                    size: 48.w,
                     color: Color(0xFFFF5757),
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
+                  SizedBox(height: 16.h),
+                  Text(
                     'Error loading bookings',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 16.sp,
                       fontWeight: FontWeight.w600,
                       color: Colors.black,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: 8.h),
                   Text(
                     snapshot.error.toString(),
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF9CA3AF),
-                    ),
+                    style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -286,30 +272,23 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return Center(
             child: Padding(
-              padding: const EdgeInsets.all(32),
+              padding: EdgeInsets.all(32.w),
               child: Column(
                 children: [
-                  Icon(
-                    Icons.event_busy,
-                    size: 64,
-                    color: Colors.grey[300],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
+                  Icon(Icons.event_busy, size: 64.w, color: Colors.grey[300]),
+                  SizedBox(height: 16.h),
+                  Text(
                     'No bookings yet',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 16.sp,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF9CA3AF),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
+                  SizedBox(height: 8.h),
+                  Text(
                     'Book an amenity to see it here',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF9CA3AF),
-                    ),
+                    style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
                   ),
                 ],
               ),
@@ -322,7 +301,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
         return Column(
           children: bookings.map((booking) {
             return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
+              padding: EdgeInsets.only(bottom: 16.h),
               child: BookingCard(
                 booking: booking,
                 onCancel: () => _handleCancelBooking(booking),
@@ -349,7 +328,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
       openTime: '6:00 AM',
       closeTime: '8:00 PM',
     );
-    
+
     await BookingModal.show(context, amenityLegacy);
   }
 }
@@ -362,15 +341,11 @@ class AmenityCard extends StatelessWidget {
   final AmenityModel amenity;
   final VoidCallback? onTap;
 
-  const AmenityCard({
-    Key? key,
-    required this.amenity,
-    this.onTap,
-  }) : super(key: key);
+  const AmenityCard({super.key, required this.amenity, this.onTap});
 
   IconData _getIconFromName(String? iconName) {
     if (iconName == null) return Icons.apartment;
-    
+
     switch (iconName.toLowerCase()) {
       case 'pool':
       case 'swimming_pool':
@@ -406,7 +381,7 @@ class AmenityCard extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(16.r),
           border: Border.all(color: const Color(0xFFEDEDED)),
           boxShadow: [
             BoxShadow(
@@ -421,27 +396,27 @@ class AmenityCard extends StatelessWidget {
           children: [
             // Icon container
             Container(
-              height: 90,
-              decoration: const BoxDecoration(
+              height: 90.h,
+              decoration: BoxDecoration(
                 color: Color(0xFFD6EBFF),
                 borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
+                  topLeft: Radius.circular(16.r),
+                  topRight: Radius.circular(16.r),
                 ),
               ),
               child: Center(
                 child: Icon(
                   _getIconFromName(amenity.iconName),
-                  size: 44,
+                  size: 44.w,
                   color: const Color(0xFF0A64FF),
                 ),
               ),
             ),
-            
+
             // Content
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(10),
+                padding: EdgeInsets.all(10.w),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -450,8 +425,8 @@ class AmenityCard extends StatelessWidget {
                       children: [
                         Text(
                           amenity.name,
-                          style: const TextStyle(
-                            fontSize: 14,
+                          style: TextStyle(
+                            fontSize: 14.sp,
                             fontWeight: FontWeight.w600,
                             color: Colors.black,
                           ),
@@ -459,11 +434,11 @@ class AmenityCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(height: 2),
+                        SizedBox(height: 2.h),
                         Text(
                           amenity.type,
-                          style: const TextStyle(
-                            fontSize: 11,
+                          style: TextStyle(
+                            fontSize: 11.sp,
                             color: Color(0xFF9CA3AF),
                           ),
                           textAlign: TextAlign.center,
@@ -472,37 +447,37 @@ class AmenityCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                    
+
                     // Price, Packages, and Capacity
                     Column(
                       children: [
                         // Price
                         Text(
                           amenity.priceDisplay,
-                          style: const TextStyle(
-                            fontSize: 13,
+                          style: TextStyle(
+                            fontSize: 13.sp,
                             fontWeight: FontWeight.w600,
                             color: Color(0xFF0A64FF),
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        
+
                         // Packages indicator
                         if (amenity.hasPackages) ...[
-                          const SizedBox(height: 3),
+                          SizedBox(height: 3.h),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
+                            children: [
                               Icon(
                                 Icons.card_membership,
-                                size: 11,
+                                size: 11.w,
                                 color: Color(0xFF10B981),
                               ),
-                              SizedBox(width: 3),
+                              SizedBox(width: 3.w),
                               Text(
                                 'Packages',
                                 style: TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 10.sp,
                                   color: Color(0xFF10B981),
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -510,37 +485,37 @@ class AmenityCard extends StatelessWidget {
                             ],
                           ),
                         ],
-                        
+
                         // Capacity indicator
                         if (amenity.allowMultipleBookings) ...[
-                          const SizedBox(height: 3),
+                          SizedBox(height: 3.h),
                           Text(
                             'Max ${amenity.maxCapacity} users',
-                            style: const TextStyle(
-                              fontSize: 9,
+                            style: TextStyle(
+                              fontSize: 9.sp,
                               color: Color(0xFF9CA3AF),
                             ),
                             textAlign: TextAlign.center,
                           ),
                         ],
-                        
-                        const SizedBox(height: 6),
+
+                        SizedBox(height: 6.h),
                         // Status pill
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10.w,
+                            vertical: 5.h,
                           ),
                           decoration: BoxDecoration(
                             color: amenity.isAvailable
                                 ? const Color(0xFFE5F6E9)
                                 : const Color(0xFFFFECEC),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(8.r),
                           ),
                           child: Text(
                             amenity.isAvailable ? 'Available' : 'Unavailable',
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 10.sp,
                               fontWeight: FontWeight.w600,
                               color: amenity.isAvailable
                                   ? const Color(0xFF0AA03C)
@@ -569,19 +544,15 @@ class BookingCard extends StatelessWidget {
   final BookingModel booking;
   final VoidCallback onCancel;
 
-  const BookingCard({
-    Key? key,
-    required this.booking,
-    required this.onCancel,
-  }) : super(key: key);
+  const BookingCard({super.key, required this.booking, required this.onCancel});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(16.r),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.06),
@@ -599,57 +570,57 @@ class BookingCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   booking.amenityName,
-                  style: const TextStyle(
-                    fontSize: 16,
+                  style: TextStyle(
+                    fontSize: 16.sp,
                     fontWeight: FontWeight.w700,
                     color: Colors.black,
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: 8.w),
               StatusPill(status: booking.status),
             ],
           ),
-          const SizedBox(height: 8),
-          
+          SizedBox(height: 8.h),
+
           // Booking Type & People
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
                 decoration: BoxDecoration(
-                  color: booking.isPackage ? const Color(0xFFEFF6FF) : const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(6),
+                  color: booking.isPackage
+                      ? const Color(0xFFEFF6FF)
+                      : const Color(0xFFF3F4F6),
+                  borderRadius: BorderRadius.circular(6.r),
                 ),
                 child: Text(
                   booking.isPackage ? booking.packageType! : 'Daily',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 11.sp,
                     fontWeight: FontWeight.w600,
-                    color: booking.isPackage ? const Color(0xFF2563EB) : const Color(0xFF6B7280),
+                    color: booking.isPackage
+                        ? const Color(0xFF0E4778)
+                        : const Color(0xFF6B7280),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: 8.w),
               if (booking.numberOfPeople > 1) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF0FDF4),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(6.r),
                   ),
                   child: Row(
                     children: [
-                      const Icon(
-                        Icons.people,
-                        size: 12,
-                        color: Color(0xFF10B981),
-                      ),
-                      const SizedBox(width: 4),
+                      Icon(Icons.people, size: 12.w, color: Color(0xFF10B981)),
+                      SizedBox(width: 4.w),
                       Text(
                         '${booking.numberOfPeople} people',
-                        style: const TextStyle(
-                          fontSize: 11,
+                        style: TextStyle(
+                          fontSize: 11.sp,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF10B981),
                         ),
@@ -660,93 +631,83 @@ class BookingCard extends StatelessWidget {
               ],
             ],
           ),
-          const SizedBox(height: 8),
-          
+          SizedBox(height: 8.h),
+
           // Date & Time
           Row(
             children: [
-              const Icon(
-                Icons.access_time,
-                size: 16,
-                color: Color(0xFF8A8A8A),
-              ),
-              const SizedBox(width: 6),
+              Icon(Icons.access_time, size: 16.w, color: Color(0xFF8A8A8A)),
+              SizedBox(width: 6.w),
               Text(
                 '${booking.formattedDate} • ${booking.timeSlot}',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF8A8A8A),
-                ),
+                style: TextStyle(fontSize: 13.sp, color: Color(0xFF8A8A8A)),
               ),
             ],
           ),
-          
+
           // Package Duration (if applicable)
           if (booking.isPackage && booking.packageDuration.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: 8.h),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.calendar_today,
-                  size: 16,
+                  size: 16.w,
                   color: Color(0xFF8A8A8A),
                 ),
-                const SizedBox(width: 6),
+                SizedBox(width: 6.w),
                 Expanded(
                   child: Text(
                     'Valid: ${booking.packageDuration}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF8A8A8A),
-                    ),
+                    style: TextStyle(fontSize: 12.sp, color: Color(0xFF8A8A8A)),
                   ),
                 ),
               ],
             ),
           ],
-          
+
           // Price
           if (booking.price > 0) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: 8.h),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.payments_outlined,
-                  size: 16,
+                  size: 16.w,
                   color: Color(0xFF8A8A8A),
                 ),
-                const SizedBox(width: 6),
+                SizedBox(width: 6.w),
                 Text(
                   '₹${booking.price.toStringAsFixed(0)}',
-                  style: const TextStyle(
-                    fontSize: 13,
+                  style: TextStyle(
+                    fontSize: 13.sp,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF2563EB),
+                    color: Color(0xFF0E4778),
                   ),
                 ),
               ],
             ),
           ],
-          
-          const SizedBox(height: 16),
+
+          SizedBox(height: 16.h),
           SizedBox(
             width: double.infinity,
-            height: 44,
+            height: 44.h,
             child: OutlinedButton(
               onPressed: booking.status == 'cancelled' ? null : onCancel,
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: Color(0xFFFF5757), width: 1.5),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(8.r),
                 ),
                 disabledForegroundColor: const Color(0xFF9B9B9B),
               ),
               child: Text(
                 booking.status == 'cancelled' ? 'Cancelled' : 'Cancel Booking',
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 15.sp,
                   fontWeight: FontWeight.w600,
-                  color: booking.status == 'cancelled' 
+                  color: booking.status == 'cancelled'
                       ? const Color(0xFF9B9B9B)
                       : const Color(0xFFFF5757),
                 ),
@@ -766,10 +727,7 @@ class BookingCard extends StatelessWidget {
 class StatusPill extends StatelessWidget {
   final String status;
 
-  const StatusPill({
-    Key? key,
-    required this.status,
-  }) : super(key: key);
+  const StatusPill({super.key, required this.status});
 
   Color get _backgroundColor {
     switch (status.toLowerCase()) {
@@ -806,15 +764,15 @@ class StatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
       decoration: BoxDecoration(
         color: _backgroundColor,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(12.r),
       ),
       child: Text(
         _displayText,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: 12.sp,
           fontWeight: FontWeight.w600,
           color: _textColor,
         ),

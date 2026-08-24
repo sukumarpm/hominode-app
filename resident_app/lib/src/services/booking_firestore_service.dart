@@ -21,15 +21,15 @@ class AmenityModel {
   final String? iconName;
   final String? imageUrl;
   final String? description;
-  
+
   // Subscription packages
   final bool hasSubscriptionPackages;
   final Map<String, double>? subscriptionPackages;
-  
+
   // Capacity management
   final bool allowMultipleBookings;
   final int maxCapacity;
-  
+
   // Booking durations
   final List<String> bookingDurations;
 
@@ -55,11 +55,11 @@ class AmenityModel {
 
   factory AmenityModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>?;
-    
+
     if (data == null) {
       throw Exception('Amenity document data is null');
     }
-    
+
     // FIX: Convert List<dynamic> to List<String> safely
     List<String> timeSlots = [];
     try {
@@ -71,15 +71,16 @@ class AmenityModel {
       print('⚠️  Error parsing timeSlots: $e');
       timeSlots = [];
     }
-    
+
     // Parse subscription packages
     Map<String, double>? packages;
     if (data['subscriptionPackages'] != null) {
       try {
-        final packagesData = data['subscriptionPackages'] as Map<String, dynamic>?;
+        final packagesData =
+            data['subscriptionPackages'] as Map<String, dynamic>?;
         if (packagesData != null) {
-          packages = packagesData.map((key, value) => 
-            MapEntry(key, (value as num).toDouble())
+          packages = packagesData.map(
+            (key, value) => MapEntry(key, (value as num).toDouble()),
           );
         }
       } catch (e) {
@@ -87,7 +88,7 @@ class AmenityModel {
         packages = null;
       }
     }
-    
+
     // FIX: Convert bookingDurations safely
     List<String> bookingDurations = ['1 hour'];
     try {
@@ -99,11 +100,11 @@ class AmenityModel {
       print('⚠️  Error parsing bookingDurations: $e');
       bookingDurations = ['1 hour'];
     }
-    
+
     // FIX: Safe null checks for all fields
     final maxCapacity = (data['maxCapacity'] as num?)?.toInt() ?? 1;
     final pricePerDay = (data['pricePerDay'] as num?)?.toDouble();
-    
+
     return AmenityModel(
       id: doc.id,
       name: (data['name'] as String?)?.trim() ?? 'Unknown Amenity',
@@ -136,13 +137,16 @@ class AmenityModel {
     if (timeSlots.length == 1) return timeSlots.first;
     return '${timeSlots.length} slots available';
   }
-  
+
   String get capacityDisplay {
     if (!allowMultipleBookings) return 'Single booking';
     return 'Up to $maxCapacity users';
   }
-  
-  bool get hasPackages => hasSubscriptionPackages && subscriptionPackages != null && subscriptionPackages!.isNotEmpty;
+
+  bool get hasPackages =>
+      hasSubscriptionPackages &&
+      subscriptionPackages != null &&
+      subscriptionPackages!.isNotEmpty;
 }
 
 /// Result class for booking operations
@@ -179,7 +183,8 @@ class BookingResult {
 /// Booking Firestore Service
 class BookingFirestoreService {
   // Singleton pattern
-  static final BookingFirestoreService instance = BookingFirestoreService._internal();
+  static final BookingFirestoreService instance =
+      BookingFirestoreService._internal();
   factory BookingFirestoreService() => instance;
   BookingFirestoreService._internal();
 
@@ -199,10 +204,13 @@ class BookingFirestoreService {
       final firebaseUser = _auth.currentUser;
       if (firebaseUser != null) {
         print('🆔 BookingService: Firebase Auth User: ${firebaseUser.uid}');
-        
+
         // Try to find user document by Firebase Auth UID
-        final doc = await _firestore.collection('users').doc(firebaseUser.uid).get();
-        
+        final doc = await _firestore
+            .collection('users')
+            .doc(firebaseUser.uid)
+            .get();
+
         if (doc.exists) {
           print('✅ BookingService: Found user document by Firebase Auth UID');
           return doc.id;
@@ -214,25 +222,27 @@ class BookingFirestoreService {
               .where('authUid', isEqualTo: firebaseUser.uid)
               .limit(1)
               .get();
-          
+
           if (querySnapshot.docs.isNotEmpty) {
             print('✅ BookingService: Found user document by authUid field');
             return querySnapshot.docs.first.id;
           }
         }
       }
-      
+
       // Fallback to SharedPreferences
-      print('⚠️  BookingService: No Firebase Auth user, checking SharedPreferences...');
+      print(
+        '⚠️  BookingService: No Firebase Auth user, checking SharedPreferences...',
+      );
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getString('user_id');
-      
+
       if (userId != null) {
         print('🆔 BookingService: Using stored User ID: $userId');
       } else {
         print('❌ BookingService: No user ID found');
       }
-      
+
       return userId;
     } catch (e) {
       print('❌ BookingService: Error getting user ID: $e');
@@ -250,14 +260,14 @@ class BookingFirestoreService {
       }
 
       final userDoc = await _firestore.collection('users').doc(userId).get();
-      
+
       if (!userDoc.exists) {
         print('❌ User document not found');
         return null;
       }
 
       final userData = userDoc.data() as Map<String, dynamic>;
-      
+
       // CRITICAL: Use Firebase Auth UID for userId, not Firestore document ID
       // This is required for Firestore rules to work
       final firebaseUser = FirebaseAuth.instance.currentUser;
@@ -268,7 +278,7 @@ class BookingFirestoreService {
         userData['userId'] = userId;
         print('⚠️  Using Firestore document ID as userId: $userId');
       }
-      
+
       return userData;
     } catch (e) {
       print('❌ Error fetching user data: $e');
@@ -304,7 +314,7 @@ class BookingFirestoreService {
 
       final buildingId = userData['buildingId']?.toString();
       final organizationId = userData['organizationId']?.toString();
-      
+
       print('👤 User: ${userData['name']}');
       print('🏢 Building ID: $buildingId');
       print('🏛️  Organization ID: $organizationId');
@@ -325,20 +335,25 @@ class BookingFirestoreService {
       // Stream the query results
       yield* query.snapshots().map((snapshot) {
         print('📊 Received ${snapshot.docs.length} amenities from stream');
-        
-        final amenities = snapshot.docs.map((doc) {
-          try {
-            return AmenityModel.fromFirestore(doc);
-          } catch (e) {
-            print('⚠️  Error parsing amenity ${doc.id}: $e');
-            return null;
-          }
-        }).whereType<AmenityModel>().toList();
+
+        final amenities = snapshot.docs
+            .map((doc) {
+              try {
+                return AmenityModel.fromFirestore(doc);
+              } catch (e) {
+                print('⚠️  Error parsing amenity ${doc.id}: $e');
+                return null;
+              }
+            })
+            .whereType<AmenityModel>()
+            .toList();
 
         if (amenities.isNotEmpty) {
           print('✅ Streaming ${amenities.length} amenities:');
           for (var amenity in amenities) {
-            print('  📍 ${amenity.name} - ${amenity.priceDisplay} - ${amenity.timeSlotsDisplay}');
+            print(
+              '  📍 ${amenity.name} - ${amenity.priceDisplay} - ${amenity.timeSlotsDisplay}',
+            );
           }
         } else {
           print('⚠️  No amenities available');
@@ -377,28 +392,31 @@ class BookingFirestoreService {
           .where('userId', isEqualTo: userId)
           .snapshots()
           .map((snapshot) {
-        print('📊 Received ${snapshot.docs.length} bookings from stream');
+            print('📊 Received ${snapshot.docs.length} bookings from stream');
 
-        final bookings = snapshot.docs.map((doc) {
-          try {
-            return _bookingFromFirestore(doc);
-          } catch (e) {
-            print('⚠️  Error parsing booking ${doc.id}: $e');
-            return null;
-          }
-        }).whereType<BookingModel>().toList();
+            final bookings = snapshot.docs
+                .map((doc) {
+                  try {
+                    return _bookingFromFirestore(doc);
+                  } catch (e) {
+                    print('⚠️  Error parsing booking ${doc.id}: $e');
+                    return null;
+                  }
+                })
+                .whereType<BookingModel>()
+                .toList();
 
-        // Sort in memory by date (newest first)
-        bookings.sort((a, b) => b.date.compareTo(a.date));
+            // Sort in memory by date (newest first)
+            bookings.sort((a, b) => b.date.compareTo(a.date));
 
-        if (bookings.isNotEmpty) {
-          print('✅ Streaming ${bookings.length} bookings');
-        } else {
-          print('⚠️  No bookings found');
-        }
+            if (bookings.isNotEmpty) {
+              print('✅ Streaming ${bookings.length} bookings');
+            } else {
+              print('⚠️  No bookings found');
+            }
 
-        return bookings;
-      });
+            return bookings;
+          });
     } catch (e, stackTrace) {
       print('❌ Error in bookings stream: $e');
       print('Stack trace: $stackTrace');
@@ -427,7 +445,7 @@ class BookingFirestoreService {
       print('   Has packages: ${amenity.hasPackages}');
       print('   Allow multiple: ${amenity.allowMultipleBookings}');
       print('   Max capacity: ${amenity.maxCapacity}');
-      
+
       return amenity;
     } catch (e) {
       print('❌ Error fetching amenity details: $e');
@@ -443,7 +461,9 @@ class BookingFirestoreService {
     int numberOfPeople = 1, // NEW: Number of people to book for
   }) async {
     try {
-      print('🔍 Checking availability for $amenityId on ${date.toString().split(' ')[0]} at $timeSlot for $numberOfPeople people');
+      print(
+        '🔍 Checking availability for $amenityId on ${date.toString().split(' ')[0]} at $timeSlot for $numberOfPeople people',
+      );
 
       // Get amenity details
       final amenity = await getAmenityDetails(amenityId);
@@ -462,7 +482,9 @@ class BookingFirestoreService {
       final startOfDay = DateTime(date.year, date.month, date.day);
       final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
-      print('📅 Querying bookings from ${startOfDay.toString()} to ${endOfDay.toString()}');
+      print(
+        '📅 Querying bookings from ${startOfDay.toString()} to ${endOfDay.toString()}',
+      );
 
       final bookingsSnapshot = await _firestore
           .collection(bookingsCollection)
@@ -478,12 +500,14 @@ class BookingFirestoreService {
         final data = doc.data();
         final docTimeSlot = data['timeSlot'] as String?;
         final docStatus = data['status'] as String?;
-        
-        return docTimeSlot == timeSlot && 
-               (docStatus == 'confirmed' || docStatus == 'pending');
+
+        return docTimeSlot == timeSlot &&
+            (docStatus == 'confirmed' || docStatus == 'pending');
       }).toList();
 
-      print('📊 Found ${matchingBookings.length} bookings for time slot "$timeSlot"');
+      print(
+        '📊 Found ${matchingBookings.length} bookings for time slot "$timeSlot"',
+      );
 
       // NEW: Sum up numberOfPeople from all bookings (not just count bookings)
       int totalPeople = 0;
@@ -491,10 +515,14 @@ class BookingFirestoreService {
         final data = doc.data();
         final people = data['numberOfPeople'] as int? ?? 1;
         totalPeople += people;
-        print('  👥 Booking ${doc.id}: $people people (Status: ${data['status']})');
+        print(
+          '  👥 Booking ${doc.id}: $people people (Status: ${data['status']})',
+        );
       }
-      
-      print('📊 Total people booked: $totalPeople out of ${amenity.maxCapacity}');
+
+      print(
+        '📊 Total people booked: $totalPeople out of ${amenity.maxCapacity}',
+      );
 
       // Check availability based on amenity settings
       if (!amenity.allowMultipleBookings) {
@@ -549,7 +577,9 @@ class BookingFirestoreService {
     required DateTime endDate,
   }) async {
     try {
-      print('📅 Fetching bookings from ${startDate.toString().split(' ')[0]} to ${endDate.toString().split(' ')[0]}');
+      print(
+        '📅 Fetching bookings from ${startDate.toString().split(' ')[0]} to ${endDate.toString().split(' ')[0]}',
+      );
 
       final bookingsSnapshot = await _firestore
           .collection(bookingsCollection)
@@ -566,7 +596,8 @@ class BookingFirestoreService {
         final data = doc.data();
         final timestamp = data['date'] as Timestamp;
         final date = timestamp.toDate();
-        final dateKey = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+        final dateKey =
+            '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
         final timeSlot = data['timeSlot'] as String;
 
         if (!bookingsByDate.containsKey(dateKey)) {
@@ -654,6 +685,13 @@ class BookingFirestoreService {
       final flatLabel = userData['flatLabel'] ?? userData['flatId'] ?? '';
       final buildingId = userData['buildingId'];
       final organizationId = userData['organizationId'];
+      final communityId = userData['communityId']?.toString().trim() ?? '';
+      if (communityId.isEmpty) {
+        return BookingResult.failure(
+          message: 'Your resident account is not assigned to a community.',
+          errorCode: 'community-not-assigned',
+        );
+      }
 
       print('✅ User data fetched: $userName');
       print('🏢 Flat: $flatLabel');
@@ -665,33 +703,35 @@ class BookingFirestoreService {
       String? adminName;
       String? adminEmail;
       double price = 0;
-      
+
       if (amenity != null) {
         // Fetch amenity document to get admin details
         final amenityDoc = await _firestore
             .collection(amenitiesCollection)
             .doc(amenityId)
             .get();
-        
+
         if (amenityDoc.exists) {
           final amenityData = amenityDoc.data() as Map<String, dynamic>;
           adminId = amenityData['adminId']?.toString();
           adminName = amenityData['adminName']?.toString();
           adminEmail = amenityData['adminEmail']?.toString();
-          
+
           print('✅ Admin data fetched: $adminName (ID: $adminId)');
         }
-        
+
         // Calculate price based on booking type
         if (bookingType == 'daily') {
           price = amenity.pricePerDay ?? 0;
         } else if (amenity.subscriptionPackages != null) {
-          final packageKey = bookingType == 'weekly' ? 'Weekly'
-                           : bookingType == 'monthly' ? 'Monthly'
-                           : 'Yearly';
+          final packageKey = bookingType == 'weekly'
+              ? 'Weekly'
+              : bookingType == 'monthly'
+              ? 'Monthly'
+              : 'Yearly';
           price = amenity.subscriptionPackages![packageKey] ?? 0;
         }
-        
+
         print('💰 Calculated price: ₹$price');
       }
 
@@ -700,7 +740,7 @@ class BookingFirestoreService {
       DateTime subscriptionEndDate;
       int validityDays;
       String? packageType;
-      
+
       switch (bookingType) {
         case 'weekly':
           subscriptionEndDate = date.add(const Duration(days: 7));
@@ -722,8 +762,10 @@ class BookingFirestoreService {
           validityDays = 1;
           packageType = null;
       }
-      
-      print('📅 Subscription: ${subscriptionStartDate.toString().split(' ')[0]} to ${subscriptionEndDate.toString().split(' ')[0]}');
+
+      print(
+        '📅 Subscription: ${subscriptionStartDate.toString().split(' ')[0]} to ${subscriptionEndDate.toString().split(' ')[0]}',
+      );
       print('⏳ Validity: $validityDays days');
 
       // Create booking document
@@ -736,36 +778,37 @@ class BookingFirestoreService {
         'flatLabel': flatLabel,
         'buildingId': buildingId,
         'organizationId': organizationId,
-        
+        'communityId': communityId,
+
         // Amenity Info
         'amenityId': amenityId,
         'amenityName': amenityName,
-        
+
         // Booking Type & Duration (NEW)
         'bookingType': bookingType,
         'packageType': packageType,
-        
+
         // Date & Time
         'date': Timestamp.fromDate(date),
         'timeSlot': timeSlot,
-        
+
         // Package Duration (NEW)
         'subscriptionStartDate': Timestamp.fromDate(subscriptionStartDate),
         'subscriptionEndDate': Timestamp.fromDate(subscriptionEndDate),
         'validityDays': validityDays,
-        
+
         // Family Members (NEW)
         'numberOfPeople': numberOfPeople,
-        
+
         // Pricing
         'price': price,
         'pricePerDay': amenity?.pricePerDay ?? 0,
-        
+
         // Status
         'status': 'confirmed', // confirmed, cancelled, completed, expired
         'cancellationDate': null,
         'cancellationReason': null,
-        
+
         // Timestamps
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -777,7 +820,7 @@ class BookingFirestoreService {
         if (adminName != null) bookingData['adminName'] = adminName;
         if (adminEmail != null) bookingData['adminEmail'] = adminEmail;
       }
-      
+
       // Add family members if provided
       if (familyMembers != null && familyMembers.isNotEmpty) {
         bookingData['familyMembers'] = familyMembers;
@@ -817,33 +860,34 @@ class BookingFirestoreService {
   // ============================================================================
 
   /// Cancel booking
-  Future<BookingResult> cancelBooking(String bookingId, {String? reason}) async {
+  Future<BookingResult> cancelBooking(
+    String bookingId, {
+    String? reason,
+  }) async {
     try {
       print('🔵 Cancelling booking: $bookingId');
       if (reason != null) {
         print('📝 Reason: $reason');
       }
-      
+
       final updateData = {
         'status': 'cancelled',
         'cancellationDate': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
-      
+
       // Add cancellation reason if provided
       if (reason != null && reason.isNotEmpty) {
         updateData['cancellationReason'] = reason;
       }
-      
+
       await _firestore
           .collection(bookingsCollection)
           .doc(bookingId)
           .update(updateData);
 
       print('✅ Booking cancelled successfully');
-      return BookingResult.success(
-        message: 'Booking cancelled successfully',
-      );
+      return BookingResult.success(message: 'Booking cancelled successfully');
     } on FirebaseException catch (e) {
       print('❌ Firebase Error: ${e.code}');
       return BookingResult.failure(
@@ -852,9 +896,7 @@ class BookingFirestoreService {
       );
     } catch (e) {
       print('❌ Error cancelling booking: $e');
-      return BookingResult.failure(
-        message: 'Failed to cancel booking',
-      );
+      return BookingResult.failure(message: 'Failed to cancel booking');
     }
   }
 
@@ -865,7 +907,7 @@ class BookingFirestoreService {
   /// Convert Firestore document to BookingModel object
   BookingModel _bookingFromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    
+
     // Parse date timestamp
     DateTime date;
     try {
@@ -883,14 +925,14 @@ class BookingFirestoreService {
     } catch (e) {
       createdAt = DateTime.now();
     }
-    
+
     // Parse subscription dates (NEW)
     DateTime? subscriptionStartDate;
     DateTime? subscriptionEndDate;
     try {
       final startTimestamp = data['subscriptionStartDate'] as Timestamp?;
       subscriptionStartDate = startTimestamp?.toDate();
-      
+
       final endTimestamp = data['subscriptionEndDate'] as Timestamp?;
       subscriptionEndDate = endTimestamp?.toDate();
     } catch (e) {
