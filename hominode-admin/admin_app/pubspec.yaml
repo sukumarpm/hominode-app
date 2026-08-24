@@ -65,6 +65,8 @@ dependencies:
   flutter_screenutil: any
   google_maps_flutter: ^2.18.0
   geolocator: ^14.0.2
+  hominode_core:
+    path: ../../packages/hominode_core
 dev_dependencies:
   flutter_test:
     sdk: flutter

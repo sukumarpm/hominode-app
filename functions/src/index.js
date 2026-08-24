@@ -47,6 +47,10 @@ const {
   reverseGeocodeCommunityLocationCore,
 } = require("./community_geocoding");
 const {updateCommunityLocationCore} = require("./community_location_management");
+const {
+  validateResidentBulkImportCore,
+  importResidentsBulkCore,
+} = require("./resident_bulk_import");
 
 
 const REGION = "asia-southeast1";
@@ -102,6 +106,16 @@ initializeApp();
 exports.registerResident = callable(
   registerResidentCore,
   "Registration could not be completed."
+);
+
+exports.validateResidentBulkImport = callable(
+  validateResidentBulkImportCore,
+  "The resident import could not be validated."
+);
+
+exports.importResidentsBulk = callable(
+  importResidentsBulkCore,
+  "The resident import could not be completed."
 );
 
 /*

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../session/web_session.dart';
 import '../theme/web_design_system.dart';
 import '../widgets/dashboard_components.dart';
+import '../widgets/resident_bulk_import_dialog.dart';
 
 class AdminResidentsPage extends StatefulWidget {
   const AdminResidentsPage({
@@ -183,6 +184,10 @@ class _AdminResidentsPageState extends State<AdminResidentsPage> {
                     _statusFilter = value;
                   });
                 },
+                onBulkImport: () => ResidentBulkImportDialog.show(
+                  context,
+                  communityId: _communityId,
+                ),
               ),
               child: filteredResidents.isEmpty
                   ? EmptyState(
@@ -455,6 +460,7 @@ class _ResidentToolbar extends StatelessWidget {
     required this.onSearchChanged,
     required this.onSearchClear,
     required this.onStatusChanged,
+    required this.onBulkImport,
   });
 
   final TextEditingController searchController;
@@ -464,6 +470,7 @@ class _ResidentToolbar extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onSearchClear;
   final ValueChanged<String?> onStatusChanged;
+  final VoidCallback onBulkImport;
 
   @override
   Widget build(BuildContext context) {
@@ -472,6 +479,11 @@ class _ResidentToolbar extends StatelessWidget {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
+        FilledButton.icon(
+          onPressed: onBulkImport,
+          icon: const Icon(Icons.upload_file_outlined, size: 18),
+          label: const Text('Bulk Import'),
+        ),
         SizedBox(
           width: 250,
           child: TextField(

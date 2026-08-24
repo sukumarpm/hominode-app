@@ -1,4 +1,5 @@
 const {FieldValue} = require("firebase-admin/firestore");
+const {residentOnboardingId} = require("./resident_import_ids");
 
 class RegistrationError extends Error {
   constructor(code, message) {
@@ -87,15 +88,45 @@ async function registerResidentCore({db, auth, data, now = Date.now()}) {
     const community = await transaction.get(communityRef);
     if (!community.exists || community.data().isActive !== true) throw new RegistrationError("failed-precondition", "Community is inactive or unavailable.");
 
+    // A trusted bulk import creates onboarding data, never an Auth account.
+    // Bind that data only after this resident proves ownership of the same
+    // phone number through the existing OTP registration flow.
+    const onboardingRef = db.collection("residentOnboarding")
+      .doc(residentOnboardingId(communityId, identity.phoneNumber));
+    const onboardingSnapshot = await transaction.get(onboardingRef);
+    const onboarding = onboardingSnapshot.exists ? onboardingSnapshot.data() : null;
+    const imported = onboarding &&
+      onboarding.communityId === communityId &&
+      onboarding.phoneNumber === identity.phoneNumber &&
+      onboarding.status === "pending_registration" &&
+      onboarding.claimedByUid == null;
+
     transaction.set(userRef, {
       uid: identity.uid, phoneNumber: identity.phoneNumber, phone: identity.phoneNumber,
       name: input.fullName, fullName: input.fullName, email: input.email,
       communityId, communityInviteCode: input.inviteCode,
       role: "resident", isActive: false, approvalStatus: "pending",
-      buildingReference: input.buildingReference, unitReference: input.unitReference,
-      buildingId: null, unitId: null, flatId: null,
+      buildingReference: imported ? onboarding.buildingReference : input.buildingReference,
+      unitReference: imported ? onboarding.unitReference : input.unitReference,
+      buildingId: imported ? onboarding.buildingId : null,
+      buildingName: imported ? onboarding.buildingName : null,
+      unitId: imported ? onboarding.unitId : null,
+      flatId: imported ? onboarding.flatId : null,
+      flatLabel: imported ? onboarding.flatLabel : null,
+      ownershipType: imported ? onboarding.residentType : null,
+      residentType: imported ? onboarding.residentType : null,
+      importJobId: imported ? onboarding.importJobId : null,
+      creationSource: imported ? "admin_bulk_import_claim" : "resident_registration",
       createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
     });
+    if (imported) {
+      transaction.update(onboardingRef, {
+        status: "claimed",
+        claimedByUid: identity.uid,
+        claimedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
     transaction.update(inviteRef, {
       useCount: useCount + 1, usedCount: useCount + 1, updatedAt: FieldValue.serverTimestamp(),
     });

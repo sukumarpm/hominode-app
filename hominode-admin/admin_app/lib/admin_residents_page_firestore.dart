@@ -21,6 +21,7 @@ import 'services/user_service.dart';
 import 'services/building_service.dart';
 import 'services/billing_service.dart';
 import 'pending_residents_screen.dart';
+import 'resident_bulk_import_screen.dart';
 
 class AdminResidentsPageFirestore extends StatefulWidget {
   const AdminResidentsPageFirestore({super.key});
@@ -124,6 +125,19 @@ class _AdminResidentsPageFirestoreState
           ),
           Row(
             children: [
+              IconButton(
+                tooltip: 'Bulk resident import',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ResidentBulkImportScreen(),
+                  ),
+                ),
+                icon: const Icon(
+                  Icons.upload_file_outlined,
+                  color: Color(0xFF0E4778),
+                ),
+              ),
               IconButton(
                 tooltip: 'Pending registrations',
                 onPressed: () => Navigator.push(
