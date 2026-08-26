@@ -11,17 +11,18 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
-import 'widgets/standard_bottom_nav.dart';
-import 'widgets/standard_header.dart';
-import 'widgets/add_resident_modal_clean.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import 'edit_resident_screen.dart';
-import 'services/user_service.dart';
-import 'services/building_service.dart';
-import 'services/billing_service.dart';
 import 'pending_residents_screen.dart';
 import 'resident_bulk_import_screen.dart';
+import 'services/billing_service.dart';
+import 'services/building_service.dart';
+import 'services/user_service.dart';
+import 'widgets/add_resident_modal_clean.dart';
+import 'widgets/standard_bottom_nav.dart';
+import 'widgets/standard_header.dart';
 
 class AdminResidentsPageFirestore extends StatefulWidget {
   const AdminResidentsPageFirestore({super.key});
@@ -112,17 +113,18 @@ class _AdminResidentsPageFirestoreState
   Widget _buildSectionHeader() {
     return Padding(
       padding: EdgeInsets.fromLTRB(16.w, 16.h, 16.w, 0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Resident Management',
             style: TextStyle(
               fontSize: 18.sp,
               fontWeight: FontWeight.w700,
-              color: Color(0xFF111111),
+              color: const Color(0xFF111111),
             ),
           ),
+          SizedBox(height: 10.h),
           Row(
             children: [
               IconButton(
@@ -149,6 +151,7 @@ class _AdminResidentsPageFirestoreState
                   color: Color(0xFF0E4778),
                 ),
               ),
+              const Spacer(),
               ElevatedButton.icon(
                 onPressed: _showAddResidentDialog,
                 icon: Icon(Icons.add, size: 18.w),

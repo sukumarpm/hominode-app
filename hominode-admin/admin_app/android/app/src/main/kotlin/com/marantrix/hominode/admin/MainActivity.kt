@@ -1,4 +1,4 @@
-package com.marantrix.lyvo.admin
+package com.marantrix.hominode.admin
 
 import io.flutter.embedding.android.FlutterActivity
 

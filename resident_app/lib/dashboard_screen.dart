@@ -1243,6 +1243,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final PageController _pageController = PageController();
   int _currentPage = 0;
+  late Future<List<dynamic>> _recentActivityFuture;
 
   final _billService = BillFirestoreService();
   final _visitorService = VisitorFirestoreService();
@@ -1262,6 +1263,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _recentActivityFuture = _fetchRecentActivities();
     _loadDashboardData();
     _loadApartmentImages();
     Future.delayed(const Duration(seconds: 5), _autoScroll);
@@ -1456,121 +1458,128 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildHeroAndBanner() {
-    final topInset = MediaQuery.of(context).padding.top;
+  final topInset = MediaQuery.of(context).padding.top;
 
-    // Keep header + banner to roughly 45-48% of an iPhone-height screen.
-    // The Stack itself reserves the banner's full height, so following widgets
-    // can never overlap it.
-    final heroHeight = 230.h + topInset;
-    final bannerHeight = 150.h;
-    final bannerTop = heroHeight - 24.h;
-    final indicatorSpace = 22.h;
-    final totalHeight = bannerTop + bannerHeight + indicatorSpace;
+  // Keep header + banner to roughly 45-48% of an iPhone-height screen.
+  // The Stack itself reserves the banner's full height, so following widgets
+  // can never overlap it.
+  final heroHeight = 230.h + topInset;
+  final bannerHeight = 150.h;
+  final bannerTop = heroHeight - 24.h;
+  final indicatorSpace = 22.h;
+  final totalHeight = bannerTop + bannerHeight + indicatorSpace;
 
-    return SizedBox(
-      height: totalHeight,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: double.infinity,
-            height: heroHeight,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [_navy, _blue, _cyan],
-                stops: [0.05, 0.60, 1.0],
-              ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(30.r),
-                bottomRight: Radius.circular(30.r),
-              ),
+  return SizedBox(
+    height: totalHeight,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: double.infinity,
+          height: heroHeight,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF0B376C),
+                Color(0xFF103F78),
+                Color(0xFF2CA4C7),
+              ],
+              stops: [0.05, 0.60, 1.0],
             ),
-            child: Stack(
-              children: [
-                Positioned(
-                  right: -45.w,
-                  top: topInset + 8.h,
-                  child: Container(
-                    width: 220.w,
-                    height: 125.h,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(100.r),
-                    ),
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(30.r),
+              bottomRight: Radius.circular(30.r),
+            ),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -45.w,
+                top: topInset + 8.h,
+                child: Container(
+                  width: 220.w,
+                  height: 125.h,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(100.r),
                   ),
                 ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    20.w,
-                    topInset + 10.h,
-                    20.w,
-                    18.h,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: _notificationButton(),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  20.w,
+                  topInset + 10.h,
+                  20.w,
+                  18.h,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _notificationButton(),
+                    ),
+                    SizedBox(height: 2.h),
+                    Text(
+                      'good_morning'.tr(),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.95),
+                        fontSize: 13.sp,
+                        fontWeight: FontWeight.w500,
                       ),
-                      SizedBox(height: 2.h),
-                      Text(
-                        'good_morning'.tr(),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.95),
-                          fontSize: 13.sp,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      SizedBox(height: 2.h),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              'Hi, $_userName!',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 23.sp,
-                                fontWeight: FontWeight.w800,
-                                height: 1.05,
-                              ),
+                    ),
+                    SizedBox(height: 2.h),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'Hi, $_userName!',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 23.sp,
+                              fontWeight: FontWeight.w800,
+                              height: 1.05,
                             ),
                           ),
-                          SizedBox(width: 5.w),
-                          Text('👋', style: TextStyle(fontSize: 21.sp)),
-                        ],
-                      ),
-                      SizedBox(height: 3.h),
-                      Text(
-                        'Welcome back to your community',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.92),
-                          fontSize: 12.5.sp,
                         ),
+                        SizedBox(width: 5.w),
+                        Text(
+                          '👋',
+                          style: TextStyle(fontSize: 21.sp),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 3.h),
+                    Text(
+                      'Welcome back to your community',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.92),
+                        fontSize: 12.5.sp,
                       ),
-                      SizedBox(height: 9.h),
-                      _apartmentCard(),
-                    ],
-                  ),
+                    ),
+                    SizedBox(height: 9.h),
+                    _apartmentCard(),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Positioned(
-            left: 16.w,
-            right: 16.w,
-            top: bannerTop,
-            child: _bannerCard(height: bannerHeight),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
 
+        Positioned(
+          left: 16.w,
+          right: 16.w,
+          top: bannerTop,
+          child: _bannerCard(height: bannerHeight),
+        ),
+      ],
+    ),
+  );
+}
   Widget _notificationButton() {
     return GestureDetector(
       onTap: () {
@@ -2023,14 +2032,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               const Spacer(),
-              Text(
-                'View All',
-                style: TextStyle(
-                  color: _blue,
-                  fontSize: 13.sp,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              // Text(
+              //   'View All',
+              //   style: TextStyle(
+              //     color: _blue,
+              //     fontSize: 13.sp,
+              //     fontWeight: FontWeight.w700,
+              //   ),
+              // ),
             ],
           ),
           SizedBox(height: 12.h),
@@ -2133,27 +2142,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () {},
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    minimumSize: Size(52.w, 30.h),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    'View All',
-                    style: TextStyle(
-                      color: _blue,
-                      fontSize: 13.sp,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
+                // const Spacer(),
+                // TextButton(
+                //   onPressed: () {},
+                //   style: TextButton.styleFrom(
+                //     padding: EdgeInsets.zero,
+                //     minimumSize: Size(52.w, 30.h),
+                //     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                //   ),
+                //   child: Text(
+                //     'View All',
+                //     style: TextStyle(
+                //       color: _blue,
+                //       fontSize: 13.sp,
+                //       fontWeight: FontWeight.w700,
+                //     ),
+                //   ),
+                // ),
               ],
             ),
             FutureBuilder<List<dynamic>>(
-              future: _fetchRecentActivities(),
+              future: _recentActivityFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Padding(

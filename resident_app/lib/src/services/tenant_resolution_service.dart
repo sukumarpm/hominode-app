@@ -105,6 +105,29 @@ class TenantResolutionService extends ChangeNotifier {
     return _current!;
   }
 
+  Future<CommunityModel> loadAssignedCommunity(TenantProfile profile) async {
+    if (profile.communityId.trim().isEmpty) {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.profileMissing,
+        'This account is not assigned to a community.',
+      );
+    }
+    final document = await _firestore
+        .collection('communities')
+        .doc(profile.communityId)
+        .get();
+    if (!document.exists) {
+      throw const TenantResolutionException(
+        TenantResolutionFailure.communityMissing,
+        'The assigned community does not exist.',
+      );
+    }
+    return requireActiveCommunity(
+      profile,
+      CommunityModel.fromFirestore(document),
+    );
+  }
+
   Future<Map<String, dynamic>?> _loadProfile(String uid) async {
     final user = await _firestore.collection('users').doc(uid).get();
     return user.data();

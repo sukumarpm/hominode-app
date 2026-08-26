@@ -93,22 +93,82 @@ service cloud.firestore {
     // RESIDENT HELPERS
     // ============================================================
 
+    function residentTypeIs(expected) {
+      return hasUserProfile()
+        && (
+          (
+            ('residentType' in userProfile())
+            && userProfile().residentType == expected
+            && (
+              !('ownershipType' in userProfile())
+              || userProfile().ownershipType == expected
+            )
+          )
+          || (
+            !('residentType' in userProfile())
+            && ('ownershipType' in userProfile())
+            && userProfile().ownershipType == expected
+          )
+        );
+    }
+
+    function residentIdentityVerified() {
+      return userProfile().identityVerified == true
+        && ('identityVerificationStatus' in userProfile())
+        && userProfile().identityVerificationStatus == 'verified';
+    }
+
+    function ownerIdentityVerificationRequired() {
+      let community = get(
+        /databases/$(database)/documents/communities/$(userProfile().communityId)
+      ).data;
+      return ('ownerIdentityVerificationRequired' in community)
+        && community.ownerIdentityVerificationRequired == true;
+    }
+
+    function residentIdentityEligible() {
+      return (
+          residentTypeIs('owner')
+          && (
+            !ownerIdentityVerificationRequired()
+            || residentIdentityVerified()
+          )
+        )
+        || (
+          residentTypeIs('tenant')
+          && residentIdentityVerified()
+        );
+    }
+
+    function flatHasNoOccupant(flat) {
+      return (
+          !('residentUserId' in flat)
+          || flat.residentUserId == null
+        )
+        && (
+          !('residentUid' in flat)
+          || flat.residentUid == null
+        )
+        && (
+          !('residentIds' in flat)
+          || flat.residentIds == null
+          || (
+            flat.residentIds is list
+            && flat.residentIds.size() == 0
+          )
+        );
+    }
+
     /*
-     * IMPORTANT:
-     *
-     * Do not depend on isActive here.
-     *
-     * Current resident approval flow already uses:
-     *   role = resident
-     *   approvalStatus = approved
-     *   status = active
-     *
-     * approvalStatus/status remain the canonical access controls.
+     * Canonical Resident operational access requires an approved, active
+     * profile in an active community, a valid owner/tenant classification,
+     * and any identity verification required for that resident type.
      */
     function approvedResident() {
       return hasUserProfile()
         && userProfile().role == 'resident'
         && userProfile().approvalStatus == 'approved'
+        && userProfile().isActive == true
         && (
           !('status' in userProfile())
           || userProfile().status == 'active'
@@ -117,7 +177,8 @@ service cloud.firestore {
         && userProfile().communityId.size() > 0
         && activeCommunity(
           userProfile().communityId
-        );
+        )
+        && residentIdentityEligible();
     }
 
     function residentCanAccessCommunity(communityId) {
@@ -342,8 +403,15 @@ function securityCanAccessCommunity(communityId) {
     match /users/{userId} {
 
       allow create: if adminCanAccessCommunity(
-        request.resource.data.communityId
-      );
+          request.resource.data.communityId
+        )
+        && request.resource.data.role == 'resident'
+        && request.resource.data.approvalStatus == 'pending'
+        && request.resource.data.isActive == false
+        && (
+          !('flatId' in request.resource.data)
+          || request.resource.data.flatId == null
+        );
 
       // Resident can always read own profile.
       allow get: if signedIn()
@@ -369,7 +437,7 @@ function securityCanAccessCommunity(communityId) {
         );
 
       // Resident-safe profile changes.
-      allow update: if signedIn()
+      allow update: if approvedResident()
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data)
           .affectedKeys()
@@ -392,7 +460,62 @@ function securityCanAccessCommunity(communityId) {
           resource.data.communityId
         )
         && request.resource.data.communityId
-          == resource.data.communityId;
+          == resource.data.communityId
+        && !request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasAny([
+            'role',
+            'communityId',
+            'residentType',
+            'ownershipType',
+            'declaredResidentType',
+            'identityVerified',
+            'identityVerificationStatus',
+            'identityProofStoragePath',
+            'identityProofContentType',
+            'identityProofUploadedAt',
+            'identityVerificationReviewedAt',
+            'identityVerificationReviewedBy',
+            'identityVerificationRejectionReason',
+            'approvalStatus',
+            'isActive',
+            'status',
+            'buildingId',
+            'buildingName',
+            'flatId',
+            'flatLabel',
+            'unitId',
+            'occupancyStatus',
+            'approvedAt',
+            'approvedBy',
+            'movedOutAt',
+            'movedOutBy',
+            'previousFlatId',
+            'previousUnitId',
+            'previousBuildingId'
+          ]);
+
+      // Preserve the existing Admin rejection action without allowing an
+      // activation, assignment, or approval transition from the client.
+      allow update: if adminCanAccessCommunity(
+          resource.data.communityId
+        )
+        && resource.data.approvalStatus == 'pending'
+        && resource.data.isActive == false
+        && request.resource.data.communityId == resource.data.communityId
+        && request.resource.data.approvalStatus == 'rejected'
+        && request.resource.data.isActive == false
+        && request.resource.data.rejectedBy == request.auth.uid
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'approvalStatus',
+            'isActive',
+            'rejectedAt',
+            'rejectedBy',
+            'rejectedReason',
+            'updatedAt'
+          ]);
 
       allow delete: if false;
     }
@@ -404,10 +527,10 @@ function securityCanAccessCommunity(communityId) {
 
     match /users/{userId}/{subPath=**} {
 
-      allow read: if signedIn()
+      allow read: if approvedResident()
         && request.auth.uid == userId;
 
-      allow create, update, delete: if signedIn()
+      allow create, update, delete: if approvedResident()
         && request.auth.uid == userId;
     }
 
@@ -452,18 +575,30 @@ function securityCanAccessCommunity(communityId) {
         || residentSameFlat(resource.data);
 
       allow create: if adminCanAccessCommunity(
-        request.resource.data.communityId
-      );
+          request.resource.data.communityId
+        )
+        && flatHasNoOccupant(request.resource.data);
 
       allow update: if adminCanAccessCommunity(
           resource.data.communityId
         )
         && request.resource.data.communityId
-          == resource.data.communityId;
+          == resource.data.communityId
+        && !request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasAny([
+            'residentUserId',
+            'residentUid',
+            'residentIds',
+            'residentId',
+            'residentName',
+            'ownershipType'
+          ]);
 
       allow delete: if adminCanAccessCommunity(
-        resource.data.communityId
-      );
+          resource.data.communityId
+        )
+        && flatHasNoOccupant(resource.data);
     }
 
 

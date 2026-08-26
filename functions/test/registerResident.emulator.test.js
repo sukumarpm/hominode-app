@@ -15,7 +15,7 @@ test("transaction creates one profile and increments invite only once on retry",
   const communityId = `community-${suffix}`;
   await db.collection("communities").doc(communityId).set({name: "Test", isActive: true});
   await db.collection("communityInvites").doc(code).set({code, communityId, isActive: true, expiresAt: Timestamp.fromMillis(Date.now() + 60000), maxUses: 1, useCount: 0, usedCount: 0});
-  const request = {db, auth: {uid, token: {phone_number: "+919876543210", firebase: {sign_in_provider: "phone"}}}, data: {inviteCode: code, fullName: "Resident Name", email: null, buildingReference: "Tower A", unitReference: "A-101"}};
+  const request = {db, auth: {uid, token: {phone_number: "+919876543210", firebase: {sign_in_provider: "phone"}}}, data: {inviteCode: code, fullName: "Resident Name", email: null, buildingReference: "Tower A", unitReference: "A-101", residentType: "owner"}};
   const first = await registerResidentCore(request);
   const retry = await registerResidentCore(request);
   assert.equal(first.idempotent, false);

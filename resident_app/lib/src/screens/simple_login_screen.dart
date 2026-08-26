@@ -5,10 +5,21 @@ import 'package:flutter/services.dart';
 import '../components/auth_primary_button.dart';
 import '../components/auth_text_field.dart';
 import '../services/firebase_auth_service.dart';
+import '../services/resident_auth_routing.dart';
 import 'verify_otp_screen_single_field.dart';
 
+typedef ResidentOtpScreenBuilder =
+    Widget Function(
+      String phoneNumber,
+      String verificationId,
+      ResidentAuthenticationIntent intent,
+    );
+
 class SimpleLoginScreen extends StatefulWidget {
-  const SimpleLoginScreen({super.key});
+  const SimpleLoginScreen({super.key, this.authGateway, this.otpScreenBuilder});
+
+  final ResidentPhoneAuthGateway? authGateway;
+  final ResidentOtpScreenBuilder? otpScreenBuilder;
 
   @override
   State<SimpleLoginScreen> createState() => _SimpleLoginScreenState();
@@ -17,10 +28,16 @@ class SimpleLoginScreen extends StatefulWidget {
 class _SimpleLoginScreenState extends State<SimpleLoginScreen> {
   final _phoneController = TextEditingController(text: '+91');
   final _phoneFocusNode = FocusNode();
-  final _authService = FirebaseAuthService();
+  late final ResidentPhoneAuthGateway _authService;
 
   bool _isLoading = false;
   bool _navigationStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService = widget.authGateway ?? FirebaseAuthService();
+  }
 
   @override
   void dispose() {
@@ -29,7 +46,9 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen> {
     super.dispose();
   }
 
-  Future<void> _sendOtp() async {
+  Future<void> _sendOtp({
+    ResidentAuthenticationIntent intent = ResidentAuthenticationIntent.login,
+  }) async {
     if (_isLoading) return;
 
     FocusScope.of(context).unfocus();
@@ -64,10 +83,17 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen> {
 
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => VerifyOTPScreenSingleField(
-                mobileNumber: phone,
-                verificationId: verificationId,
-              ),
+              builder: (_) =>
+                  widget.otpScreenBuilder?.call(
+                    phone,
+                    verificationId,
+                    intent,
+                  ) ??
+                  VerifyOTPScreenSingleField(
+                    mobileNumber: phone,
+                    verificationId: verificationId,
+                    intent: intent,
+                  ),
             ),
           );
         },
@@ -190,6 +216,19 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen> {
                               text: 'Send OTP',
                               onPressed: _sendOtp,
                               isLoading: _isLoading,
+                            ),
+                            SizedBox(height: 14.h),
+                            Center(
+                              child: TextButton(
+                                key: const Key('resident-register-link'),
+                                onPressed: _isLoading
+                                    ? null
+                                    : () => _sendOtp(
+                                        intent: ResidentAuthenticationIntent
+                                            .register,
+                                      ),
+                                child: const Text('Create account'),
+                              ),
                             ),
                           ],
                         ),

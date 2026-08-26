@@ -14,6 +14,13 @@ class PendingResident {
     this.buildingId,
     this.flatId,
     this.unitId,
+    this.buildingName,
+    this.flatLabel,
+    this.residentType,
+    this.creationSource,
+    this.declaredResidentType,
+    this.identityVerificationStatus = 'verification_required',
+    this.hasIdentityProof = false,
     this.registeredAt,
   });
 
@@ -29,6 +36,13 @@ class PendingResident {
   final String? buildingId;
   final String? flatId;
   final String? unitId;
+  final String? buildingName;
+  final String? flatLabel;
+  final String? residentType;
+  final String? creationSource;
+  final String? declaredResidentType;
+  final String identityVerificationStatus;
+  final bool hasIdentityProof;
   final DateTime? registeredAt;
 
   factory PendingResident.fromMap(
@@ -56,8 +70,15 @@ class PendingResident {
       name: (data['name'] ?? data['fullName'] ?? '').toString(),
       phoneNumber: (data['phoneNumber'] ?? data['phone'] ?? '').toString(),
       communityId: (data['communityId'] ?? '').toString(),
-      buildingReference: reference(data['buildingReference']),
-      unitReference: reference(data['unitReference']),
+      buildingReference: reference(
+        data['buildingReference'] ?? data['buildingName'] ?? data['buildingId'],
+      ),
+      unitReference: reference(
+        data['unitReference'] ??
+            data['flatLabel'] ??
+            data['unitId'] ??
+            data['flatId'],
+      ),
       approvalStatus: (data['approvalStatus'] ?? '').toString(),
       isActive: data['isActive'] == true,
       email: (data['email'] as String?)?.trim().isEmpty == true
@@ -66,6 +87,19 @@ class PendingResident {
       buildingId: data['buildingId']?.toString(),
       flatId: data['flatId']?.toString(),
       unitId: data['unitId']?.toString(),
+      buildingName: data['buildingName']?.toString(),
+      flatLabel: data['flatLabel']?.toString(),
+      residentType: (data['residentType'] ?? data['ownershipType'])?.toString(),
+      creationSource: data['creationSource']?.toString(),
+      declaredResidentType: data['declaredResidentType']?.toString(),
+      identityVerificationStatus:
+          data['identityVerificationStatus']?.toString() ??
+          (data['identityVerified'] == true
+              ? 'verified'
+              : 'verification_required'),
+      hasIdentityProof:
+          data['identityProofStoragePath'] is String &&
+          (data['identityProofStoragePath'] as String).trim().isNotEmpty,
       registeredAt: timestamp is Timestamp
           ? timestamp.toDate()
           : timestamp is DateTime
@@ -76,6 +110,15 @@ class PendingResident {
 }
 
 class ResidentApprovalPolicy {
+  static bool isPendingForCommunity(
+    Map<String, dynamic> user,
+    String communityId,
+  ) =>
+      user['communityId'] == communityId &&
+      user['role'] == 'resident' &&
+      user['approvalStatus'] == 'pending' &&
+      user['isActive'] == false;
+
   static bool canReview(Map<String, dynamic> user, String communityId) =>
       user['communityId'] == communityId && user['role'] == 'resident';
 

@@ -236,10 +236,16 @@ class RecentActivityFlowFunction {
       print('🔐 STEP 4: Fetching visitors...');
 
       try {
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+
+        if (uid == null) {
+          throw StateError('Resident is not authenticated.');
+        }
+
         final visitorsQuery = await _firestore
             .collection('visitors')
             .where('communityId', isEqualTo: communityId)
-            .where('flatId', isEqualTo: flatId)
+            .where('hostUserId', isEqualTo: uid)
             .orderBy('createdAt', descending: true)
             .limit(10)
             .get();
@@ -368,10 +374,16 @@ class RecentActivityFlowFunction {
           .limit(10)
           .snapshots();
 
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+
+      if (uid == null) {
+        throw StateError('Resident is not authenticated.');
+      }
+
       final visitorsStream = _firestore
           .collection('visitors')
           .where('communityId', isEqualTo: communityId)
-          .where('flatId', isEqualTo: flatId)
+          .where('hostUserId', isEqualTo: uid)
           .orderBy('createdAt', descending: true)
           .limit(10)
           .snapshots();

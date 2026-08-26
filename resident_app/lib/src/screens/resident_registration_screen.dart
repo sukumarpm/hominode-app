@@ -29,7 +29,48 @@ class _ResidentRegistrationScreenState
   CommunityInvite? _invite;
   bool _resolving = false;
   bool _submitting = false;
+  bool _checkingImportedOnboarding = true;
   String? _error;
+  String _residentType = 'owner';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _claimImportedOnboarding();
+    });
+  }
+
+  Future<void> _claimImportedOnboarding() async {
+    try {
+      final claimed = await _service.claimImportedOnboarding();
+      if (!mounted) return;
+      if (!claimed) {
+        setState(() => _checkingImportedOnboarding = false);
+        return;
+      }
+      final result = await FirebaseAuthService().restoreResidentSession(
+        context.read<TenantResolutionService>(),
+      );
+      if (mounted) {
+        ResidentAuthRouting.navigateToResult(context, result);
+      }
+    } on ResidentRegistrationException catch (error) {
+      if (mounted) {
+        setState(() {
+          _checkingImportedOnboarding = false;
+          _error = error.message;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _checkingImportedOnboarding = false;
+          _error = 'Imported registration could not be checked.';
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -90,6 +131,7 @@ class _ResidentRegistrationScreenState
           buildingReference: _building.text.trim(),
           unitReference: _unit.text.trim(),
           email: _email.text.trim().isEmpty ? null : _email.text.trim(),
+          residentType: _residentType,
         ),
       );
       if (mounted) {
@@ -121,6 +163,22 @@ class _ResidentRegistrationScreenState
   @override
   Widget build(BuildContext context) {
     final phone = FirebaseAuth.instance.currentUser?.phoneNumber ?? '';
+    if (_checkingImportedOnboarding) {
+      return const Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Checking imported resident registration…'),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('Resident Registration')),
       body: SafeArea(
@@ -196,6 +254,20 @@ class _ResidentRegistrationScreenState
                 controller: _unit,
                 decoration: const InputDecoration(labelText: 'Flat / Unit'),
                 validator: _required,
+              ),
+              SizedBox(height: 16.h),
+              DropdownButtonFormField<String>(
+                initialValue: _residentType,
+                decoration: const InputDecoration(labelText: 'Resident Type'),
+                items: const [
+                  DropdownMenuItem(value: 'owner', child: Text('Owner')),
+                  DropdownMenuItem(value: 'tenant', child: Text('Tenant')),
+                ],
+                onChanged: _submitting
+                    ? null
+                    : (value) => setState(
+                        () => _residentType = value ?? _residentType,
+                      ),
               ),
               SizedBox(height: 16.h),
               TextFormField(

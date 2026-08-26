@@ -210,6 +210,7 @@ test("import writes only pending unverified onboarding records and audit data", 
   assert.equal(onboarding.approvalStatus, "pending");
   assert.equal(onboarding.isActive, false);
   assert.equal(onboarding.identityVerified, false);
+  assert.equal(onboarding.identityVerificationStatus, "verification_required");
   assert.equal(onboarding.creationSource, "admin_bulk_import");
   assert.equal(onboarding.communityId, "A");
   assert.equal(onboarding.createdBy, "admin-a");
@@ -288,6 +289,7 @@ test("existing OTP registration binds matching imported onboarding without verif
       buildingReference: "Typed value",
       unitReference: "Typed value",
       email: "alex@example.com",
+      residentType: "owner",
     },
   });
   assert.equal(result.status, "pending");
@@ -299,8 +301,56 @@ test("existing OTP registration binds matching imported onboarding without verif
   assert.equal(profile.flatId, "flat-a-101");
   assert.equal(profile.ownershipType, "owner");
   assert.equal(profile.creationSource, "admin_bulk_import_claim");
-  assert.equal(profile.identityVerified, undefined);
+  assert.equal(profile.identityVerified, false);
+  assert.equal(profile.identityVerificationStatus, "verification_required");
   const onboarding = db.values.get(onboardingPath);
   assert.equal(onboarding.status, "claimed");
   assert.equal(onboarding.claimedByUid, "resident-auth-uid");
+});
+
+test("Register claims imported onboarding directly after verified OTP and retains trusted unit data", async () => {
+  const phone = "+639171111111";
+  const onboardingPath = `residentOnboarding/${residentOnboardingId("A", phone)}`;
+  const db = fakeDb({
+    ...baseSeed,
+    [onboardingPath]: {
+      communityId: "A",
+      phoneNumber: phone,
+      residentName: "Imported Resident",
+      status: "pending_registration",
+      claimedByUid: null,
+      buildingId: "ivory",
+      buildingName: "Ivory",
+      buildingReference: "Ivory",
+      flatId: "ivory-i002",
+      unitId: "I002",
+      flatLabel: "I002",
+      unitReference: "I002",
+      residentType: "owner",
+      importJobId: "job_20260825_ivory",
+    },
+  });
+
+  const result = await registerResidentCore({
+    db,
+    auth: phoneAuth("imported-resident-uid", phone),
+    data: {claimImportedOnboarding: true},
+  });
+
+  assert.deepEqual(result, {
+    status: "pending",
+    communityId: "A",
+    idempotent: false,
+    imported: true,
+  });
+  const profile = db.values.get("users/imported-resident-uid");
+  assert.equal(profile.communityId, "A");
+  assert.equal(profile.buildingName, "Ivory");
+  assert.equal(profile.unitId, "I002");
+  assert.equal(profile.flatLabel, "I002");
+  assert.equal(profile.ownershipType, "owner");
+  assert.equal(profile.approvalStatus, "pending");
+  assert.equal(profile.isActive, false);
+  assert.equal(profile.identityVerified, false);
+  assert.equal(db.values.get(onboardingPath).claimedByUid, "imported-resident-uid");
 });

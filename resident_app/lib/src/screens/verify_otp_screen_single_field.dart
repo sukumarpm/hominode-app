@@ -13,11 +13,13 @@ import '../services/tenant_resolution_service.dart';
 class VerifyOTPScreenSingleField extends StatefulWidget {
   final String? mobileNumber;
   final String? verificationId;
+  final ResidentAuthenticationIntent intent;
 
   const VerifyOTPScreenSingleField({
     super.key,
     this.mobileNumber,
     this.verificationId,
+    this.intent = ResidentAuthenticationIntent.login,
   });
 
   @override
@@ -85,15 +87,25 @@ class _VerifyOTPScreenSingleFieldState
 
       if (!mounted) return;
 
-      if (result.success) {
-        ResidentAuthRouting.navigateToResult(context, result);
+      final routedResult = ResidentAuthRouting.resultForIntent(
+        result,
+        widget.intent,
+      );
+
+      if (routedResult.success) {
+        ResidentAuthRouting.navigateToResult(context, routedResult);
       } else {
+        if (result.state == ResidentAuthState.registrationRequired &&
+            widget.intent == ResidentAuthenticationIntent.login) {
+          await _authService.signOut(context.read<TenantResolutionService>());
+        }
+        if (!mounted) return;
         setState(() => _isLoading = false);
         _showSnackBar(
-          result.message ?? 'Unable to complete authentication.',
+          routedResult.message ?? 'Unable to complete authentication.',
           isError: true,
         );
-        if (result.errorCode == 'invalid-verification-code') {
+        if (routedResult.errorCode == 'invalid-verification-code') {
           _clearOTP();
         }
       }

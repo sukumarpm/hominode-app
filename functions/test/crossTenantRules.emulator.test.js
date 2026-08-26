@@ -32,10 +32,30 @@ test.before(async () => {
     set("admins", "admin-b", {uid: "admin-b", role: "admin", isActive: true, authorizedCommunityIds: ["community-b"]});
     set("admins", "super", {uid: "super", role: "superAdmin", isActive: true});
     set("admins", "admin-off", {uid: "admin-off", role: "admin", isActive: true, authorizedCommunityIds: ["community-off"]});
-    set("users", "resident-a", {uid: "resident-a", role: "resident", isActive: true, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-a"});
-    set("users", "resident-b", {uid: "resident-b", role: "resident", isActive: true, approvalStatus: "approved", communityId: "community-b", buildingId: "building-b", flatId: "flat-b"});
-    set("users", "resident-off", {uid: "resident-off", role: "resident", isActive: true, approvalStatus: "approved", communityId: "community-off", buildingId: "building-off", flatId: "flat-off"});
+    set("buildings", "building-a", {communityId: "community-a", name: "A"});
+    set("buildings", "building-b", {communityId: "community-b", name: "B"});
+    set("buildings", "building-off", {communityId: "community-off", name: "Off"});
+    set("users", "resident-a", {uid: "resident-a", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "not_required", isActive: true, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-a"});
+    set("users", "resident-b", {uid: "resident-b", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "not_required", isActive: true, approvalStatus: "approved", communityId: "community-b", buildingId: "building-b", flatId: "flat-b"});
+    set("users", "resident-off", {uid: "resident-off", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "not_required", isActive: true, approvalStatus: "approved", communityId: "community-off", buildingId: "building-off", flatId: "flat-off"});
+    set("users", "tenant-unverified", {uid: "tenant-unverified", role: "resident", residentType: "tenant", ownershipType: "tenant", identityVerified: false, identityVerificationStatus: "verification_required", isActive: true, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-tu"});
+    set("users", "tenant-pending", {uid: "tenant-pending", role: "resident", residentType: "tenant", ownershipType: "tenant", identityVerified: false, identityVerificationStatus: "pending", isActive: true, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-tp"});
+    set("users", "tenant-verified", {uid: "tenant-verified", role: "resident", residentType: "tenant", ownershipType: "tenant", identityVerified: true, identityVerificationStatus: "verified", isActive: true, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-tv"});
+    set("users", "resident-inactive", {uid: "resident-inactive", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "not_required", isActive: false, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-ri"});
+    set("users", "resident-pending", {uid: "resident-pending", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "not_required", isActive: false, approvalStatus: "pending", communityId: "community-a", buildingId: "building-a", flatId: "flat-rp"});
+    set("users", "resident-mismatch", {uid: "resident-mismatch", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "not_required", isActive: true, approvalStatus: "approved", communityId: "community-a", buildingId: "building-a", flatId: "flat-mismatch"});
+    set("users", "resident-review", {uid: "resident-review", role: "resident", residentType: "owner", ownershipType: "owner", identityVerified: false, identityVerificationStatus: "verification_required", isActive: false, approvalStatus: "pending", communityId: "community-a"});
+    set("flats", "flat-a", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "resident-a"});
+    set("flats", "flat-b", {communityId: "community-b", buildingId: "building-b", status: "occupied", residentUserId: "resident-b"});
+    set("flats", "flat-off", {communityId: "community-off", buildingId: "building-off", status: "occupied", residentUserId: "resident-off"});
+    set("flats", "flat-tu", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "tenant-unverified"});
+    set("flats", "flat-tp", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "tenant-pending"});
+    set("flats", "flat-tv", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "tenant-verified"});
+    set("flats", "flat-ri", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "resident-inactive"});
+    set("flats", "flat-rp", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "resident-pending"});
+    set("flats", "flat-mismatch", {communityId: "community-a", buildingId: "building-a", status: "occupied", residentUserId: "somebody-else"});
     set("bills", "bill-a", {communityId: "community-a", buildingId: "building-a", flatId: "flat-a", amount: 100});
+    set("bills", "bill-tv", {communityId: "community-a", buildingId: "building-a", flatId: "flat-tv", amount: 150, userId: "tenant-verified"});
     set("bills", "bill-b", {communityId: "community-b", buildingId: "building-b", flatId: "flat-b", amount: 200});
     set("visitors", "visitor-a", {communityId: "community-a", buildingId: "building-a", flatId: "flat-a", hostUserId: "resident-a"});
     await batch.commit();
@@ -81,4 +101,33 @@ test("superAdmin has registry access but no operational access", {skip: !enabled
 
 test("inactive communities fail closed", {skip: !enabled}, async () => {
   await assertFails(dbFor("resident-off").collection("events").where("communityId", "==", "community-off").get());
+});
+
+test("unverified, pending-proof, inactive, and pending residents cannot use operational data", {skip: !enabled}, async () => {
+  await assertFails(dbFor("tenant-unverified").collection("bills").doc("bill-a").get());
+  await assertFails(dbFor("tenant-pending").collection("bills").doc("bill-a").get());
+  await assertFails(dbFor("resident-inactive").collection("bills").doc("bill-a").get());
+  await assertFails(dbFor("resident-pending").collection("bills").doc("bill-a").get());
+  await assertSucceeds(dbFor("tenant-verified").collection("bills").doc("bill-tv").get());
+});
+
+test("restricted residents retain only their own profile access", {skip: !enabled}, async () => {
+  await assertSucceeds(dbFor("tenant-unverified").collection("users").doc("tenant-unverified").get());
+  await assertFails(dbFor("tenant-unverified").collection("users").doc("resident-a").get());
+  await assertFails(dbFor("tenant-unverified").collection("users").doc("tenant-unverified").update({name: "Bypass"}));
+  await assertFails(dbFor("tenant-unverified").collection("users").doc("tenant-unverified").collection("private").doc("bypass").set({value: true}));
+});
+
+test("Admin clients cannot forge resident type or identity verification", {skip: !enabled}, async () => {
+  await assertFails(dbFor("admin-a").collection("users").doc("tenant-unverified").update({identityVerified: true, identityVerificationStatus: "verified"}));
+  await assertFails(dbFor("admin-a").collection("users").doc("tenant-unverified").update({residentType: "owner", ownershipType: "owner"}));
+});
+
+test("Admin clients cannot bypass trusted occupancy transitions", {skip: !enabled}, async () => {
+  await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentUserId: "tenant-verified"}));
+  await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentUid: null}));
+  await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentIds: ["tenant-verified"]}));
+  await assertFails(dbFor("admin-a").collection("users").doc("resident-review").update({approvalStatus: "approved", isActive: true, flatId: "flat-a"}));
+  await assertFails(dbFor("admin-a").collection("flats").doc("forged-occupied").set({communityId: "community-a", buildingId: "building-a", residentUserId: "resident-review"}));
+  await assertSucceeds(dbFor("admin-a").collection("users").doc("resident-review").update({approvalStatus: "rejected", isActive: false, rejectedAt: new Date(), rejectedBy: "admin-a", updatedAt: new Date()}));
 });

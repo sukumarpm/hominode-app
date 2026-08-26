@@ -23,6 +23,7 @@ class ResidentRegistrationModel {
   final String buildingReference;
   final String unitReference;
   final String? email;
+  final String residentType;
 
   const ResidentRegistrationModel({
     required this.uid,
@@ -33,6 +34,7 @@ class ResidentRegistrationModel {
     required this.buildingReference,
     required this.unitReference,
     this.email,
+    required this.residentType,
   });
 
   Map<String, dynamic> toFirestore() => {
@@ -46,6 +48,9 @@ class ResidentRegistrationModel {
     'role': 'resident',
     'isActive': false,
     'approvalStatus': 'pending',
+    'declaredResidentType': residentType,
+    'identityVerified': false,
+    'identityVerificationStatus': 'verification_required',
     'buildingReference': buildingReference,
     'unitReference': unitReference,
     'buildingId': null,

@@ -89,6 +89,20 @@ class _ResidentCard extends StatelessWidget {
             Icons.home_outlined,
             'Submitted unit: ${resident.unitReference.isEmpty ? "Not provided" : resident.unitReference}',
           ),
+          if (resident.residentType?.trim().isNotEmpty == true)
+            _row(
+              Icons.person_outline,
+              'Resident type: ${resident.residentType}',
+            ),
+          if (resident.creationSource?.trim().isNotEmpty == true)
+            _row(
+              Icons.how_to_reg_outlined,
+              'Registration source: ${resident.creationSource}',
+            ),
+          _row(
+            Icons.verified_user_outlined,
+            'Identity: ${resident.identityVerificationStatus}',
+          ),
           _row(
             Icons.schedule,
             resident.registeredAt == null
@@ -118,6 +132,13 @@ class _ResidentCard extends StatelessWidget {
                 ),
                 child: const Text('Reject'),
               ),
+              if (resident.hasIdentityProof &&
+                  resident.identityVerificationStatus == 'pending')
+                OutlinedButton.icon(
+                  onPressed: () => _reviewIdentityProof(context),
+                  icon: const Icon(Icons.badge_outlined),
+                  label: const Text('Review identity proof'),
+                ),
             ],
           ),
         ],
@@ -185,6 +206,158 @@ class _ResidentCard extends StatelessWidget {
     }
     controller.dispose();
   }
+
+  Future<void> _reviewIdentityProof(BuildContext context) async {
+    try {
+      final url = await residents.getIdentityProofUrl(resident.uid);
+      if (!context.mounted) return;
+      final decision = await showDialog<bool>(
+        context: context,
+        builder: (_) =>
+            IdentityProofReviewDialog(proofImage: NetworkImage(url)),
+      );
+      if (decision == null) return;
+      await residents.reviewIdentityProof(
+        userId: resident.uid,
+        verified: decision,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              decision
+                  ? 'Identity proof verified.'
+                  : 'Identity proof rejected.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+}
+
+class IdentityProofReviewDialog extends StatefulWidget {
+  const IdentityProofReviewDialog({super.key, required this.proofImage});
+
+  final ImageProvider proofImage;
+
+  @override
+  State<IdentityProofReviewDialog> createState() =>
+      _IdentityProofReviewDialogState();
+}
+
+class _IdentityProofReviewDialogState extends State<IdentityProofReviewDialog> {
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+  bool _previewLoaded = false;
+  bool _previewFailed = false;
+  bool isSubmitting = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _subscribeToImage();
+  }
+
+  void _subscribeToImage() {
+    final previousListener = _listener;
+    if (previousListener != null) {
+      _stream?.removeListener(previousListener);
+    }
+    _previewLoaded = false;
+    _previewFailed = false;
+    final stream = widget.proofImage.resolve(
+      createLocalImageConfiguration(context),
+    );
+    final listener = ImageStreamListener(
+      (_, synchronousCall) =>
+          _setPreviewState(loaded: true, synchronousCall: synchronousCall),
+      onError: (_, __) => _setPreviewState(loaded: false),
+    );
+    _stream = stream;
+    _listener = listener;
+    stream.addListener(listener);
+  }
+
+  void _setPreviewState({required bool loaded, bool synchronousCall = false}) {
+    void update() {
+      if (!mounted) return;
+      setState(() {
+        _previewLoaded = loaded;
+        _previewFailed = !loaded;
+      });
+    }
+
+    if (synchronousCall) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => update());
+    } else {
+      update();
+    }
+  }
+
+  @override
+  void dispose() {
+    final listener = _listener;
+    if (listener != null) _stream?.removeListener(listener);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Review identity proof'),
+    content: SizedBox(
+      width: 420.w,
+      child: _previewFailed
+          ? const Text(
+              'The proof preview could not be loaded. Do not verify it.',
+              style: TextStyle(color: Colors.red),
+            )
+          : Image(
+              image: widget.proofImage,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => const Text(
+                'The proof preview could not be loaded. Do not verify it.',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: isSubmitting ? null : () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      OutlinedButton(
+        onPressed: isSubmitting ? null : () => Navigator.pop(context, false),
+        child: const Text('Reject'),
+      ),
+      FilledButton(
+        onPressed: (!_previewLoaded || isSubmitting)
+            ? null
+            : () async {
+                setState(() => isSubmitting = true);
+
+                // Return true to the caller so it can perform verification.
+                Navigator.pop(context, true);
+              },
+        child: isSubmitting
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Text('Verify'),
+      ),
+    ],
+  );
 }
 
 class _ApprovalDialog extends StatefulWidget {
@@ -200,11 +373,24 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
   final _flats = FlatService();
   String? buildingId;
   String? unitId;
+  late String residentType;
   bool busy = false;
   bool _triedBuildingReference = false;
   bool _triedUnitReference = false;
   Set<String> _canonicalBuildingIds = const {};
   Set<String> _canonicalFlatIds = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    final initial =
+        (widget.resident.residentType ??
+                widget.resident.declaredResidentType ??
+                'owner')
+            .trim()
+            .toLowerCase();
+    residentType = initial == 'tenant' ? 'tenant' : 'owner';
+  }
 
   String _normalized(String value) =>
       value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
@@ -253,6 +439,8 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
       !busy &&
       buildingId != null &&
       unitId != null &&
+      (residentType != 'tenant' ||
+          widget.resident.identityVerificationStatus == 'verified') &&
       _canonicalBuildingIds.contains(buildingId) &&
       _canonicalFlatIds.contains(unitId);
 
@@ -292,6 +480,31 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              DropdownButtonFormField<String>(
+                initialValue: residentType,
+                decoration: const InputDecoration(labelText: 'Resident type'),
+                items: const [
+                  DropdownMenuItem(value: 'owner', child: Text('Owner')),
+                  DropdownMenuItem(value: 'tenant', child: Text('Tenant')),
+                ],
+                onChanged:
+                    busy ||
+                        widget.resident.residentType != null ||
+                        widget.resident.declaredResidentType != null
+                    ? null
+                    : (value) =>
+                          setState(() => residentType = value ?? residentType),
+              ),
+              if (residentType == 'tenant' &&
+                  widget.resident.identityVerificationStatus != 'verified')
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Verify the tenant identity proof before approval.',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
+              SizedBox(height: 16.h),
               DropdownButtonFormField<String>(
                 initialValue: buildingId,
                 decoration: const InputDecoration(
@@ -396,6 +609,7 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
         userId: widget.resident.uid,
         buildingId: buildingId!,
         flatId: unitId!,
+        residentType: residentType,
       );
       if (mounted) {
         Navigator.pop(context);

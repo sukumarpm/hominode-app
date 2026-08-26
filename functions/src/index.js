@@ -1,6 +1,7 @@
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
@@ -51,6 +52,13 @@ const {
   validateResidentBulkImportCore,
   importResidentsBulkCore,
 } = require("./resident_bulk_import");
+const {
+  approveResidentRegistrationCore,
+  submitResidentIdentityProofCore,
+  getResidentIdentityProofUrlCore,
+  reviewResidentIdentityProofCore,
+  moveOutResidentCore,
+} = require("./resident_identity");
 
 
 const REGION = "asia-southeast1";
@@ -67,6 +75,7 @@ function callable(core, failureMessage) {
     try {
       return await core({
         db: getFirestore(),
+        bucket: getStorage().bucket(),
         auth: request.auth,
         data: request.data,
       });
@@ -116,6 +125,27 @@ exports.validateResidentBulkImport = callable(
 exports.importResidentsBulk = callable(
   importResidentsBulkCore,
   "The resident import could not be completed."
+);
+
+exports.approveResidentRegistration = callable(
+  approveResidentRegistrationCore,
+  "Resident approval could not be completed."
+);
+exports.submitResidentIdentityProof = callable(
+  submitResidentIdentityProofCore,
+  "Identity proof could not be submitted."
+);
+exports.getResidentIdentityProofUrl = callable(
+  getResidentIdentityProofUrlCore,
+  "Identity proof could not be opened."
+);
+exports.reviewResidentIdentityProof = callable(
+  reviewResidentIdentityProofCore,
+  "Identity proof review could not be completed."
+);
+exports.moveOutResident = callable(
+  moveOutResidentCore,
+  "Resident move-out could not be completed."
 );
 
 /*

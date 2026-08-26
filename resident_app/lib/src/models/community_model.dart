@@ -22,6 +22,7 @@ class CommunityModel {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final CommunityFeatureFlags features;
+  final bool ownerIdentityVerificationRequired;
 
   const CommunityModel({
     required this.id,
@@ -41,6 +42,7 @@ class CommunityModel {
     this.createdAt,
     this.updatedAt,
     this.features = const CommunityFeatureFlags(),
+    this.ownerIdentityVerificationRequired = false,
   });
 
   factory CommunityModel.fromFirestore(
@@ -82,6 +84,8 @@ class CommunityModel {
       features: CommunityFeatureFlags.fromMap(
         data['features'] as Map<String, dynamic>?,
       ),
+      ownerIdentityVerificationRequired:
+          data['ownerIdentityVerificationRequired'] == true,
     );
   }
 
@@ -115,5 +119,6 @@ class CommunityModel {
     'createdAt': createdAt == null ? null : Timestamp.fromDate(createdAt!),
     'updatedAt': updatedAt == null ? null : Timestamp.fromDate(updatedAt!),
     'features': features.toMap(),
+    'ownerIdentityVerificationRequired': ownerIdentityVerificationRequired,
   };
 }

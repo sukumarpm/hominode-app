@@ -186,7 +186,12 @@ import 'src/providers/localization_provider.dart';
 import 'src/providers/theme_provider.dart';
 import 'src/screens/simple_login_screen.dart';
 import 'src/screens/splash_screen_clean.dart';
+import 'src/screens/resident_registration_screen.dart';
+import 'src/screens/awaiting_approval_screen.dart';
+import 'src/screens/access_blocked_screen.dart';
+import 'src/screens/resident_identity_verification_screen.dart';
 import 'src/services/firebase_auth_service.dart';
+import 'src/services/resident_auth_routing.dart';
 import 'src/services/tenant_resolution_service.dart';
 
 Future<void> main() async {
@@ -305,11 +310,10 @@ class MyApp extends StatelessWidget {
                         return;
                       }
 
-                      if (result.success) {
-                        Navigator.of(context).pushReplacementNamed('/home');
-                      } else {
-                        Navigator.of(context).pushReplacementNamed('/login');
-                      }
+                      Navigator.of(context).pushReplacementNamed(
+                        ResidentAuthRouting.routeFor(result),
+                        arguments: result.message,
+                      );
                     },
                   ),
                 );
@@ -324,9 +328,34 @@ class MyApp extends StatelessWidget {
                   builder: (context) => const MainNavigation(),
                 );
 
+              case '/resident-registration':
+                return MaterialPageRoute(
+                  builder: (context) => const ResidentRegistrationScreen(),
+                );
+
+              case '/awaiting-approval':
+                return MaterialPageRoute(
+                  builder: (context) => const AwaitingApprovalScreen(),
+                );
+
+              case '/resident-access-blocked':
+                return MaterialPageRoute(
+                  builder: (context) => AccessBlockedScreen(
+                    message:
+                        settings.arguments as String? ??
+                        'Resident access is unavailable. Contact your community administrator.',
+                  ),
+                );
+
+              case '/resident-identity-verification':
+                return MaterialPageRoute(
+                  builder: (context) =>
+                      const ResidentIdentityVerificationScreen(),
+                );
+
               default:
                 return MaterialPageRoute(
-                  builder: (context) => const MainNavigation(),
+                  builder: (context) => const SimpleLoginScreen(),
                 );
             }
           },
@@ -373,11 +402,10 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
       return;
     }
 
-    if (result.success) {
-      Navigator.of(context).pushReplacementNamed('/home');
-    } else {
-      Navigator.of(context).pushReplacementNamed('/login');
-    }
+    Navigator.of(context).pushReplacementNamed(
+      ResidentAuthRouting.routeFor(result),
+      arguments: result.message,
+    );
   }
 
   @override

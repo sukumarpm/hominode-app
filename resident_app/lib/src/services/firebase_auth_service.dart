@@ -3,11 +3,13 @@ import 'package:flutter/foundation.dart';
 
 import '../models/tenant_profile.dart';
 import 'flat_access_control_service.dart';
+import 'resident_access_policy.dart';
 import 'tenant_resolution_service.dart';
 
 enum ResidentAuthState {
   approved,
   flatAssignmentRequired,
+  identityVerificationRequired,
   registrationRequired,
   pendingApproval,
   rejected,
@@ -56,9 +58,20 @@ class AuthResult {
   bool get canEnterApp => success && state == ResidentAuthState.approved;
 }
 
+abstract interface class ResidentPhoneAuthGateway {
+  String formatPhoneNumber(String phone);
+  bool validatePhoneNumber(String phone);
+  Future<void> sendOtp({
+    required String phoneNumber,
+    required ValueChanged<String> onCodeSent,
+    required ValueChanged<AuthResult> onError,
+    bool forceResend = false,
+  });
+}
+
 /// Resident authentication gateway. Firebase Phone Auth is the only supported
 /// sign-in mechanism; profile and tenant authorization are checked afterwards.
-class FirebaseAuthService {
+class FirebaseAuthService implements ResidentPhoneAuthGateway {
   static final FirebaseAuthService instance = FirebaseAuthService._internal();
 
   factory FirebaseAuthService() => instance;
@@ -80,6 +93,7 @@ class FirebaseAuthService {
 
   Stream<User?> authStateChanges() => _auth.authStateChanges();
 
+  @override
   Future<void> sendOtp({
     required String phoneNumber,
     required ValueChanged<String> onCodeSent,
@@ -245,6 +259,15 @@ class FirebaseAuthService {
       // 3. Validate Status
       switch (profile.approvalStatus) {
         case 'pending':
+          if ((profile.residentType ?? profile.declaredResidentType) ==
+                  'tenant' &&
+              !ResidentAccessPolicy.identitySatisfied(profile)) {
+            return AuthResult.success(
+              message: 'Upload identity proof to continue tenant verification.',
+              user: user,
+              state: ResidentAuthState.identityVerificationRequired,
+            );
+          }
           return AuthResult.success(
             message: 'Your registration is awaiting admin approval.',
             user: user,
@@ -264,6 +287,31 @@ class FirebaseAuthService {
             user: user,
             state: ResidentAuthState.blocked,
           );
+      }
+
+      final community = await tenantResolver.loadAssignedCommunity(profile);
+      final operationalAccess = ResidentAccessPolicy.evaluate(
+        profile,
+        community,
+      );
+      if (operationalAccess ==
+          ResidentOperationalAccess.identityVerificationRequired) {
+        return AuthResult.success(
+          message: profile.identityVerificationStatus == 'rejected'
+              ? 'Your identity proof was rejected. Upload a new proof to continue.'
+              : 'Identity verification is required before resident access is enabled.',
+          user: user,
+          state: ResidentAuthState.identityVerificationRequired,
+        );
+      }
+      if (operationalAccess ==
+          ResidentOperationalAccess.residentTypeAmbiguous) {
+        return AuthResult.success(
+          message:
+              'Your owner or tenant classification is missing. Contact your community administrator.',
+          user: user,
+          state: ResidentAuthState.blocked,
+        );
       }
 
       if (!profile.isActive) {
@@ -359,9 +407,11 @@ class FirebaseAuthService {
     await _auth.signOut();
   }
 
+  @override
   bool validatePhoneNumber(String phone) =>
       RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(formatPhoneNumber(phone));
 
+  @override
   String formatPhoneNumber(String phone) =>
       phone.trim().replaceAll(RegExp(r'[\s()-]'), '');
 

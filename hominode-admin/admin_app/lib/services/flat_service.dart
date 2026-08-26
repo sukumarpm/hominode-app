@@ -242,7 +242,7 @@ class FlatService {
               status: data['status'] ?? 'vacant',
               residentName: data['residentName'],
               residentId: data['residentId'],
-              residentUserId: data['residentUserId'],
+              residentUserId: FlatModel.resolveResidentUserId(data),
               createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
               updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
             );
@@ -478,6 +478,29 @@ class FlatModel {
     this.createdAt,
     this.updatedAt,
   });
+
+  static String? resolveResidentUserId(Map<String, dynamic> data) {
+    String? value(Object? raw) {
+      final text = raw is String ? raw.trim() : '';
+      return text.isEmpty ? null : text;
+    }
+
+    final canonical = value(data['residentUserId']);
+    final legacy = value(data['residentUid']);
+    final residentIds = data['residentIds'];
+    if (residentIds != null &&
+        (residentIds is! List || residentIds.length > 1)) {
+      return null;
+    }
+    final legacyList = residentIds is List && residentIds.length == 1
+        ? value(residentIds.single)
+        : null;
+    if (residentIds is List && residentIds.length == 1 && legacyList == null) {
+      return null;
+    }
+    final values = {canonical, legacy, legacyList}.whereType<String>().toSet();
+    return values.length > 1 || values.isEmpty ? null : values.first;
+  }
 
   Map<String, dynamic> toMap() {
     return {

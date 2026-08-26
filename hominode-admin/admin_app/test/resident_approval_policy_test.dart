@@ -1,8 +1,46 @@
 import 'package:admin_app/models/pending_resident.dart';
 import 'package:admin_app/services/resident_service.dart';
+import 'package:admin_app/services/flat_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'flat occupant compatibility reads matching aliases and fails closed',
+    () {
+      expect(
+        FlatModel.resolveResidentUserId({'residentUid': 'resident-a'}),
+        'resident-a',
+      );
+      expect(
+        FlatModel.resolveResidentUserId({
+          'residentIds': ['resident-a'],
+        }),
+        'resident-a',
+      );
+      expect(
+        FlatModel.resolveResidentUserId({
+          'residentUserId': 'resident-a',
+          'residentUid': 'resident-a',
+        }),
+        'resident-a',
+      );
+      expect(
+        FlatModel.resolveResidentUserId({
+          'residentUserId': 'resident-a',
+          'residentUid': 'resident-b',
+        }),
+        isNull,
+      );
+      expect(
+        FlatModel.resolveResidentUserId({
+          'residentUserId': 'resident-a',
+          'residentIds': ['resident-b'],
+        }),
+        isNull,
+      );
+    },
+  );
+
   test('review requires resident in selected community', () {
     expect(
       ResidentApprovalPolicy.canReview({
@@ -89,23 +127,6 @@ void main() {
     },
   );
 
-  test('approval writes canonical resident state and assignment IDs', () {
-    final fields = ResidentService.approvalFields(
-      adminId: 'admin-1',
-      buildingId: 'building-doc-1',
-      flatId: 'flat-doc-1',
-      buildingName: 'Tower A',
-      flatLabel: 'A101',
-      timestamp: 'server-time',
-    );
-    expect(fields['approvalStatus'], 'approved');
-    expect(fields['isActive'], isTrue);
-    expect(fields['buildingId'], 'building-doc-1');
-    expect(fields['flatId'], 'flat-doc-1');
-    expect(fields['unitId'], 'flat-doc-1');
-    expect(fields['updatedAt'], 'server-time');
-  });
-
   test('rejection preserves the resident document in rejected state', () {
     final fields = ResidentService.rejectionFields(
       adminId: 'admin-1',
@@ -138,5 +159,89 @@ void main() {
     expect(resident.unitReference, 'A101');
     expect(resident.approvalStatus, 'pending');
     expect(resident.isActive, isFalse);
+  });
+
+  group('pending approval queue eligibility', () {
+    Map<String, dynamic> resident({
+      String communityId = 'community-a',
+      String approvalStatus = 'pending',
+      bool isActive = false,
+      String creationSource = 'resident_registration',
+    }) => {
+      'communityId': communityId,
+      'role': 'resident',
+      'approvalStatus': approvalStatus,
+      'isActive': isActive,
+      'creationSource': creationSource,
+    };
+
+    test('normal pending resident appears', () {
+      expect(
+        ResidentApprovalPolicy.isPendingForCommunity(resident(), 'community-a'),
+        isTrue,
+      );
+    });
+
+    test('bulk-import-claim pending resident appears', () {
+      expect(
+        ResidentApprovalPolicy.isPendingForCommunity(
+          resident(creationSource: 'admin_bulk_import_claim'),
+          'community-a',
+        ),
+        isTrue,
+      );
+    });
+
+    test('active resident is excluded', () {
+      expect(
+        ResidentApprovalPolicy.isPendingForCommunity(
+          resident(isActive: true),
+          'community-a',
+        ),
+        isFalse,
+      );
+    });
+
+    test('approved resident is excluded', () {
+      expect(
+        ResidentApprovalPolicy.isPendingForCommunity(
+          resident(approvalStatus: 'approved'),
+          'community-a',
+        ),
+        isFalse,
+      );
+    });
+
+    test('other-community resident is excluded', () {
+      expect(
+        ResidentApprovalPolicy.isPendingForCommunity(
+          resident(communityId: 'community-b'),
+          'community-a',
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  test('bulk claim maps canonical building, unit, type, and source fields', () {
+    final resident = PendingResident.fromMap('uid-bulk', {
+      'name': 'Test Owner1',
+      'phoneNumber': '+639171111111',
+      'communityId': 'GV-0701',
+      'role': 'resident',
+      'approvalStatus': 'pending',
+      'isActive': false,
+      'buildingId': 'building-ivory',
+      'buildingName': 'Ivory',
+      'flatId': 'flat-i002',
+      'flatLabel': 'I002',
+      'ownershipType': 'owner',
+      'creationSource': 'admin_bulk_import_claim',
+    });
+
+    expect(resident.buildingReference, 'Ivory');
+    expect(resident.unitReference, 'I002');
+    expect(resident.residentType, 'owner');
+    expect(resident.creationSource, 'admin_bulk_import_claim');
   });
 }

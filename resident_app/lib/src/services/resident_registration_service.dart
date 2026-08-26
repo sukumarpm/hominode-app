@@ -7,7 +7,8 @@ import '../models/resident_registration_model.dart';
 
 class ResidentRegistrationException implements Exception {
   final String message;
-  const ResidentRegistrationException(this.message);
+  final String? code;
+  const ResidentRegistrationException(this.message, {this.code});
   @override
   String toString() => message;
 }
@@ -38,7 +39,37 @@ class ResidentRegistrationService {
     'email': registration.email?.trim(),
     'buildingReference': registration.buildingReference.trim(),
     'unitReference': registration.unitReference.trim(),
+    'residentType': registration.residentType.trim().toLowerCase(),
   };
+
+  static const importedOnboardingPayload = <String, dynamic>{
+    'claimImportedOnboarding': true,
+  };
+
+  /// Claims a trusted bulk-import onboarding for the currently OTP-verified
+  /// phone. Returns false when this phone has no imported onboarding, allowing
+  /// the existing invite-code registration form to continue unchanged.
+  Future<bool> claimImportedOnboarding() async {
+    final user = _auth.currentUser;
+    if (user == null || user.phoneNumber == null) {
+      throw const ResidentRegistrationException(
+        'Your verified phone session is no longer valid.',
+      );
+    }
+    try {
+      final response = await _functions
+          .httpsCallable('registerResident')
+          .call(importedOnboardingPayload);
+      final data = response.data;
+      return data is Map && data['imported'] == true;
+    } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'not-found') return false;
+      throw ResidentRegistrationException(
+        error.message ?? 'Imported registration could not be completed.',
+        code: error.code,
+      );
+    }
+  }
 
   Future<CommunityInvite> resolveInvite(String rawCode) async {
     final code = normalizeInviteCode(rawCode);
@@ -132,6 +163,7 @@ class ResidentRegistrationService {
     } on FirebaseFunctionsException catch (error) {
       throw ResidentRegistrationException(
         error.message ?? 'Registration could not be submitted.',
+        code: error.code,
       );
     }
   }

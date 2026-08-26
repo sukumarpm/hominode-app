@@ -325,6 +325,7 @@ async function commitRow({db, input, actor, row}) {
       approvalStatus: "pending",
       isActive: false,
       identityVerified: false,
+      identityVerificationStatus: "verification_required",
       status: "pending_registration",
       claimedByUid: null,
       importJobId: input.importJobId,

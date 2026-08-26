@@ -13,13 +13,13 @@ test("only verified phone authentication is accepted", () => {
 });
 
 test("client input contains no trusted identity or tenant fields", () => {
-  const value = validateInput({inviteCode: "HOME-2026", fullName: " Resident Name ", email: "R@EXAMPLE.COM", buildingReference: "Tower A", unitReference: "A-101", uid: "attacker", role: "admin", communityId: "other"});
-  assert.deepEqual(value, {inviteCode: "HOME-2026", fullName: "Resident Name", email: "r@example.com", buildingReference: "Tower A", unitReference: "A-101"});
+  const value = validateInput({inviteCode: "HOME-2026", fullName: " Resident Name ", email: "R@EXAMPLE.COM", buildingReference: "Tower A", unitReference: "A-101", residentType: "tenant", uid: "attacker", role: "admin", communityId: "other"});
+  assert.deepEqual(value, {inviteCode: "HOME-2026", fullName: "Resident Name", email: "r@example.com", buildingReference: "Tower A", unitReference: "A-101", declaredResidentType: "tenant"});
   assert.throws(() => validateInput({inviteCode: "home-2026", fullName: "Resident", buildingReference: "A", unitReference: "1"}), {code: "invalid-argument"});
 });
 
 test("matching existing registration is an idempotent retry", () => {
-  const expected = {uid: "uid-1", phoneNumber: "+919876543210", inviteCode: "HOME-2026", communityId: "community-a", fullName: "Resident", buildingReference: "Tower A", unitReference: "A-101", email: null};
-  assert.equal(isIdempotentExisting({uid: "uid-1", phoneNumber: "+919876543210", communityInviteCode: "HOME-2026", communityId: "community-a", role: "resident", name: "Resident", buildingReference: "Tower A", unitReference: "A-101", email: null}, expected), true);
+  const expected = {uid: "uid-1", phoneNumber: "+919876543210", inviteCode: "HOME-2026", communityId: "community-a", fullName: "Resident", buildingReference: "Tower A", unitReference: "A-101", email: null, declaredResidentType: "owner"};
+  assert.equal(isIdempotentExisting({uid: "uid-1", phoneNumber: "+919876543210", communityInviteCode: "HOME-2026", communityId: "community-a", role: "resident", name: "Resident", buildingReference: "Tower A", unitReference: "A-101", email: null, declaredResidentType: "owner"}, expected), true);
   assert.equal(isIdempotentExisting({uid: "uid-1", phoneNumber: "+919876543210", communityInviteCode: "HOME-2026", communityId: "community-b", role: "resident", name: "Resident", buildingReference: "Tower A", unitReference: "A-101", email: null}, expected), false);
 });

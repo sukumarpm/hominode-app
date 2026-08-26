@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'firebase_auth_service.dart';
 
+enum ResidentAuthenticationIntent { login, register }
+
 class ResidentAuthRouting {
   const ResidentAuthRouting._();
 
@@ -18,6 +20,8 @@ class ResidentAuthRouting {
         return '/resident-registration';
       case ResidentAuthState.pendingApproval:
         return '/awaiting-approval';
+      case ResidentAuthState.identityVerificationRequired:
+        return '/resident-identity-verification';
       case ResidentAuthState.rejected:
       case ResidentAuthState.blocked:
       case ResidentAuthState.flatAssignmentRequired:
@@ -25,6 +29,24 @@ class ResidentAuthRouting {
       case ResidentAuthState.failed:
         return '/login';
     }
+  }
+
+  /// Login never turns an unknown phone into a registration. Register uses
+  /// the same OTP verification but may continue to the existing registration
+  /// screen when no canonical resident profile exists.
+  static AuthResult resultForIntent(
+    AuthResult result,
+    ResidentAuthenticationIntent intent,
+  ) {
+    if (intent == ResidentAuthenticationIntent.login &&
+        result.state == ResidentAuthState.registrationRequired) {
+      return AuthResult.failure(
+        message:
+            'No resident profile is registered for this phone number. Use Register to create or claim one.',
+        errorCode: 'resident-registration-required',
+      );
+    }
+    return result;
   }
 
   /// Executes safe root navigation, clearing the stack and passing AuthResult data.

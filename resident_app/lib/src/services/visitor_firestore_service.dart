@@ -271,6 +271,38 @@ class VisitorFirestoreService {
     }
   }
 
+  Future<String> _requireResidentCommunityId() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      throw StateError('Resident is not authenticated.');
+    }
+
+    final userDoc = await _firestore.collection('users').doc(user.uid).get();
+
+    if (!userDoc.exists || userDoc.data() == null) {
+      throw StateError('Resident profile not found.');
+    }
+
+    final data = userDoc.data()!;
+
+    if (data['role'] != 'resident') {
+      throw StateError('Invalid resident role.');
+    }
+
+    if (data['isActive'] != true || data['approvalStatus'] != 'approved') {
+      throw StateError('Resident profile is not approved.');
+    }
+
+    final communityId = data['communityId'];
+
+    if (communityId is! String || communityId.trim().isEmpty) {
+      throw StateError('Resident community is not assigned.');
+    }
+
+    return communityId.trim();
+  }
+
   // ============================================================================
   // GET VISITORS
   // ============================================================================
@@ -297,9 +329,10 @@ class VisitorFirestoreService {
 
         print('🆔 Using Firestore User ID: $userId');
       }
-
+      final communityId = await _requireResidentCommunityId();
       final snapshot = await _firestore
           .collection(visitorsCollection)
+          .where('communityId', isEqualTo: communityId)
           .where('hostUserId', isEqualTo: userId)
           .get();
 
@@ -500,9 +533,11 @@ class VisitorFirestoreService {
 
         print('🆔 Using Firestore User ID: $userId');
       }
+      final communityId = await _requireResidentCommunityId();
 
       final snapshot = await _firestore
           .collection(visitorsCollection)
+          .where('communityId', isEqualTo: communityId)
           .where('hostUserId', isEqualTo: userId)
           .where('status', isEqualTo: 'expected')
           .get();
@@ -551,9 +586,11 @@ class VisitorFirestoreService {
     }
 
     print('📡 Streaming visitors for user: $userId');
+    final communityId = await _requireResidentCommunityId();
 
     yield* _firestore
         .collection(visitorsCollection)
+        .where('communityId', isEqualTo: communityId)
         .where('hostUserId', isEqualTo: userId)
         .snapshots()
         .map((snapshot) {

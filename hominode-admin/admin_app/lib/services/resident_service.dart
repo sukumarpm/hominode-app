@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:math';
 import 'admin_service.dart';
@@ -12,13 +13,18 @@ class ResidentService {
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     AdminService? adminService,
+    FirebaseFunctions? functions,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _adminService = adminService ?? AdminService();
+       _adminService = adminService ?? AdminService(),
+       _functions =
+           functions ??
+           FirebaseFunctions.instanceFor(region: 'asia-southeast1');
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final AdminService _adminService;
+  final FirebaseFunctions _functions;
   final String _collection = 'users';
 
   Stream<List<PendingResident>> watchPendingResidents() {
@@ -28,10 +34,16 @@ class ResidentService {
         .collection(_collection)
         .where('communityId', isEqualTo: communityId)
         .where('role', isEqualTo: 'resident')
-        .where('approvalStatus', isEqualTo: 'pending')
+        .where('isActive', isEqualTo: false)
         .snapshots()
         .map((snapshot) {
           final residents = snapshot.docs
+              .where(
+                (doc) => ResidentApprovalPolicy.isPendingForCommunity(
+                  doc.data(),
+                  communityId,
+                ),
+              )
               .map((doc) => PendingResident.fromMap(doc.id, doc.data()))
               .toList();
           residents.sort(
@@ -48,74 +60,42 @@ class ResidentService {
     required String userId,
     required String buildingId,
     required String flatId,
+    required String residentType,
   }) async {
     final communityId = _adminService.requireCurrentCommunityId();
-    final adminId = _adminService.getCurrentAdminId();
-    if (adminId == null) {
-      throw StateError('Admin is not authenticated.');
+    await _functions.httpsCallable('approveResidentRegistration').call({
+      'communityId': communityId,
+      'userId': userId,
+      'buildingId': buildingId,
+      'flatId': flatId,
+      'residentType': residentType,
+    });
+  }
+
+  Future<String> getIdentityProofUrl(String userId) async {
+    final response = await _functions
+        .httpsCallable('getResidentIdentityProofUrl')
+        .call({
+          'communityId': _adminService.requireCurrentCommunityId(),
+          'userId': userId,
+        });
+    final data = response.data;
+    if (data is! Map || data['url'] is! String) {
+      throw StateError('Identity proof URL was not returned.');
     }
+    return data['url'] as String;
+  }
 
-    await _firestore.runTransaction((transaction) async {
-      final userRef = _firestore.collection(_collection).doc(userId);
-      final buildingRef = _firestore.collection('buildings').doc(buildingId);
-      final flatRef = _firestore.collection('flats').doc(flatId);
-      final user = await transaction.get(userRef);
-      final building = await transaction.get(buildingRef);
-      final flat = await transaction.get(flatRef);
-
-      if (!user.exists) {
-        throw StateError('Resident registration was not found.');
-      }
-      if (!building.exists) {
-        throw StateError('Selected building was not found.');
-      }
-      if (!flat.exists) throw StateError('Selected unit was not found.');
-
-      final userData = user.data()!;
-      final buildingData = building.data()!;
-      final flatData = flat.data()!;
-      if (!ResidentApprovalPolicy.canReview(userData, communityId)) {
-        throw StateError('Resident is outside the selected community.');
-      }
-      if (userData['approvalStatus'] != 'pending') {
-        throw StateError(
-          'Only pending resident registrations can be approved.',
-        );
-      }
-      if (!ResidentApprovalPolicy.canonicalAssignmentMatches(
-        building: buildingData,
-        unit: flatData,
-        communityId: communityId,
-        buildingId: buildingId,
-      )) {
-        throw StateError(
-          'The selected building and unit do not belong to this community.',
-        );
-      }
-      if (!ResidentApprovalPolicy.flatCanBeAssigned(flatData, userId)) {
-        throw StateError('The selected unit is not available for assignment.');
-      }
-
-      final timestamp = FieldValue.serverTimestamp();
-      transaction.update(
-        userRef,
-        approvalFields(
-          adminId: adminId,
-          buildingId: buildingId,
-          flatId: flatId,
-          buildingName: (buildingData['buildingName'] ?? buildingData['name'])
-              ?.toString(),
-          flatLabel: (flatData['flatLabel'] ?? flatData['flatId'])?.toString(),
-          timestamp: timestamp,
-        ),
-      );
-      transaction.update(flatRef, {
-        'status': 'occupied',
-        'residentUserId': userId,
-        'residentId': userData['residentId'],
-        'residentName': userData['name'] ?? userData['fullName'],
-        'updatedAt': timestamp,
-      });
+  Future<void> reviewIdentityProof({
+    required String userId,
+    required bool verified,
+    String? reason,
+  }) async {
+    await _functions.httpsCallable('reviewResidentIdentityProof').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'userId': userId,
+      'decision': verified ? 'verified' : 'rejected',
+      'reason': reason?.trim(),
     });
   }
 
@@ -149,27 +129,6 @@ class ResidentService {
       );
     });
   }
-
-  @visibleForTesting
-  static Map<String, dynamic> approvalFields({
-    required String adminId,
-    required String buildingId,
-    required String flatId,
-    required Object timestamp,
-    String? buildingName,
-    String? flatLabel,
-  }) => {
-    'approvalStatus': 'approved',
-    'isActive': true,
-    'buildingId': buildingId,
-    'flatId': flatId,
-    'unitId': flatId,
-    if (buildingName != null) 'buildingName': buildingName,
-    if (flatLabel != null) 'flatLabel': flatLabel,
-    'approvedAt': timestamp,
-    'approvedBy': adminId,
-    'updatedAt': timestamp,
-  };
 
   @visibleForTesting
   static Map<String, dynamic> rejectionFields({

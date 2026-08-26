@@ -25,6 +25,7 @@ void main() {
       communityInviteCode: 'HOME-2026',
       buildingReference: 'Tower A',
       unitReference: 'A-101',
+      residentType: 'owner',
     );
     final data = registration.toFirestore();
     expect(data['role'], 'resident');
@@ -45,6 +46,7 @@ void main() {
         communityInviteCode: 'HOME-2026',
         buildingReference: ' Tower A ',
         unitReference: ' A-101 ',
+        residentType: 'tenant',
       );
       final payload = ResidentRegistrationService.callablePayload(registration);
       expect(payload, {
@@ -53,6 +55,7 @@ void main() {
         'email': null,
         'buildingReference': 'Tower A',
         'unitReference': 'A-101',
+        'residentType': 'tenant',
       });
       expect(payload.containsKey('uid'), isFalse);
       expect(payload.containsKey('phoneNumber'), isFalse);
@@ -77,6 +80,12 @@ void main() {
       '/awaiting-approval',
     );
     expect(
+      ResidentAuthRouting.routeFor(
+        result(ResidentAuthState.identityVerificationRequired),
+      ),
+      '/resident-identity-verification',
+    );
+    expect(
       ResidentAuthRouting.routeFor(result(ResidentAuthState.approved)),
       '/home',
     );
@@ -97,4 +106,57 @@ void main() {
       '/login',
     );
   });
+
+  test('imported onboarding claim sends no client-owned tenant data', () {
+    expect(ResidentRegistrationService.importedOnboardingPayload, {
+      'claimImportedOnboarding': true,
+    });
+  });
+
+  test('Login cannot auto-register an unknown phone', () {
+    final registrationRequired = AuthResult(
+      success: true,
+      state: ResidentAuthState.registrationRequired,
+    );
+    final result = ResidentAuthRouting.resultForIntent(
+      registrationRequired,
+      ResidentAuthenticationIntent.login,
+    );
+
+    expect(result.success, isFalse);
+    expect(result.errorCode, 'resident-registration-required');
+    expect(ResidentAuthRouting.routeFor(result), '/login');
+  });
+
+  test(
+    'Register may continue after OTP while pending profiles await approval',
+    () {
+      final registrationRequired = AuthResult(
+        success: true,
+        state: ResidentAuthState.registrationRequired,
+      );
+      final registerResult = ResidentAuthRouting.resultForIntent(
+        registrationRequired,
+        ResidentAuthenticationIntent.register,
+      );
+      expect(
+        ResidentAuthRouting.routeFor(registerResult),
+        '/resident-registration',
+      );
+
+      final pending = AuthResult(
+        success: true,
+        state: ResidentAuthState.pendingApproval,
+      );
+      expect(
+        ResidentAuthRouting.routeFor(
+          ResidentAuthRouting.resultForIntent(
+            pending,
+            ResidentAuthenticationIntent.login,
+          ),
+        ),
+        '/awaiting-approval',
+      );
+    },
+  );
 }
