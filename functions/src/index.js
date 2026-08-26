@@ -54,6 +54,11 @@ const {
 } = require("./resident_bulk_import");
 const {
   approveResidentRegistrationCore,
+  rejectResidentRegistrationCore,
+  deactivateResidentCore,
+  reactivateResidentCore,
+  reassignResidentCore,
+  createResidentOnboardingCore,
   submitResidentIdentityProofCore,
   getResidentIdentityProofUrlCore,
   reviewResidentIdentityProofCore,
@@ -130,6 +135,26 @@ exports.importResidentsBulk = callable(
 exports.approveResidentRegistration = callable(
   approveResidentRegistrationCore,
   "Resident approval could not be completed."
+);
+exports.rejectResidentRegistration = callable(
+  rejectResidentRegistrationCore,
+  "Resident rejection could not be completed."
+);
+exports.deactivateResident = callable(
+  deactivateResidentCore,
+  "Resident deactivation could not be completed."
+);
+exports.reactivateResident = callable(
+  reactivateResidentCore,
+  "Resident reactivation could not be completed."
+);
+exports.reassignResident = callable(
+  reassignResidentCore,
+  "Resident reassignment could not be completed."
+);
+exports.createResidentOnboarding = callable(
+  createResidentOnboardingCore,
+  "Resident onboarding could not be created."
 );
 exports.submitResidentIdentityProof = callable(
   submitResidentIdentityProofCore,

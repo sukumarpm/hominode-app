@@ -19,6 +19,7 @@ import 'pending_residents_screen.dart';
 import 'resident_bulk_import_screen.dart';
 import 'services/billing_service.dart';
 import 'services/building_service.dart';
+import 'services/resident_service.dart';
 import 'services/user_service.dart';
 import 'widgets/add_resident_modal_clean.dart';
 import 'widgets/standard_bottom_nav.dart';
@@ -35,6 +36,7 @@ class AdminResidentsPageFirestore extends StatefulWidget {
 class _AdminResidentsPageFirestoreState
     extends State<AdminResidentsPageFirestore> {
   final UserService _userService = UserService();
+  final ResidentService _residentService = ResidentService();
   final BuildingService _buildingService = BuildingService();
   final BillingService _billingService = BillingService();
 
@@ -474,13 +476,14 @@ class _AdminResidentsPageFirestoreState
                           case 'deactivate':
                             _toggleResidentStatus(resident, 'inactive');
                             break;
-                          case 'delete':
-                            _deleteResident(resident);
+                          case 'move_out':
+                            _moveOutResident(resident);
                             break;
                         }
                       },
                       itemBuilder: (context) => [
-                        if (resident.status == 'inactive')
+                        if (resident.status == 'inactive' &&
+                            resident.occupancyStatus != 'moved_out')
                           PopupMenuItem(
                             value: 'activate',
                             child: Row(
@@ -491,7 +494,7 @@ class _AdminResidentsPageFirestoreState
                                   color: Color(0xFF10B981),
                                 ),
                                 SizedBox(width: 8.w),
-                                Text('Activate'),
+                                Text('Reactivate'),
                               ],
                             ),
                           ),
@@ -510,20 +513,21 @@ class _AdminResidentsPageFirestoreState
                               ],
                             ),
                           ),
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.delete_outline,
-                                size: 18.w,
-                                color: Color(0xFFEF4444),
-                              ),
-                              SizedBox(width: 8.w),
-                              Text('Delete'),
-                            ],
+                        if (resident.flatId?.isNotEmpty == true)
+                          PopupMenuItem(
+                            value: 'move_out',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.logout,
+                                  size: 18.w,
+                                  color: Color(0xFFEF4444),
+                                ),
+                                SizedBox(width: 8.w),
+                                Text('Move Out'),
+                              ],
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ],
@@ -585,15 +589,11 @@ class _AdminResidentsPageFirestoreState
             );
           }
 
-          // Use the generated password from the modal
-          final password = residentData.generatedPassword;
-
-          // Create user in Firestore
-          final userId = await _userService.createUser(
+          await _userService.createUser(
             name: residentData.fullName,
             phone: residentData.phone,
             email: residentData.email.isNotEmpty ? residentData.email : null,
-            password: password,
+            residentType: residentData.residentType,
             familyMembers: residentData.membersCount,
           );
 
@@ -601,7 +601,6 @@ class _AdminResidentsPageFirestoreState
           if (mounted) {
             ScaffoldMessenger.of(context).clearSnackBars();
 
-            // Show success dialog with password
             await showDialog(
               context: context,
               barrierDismissible: false,
@@ -623,7 +622,7 @@ class _AdminResidentsPageFirestoreState
                     SizedBox(width: 12.w),
                     Expanded(
                       child: Text(
-                        'Resident Added',
+                        'Resident Onboarding Created',
                         style: TextStyle(
                           fontSize: 18.sp,
                           fontWeight: FontWeight.w600,
@@ -637,7 +636,7 @@ class _AdminResidentsPageFirestoreState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${residentData.fullName} has been added successfully!',
+                      '${residentData.fullName} can now register using the verified phone number below.',
                       style: TextStyle(fontSize: 15.sp),
                     ),
                     SizedBox(height: 20.h),
@@ -654,13 +653,13 @@ class _AdminResidentsPageFirestoreState
                           Row(
                             children: [
                               Icon(
-                                Icons.lock_outline,
+                                Icons.phone_android,
                                 color: Color(0xFF0E4778),
                                 size: 20.w,
                               ),
                               SizedBox(width: 8.w),
                               Text(
-                                'Login Credentials',
+                                'OTP Registration',
                                 style: TextStyle(
                                   fontSize: 15.sp,
                                   fontWeight: FontWeight.w600,
@@ -670,14 +669,7 @@ class _AdminResidentsPageFirestoreState
                             ],
                           ),
                           SizedBox(height: 12.h),
-                          _buildCredentialRow(
-                            'Username',
-                            residentData.email.isNotEmpty
-                                ? residentData.email
-                                : residentData.phone,
-                          ),
-                          SizedBox(height: 8.h),
-                          _buildCredentialRow('Password', password),
+                          _buildCredentialRow('Phone', residentData.phone),
                           SizedBox(height: 12.h),
                           Row(
                             children: [
@@ -689,7 +681,7 @@ class _AdminResidentsPageFirestoreState
                               SizedBox(width: 6.w),
                               Expanded(
                                 child: Text(
-                                  'Save these credentials securely',
+                                  'Use Register in the Resident app. No password or Auth user was created by Admin.',
                                   style: TextStyle(
                                     fontSize: 12.sp,
                                     color: Color(0xFF0E4778),
@@ -710,12 +702,12 @@ class _AdminResidentsPageFirestoreState
                       Clipboard.setData(
                         ClipboardData(
                           text:
-                              'Username: ${residentData.email.isNotEmpty ? residentData.email : residentData.phone}\nPassword: $password',
+                              'Register in the Hominode Resident app with ${residentData.phone}',
                         ),
                       );
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Credentials copied to clipboard'),
+                          content: Text('Registration instructions copied'),
                           backgroundColor: Color(0xFF10B981),
                           duration: Duration(seconds: 2),
                         ),
@@ -746,26 +738,7 @@ class _AdminResidentsPageFirestoreState
           if (mounted) {
             ScaffoldMessenger.of(context).clearSnackBars();
 
-            // Parse Firebase Auth errors
-            String errorMessage = 'Failed to add resident';
-            final errorString = e.toString().toLowerCase();
-
-            if (errorString.contains('email-already-in-use')) {
-              errorMessage =
-                  'This email address is already registered. Please use a different email.';
-            } else if (errorString.contains('invalid-email')) {
-              errorMessage =
-                  'Invalid email address format. Please check and try again.';
-            } else if (errorString.contains('weak-password')) {
-              errorMessage =
-                  'Password is too weak. Please use a stronger password.';
-            } else if (errorString.contains('network')) {
-              errorMessage =
-                  'Network error. Please check your internet connection.';
-            } else {
-              errorMessage =
-                  'Failed to add resident: ${e.toString().replaceAll('Exception: ', '')}';
-            }
+            final errorMessage = ResidentService.errorMessage(e);
 
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -845,16 +818,17 @@ class _AdminResidentsPageFirestoreState
     String newStatus,
   ) async {
     try {
-      await _userService.updateUserStatus(
-        userId: resident.id,
-        status: newStatus,
-      );
+      if (newStatus == 'active') {
+        await _residentService.reactivateResident(resident.id);
+      } else {
+        await _residentService.deactivateResident(resident.id);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '${resident.name} ${newStatus == "active" ? "activated" : "deactivated"}',
+              '${resident.name} ${newStatus == "active" ? "reactivated" : "deactivated"}',
             ),
             backgroundColor: const Color(0xFF10B981),
           ),
@@ -864,7 +838,7 @@ class _AdminResidentsPageFirestoreState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to update status: $e'),
+            content: Text(ResidentService.errorMessage(e)),
             backgroundColor: const Color(0xFFEF4444),
           ),
         );
@@ -872,6 +846,49 @@ class _AdminResidentsPageFirestoreState
     }
   }
 
+  Future<void> _moveOutResident(UserModel resident) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Move Out Resident'),
+        content: Text(
+          'Move out ${resident.name}? Their operational access and current unit assignment will be removed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Move Out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _residentService.moveOutResident(resident.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${resident.name} moved out successfully')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(ResidentService.errorMessage(error)),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
+      }
+    }
+  }
+
+  // Legacy hard-delete UI is intentionally retired; historical resident
+  // documents are preserved by move-out.
+  // ignore: unused_element
   Future<void> _deleteResident(UserModel resident) async {
     final confirmed = await showDialog<bool>(
       context: context,

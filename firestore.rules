@@ -402,16 +402,9 @@ function securityCanAccessCommunity(communityId) {
 
     match /users/{userId} {
 
-      allow create: if adminCanAccessCommunity(
-          request.resource.data.communityId
-        )
-        && request.resource.data.role == 'resident'
-        && request.resource.data.approvalStatus == 'pending'
-        && request.resource.data.isActive == false
-        && (
-          !('flatId' in request.resource.data)
-          || request.resource.data.flatId == null
-        );
+      // Resident profiles are created only by the trusted OTP registration
+      // and onboarding callables. Admin clients cannot create hidden users.
+      allow create: if false;
 
       // Resident can always read own profile.
       allow get: if signedIn()
@@ -488,36 +481,32 @@ function securityCanAccessCommunity(communityId) {
             'occupancyStatus',
             'approvedAt',
             'approvedBy',
+            'rejectedAt',
+            'rejectedBy',
+            'rejectedReason',
+            'deactivatedAt',
+            'deactivatedBy',
+            'reactivatedAt',
+            'reactivatedBy',
+            'reassignedAt',
+            'reassignedBy',
+            'reassignmentCount',
             'movedOutAt',
             'movedOutBy',
             'previousFlatId',
             'previousUnitId',
-            'previousBuildingId'
-          ]);
-
-      // Preserve the existing Admin rejection action without allowing an
-      // activation, assignment, or approval transition from the client.
-      allow update: if adminCanAccessCommunity(
-          resource.data.communityId
-        )
-        && resource.data.approvalStatus == 'pending'
-        && resource.data.isActive == false
-        && request.resource.data.communityId == resource.data.communityId
-        && request.resource.data.approvalStatus == 'rejected'
-        && request.resource.data.isActive == false
-        && request.resource.data.rejectedBy == request.auth.uid
-        && request.resource.data.diff(resource.data)
-          .affectedKeys()
-          .hasOnly([
-            'approvalStatus',
-            'isActive',
-            'rejectedAt',
-            'rejectedBy',
-            'rejectedReason',
-            'updatedAt'
+            'previousFlatLabel',
+            'previousBuildingId',
+            'previousBuildingName'
           ]);
 
       allow delete: if false;
+    }
+
+    // Admin single onboarding and bulk onboarding are server-owned. Residents
+    // claim them only through verified-OTP callable registration.
+    match /residentOnboarding/{onboardingId} {
+      allow read, write: if false;
     }
 
 

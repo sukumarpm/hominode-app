@@ -1,11 +1,38 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import 'admin_service.dart';
+import 'resident_service.dart';
 
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AdminService _adminService = AdminService();
+  final ResidentService _residentService = ResidentService();
   final String _collection = 'users';
+
+  static bool isReturningResidentData(Map<String, dynamic> data) {
+    final flatId = data['flatId']?.toString().trim() ?? '';
+    final residentType = data['residentType']?.toString().trim().toLowerCase();
+    final ownershipType = data['ownershipType']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final canonicalType = residentType?.isNotEmpty == true
+        ? residentType
+        : ownershipType;
+    return data['role'] == 'resident' &&
+        data['approvalStatus'] == 'approved' &&
+        data['isActive'] == false &&
+        data['status'] == 'inactive' &&
+        data['occupancyStatus'] == 'moved_out' &&
+        flatId.isEmpty &&
+        (canonicalType == 'owner' || canonicalType == 'tenant') &&
+        (residentType == null ||
+            residentType.isEmpty ||
+            residentType == canonicalType) &&
+        (ownershipType == null ||
+            ownershipType.isEmpty ||
+            ownershipType == canonicalType);
+  }
 
   // Get all users (residents) - FILTERED BY ADMIN
   Stream<List<UserModel>> getUsers() async* {
@@ -34,8 +61,7 @@ class UserService {
           return snapshot.docs
               .where((doc) {
                 final data = doc.data();
-                return data['approvalStatus'] == 'approved' &&
-                    data['isActive'] == true;
+                return data['approvalStatus'] == 'approved';
               })
               .map((doc) {
                 final data = doc.data();
@@ -69,6 +95,7 @@ class UserService {
                   unitReference: data['unitReference']?.toString(),
                   approvalStatus: data['approvalStatus'] ?? '',
                   isActive: data['isActive'] == true,
+                  occupancyStatus: data['occupancyStatus']?.toString(),
                   ownershipType: data['ownershipType'],
                   familyMembers: data['familyMembers'] ?? 1,
                   status: status,
@@ -204,11 +231,14 @@ class UserService {
     print('║         GET AVAILABLE USERS - START                    ║');
     print('╚════════════════════════════════════════════════════════╝');
     print('Collection: $_collection');
-    print('Query: WHERE role = "resident"');
+    final communityId = _adminService.getCurrentCommunityId();
+    if (communityId == null) return Stream.value(const <UserModel>[]);
+    print('Query: returning residents in community $communityId');
 
     return _firestore
         .collection(_collection)
         .where('role', isEqualTo: 'resident')
+        .where('communityId', isEqualTo: communityId)
         .snapshots()
         .map((snapshot) {
           print('\n[Snapshot Received]');
@@ -228,7 +258,7 @@ class UserService {
               .where((doc) {
                 final data = doc.data();
                 final flatId = data['flatId'];
-                final isAvailable = flatId == null || flatId == '';
+                final isAvailable = isReturningResidentData(data);
 
                 print('  Document ${doc.id}:');
                 print('    Name: ${data['name']}');
@@ -258,6 +288,13 @@ class UserService {
                   role: data['role'] ?? 'resident',
                   flatId: data['flatId'],
                   flatLabel: data['flatLabel'],
+                  buildingId: data['buildingId'],
+                  buildingName: data['buildingName'],
+                  unitId: data['unitId'],
+                  communityId: data['communityId'],
+                  approvalStatus: data['approvalStatus'] ?? '',
+                  isActive: data['isActive'] == true,
+                  occupancyStatus: data['occupancyStatus']?.toString(),
                   ownershipType: data['ownershipType'],
                   familyMembers: data['familyMembers'] ?? 1,
                   status: status,
@@ -294,14 +331,21 @@ class UserService {
       final data = doc.data()!;
       return UserModel(
         id: doc.id,
-        name: data['name'] ?? '',
-        phone: data['phone'] ?? '',
+        name: data['name'] ?? data['fullName'] ?? '',
+        phone: data['phone'] ?? data['phoneNumber'] ?? '',
         email: data['email'],
         password: data['password'],
         residentId: data['residentId'] ?? '',
         role: data['role'] ?? 'resident',
         flatId: data['flatId'],
         flatLabel: data['flatLabel'],
+        buildingId: data['buildingId'],
+        buildingName: data['buildingName'],
+        unitId: data['unitId'],
+        communityId: data['communityId'],
+        approvalStatus: data['approvalStatus'] ?? '',
+        isActive: data['isActive'] == true,
+        occupancyStatus: data['occupancyStatus']?.toString(),
         ownershipType: data['ownershipType'],
         familyMembers: data['familyMembers'] ?? 1,
         status: data['status'] ?? 'active',
@@ -313,15 +357,38 @@ class UserService {
     }
   }
 
-  // Create new user (resident) with Firebase Authentication and Admin Details
-  // Returns the Firebase Auth UID (which is also the Firestore document ID)
+  /// Creates a server-owned pending onboarding record. It intentionally does
+  /// not create a Firebase Auth account or a /users profile.
   Future<String> createUser({
+    required String name,
+    required String phone,
+    String? password,
+    String? email,
+    String residentType = 'owner',
+    String? buildingId,
+    String? buildingName,
+    String? unitReference,
+    int familyMembers = 1,
+  }) => _residentService.createResidentOnboarding(
+    name: name,
+    phone: phone,
+    email: email,
+    residentType: residentType,
+    familyMembers: familyMembers,
+    buildingReference: buildingName,
+    unitReference: unitReference,
+  );
+
+  // Historical implementation retained privately while old widgets are
+  // migrated. It has no active caller.
+  // ignore: unused_element
+  Future<String> _legacyCreateUser({
     required String name,
     required String phone,
     required String password,
     String? email,
-    String? buildingId, // Optional - can be null if not assigned yet
-    String? buildingName, // Optional - can be null if not assigned yet
+    String? buildingId,
+    String? buildingName,
     int familyMembers = 1,
   }) async {
     print('\n╔════════════════════════════════════════════════════════╗');
@@ -517,8 +584,29 @@ class UserService {
     }
   }
 
-  // Assign user to flat - SAFE VERSION with existence checks and batch operations
   Future<void> assignUserToFlat({
+    required String userId,
+    required String flatId,
+    required String flatLabel,
+    String? buildingId,
+    String? buildingName,
+    String? ownershipType,
+  }) async {
+    if (buildingId == null || buildingId.trim().isEmpty) {
+      throw StateError('A building is required to reassign a resident.');
+    }
+    await _residentService.reassignResident(
+      userId: userId,
+      buildingId: buildingId,
+      flatId: flatId,
+    );
+  }
+
+  // Historical direct assignment implementation; no active lifecycle flow
+  // should invoke it.
+  // ignore: unused_element
+  // Assign user to flat - SAFE VERSION with existence checks and batch operations
+  Future<void> _legacyAssignUserToFlat({
     required String userId,
     required String flatId,
     required String flatLabel,
@@ -681,8 +769,13 @@ class UserService {
     }
   }
 
+  Future<void> removeUserFromFlat(String userId) =>
+      _residentService.moveOutResident(userId);
+
+  // Historical direct removal implementation; trusted move-out is used now.
+  // ignore: unused_element
   // Remove user from flat - SAFE VERSION with existence checks and batch operations
-  Future<void> removeUserFromFlat(String userId) async {
+  Future<void> _legacyRemoveUserFromFlat(String userId) async {
     try {
       print('\n╔════════════════════════════════════════════════════════╗');
       print('║        REMOVE USER FROM FLAT - START                   ║');
@@ -828,6 +921,11 @@ class UserService {
     String? status,
   }) async {
     try {
+      if (status != null) {
+        throw ArgumentError(
+          'Resident lifecycle status must use updateUserStatus().',
+        );
+      }
       final updates = <String, dynamic>{
         'updatedAt': FieldValue.serverTimestamp(),
       };
@@ -837,7 +935,6 @@ class UserService {
       if (email != null) updates['email'] = email;
       if (password != null) updates['password'] = password;
       if (familyMembers != null) updates['familyMembers'] = familyMembers;
-      if (status != null) updates['status'] = status;
 
       await _firestore.collection(_collection).doc(userId).update(updates);
     } catch (e) {
@@ -850,18 +947,24 @@ class UserService {
     required String userId,
     required String status,
   }) async {
-    try {
-      await _firestore.collection(_collection).doc(userId).update({
-        'status': status,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      throw Exception('Failed to update user status: $e');
+    if (status == 'active') {
+      await _residentService.reactivateResident(userId);
+      return;
     }
+    if (status == 'inactive') {
+      await _residentService.deactivateResident(userId);
+      return;
+    }
+    throw ArgumentError.value(status, 'status', 'Use active or inactive.');
   }
 
-  // Delete user
-  Future<void> deleteUser(String userId) async {
+  Future<void> deleteUser(String userId) => Future<void>.error(
+    StateError('Resident hard-delete is retired. Use Move Out.'),
+  );
+
+  // Historical hard-delete implementation; resident history is retained now.
+  // ignore: unused_element
+  Future<void> _legacyDeleteUser(String userId) async {
     try {
       // Get user data to find auth UID
       final doc = await _firestore.collection(_collection).doc(userId).get();
@@ -949,6 +1052,7 @@ class UserModel {
   final String? unitReference;
   final String approvalStatus;
   final bool isActive;
+  final String? occupancyStatus;
   final String? ownershipType;
   final int familyMembers;
   final String status; // active, inactive
@@ -973,6 +1077,7 @@ class UserModel {
     this.unitReference,
     this.approvalStatus = '',
     this.isActive = false,
+    this.occupancyStatus,
     this.ownershipType,
     required this.familyMembers,
     required this.status,
@@ -999,6 +1104,7 @@ class UserModel {
       'unitReference': unitReference,
       'approvalStatus': approvalStatus,
       'isActive': isActive,
+      'occupancyStatus': occupancyStatus,
       'ownershipType': ownershipType,
       'familyMembers': familyMembers,
       'status': status,

@@ -1,8 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_tenant_context.dart';
+import 'resident_service.dart';
 
 class FlatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final ResidentService _residentService = ResidentService();
   final String _collection = 'flats';
 
   /// Adds canonical flat documents to the caller's atomic building batch.
@@ -329,9 +331,21 @@ class FlatService {
     }
   }
 
-  // Assign resident to flat
   Future<void> assignResident({
-    required String flatId, // Firestore document ID (not sequential ID)
+    required String flatId,
+    required String residentName,
+    required String residentId,
+  }) => Future<void>.error(
+    StateError(
+      'Direct resident assignment is retired. Use Pending Registrations approval.',
+    ),
+  );
+
+  // Historical direct assignment implementation; no active lifecycle flow
+  // should invoke it.
+  // ignore: unused_element
+  Future<void> _legacyAssignResident({
+    required String flatId,
     required String residentName,
     required String residentId,
   }) async {
@@ -360,8 +374,19 @@ class FlatService {
     }
   }
 
-  // Remove resident from flat
   Future<void> removeResident(String flatId) async {
+    final snapshot = await _firestore.collection(_collection).doc(flatId).get();
+    if (!snapshot.exists) throw StateError('Flat was not found.');
+    final residentUserId = FlatModel.resolveResidentUserId(snapshot.data()!);
+    if (residentUserId == null) {
+      throw StateError('Flat occupant data is missing or conflicting.');
+    }
+    await _residentService.moveOutResident(residentUserId);
+  }
+
+  // Historical direct removal implementation; trusted move-out is used now.
+  // ignore: unused_element
+  Future<void> _legacyRemoveResident(String flatId) async {
     try {
       print('\n🔵 FlatService.removeResident() called');
       print('   - flatId: $flatId');

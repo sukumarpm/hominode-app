@@ -1,6 +1,6 @@
 import 'package:admin_app/models/pending_resident.dart';
-import 'package:admin_app/services/resident_service.dart';
 import 'package:admin_app/services/flat_service.dart';
+import 'package:admin_app/services/user_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -127,18 +127,6 @@ void main() {
     },
   );
 
-  test('rejection preserves the resident document in rejected state', () {
-    final fields = ResidentService.rejectionFields(
-      adminId: 'admin-1',
-      reason: ' Not a resident ',
-      timestamp: 'server-time',
-    );
-    expect(fields['approvalStatus'], 'rejected');
-    expect(fields['isActive'], isFalse);
-    expect(fields['rejectedReason'], 'Not a resident');
-    expect(fields['updatedAt'], 'server-time');
-  });
-
   test('pending resident maps canonical registration fields', () {
     final resident = PendingResident.fromMap('uid-1', {
       'fullName': 'Resident Name',
@@ -243,5 +231,54 @@ void main() {
     expect(resident.unitReference, 'I002');
     expect(resident.residentType, 'owner');
     expect(resident.creationSource, 'admin_bulk_import_claim');
+  });
+
+  group('returning resident selection', () {
+    Map<String, dynamic> returning({
+      String communityId = 'community-a',
+      bool active = false,
+      String approvalStatus = 'approved',
+      String status = 'inactive',
+      String occupancyStatus = 'moved_out',
+      String? flatId,
+      String residentType = 'owner',
+      String ownershipType = 'owner',
+    }) => {
+      'communityId': communityId,
+      'role': 'resident',
+      'approvalStatus': approvalStatus,
+      'isActive': active,
+      'status': status,
+      'occupancyStatus': occupancyStatus,
+      'flatId': flatId,
+      'residentType': residentType,
+      'ownershipType': ownershipType,
+    };
+
+    test('only canonical moved-out profiles are offered for reassignment', () {
+      expect(UserService.isReturningResidentData(returning()), isTrue);
+      expect(
+        UserService.isReturningResidentData(returning(active: true)),
+        isFalse,
+      );
+      expect(
+        UserService.isReturningResidentData(
+          returning(occupancyStatus: 'suspended', flatId: 'flat-a'),
+        ),
+        isFalse,
+      );
+      expect(
+        UserService.isReturningResidentData(
+          returning(residentType: 'owner', ownershipType: 'tenant'),
+        ),
+        isFalse,
+      );
+      expect(
+        UserService.isReturningResidentData(
+          returning(approvalStatus: 'pending'),
+        ),
+        isFalse,
+      );
+    });
   });
 }

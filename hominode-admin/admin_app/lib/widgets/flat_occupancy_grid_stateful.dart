@@ -4,7 +4,6 @@ import 'assign_resident_modal.dart';
 import 'flat_maintenance_modal.dart';
 import 'flat_occupied_modal.dart';
 import '../services/user_service.dart';
-import '../services/flat_service.dart';
 import '../services/building_service.dart';
 
 /// Stateful wrapper for Flat Occupancy Grid that properly handles status updates
@@ -49,10 +48,7 @@ class FlatOccupancyGridStateful extends StatefulWidget {
           opacity: animation,
           child: ScaleTransition(
             scale: Tween<double>(begin: 0.96, end: 1.0).animate(
-              CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOut,
-              ),
+              CurvedAnimation(parent: animation, curve: Curves.easeOut),
             ),
             child: child,
           ),
@@ -62,13 +58,13 @@ class FlatOccupancyGridStateful extends StatefulWidget {
   }
 
   @override
-  State<FlatOccupancyGridStateful> createState() => _FlatOccupancyGridStatefulState();
+  State<FlatOccupancyGridStateful> createState() =>
+      _FlatOccupancyGridStatefulState();
 }
 
 class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
   late List<FloorOccupancy> _floorData;
   final UserService _userService = UserService();
-  final FlatService _flatService = FlatService();
   final BuildingService _buildingService = BuildingService();
 
   @override
@@ -84,12 +80,12 @@ class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
         // Vacant flats: Open Assign Resident Modal DIRECTLY
         _openAssignResidentModal(unit);
         break;
-        
+
       case FlatStatus.maintenance:
         // Maintenance flats: Open Maintenance Modal DIRECTLY
         _openMaintenanceModal(unit);
         break;
-        
+
       case FlatStatus.occupied:
         // Occupied flats: Open Occupied Details Modal DIRECTLY
         _openOccupiedModal(unit);
@@ -99,24 +95,24 @@ class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
 
   void _openAssignResidentModal(FlatUnit unit) {
     print('\n🟢 Opening Assign Resident Modal for ${unit.id}');
-    
+
     AssignResidentModal.show(
       context,
       flatId: unit.id,
       flatLabel: unit.id,
       loadResidents: () async {
         print('🟢 Loading residents from Firestore...');
-        // Fetch ALL users from Firestore (assigned + unassigned)
-        final users = await _userService.getAllResidentsWithStatus().first;
-        print('🟢 Loaded ${users.length} residents (all statuses)');
+        // Only previously moved-out residents can be returned to a unit.
+        final users = await _userService.getAvailableUsers().first;
+        print('🟢 Loaded ${users.length} returning residents');
         return users.map((user) {
           final isAssigned = user.flatId != null && user.flatId!.isNotEmpty;
           return ResidentSummary(
             id: user.id,
             name: user.name,
             uniqueId: user.residentId,
-            status: isAssigned 
-                ? ResidentStatus.assigned 
+            status: isAssigned
+                ? ResidentStatus.assigned
                 : ResidentStatus.available,
             flatLabel: user.flatLabel,
           );
@@ -130,35 +126,30 @@ class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
           if (user == null) {
             throw Exception('User not found');
           }
-          
+
           // Assign user to flat in users collection
           await _userService.assignUserToFlat(
             userId: user.id,
-            flatId: request.flatId,
+            flatId: unit.docId,
             flatLabel: unit.id,
             buildingId: widget.buildingId,
             buildingName: widget.buildingName,
             ownershipType: request.ownershipType,
           );
-          
-          // Update flat status in flats collection
-          await _flatService.assignResident(
-            flatId: unit.docId,  // Use Firestore document ID
-            residentName: user.name,
-            residentId: user.id,
-          );
-          
+
           // Sync building occupancy
           await _buildingService.syncOccupancyFromFlats(widget.buildingId);
-          
+
           // Update local state
           _updateFlatStatus(unit.id, FlatStatus.occupied);
-          
+
           if (mounted) {
             Navigator.of(context).pop(); // Close assign modal
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('${user.name} assigned to ${unit.id} successfully'),
+                content: Text(
+                  '${user.name} assigned to ${unit.id} successfully',
+                ),
                 backgroundColor: const Color(0xFF10B981),
                 duration: const Duration(seconds: 2),
               ),
@@ -186,61 +177,27 @@ class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
         print('  - Email: ${request.email}');
         print('  - Password: ${request.generatedPassword}');
         print('  - FlatId: ${request.flatId}');
-        
+
         try {
-          print('\n🟢 Calling UserService.createUser()...');
-          // Create new resident WITHOUT Firebase Auth (resident creates account on first login)
-          final residentUid = await widget.userService.createUser(
+          await _userService.createUser(
             name: request.name,
             email: request.email,
             phone: request.phone,
             password: request.generatedPassword,
+            residentType: request.ownershipType,
             familyMembers: request.familyMembers,
             buildingId: widget.buildingId,
             buildingName: widget.buildingName,
+            unitReference: request.flatId,
           );
-          
-          print('\n🟢 Resident created with UID: $residentUid');
-          print('🟢 Now assigning to flat...');
-          
-          // Assign resident to flat
-          await widget.userService.assignUserToFlat(
-            userId: residentUid,
-            flatId: request.flatId,
-            flatLabel: unit.id,
-            buildingId: widget.buildingId,
-            buildingName: widget.buildingName,
-            ownershipType: request.ownershipType,
-          );
-          
-          print('🟢 Resident assigned to flat');
-          print('🟢 Now updating flat status...');
-          
-          // Update flat status
-          await _flatService.assignResident(
-            flatId: unit.docId,  // Use Firestore document ID
-            residentName: request.name,
-            residentId: residentUid,
-          );
-          
-          print('🟢 Flat status updated');
-          print('🟢 Now syncing building occupancy...');
-          
-          // Sync building occupancy
-          await _buildingService.syncOccupancyFromFlats(widget.buildingId);
-          
-          print('🟢 Building occupancy synced');
-          
-          // Update local state
-          _updateFlatStatus(unit.id, FlatStatus.occupied);
-          
-          print('✅ ALL OPERATIONS COMPLETED SUCCESSFULLY!\n');
-          
+
           if (mounted) {
             Navigator.of(context).pop(); // Close assign modal
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('${request.name} created and assigned to ${unit.id}'),
+                content: Text(
+                  '${request.name} onboarding created. Unit assignment waits for OTP registration and Admin approval.',
+                ),
                 backgroundColor: const Color(0xFF10B981),
                 duration: const Duration(seconds: 3),
               ),
@@ -250,11 +207,11 @@ class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
           print('\n❌ ERROR in onAssignNew callback!');
           print('Error: $e');
           print('Stack trace: $stackTrace');
-          
+
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Failed to create and assign resident: $e'),
+                content: Text('Failed to create resident onboarding: $e'),
                 backgroundColor: const Color(0xFFEF4444),
                 duration: const Duration(seconds: 3),
               ),
@@ -294,7 +251,9 @@ class _FlatOccupancyGridStatefulState extends State<FlatOccupancyGridStateful> {
         for (var flat in floor.flats) {
           if (flat.id == flatId) {
             flat.updateStatus(newStatus);
-            print('✅ Flat $flatId status updated to: ${_getStatusName(newStatus)}');
+            print(
+              '✅ Flat $flatId status updated to: ${_getStatusName(newStatus)}',
+            );
             print('   Color will change to: ${_getColorName(newStatus)}');
             break;
           }

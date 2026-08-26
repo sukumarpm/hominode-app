@@ -128,6 +128,10 @@ test("Admin clients cannot bypass trusted occupancy transitions", {skip: !enable
   await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentUid: null}));
   await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentIds: ["tenant-verified"]}));
   await assertFails(dbFor("admin-a").collection("users").doc("resident-review").update({approvalStatus: "approved", isActive: true, flatId: "flat-a"}));
+  await assertFails(dbFor("admin-a").collection("users").doc("resident-a").update({isActive: false, status: "inactive", occupancyStatus: "suspended"}));
+  await assertFails(dbFor("admin-a").collection("users").doc("resident-inactive").update({isActive: true, status: "active", occupancyStatus: "current"}));
   await assertFails(dbFor("admin-a").collection("flats").doc("forged-occupied").set({communityId: "community-a", buildingId: "building-a", residentUserId: "resident-review"}));
-  await assertSucceeds(dbFor("admin-a").collection("users").doc("resident-review").update({approvalStatus: "rejected", isActive: false, rejectedAt: new Date(), rejectedBy: "admin-a", updatedAt: new Date()}));
+  await assertFails(dbFor("admin-a").collection("users").doc("resident-review").update({approvalStatus: "rejected", isActive: false, rejectedAt: new Date(), rejectedBy: "admin-a", updatedAt: new Date()}));
+  await assertFails(dbFor("admin-a").collection("users").doc("forged-resident").set({role: "resident", communityId: "community-a", approvalStatus: "pending", isActive: false}));
+  await assertFails(dbFor("admin-a").collection("residentOnboarding").doc("forged-onboarding").set({communityId: "community-a", phoneNumber: "+639171100000", status: "pending_registration"}));
 });

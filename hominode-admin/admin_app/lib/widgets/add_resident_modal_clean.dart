@@ -8,7 +8,6 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
-import 'dart:math';
 
 // ============================================================================
 // RESIDENT MODEL
@@ -20,7 +19,7 @@ class ResidentModel {
   final String phone;
   final String email;
   final int membersCount;
-  final String generatedPassword;
+  final String residentType;
 
   ResidentModel({
     required this.id,
@@ -28,7 +27,7 @@ class ResidentModel {
     required this.phone,
     required this.email,
     required this.membersCount,
-    required this.generatedPassword,
+    required this.residentType,
   });
 
   Map<String, dynamic> toJson() {
@@ -38,13 +37,13 @@ class ResidentModel {
       'phone': phone,
       'email': email,
       'membersCount': membersCount,
-      'generatedPassword': generatedPassword,
+      'residentType': residentType,
     };
   }
 
   @override
   String toString() {
-    return 'ResidentModel(id: $id, fullName: $fullName, phone: $phone, email: $email, membersCount: $membersCount, password: $generatedPassword)';
+    return 'ResidentModel(id: $id, fullName: $fullName, phone: $phone, email: $email, membersCount: $membersCount, residentType: $residentType)';
   }
 }
 
@@ -97,27 +96,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
   final _membersController = TextEditingController(text: '4');
 
   bool _isSubmitting = false;
-  String _generatedPassword = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _generatePassword();
-  }
-
-  /// Generate random password for new resident
-  void _generatePassword() {
-    final random = Random();
-    const chars =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    _generatedPassword = String.fromCharCodes(
-      Iterable.generate(
-        8,
-        (_) => chars.codeUnitAt(random.nextInt(chars.length)),
-      ),
-    );
-    setState(() {});
-  }
+  String _residentType = 'owner';
 
   @override
   void dispose() {
@@ -176,7 +155,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
         phone: _phoneController.text.trim(),
         email: _emailController.text.trim(),
         membersCount: int.parse(_membersController.text.trim()),
-        generatedPassword: _generatedPassword,
+        residentType: _residentType,
       );
 
       if (mounted) {
@@ -244,6 +223,8 @@ class _AddResidentModalState extends State<AddResidentModal> {
                           _buildPhoneField(),
                           SizedBox(height: 16.h),
                           _buildEmailField(),
+                          SizedBox(height: 16.h),
+                          _buildResidentTypeField(),
                           SizedBox(height: 16.h),
                           _buildMembersField(),
                           SizedBox(height: 24.h),
@@ -562,10 +543,25 @@ class _AddResidentModalState extends State<AddResidentModal> {
     );
   }
 
+  Widget _buildResidentTypeField() {
+    return DropdownButtonFormField<String>(
+      initialValue: _residentType,
+      decoration: InputDecoration(
+        labelText: 'Resident type',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
+      ),
+      items: const [
+        DropdownMenuItem(value: 'owner', child: Text('Owner')),
+        DropdownMenuItem(value: 'tenant', child: Text('Tenant')),
+      ],
+      onChanged: _isSubmitting
+          ? null
+          : (value) => setState(() => _residentType = value ?? 'owner'),
+    );
+  }
+
   Widget _buildCredentialsInfo() {
-    final email = _emailController.text.trim();
     final phone = _phoneController.text.trim();
-    final username = email.isNotEmpty ? email : phone;
 
     return Container(
       padding: EdgeInsets.all(16.w),
@@ -583,7 +579,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Login credentials:',
+                  'OTP registration:',
                   style: TextStyle(
                     fontSize: 15.sp,
                     fontWeight: FontWeight.w600,
@@ -592,17 +588,17 @@ class _AddResidentModalState extends State<AddResidentModal> {
                 ),
                 SizedBox(height: 8.h),
                 _buildBulletPoint(
-                  username.isNotEmpty
-                      ? 'Username: $username (Email/Phone)'
-                      : 'Username: Email or Phone (enter above)',
+                  phone.isNotEmpty
+                      ? 'Resident registers with $phone'
+                      : 'Resident registers with the phone entered above',
                 ),
                 SizedBox(height: 4.h),
                 _buildBulletPoint(
-                  'Password: $_generatedPassword (auto-generated)',
+                  'No password or Auth account is created by Admin',
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Credentials will be sent via SMS/Email',
+                  'Approval remains pending after verified OTP registration',
                   style: TextStyle(
                     fontSize: 13.sp,
                     color: Color(0xFF061C4C),

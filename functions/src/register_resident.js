@@ -58,19 +58,22 @@ function isIdempotentExisting(existing, expected) {
     (existing.email ?? null) === expected.email;
 }
 
-function validateImportedOnboarding(onboarding, identity) {
+function validateResidentOnboarding(onboarding, identity, {fallbackFullName = ""} = {}) {
   const communityId = typeof onboarding?.communityId === "string" ? onboarding.communityId.trim() : "";
-  const fullName = typeof onboarding?.residentName === "string" ? onboarding.residentName.trim() : "";
+  const storedName = typeof onboarding?.residentName === "string" ? onboarding.residentName.trim() : "";
+  const fullName = storedName || String(fallbackFullName).trim();
   const buildingId = typeof onboarding?.buildingId === "string" ? onboarding.buildingId.trim() : "";
   const buildingName = typeof onboarding?.buildingName === "string" ? onboarding.buildingName.trim() : "";
   const flatId = typeof onboarding?.flatId === "string" ? onboarding.flatId.trim() : "";
   const flatLabel = typeof onboarding?.flatLabel === "string" ? onboarding.flatLabel.trim() : "";
   const unitId = typeof onboarding?.unitId === "string" ? onboarding.unitId.trim() : "";
   const residentType = typeof onboarding?.residentType === "string" ? onboarding.residentType.trim().toLowerCase() : "";
+  const singleOnboarding = onboarding?.creationSource === "admin_single_onboarding";
   if (!communityId || onboarding?.phoneNumber !== identity.phoneNumber ||
-      fullName.length < 2 || fullName.length > 120 || !buildingId || !buildingName ||
-      !flatId || !flatLabel || !unitId || !["owner", "tenant"].includes(residentType)) {
-    throw new RegistrationError("failed-precondition", "Imported resident onboarding data is incomplete or invalid.");
+      fullName.length < 2 || fullName.length > 120 ||
+      (!singleOnboarding && (!buildingId || !buildingName || !flatId || !flatLabel || !unitId)) ||
+      !["owner", "tenant"].includes(residentType)) {
+    throw new RegistrationError("failed-precondition", "Resident onboarding data is incomplete or invalid.");
   }
   return {
     communityId,
@@ -81,10 +84,13 @@ function validateImportedOnboarding(onboarding, identity) {
     flatLabel,
     unitId,
     residentType,
-    buildingReference: typeof onboarding.buildingReference === "string" && onboarding.buildingReference.trim() ? onboarding.buildingReference.trim() : buildingName,
-    unitReference: typeof onboarding.unitReference === "string" && onboarding.unitReference.trim() ? onboarding.unitReference.trim() : flatLabel,
+    buildingReference: typeof onboarding.buildingReference === "string" && onboarding.buildingReference.trim() ? onboarding.buildingReference.trim() : buildingName || null,
+    unitReference: typeof onboarding.unitReference === "string" && onboarding.unitReference.trim() ? onboarding.unitReference.trim() : flatLabel || null,
     email: typeof onboarding.email === "string" && onboarding.email.trim() ? onboarding.email.trim().toLowerCase() : null,
+    familyMembers: Number.isInteger(onboarding.familyMembers) ? onboarding.familyMembers : null,
     importJobId: typeof onboarding.importJobId === "string" ? onboarding.importJobId : null,
+    creationSource: singleOnboarding ? "admin_single_onboarding_claim" : "admin_bulk_import_claim",
+    singleOnboarding,
   };
 }
 
@@ -97,20 +103,20 @@ async function claimImportedOnboardingCore({db, identity}) {
       (value?.status === "claimed" && value?.claimedByUid === identity.uid);
   });
   if (candidates.length === 0) {
-    throw new RegistrationError("not-found", "No imported resident onboarding was found for this verified phone number.");
+    throw new RegistrationError("not-found", "No resident onboarding was found for this verified phone number.");
   }
   const claimed = candidates.filter((doc) => doc.data()?.claimedByUid === identity.uid);
   const selected = claimed.length === 1 ? claimed[0] : candidates.length === 1 ? candidates[0] : null;
   if (!selected) {
-    throw new RegistrationError("failed-precondition", "Multiple imported resident onboardings use this phone number. Contact an administrator.");
+    throw new RegistrationError("failed-precondition", "Multiple resident onboardings use this phone number. Contact an administrator.");
   }
   const onboardingRef = db.collection("residentOnboarding").doc(selected.id);
   const userRef = db.collection("users").doc(identity.uid);
   return db.runTransaction(async (transaction) => {
     const onboardingSnapshot = await transaction.get(onboardingRef);
     const onboarding = onboardingSnapshot.data();
-    const imported = validateImportedOnboarding(onboarding, identity);
-    const communityRef = db.collection("communities").doc(imported.communityId);
+    const onboardingData = validateResidentOnboarding(onboarding, identity);
+    const communityRef = db.collection("communities").doc(onboardingData.communityId);
     const [userSnapshot, communitySnapshot] = await Promise.all([
       transaction.get(userRef),
       transaction.get(communityRef),
@@ -121,40 +127,42 @@ async function claimImportedOnboardingCore({db, identity}) {
     if (userSnapshot.exists) {
       const user = userSnapshot.data();
       if (user?.uid === identity.uid && user?.phoneNumber === identity.phoneNumber &&
-          user?.role === "resident" && user?.communityId === imported.communityId &&
+          user?.role === "resident" && user?.communityId === onboardingData.communityId &&
           onboarding?.status === "claimed" && onboarding?.claimedByUid === identity.uid) {
-        return {status: user.approvalStatus ?? "pending", communityId: imported.communityId, idempotent: true, imported: true};
+        return {status: user.approvalStatus ?? "pending", communityId: onboardingData.communityId, idempotent: true, imported: !onboardingData.singleOnboarding};
       }
       throw new RegistrationError("already-exists", "A resident profile already exists for this account.");
     }
     if (onboarding?.status !== "pending_registration" || onboarding?.claimedByUid != null) {
-      throw new RegistrationError("failed-precondition", "Imported resident onboarding has already been claimed.");
+      throw new RegistrationError("failed-precondition", "Resident onboarding has already been claimed.");
     }
     transaction.set(userRef, {
       uid: identity.uid,
       phoneNumber: identity.phoneNumber,
       phone: identity.phoneNumber,
-      name: imported.fullName,
-      fullName: imported.fullName,
-      email: imported.email,
-      communityId: imported.communityId,
+      name: onboardingData.fullName,
+      fullName: onboardingData.fullName,
+      email: onboardingData.email,
+      communityId: onboardingData.communityId,
       communityInviteCode: null,
       role: "resident",
       isActive: false,
       approvalStatus: "pending",
       identityVerified: false,
       identityVerificationStatus: "verification_required",
-      buildingReference: imported.buildingReference,
-      unitReference: imported.unitReference,
-      buildingId: imported.buildingId,
-      buildingName: imported.buildingName,
-      unitId: imported.unitId,
-      flatId: imported.flatId,
-      flatLabel: imported.flatLabel,
-      ownershipType: imported.residentType,
-      residentType: imported.residentType,
-      importJobId: imported.importJobId,
-      creationSource: "admin_bulk_import_claim",
+      declaredResidentType: onboardingData.residentType,
+      buildingReference: onboardingData.buildingReference,
+      unitReference: onboardingData.unitReference,
+      buildingId: onboardingData.buildingId || null,
+      buildingName: onboardingData.buildingName || null,
+      unitId: onboardingData.unitId || null,
+      flatId: onboardingData.flatId || null,
+      flatLabel: onboardingData.flatLabel || null,
+      ownershipType: onboardingData.residentType,
+      residentType: onboardingData.residentType,
+      familyMembers: onboardingData.familyMembers,
+      importJobId: onboardingData.importJobId,
+      creationSource: onboardingData.creationSource,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -164,7 +172,7 @@ async function claimImportedOnboardingCore({db, identity}) {
       claimedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    return {status: "pending", communityId: imported.communityId, idempotent: false, imported: true};
+    return {status: "pending", communityId: onboardingData.communityId, idempotent: false, imported: !onboardingData.singleOnboarding};
   });
 }
 
@@ -215,33 +223,39 @@ async function registerResidentCore({db, auth, data, now = Date.now()}) {
       .doc(residentOnboardingId(communityId, identity.phoneNumber));
     const onboardingSnapshot = await transaction.get(onboardingRef);
     const onboarding = onboardingSnapshot.exists ? onboardingSnapshot.data() : null;
-    const imported = onboarding &&
+    const hasOnboarding = onboarding &&
       onboarding.communityId === communityId &&
       onboarding.phoneNumber === identity.phoneNumber &&
       onboarding.status === "pending_registration" &&
       onboarding.claimedByUid == null;
+    const onboardingData = hasOnboarding
+      ? validateResidentOnboarding(onboarding, identity, {fallbackFullName: input.fullName})
+      : null;
 
     transaction.set(userRef, {
       uid: identity.uid, phoneNumber: identity.phoneNumber, phone: identity.phoneNumber,
-      name: input.fullName, fullName: input.fullName, email: input.email,
+      name: onboardingData?.fullName ?? input.fullName,
+      fullName: onboardingData?.fullName ?? input.fullName,
+      email: onboardingData?.email ?? input.email,
       communityId, communityInviteCode: input.inviteCode,
       role: "resident", isActive: false, approvalStatus: "pending", identityVerified: false,
       identityVerificationStatus: "verification_required",
-      declaredResidentType: input.declaredResidentType,
-      buildingReference: imported ? onboarding.buildingReference : input.buildingReference,
-      unitReference: imported ? onboarding.unitReference : input.unitReference,
-      buildingId: imported ? onboarding.buildingId : null,
-      buildingName: imported ? onboarding.buildingName : null,
-      unitId: imported ? onboarding.unitId : null,
-      flatId: imported ? onboarding.flatId : null,
-      flatLabel: imported ? onboarding.flatLabel : null,
-      ownershipType: imported ? onboarding.residentType : null,
-      residentType: imported ? onboarding.residentType : null,
-      importJobId: imported ? onboarding.importJobId : null,
-      creationSource: imported ? "admin_bulk_import_claim" : "resident_registration",
+      declaredResidentType: onboardingData?.residentType ?? input.declaredResidentType,
+      buildingReference: onboardingData?.buildingReference ?? input.buildingReference,
+      unitReference: onboardingData?.unitReference ?? input.unitReference,
+      buildingId: onboardingData?.buildingId || null,
+      buildingName: onboardingData?.buildingName || null,
+      unitId: onboardingData?.unitId || null,
+      flatId: onboardingData?.flatId || null,
+      flatLabel: onboardingData?.flatLabel || null,
+      ownershipType: onboardingData?.residentType ?? null,
+      residentType: onboardingData?.residentType ?? null,
+      familyMembers: onboardingData?.familyMembers ?? null,
+      importJobId: onboardingData?.importJobId ?? null,
+      creationSource: onboardingData?.creationSource ?? "resident_registration",
       createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
     });
-    if (imported) {
+    if (onboardingData) {
       transaction.update(onboardingRef, {
         status: "claimed",
         claimedByUid: identity.uid,
@@ -256,4 +270,4 @@ async function registerResidentCore({db, auth, data, now = Date.now()}) {
   });
 }
 
-module.exports = {RegistrationError, normalizeInviteCode, validateInput, verifiedPhoneAuth, isIdempotentExisting, validateImportedOnboarding, claimImportedOnboardingCore, registerResidentCore};
+module.exports = {RegistrationError, normalizeInviteCode, validateInput, verifiedPhoneAuth, isIdempotentExisting, validateResidentOnboarding, claimImportedOnboardingCore, registerResidentCore};

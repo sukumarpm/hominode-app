@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/foundation.dart';
 import 'dart:math';
 import 'admin_service.dart';
 import '../models/pending_resident.dart';
@@ -100,50 +99,104 @@ class ResidentService {
   }
 
   Future<void> rejectResident({required String userId, String? reason}) async {
-    final communityId = _adminService.requireCurrentCommunityId();
-    final adminId = _adminService.getCurrentAdminId();
-    if (adminId == null) throw StateError('Admin is not authenticated.');
-
-    await _firestore.runTransaction((transaction) async {
-      final userRef = _firestore.collection(_collection).doc(userId);
-      final user = await transaction.get(userRef);
-      if (!user.exists) {
-        throw StateError('Resident registration was not found.');
-      }
-      final data = user.data()!;
-      if (!ResidentApprovalPolicy.canReview(data, communityId)) {
-        throw StateError('Resident is outside the selected community.');
-      }
-      if (data['approvalStatus'] != 'pending') {
-        throw StateError(
-          'Only pending resident registrations can be rejected.',
-        );
-      }
-      transaction.update(
-        userRef,
-        rejectionFields(
-          adminId: adminId,
-          reason: reason,
-          timestamp: FieldValue.serverTimestamp(),
-        ),
-      );
+    await _functions.httpsCallable('rejectResidentRegistration').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'userId': userId,
+      'reason': reason?.trim(),
     });
   }
 
-  @visibleForTesting
-  static Map<String, dynamic> rejectionFields({
-    required String adminId,
-    required Object timestamp,
-    String? reason,
-  }) => {
-    'approvalStatus': 'rejected',
-    'isActive': false,
-    'rejectedAt': timestamp,
-    'rejectedBy': adminId,
-    if (reason?.trim().isNotEmpty == true) 'rejectedReason': reason!.trim(),
-    'updatedAt': timestamp,
-  };
+  Future<void> deactivateResident(String userId) async {
+    await _functions.httpsCallable('deactivateResident').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'userId': userId,
+    });
+  }
 
+  Future<void> reactivateResident(String userId) async {
+    await _functions.httpsCallable('reactivateResident').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'userId': userId,
+    });
+  }
+
+  Future<void> reassignResident({
+    required String userId,
+    required String buildingId,
+    required String flatId,
+  }) async {
+    await _functions.httpsCallable('reassignResident').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'userId': userId,
+      'buildingId': buildingId,
+      'flatId': flatId,
+    });
+  }
+
+  Future<void> moveOutResident(String userId) async {
+    await _functions.httpsCallable('moveOutResident').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'userId': userId,
+    });
+  }
+
+  Future<String> createResidentOnboarding({
+    required String name,
+    required String phone,
+    required String residentType,
+    String? email,
+    int? familyMembers,
+    String? buildingReference,
+    String? unitReference,
+  }) async {
+    final response = await _functions
+        .httpsCallable('createResidentOnboarding')
+        .call({
+          'communityId': _adminService.requireCurrentCommunityId(),
+          'residentName': name.trim(),
+          'phoneNumber': phone.trim(),
+          'residentType': residentType.trim().toLowerCase(),
+          'email': email?.trim(),
+          'familyMembers': familyMembers,
+          'buildingReference': buildingReference?.trim(),
+          'unitReference': unitReference?.trim(),
+        });
+    final data = response.data;
+    if (data is! Map || data['onboardingId'] is! String) {
+      throw StateError('Resident onboarding ID was not returned.');
+    }
+    return data['onboardingId'] as String;
+  }
+
+  static String errorMessage(Object error) {
+    if (error is FirebaseFunctionsException &&
+        error.message?.trim().isNotEmpty == true) {
+      return error.message!.trim();
+    }
+    return error.toString().replaceFirst('Exception: ', '');
+  }
+
+  Future<String> createResident({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+    String residentType = 'owner',
+    String? buildingId,
+    String? buildingName,
+    int familyMembers = 1,
+  }) => createResidentOnboarding(
+    name: name,
+    phone: phone,
+    email: email,
+    residentType: residentType,
+    familyMembers: familyMembers,
+    buildingReference: buildingName,
+  );
+
+  /// Retained privately only as historical reference. No active caller can
+  /// create an email/password Auth resident through the Admin app.
+  // ignore: unused_element
   /// Create a new resident with Firebase Authentication
   ///
   /// Flow:
@@ -154,7 +207,7 @@ class ResidentService {
   ///
   /// Returns: UID of created user
   /// Throws: Exception if creation fails (with rollback)
-  Future<String> createResident({
+  Future<String> _legacyCreateResident({
     required String name,
     required String email,
     required String phone,
@@ -323,6 +376,22 @@ class ResidentService {
     }
   }
 
+  Future<void> assignResidentToFlat({
+    required String residentUid,
+    required String flatId,
+    required String flatLabel,
+    String? buildingId,
+    String? buildingName,
+    String? ownershipType,
+  }) => Future<void>.error(
+    StateError(
+      'Direct resident assignment is retired. Use Pending Registrations approval.',
+    ),
+  );
+
+  // Historical direct assignment implementation; no active lifecycle flow
+  // should invoke it.
+  // ignore: unused_element
   /// Assign resident to flat with proper error handling and rollback
   ///
   /// Flow:
@@ -331,7 +400,7 @@ class ResidentService {
   /// 3. Ensure data consistency (rollback if one fails)
   ///
   /// Throws: Exception if assignment fails (with rollback)
-  Future<void> assignResidentToFlat({
+  Future<void> _legacyAssignResidentToFlat({
     required String residentUid,
     required String flatId,
     required String flatLabel,

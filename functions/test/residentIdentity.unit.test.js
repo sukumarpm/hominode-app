@@ -7,10 +7,16 @@ const {
   resolveFlatOccupant,
   verificationStatus,
   approveResidentRegistrationCore,
+  rejectResidentRegistrationCore,
+  deactivateResidentCore,
+  reactivateResidentCore,
+  reassignResidentCore,
+  createResidentOnboardingCore,
   submitResidentIdentityProofCore,
   moveOutResidentCore,
   reviewResidentIdentityProofCore,
 } = require("../src/resident_identity");
+const {claimImportedOnboardingCore} = require("../src/register_resident");
 
 const community = (overrides = {}) => ({id: "A", isActive: true, ...overrides});
 const profile = (overrides = {}) => ({
@@ -108,6 +114,7 @@ function fakeDb(seed, {onUpdate} = {}) {
     where(field, _operator, expected) {
       return query(collection, [...clauses, {field, expected}]);
     },
+    get: async () => querySnapshot({collection, clauses}),
   });
   const querySnapshot = (value) => ({
     docs: [...values.entries()]
@@ -122,16 +129,24 @@ function fakeDb(seed, {onUpdate} = {}) {
       return {...query(name), doc: (id) => ref(`${name}/${id}`)};
     },
     async runTransaction(action) {
-      const pendingUpdates = [];
+      const pendingWrites = [];
       const result = await action({
         get: async (target) => target._query ? querySnapshot(target) : snapshot(target._path),
         update(target, changes) {
-          pendingUpdates.push({target, changes});
+          pendingWrites.push({kind: "update", target, changes});
+        },
+        create(target, changes) {
+          if (values.has(target._path)) throw new Error("already exists");
+          pendingWrites.push({kind: "create", target, changes});
+        },
+        set(target, changes) {
+          pendingWrites.push({kind: "set", target, changes});
         },
       });
-      for (const {target, changes} of pendingUpdates) {
+      for (const {kind, target, changes} of pendingWrites) {
         if (onUpdate) await onUpdate(target._path, changes);
-        applyChanges(target._path, changes);
+        if (kind === "update") applyChanges(target._path, changes);
+        else values.set(target._path, {...changes});
       }
       return result;
     },
@@ -178,6 +193,396 @@ const activeOccupant = (residentType, overrides = {}) => ({
   identityVerified: residentType === "tenant",
   identityVerificationStatus: residentType === "tenant" ? "verified" : "not_required",
   ...overrides,
+});
+
+const lifecycleSeed = (residentOverrides = {}, extras = {}) => ({
+  "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+  "communities/A": {isActive: true},
+  "buildings/building-a": {communityId: "A", name: "Ivory"},
+  "flats/flat-a": {
+    communityId: "A",
+    buildingId: "building-a",
+    flatId: "I002",
+    status: "occupied",
+    residentUserId: "resident-a",
+  },
+  "users/resident-a": activeOccupant("owner", {
+    uid: "resident-a",
+    name: "Resident A",
+    phoneNumber: "+639171100000",
+    residentId: "RES1001",
+    ...residentOverrides,
+  }),
+  ...extras,
+});
+
+test("trusted rejection accepts only an inactive pending resident", async () => {
+  const db = fakeDb(approvalSeed());
+  const result = await rejectResidentRegistrationCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {communityId: "A", userId: "resident-a", reason: "Duplicate application"},
+  });
+  const resident = db.values.get("users/resident-a");
+  assert.equal(result.status, "rejected");
+  assert.equal(resident.approvalStatus, "rejected");
+  assert.equal(resident.isActive, false);
+  assert.equal(resident.rejectedBy, "admin-a");
+  assert.equal(resident.rejectedReason, "Duplicate application");
+
+  await assert.rejects(
+    () => rejectResidentRegistrationCore({
+      db: fakeDb(lifecycleSeed()),
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "A", userId: "resident-a"},
+    }),
+    {code: "failed-precondition"},
+  );
+});
+
+test("rejection denies cross-community and unauthorized Admin requests", async () => {
+  await assert.rejects(
+    () => rejectResidentRegistrationCore({
+      db: fakeDb(approvalSeed()),
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "B", userId: "resident-a"},
+    }),
+    {code: "permission-denied"},
+  );
+  await assert.rejects(
+    () => rejectResidentRegistrationCore({
+      db: fakeDb(approvalSeed()),
+      auth: phoneAuth("unknown-admin"),
+      data: {communityId: "A", userId: "resident-a"},
+    }),
+    {code: "permission-denied"},
+  );
+});
+
+test("deactivate suspends operational access without vacating the unit", async () => {
+  const db = fakeDb(lifecycleSeed());
+  const result = await deactivateResidentCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {communityId: "A", userId: "resident-a"},
+  });
+  const resident = db.values.get("users/resident-a");
+  const flat = db.values.get("flats/flat-a");
+  assert.deepEqual(result, {
+    status: "inactive",
+    occupancyStatus: "suspended",
+    occupantRetained: true,
+  });
+  assert.equal(resident.isActive, false);
+  assert.equal(resident.occupancyStatus, "suspended");
+  assert.equal(operationalAccessFailure(resident, community()), "inactive");
+  assert.equal(flat.status, "occupied");
+  assert.equal(flat.residentUserId, "resident-a");
+});
+
+test("reactivate restores only the eligible resident who remains the unit occupant", async () => {
+  const db = fakeDb(lifecycleSeed());
+  await deactivateResidentCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {communityId: "A", userId: "resident-a"},
+  });
+  const result = await reactivateResidentCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {communityId: "A", userId: "resident-a"},
+  });
+  const resident = db.values.get("users/resident-a");
+  assert.equal(result.status, "active");
+  assert.equal(resident.isActive, true);
+  assert.equal(resident.occupancyStatus, "current");
+  assert.equal(operationalAccessFailure(resident, community()), null);
+  assert.equal(db.values.get("flats/flat-a").residentUserId, "resident-a");
+});
+
+test("reactivate fails for another occupant, ineligible identity, and cross-community input", async () => {
+  const wrongOccupant = fakeDb(lifecycleSeed({isActive: false, status: "inactive", occupancyStatus: "suspended"}, {
+    "flats/flat-a": {
+      communityId: "A",
+      buildingId: "building-a",
+      status: "occupied",
+      residentUserId: "other-resident",
+    },
+  }));
+  await assert.rejects(
+    () => reactivateResidentCore({
+      db: wrongOccupant,
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "A", userId: "resident-a"},
+    }),
+    {code: "failed-precondition"},
+  );
+
+  const unverifiedTenant = fakeDb(lifecycleSeed({
+    residentType: "tenant",
+    ownershipType: "tenant",
+    isActive: false,
+    status: "inactive",
+    occupancyStatus: "suspended",
+    identityVerified: false,
+    identityVerificationStatus: "pending",
+  }));
+  await assert.rejects(
+    () => reactivateResidentCore({
+      db: unverifiedTenant,
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "A", userId: "resident-a"},
+    }),
+    {code: "failed-precondition"},
+  );
+  await assert.rejects(
+    () => reactivateResidentCore({
+      db: fakeDb(lifecycleSeed({isActive: false, status: "inactive", occupancyStatus: "suspended"})),
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "B", userId: "resident-a"},
+    }),
+    {code: "permission-denied"},
+  );
+});
+
+test("Admin single onboarding creates no user and is claimed by the OTP uid", async () => {
+  const db = fakeDb({
+    "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+    "communities/A": {isActive: true},
+  });
+  const created = await createResidentOnboardingCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {
+      communityId: "A",
+      residentName: "Returning Owner",
+      phoneNumber: "+639171100000",
+      residentType: "owner",
+      email: "owner@example.com",
+      familyMembers: 2,
+      buildingReference: "Ivory",
+      unitReference: "I002",
+    },
+  });
+  assert.equal(created.status, "pending_registration");
+  assert.equal([...db.values.keys()].filter((path) => path.startsWith("users/")).length, 0);
+  const onboarding = db.values.get(`residentOnboarding/${created.onboardingId}`);
+  assert.equal(onboarding.isActive, false);
+  assert.equal(onboarding.identityVerified, false);
+
+  const claimed = await claimImportedOnboardingCore({
+    db,
+    identity: {uid: "resident-returning", phoneNumber: "+639171100000"},
+  });
+  assert.equal(claimed.status, "pending");
+  const resident = db.values.get("users/resident-returning");
+  assert.equal(resident.uid, "resident-returning");
+  assert.equal(resident.creationSource, "admin_single_onboarding_claim");
+  assert.equal(resident.approvalStatus, "pending");
+  assert.equal(resident.isActive, false);
+  assert.equal(resident.identityVerified, false);
+});
+
+test("returning resident reassignment reuses the same profile and preserves move-out history", async () => {
+  const db = fakeDb(lifecycleSeed({}, {
+    "flats/flat-b": {
+      communityId: "A",
+      buildingId: "building-a",
+      flatId: "I003",
+      flatLabel: "I003",
+      status: "vacant",
+    },
+  }));
+  await moveOutResidentCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {communityId: "A", userId: "resident-a"},
+  });
+  const movedOut = db.values.get("users/resident-a");
+  assert.equal(movedOut.previousFlatId, "flat-a");
+  assert.ok(movedOut.movedOutAt);
+
+  const result = await reassignResidentCore({
+    db,
+    auth: phoneAuth("admin-a"),
+    data: {
+      communityId: "A",
+      userId: "resident-a",
+      buildingId: "building-a",
+      flatId: "flat-b",
+    },
+  });
+  const returning = db.values.get("users/resident-a");
+  assert.equal(result.userId, "resident-a");
+  assert.equal(returning.uid, "resident-a");
+  assert.equal(returning.flatId, "flat-b");
+  assert.equal(returning.flatLabel, "I003");
+  assert.equal(returning.isActive, true);
+  assert.equal(returning.occupancyStatus, "current");
+  assert.equal(returning.previousFlatId, "flat-a");
+  assert.ok(returning.movedOutAt);
+  assert.ok(returning.reassignedAt);
+  assert.ok(returning.reactivatedAt);
+  assert.equal([...db.values.keys()].filter((path) => path.startsWith("users/")).length, 1);
+  assert.equal(db.values.get("flats/flat-b").residentUserId, "resident-a");
+});
+
+test("returning resident reassignment fails closed for occupied, ineligible, duplicate, and cross-community state", async () => {
+  const movedOutProfile = {
+    ...activeOccupant("owner"),
+    uid: "resident-a",
+    name: "Resident A",
+    phoneNumber: "+639171100000",
+    buildingId: null,
+    flatId: null,
+    isActive: false,
+    status: "inactive",
+    occupancyStatus: "moved_out",
+    previousBuildingId: "building-a",
+    previousFlatId: "flat-a",
+  };
+  const seed = (overrides = {}) => lifecycleSeed({}, {
+    "users/resident-a": {...movedOutProfile, ...(overrides.resident ?? {})},
+    "flats/flat-a": {communityId: "A", buildingId: "building-a", status: "vacant"},
+    "flats/flat-b": {
+      communityId: "A",
+      buildingId: "building-a",
+      flatId: "I003",
+      status: "vacant",
+      ...(overrides.flat ?? {}),
+    },
+    ...(overrides.extra ?? {}),
+  });
+  const request = {
+    communityId: "A",
+    userId: "resident-a",
+    buildingId: "building-a",
+    flatId: "flat-b",
+  };
+
+  await assert.rejects(
+    () => reassignResidentCore({
+      db: fakeDb(seed({flat: {status: "occupied", residentUserId: "other-resident"}})),
+      auth: phoneAuth("admin-a"),
+      data: request,
+    }),
+    {code: "failed-precondition"},
+  );
+  await assert.rejects(
+    () => reassignResidentCore({
+      db: fakeDb(seed({resident: {
+        residentType: "tenant",
+        ownershipType: "tenant",
+        identityVerified: false,
+        identityVerificationStatus: "pending",
+      }})),
+      auth: phoneAuth("admin-a"),
+      data: request,
+    }),
+    {code: "failed-precondition"},
+  );
+  await assert.rejects(
+    () => reassignResidentCore({
+      db: fakeDb(seed({resident: {uid: "different-auth-uid"}})),
+      auth: phoneAuth("admin-a"),
+      data: request,
+    }),
+    {code: "permission-denied"},
+  );
+  await assert.rejects(
+    () => reassignResidentCore({
+      db: fakeDb(seed({extra: {
+        "users/duplicate-active": activeOccupant("owner", {
+          uid: "duplicate-active",
+          phoneNumber: "+639171100000",
+          flatId: "flat-c",
+        }),
+      }})),
+      auth: phoneAuth("admin-a"),
+      data: request,
+    }),
+    {code: "failed-precondition"},
+  );
+  await assert.rejects(
+    () => reassignResidentCore({
+      db: fakeDb(seed()),
+      auth: phoneAuth("admin-a"),
+      data: {...request, communityId: "B"},
+    }),
+    {code: "permission-denied"},
+  );
+  await assert.rejects(
+    () => reassignResidentCore({
+      db: fakeDb(seed()),
+      auth: phoneAuth("admin-a"),
+      data: {...request, residentType: "tenant"},
+    }),
+    {code: "invalid-argument"},
+  );
+});
+
+test("an already claimed onboarding retries against the same OTP uid without a duplicate profile", async () => {
+  const db = fakeDb({
+    "communities/A": {isActive: true},
+    "residentOnboarding/onboarding-a": {
+      communityId: "A",
+      phoneNumber: "+639171100000",
+      residentName: "Existing Resident",
+      residentType: "owner",
+      creationSource: "admin_single_onboarding",
+      status: "claimed",
+      claimedByUid: "resident-a",
+    },
+    "users/resident-a": {
+      uid: "resident-a",
+      phoneNumber: "+639171100000",
+      role: "resident",
+      communityId: "A",
+      approvalStatus: "pending",
+      isActive: false,
+    },
+  });
+  const result = await claimImportedOnboardingCore({
+    db,
+    identity: {uid: "resident-a", phoneNumber: "+639171100000"},
+  });
+  assert.equal(result.idempotent, true);
+  assert.equal([...db.values.keys()].filter((path) => path.startsWith("users/")).length, 1);
+  assert.equal(db.values.get("users/resident-a").uid, "resident-a");
+});
+
+test("Admin onboarding cannot create a second profile path for an existing moved-out resident", async () => {
+  const db = fakeDb({
+    "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+    "communities/A": {isActive: true},
+    "users/resident-a": {
+      uid: "resident-a",
+      role: "resident",
+      communityId: "A",
+      phoneNumber: "+639171100000",
+      approvalStatus: "approved",
+      isActive: false,
+      status: "inactive",
+      occupancyStatus: "moved_out",
+      residentType: "owner",
+      ownershipType: "owner",
+    },
+  });
+  await assert.rejects(
+    () => createResidentOnboardingCore({
+      db,
+      auth: phoneAuth("admin-a"),
+      data: {
+        communityId: "A",
+        residentName: "Existing Resident",
+        phoneNumber: "+639171100000",
+        residentType: "owner",
+      },
+    }),
+    {code: "already-exists"},
+  );
+  assert.equal([...db.values.keys()].filter((path) => path.startsWith("users/")).length, 1);
+  assert.equal([...db.values.keys()].filter((path) => path.startsWith("residentOnboarding/")).length, 0);
 });
 
 test("trusted approval activates optional-proof owner and blocks unverified tenant approval", async () => {

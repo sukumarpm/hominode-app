@@ -54,7 +54,7 @@ class _UnassignedUsersScreenState extends State<UnassignedUsersScreen> {
           // Users List
           Expanded(
             child: StreamBuilder<List<UserModel>>(
-              stream: _userService.getUsers(),
+              stream: _userService.getAvailableUsers(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -391,8 +391,10 @@ class _UnassignedUsersScreenState extends State<UnassignedUsersScreen> {
 
                             // Load flats for selected building
                             if (value != null) {
-                              final flatStream = _flatService.getFlats(value);
+                              final flatStream = _flatService
+                                  .getFlatsForBuilding(value);
                               await for (final flatList in flatStream.take(1)) {
+                                if (!mounted) return;
                                 setState(() {
                                   flats = flatList
                                       .where((flat) => flat.status == 'vacant')
@@ -459,9 +461,7 @@ class _UnassignedUsersScreenState extends State<UnassignedUsersScreen> {
                           items: flats.map((flat) {
                             return DropdownMenuItem(
                               value: flat.id,
-                              child: Text(
-                                '${flat.flatNumber} - ${flat.bhkType}',
-                              ),
+                              child: Text('${flat.flatId} - ${flat.type}'),
                             );
                           }).toList(),
                           onChanged: (value) {
@@ -469,7 +469,7 @@ class _UnassignedUsersScreenState extends State<UnassignedUsersScreen> {
                               selectedFlatId = value;
                               selectedFlatLabel = flats
                                   .firstWhere((f) => f.id == value)
-                                  .flatNumber;
+                                  .flatId;
                             });
                           },
                         ),

@@ -198,7 +198,7 @@ class _ResidentCard extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(error.toString()),
+            content: Text(ResidentService.errorMessage(error)),
             backgroundColor: Colors.red,
           ),
         );
@@ -236,7 +236,7 @@ class _ResidentCard extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(error.toString()),
+            content: Text(ResidentService.errorMessage(error)),
             backgroundColor: Colors.red,
           ),
         );
@@ -624,7 +624,7 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
         setState(() => busy = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(error.toString()),
+            content: Text(ResidentService.errorMessage(error)),
             backgroundColor: Colors.red,
           ),
         );

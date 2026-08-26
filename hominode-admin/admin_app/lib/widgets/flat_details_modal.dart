@@ -413,13 +413,10 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         loadResidents: widget.userService != null
             ? () async {
                 print('\n🔵 loadResidents callback triggered');
-                // Fetch ALL users from Firestore (assigned + unassigned)
                 final users = await widget.userService!
-                    .getAllResidentsWithStatus()
+                    .getAvailableUsers()
                     .first;
-                print(
-                  '🔵 Fetched ${users.length} users from Firestore (all statuses)',
-                );
+                print('🔵 Fetched ${users.length} returning residents');
                 return users.map((user) {
                   final isAssigned =
                       user.flatId != null && user.flatId!.isNotEmpty;
@@ -438,9 +435,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         onAssign: (request) async {
           print('\n🟢 onAssign callback triggered (existing resident)');
 
-          if (widget.userService == null ||
-              widget.flatService == null ||
-              widget.buildingService == null) {
+          if (widget.userService == null) {
             print('⚠️  Services not available, using fallback');
             await Future.delayed(const Duration(milliseconds: 800));
             widget.onStatusChange?.call(FlatStatus.occupied);
@@ -462,18 +457,11 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             // Assign user to flat in users collection
             await widget.userService!.assignUserToFlat(
               userId: user.id,
-              flatId: request.flatId, // Sequential ID (T001, A101, etc.)
+              flatId: widget.unit.docId,
               flatLabel: widget.unit.id,
               buildingId: widget.buildingId,
               buildingName: widget.buildingName,
               ownershipType: request.ownershipType,
-            );
-
-            // Update flat status in flats collection using Firestore document ID
-            await widget.flatService!.assignResident(
-              flatId: widget.unit.docId, // Use Firestore document ID
-              residentName: user.name,
-              residentId: user.id,
             );
 
             // Sync building occupancy
@@ -530,64 +518,23 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           }
 
           try {
-            print('\n🔵 Step 1: Creating resident in Firestore...');
-            // Create new resident WITHOUT Firebase Auth (resident creates account on first login)
-            final residentUid = await widget.userService!.createUser(
+            await widget.userService!.createUser(
               name: request.name,
               email: request.email,
               phone: request.phone,
               password: request.generatedPassword,
+              residentType: request.ownershipType,
               buildingId: widget.buildingId,
               buildingName: widget.buildingName,
+              unitReference: request.flatId,
               familyMembers: request.familyMembers,
             );
-
-            print('\n🔵 Step 2: Resident created with UID: $residentUid');
-            print('🔵 Now assigning to flat...');
-
-            // Assign resident to flat
-            await widget.userService!.assignUserToFlat(
-              userId: residentUid,
-              flatId: request.flatId,
-              flatLabel: widget.unit.id,
-              buildingId: widget.buildingId,
-              buildingName: widget.buildingName,
-              ownershipType: request.ownershipType,
-            );
-
-            print('🔵 Step 3: Resident assigned to flat');
-            print('🔵 Now updating flat status...');
-
-            // Update flat status
-            await widget.flatService!.assignResident(
-              flatId: widget
-                  .unit
-                  .docId, // Use Firestore document ID, not sequential ID
-              residentName: request.name,
-              residentId: residentUid,
-            );
-
-            print('🔵 Step 4: Flat status updated');
-            print('🔵 Now syncing building occupancy...');
-
-            // Sync building occupancy
-            if (widget.buildingId != null) {
-              await widget.buildingService!.syncOccupancyFromFlats(
-                widget.buildingId!,
-              );
-            }
-
-            print('🔵 Step 5: Building occupancy synced');
-            print('✅ ALL OPERATIONS COMPLETED SUCCESSFULLY!\n');
-
-            // Update flat status to occupied
-            widget.onStatusChange?.call(FlatStatus.occupied);
 
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    '${request.name} created and assigned to ${widget.unit.id}',
+                    '${request.name} onboarding created. Unit assignment waits for OTP registration and Admin approval.',
                   ),
                   backgroundColor: const Color(0xFF10B981),
                   duration: const Duration(seconds: 3),
@@ -603,7 +550,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Failed to create and assign resident: $e'),
+                  content: Text('Failed to create resident onboarding: $e'),
                   backgroundColor: const Color(0xFFEF4444),
                   duration: const Duration(seconds: 3),
                 ),

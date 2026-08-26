@@ -487,18 +487,11 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                         // Assign user to flat in users collection
                         await _userService.assignUserToFlat(
                           userId: user.id,
-                          flatId: request.flatId,
+                          flatId: unit.docId,
                           flatLabel: unit.id,
                           buildingId: building.id,
                           buildingName: building.name,
                           ownershipType: request.ownershipType,
-                        );
-
-                        // Update flat status in flats collection
-                        await _flatService.assignResident(
-                          flatId: unit.docId, // Use Firestore document ID
-                          residentName: user.name,
-                          residentId: user.id,
                         );
 
                         // Sync building occupancy
@@ -542,69 +535,23 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                       print('  - BuildingName: ${building.name}');
 
                       try {
-                        print(
-                          '\n🔵 Calling UserService.createUser() with building details...',
-                        );
-                        // Create new resident WITHOUT Firebase Auth (resident creates account on first login)
-                        final residentUid = await _userService.createUser(
+                        await _userService.createUser(
                           name: request.name,
                           email: request.email,
                           phone: request.phone,
                           password: request.generatedPassword,
+                          residentType: request.ownershipType,
                           familyMembers: request.familyMembers,
                           buildingId: building.id,
                           buildingName: building.name,
-                        );
-
-                        print('\n🔵 Resident created with UID: $residentUid');
-                        print('🔵 Resident stored with:');
-                        print(
-                          '   - Admin details (adminId, adminName, adminEmail, adminPhone, organization)',
-                        );
-                        print(
-                          '   - Building details (buildingId: ${building.id}, buildingName: ${building.name})',
-                        );
-                        print('🔵 Now assigning to flat...');
-
-                        // Assign resident to flat
-                        await _userService.assignUserToFlat(
-                          userId: residentUid,
-                          flatId: request.flatId,
-                          flatLabel: unit.id,
-                          buildingId: building.id,
-                          buildingName: building.name,
-                          ownershipType: request.ownershipType,
-                        );
-
-                        print('🔵 Resident assigned to flat');
-                        print('🔵 Now updating flat status...');
-
-                        // Update flat status
-                        await _flatService.assignResident(
-                          flatId: unit.docId, // Use Firestore document ID
-                          residentName: request.name,
-                          residentId: residentUid,
-                        );
-
-                        print('🔵 Flat status updated');
-                        print('🔵 Now syncing building occupancy...');
-
-                        // Sync building occupancy
-                        await _buildingService.syncOccupancyFromFlats(
-                          building.id,
-                        );
-
-                        print('🔵 Building occupancy synced');
-                        print('✅ ALL OPERATIONS COMPLETED SUCCESSFULLY!');
-                        print(
-                          '✅ Resident stored with complete admin + building + flat details\n',
+                          unitReference: request.flatId,
                         );
 
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
-                                '${request.name} created and assigned to ${unit.id}',
+                                '${request.name} onboarding created. Unit assignment waits for OTP registration and Admin approval.',
                               ),
                               backgroundColor: const Color(0xFF10B981),
                               duration: const Duration(seconds: 3),
@@ -620,7 +567,7 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
-                                'Failed to create and assign resident: $e',
+                                'Failed to create resident onboarding: $e',
                               ),
                               backgroundColor: const Color(0xFFEF4444),
                               duration: const Duration(seconds: 3),
@@ -636,22 +583,14 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                   try {
                     // Update flat status in Firestore
                     String statusString;
+                    var statusUpdatedByLifecycle = false;
                     switch (newStatus) {
                       case FlatStatus.vacant:
                         statusString = 'vacant';
                         // Remove resident if changing to vacant
                         if (unit.status == FlatStatus.occupied) {
                           await _flatService.removeResident(unit.docId);
-                          // Also remove flat assignment from user
-                          // Find user by flatId and remove assignment
-                          final users = await _userService.getUsers().first;
-                          final assignedUser = users.firstWhere(
-                            (u) => u.flatId == unit.id,
-                            orElse: () => throw Exception('User not found'),
-                          );
-                          await _userService.removeUserFromFlat(
-                            assignedUser.id,
-                          );
+                          statusUpdatedByLifecycle = true;
                         }
                         break;
                       case FlatStatus.occupied:
@@ -662,10 +601,12 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                         break;
                     }
 
-                    await _flatService.updateFlatStatus(
-                      flatId: unit.id,
-                      status: statusString,
-                    );
+                    if (!statusUpdatedByLifecycle) {
+                      await _flatService.updateFlatStatus(
+                        flatId: unit.id,
+                        status: statusString,
+                      );
+                    }
 
                     // Sync building occupancy
                     await _buildingService.syncOccupancyFromFlats(building.id);
