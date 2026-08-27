@@ -3,7 +3,7 @@ import '../screens/access_blocked_screen.dart';
 import '../screens/simple_login_screen.dart';
 import '../services/flat_access_control_service.dart';
 
-/// Wraps child widgets to enforce flat/resident access control.
+/// Wraps child widgets to enforce live flat and resident lifecycle access.
 class FlatAccessWrapper extends StatelessWidget {
   final Widget child;
 

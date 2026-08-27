@@ -9,6 +9,7 @@ class FlatUnit {
   final String docId; // Firestore document ID
   final String type;
   String? residentName;
+  final String? residentUserId;
   FlatStatus status;
   final int floor;
   final String area; // e.g., "1500 Sqft"
@@ -18,6 +19,7 @@ class FlatUnit {
     required this.docId,
     required this.type,
     this.residentName,
+    this.residentUserId,
     required this.status,
     required this.floor,
     required this.area,

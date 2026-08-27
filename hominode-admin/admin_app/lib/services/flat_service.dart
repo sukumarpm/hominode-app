@@ -1,10 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_tenant_context.dart';
-import 'resident_service.dart';
 
 class FlatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final ResidentService _residentService = ResidentService();
   final String _collection = 'flats';
 
   /// Adds canonical flat documents to the caller's atomic building batch.
@@ -265,15 +263,11 @@ class FlatService {
   Future<void> updateFlatStatus({
     required String flatId, // Sequential ID (T001, A101, etc.)
     required String status,
-    String? residentName,
-    String? residentId,
   }) async {
     try {
       print('\n🔵 FlatService.updateFlatStatus() called');
       print('   - flatId (sequential): $flatId');
       print('   - status: $status');
-      print('   - residentName: $residentName');
-      print('   - residentId: $residentId');
 
       // STEP 1: Query for the flat document using flatId field
       print('   - STEP 1: Querying for flat document with flatId: $flatId');
@@ -295,15 +289,32 @@ class FlatService {
       }
 
       final flatDocRef = flatQuery.docs.first.reference;
+      final flatData = flatQuery.docs.first.data();
       print('   ✅ STEP 1 PASSED: Flat document found: ${flatDocRef.id}');
+
+      final residentIds = flatData['residentIds'];
+      final hasResidentPointer =
+          (flatData['residentUserId'] is String &&
+              (flatData['residentUserId'] as String).trim().isNotEmpty) ||
+          (flatData['residentUid'] is String &&
+              (flatData['residentUid'] as String).trim().isNotEmpty) ||
+          (residentIds != null &&
+              (residentIds is! List || residentIds.isNotEmpty));
+      if (hasResidentPointer) {
+        throw StateError(
+          'Resident-linked flats can change occupancy only through explicit resident lifecycle actions.',
+        );
+      }
+      if (status != 'vacant' && status != 'maintenance') {
+        throw StateError(
+          'Direct occupied status changes are not allowed. Use resident assignment.',
+        );
+      }
 
       // STEP 2: Prepare update data
       print('   - STEP 2: Preparing update data');
       final updateData = {
         'status': status,
-        'residentName': residentName,
-        'residentId': residentId,
-        'residentUserId': residentId, // Store userId for consistency
         'updatedAt': FieldValue.serverTimestamp(),
       };
       print('   ✅ STEP 2 PASSED: Update data prepared');
@@ -320,8 +331,6 @@ class FlatService {
         final data = verifyDoc.data() as Map<String, dynamic>;
         print('   ✅ STEP 4 PASSED: Verification successful');
         print('      - Status: ${data['status']}');
-        print('      - ResidentName: ${data['residentName']}');
-        print('      - ResidentId: ${data['residentId']}');
       }
 
       print('✅ Flat status updated successfully\n');
@@ -374,15 +383,11 @@ class FlatService {
     }
   }
 
-  Future<void> removeResident(String flatId) async {
-    final snapshot = await _firestore.collection(_collection).doc(flatId).get();
-    if (!snapshot.exists) throw StateError('Flat was not found.');
-    final residentUserId = FlatModel.resolveResidentUserId(snapshot.data()!);
-    if (residentUserId == null) {
-      throw StateError('Flat occupant data is missing or conflicting.');
-    }
-    await _residentService.moveOutResident(residentUserId);
-  }
+  Future<void> removeResident(String flatId) => Future<void>.error(
+    StateError(
+      'Generic flat removal is retired. Use the explicit Move Out resident action.',
+    ),
+  );
 
   // Historical direct removal implementation; trusted move-out is used now.
   // ignore: unused_element

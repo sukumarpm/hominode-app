@@ -124,6 +124,16 @@ test("Admin clients cannot forge resident type or identity verification", {skip:
 });
 
 test("Admin clients cannot bypass trusted occupancy transitions", {skip: !enabled}, async () => {
+  const unlinkedFlat = dbFor("admin-a").collection("flats").doc("flat-status-test");
+  await assertSucceeds(unlinkedFlat.set({
+    communityId: "community-a",
+    buildingId: "building-a",
+    status: "vacant",
+  }));
+  await assertSucceeds(unlinkedFlat.update({status: "maintenance"}));
+  await assertFails(unlinkedFlat.update({status: "occupied"}));
+  await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({status: "maintenance"}));
+  await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({status: "vacant"}));
   await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentUserId: "tenant-verified"}));
   await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentUid: null}));
   await assertFails(dbFor("admin-a").collection("flats").doc("flat-a").update({residentIds: ["tenant-verified"]}));

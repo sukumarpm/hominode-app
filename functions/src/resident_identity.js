@@ -274,13 +274,17 @@ async function approveResidentRegistrationCore({db, auth, data}) {
   const sameFlatQuery = db.collection("users")
     .where("communityId", "==", input.communityId)
     .where("flatId", "==", input.flatId);
+  const buildingFlatsQuery = db.collection("flats")
+    .where("communityId", "==", input.communityId)
+    .where("buildingId", "==", input.buildingId);
 
   return db.runTransaction(async (transaction) => {
-    const [userSnapshot, buildingSnapshot, flatSnapshot, sameFlatSnapshot] = await Promise.all([
+    const [userSnapshot, buildingSnapshot, flatSnapshot, sameFlatSnapshot, buildingFlatsSnapshot] = await Promise.all([
       transaction.get(userRef),
       transaction.get(buildingRef),
       transaction.get(flatRef),
       transaction.get(sameFlatQuery),
+      transaction.get(buildingFlatsQuery),
     ]);
     if (!userSnapshot.exists || userSnapshot.data()?.role !== "resident") {
       throw new RegistrationError("not-found", "Pending resident registration was not found.");
@@ -310,40 +314,22 @@ async function approveResidentRegistrationCore({db, auth, data}) {
     }
     const flat = flatSnapshot.data();
     const occupant = resolveFlatOccupant(flat);
-    if (!["vacant", "occupied"].includes(flat.status)) {
-      throw new RegistrationError("failed-precondition", "This unit is unavailable for resident assignment.");
+    const safelyVacant = flat.status === "vacant" && occupant.uid == null;
+    const sameResidentRetry = flat.status === "occupied" &&
+      occupant.uid === input.userId &&
+      clean(resident.flatId) === input.flatId &&
+      clean(resident.buildingId) === input.buildingId;
+    if (!safelyVacant && !sameResidentRetry) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "This unit is not safely vacant for resident approval.",
+      );
     }
-    if (!occupant.uid && flat.status === "occupied") {
-      throw new RegistrationError("failed-precondition", "This unit is marked occupied without a valid occupant reference.");
-    }
-    for (const doc of sameFlatSnapshot.docs) {
-      if (doc.id === input.userId) continue;
-      const state = residentOccupancyState(doc.data(), {
-        communityId: input.communityId,
-        flatId: input.flatId,
-      });
-      if (state === "active") {
-        throw new RegistrationError("failed-precondition", "This unit already has an active resident occupant.");
-      }
-      if (state === "ambiguous") {
-        throw new RegistrationError("failed-precondition", "This unit has ambiguous resident assignment data.");
-      }
-    }
-    if (occupant.uid && occupant.uid !== input.userId) {
-      const occupantSnapshot = await transaction.get(db.collection("users").doc(occupant.uid));
-      if (!occupantSnapshot.exists) {
-        throw new RegistrationError("failed-precondition", "This unit references an unknown resident occupant.");
-      }
-      const state = residentOccupancyState(occupantSnapshot.data(), {
-        communityId: input.communityId,
-        flatId: input.flatId,
-      });
-      if (state === "active") {
-        throw new RegistrationError("failed-precondition", "This unit already has an active resident occupant.");
-      }
-      if (state !== "inactive") {
-        throw new RegistrationError("failed-precondition", "This unit occupant reference is ambiguous.");
-      }
+    if (sameFlatSnapshot.docs.some((doc) => doc.id !== input.userId)) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "This unit already has resident assignment data that must be resolved first.",
+      );
     }
     const required = identityVerificationRequired(trustedType, actor.community);
     const verified = identityIsVerified(resident);
@@ -385,6 +371,11 @@ async function approveResidentRegistrationCore({db, auth, data}) {
       ownershipType: trustedType,
       updatedAt: timestamp,
     });
+    transaction.update(buildingRef, buildingOccupancyUpdate(buildingFlatsSnapshot, {
+      targetFlatId: input.flatId,
+      targetStatus: "occupied",
+      timestamp,
+    }));
     return {status: "approved", isActive: active, identityVerificationRequired: false};
   });
 }
@@ -398,6 +389,23 @@ function vacantFlatUpdate(timestamp) {
     residentId: null,
     residentName: null,
     ownershipType: null,
+    updatedAt: timestamp,
+  };
+}
+
+function buildingOccupancyUpdate(flatSnapshot, {targetFlatId, targetStatus, timestamp}) {
+  let occupied = 0;
+  let vacant = 0;
+  for (const doc of flatSnapshot.docs) {
+    const status = doc.id === targetFlatId ? targetStatus : clean(doc.data()?.status);
+    if (status === "occupied") occupied += 1;
+    if (status === "vacant") vacant += 1;
+  }
+  const total = flatSnapshot.docs.length;
+  return {
+    occupied,
+    vacant,
+    occupancyRate: total > 0 ? Math.round((occupied / total) * 100) : 0,
     updatedAt: timestamp,
   };
 }
@@ -531,11 +539,9 @@ async function reactivateResidentCore({db, auth, data}) {
         resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
-    const status = clean(resident.status);
-    const occupancyStatus = clean(resident.occupancyStatus);
     if (resident.approvalStatus !== "approved" || resident.isActive !== false ||
-        (status && status !== "inactive") ||
-        !["", "current", "suspended"].includes(occupancyStatus)) {
+        clean(resident.status) !== "inactive" ||
+        clean(resident.occupancyStatus) !== "suspended") {
       throw new RegistrationError("failed-precondition", "Only a suspended approved resident can be reactivated.");
     }
     const residentType = trustedResidentType(resident);
@@ -610,6 +616,9 @@ async function reassignResidentCore({db, auth, data}) {
   const sameFlatQuery = db.collection("users")
     .where("communityId", "==", input.communityId)
     .where("flatId", "==", input.flatId);
+  const buildingFlatsQuery = db.collection("flats")
+    .where("communityId", "==", input.communityId)
+    .where("buildingId", "==", input.buildingId);
 
   return db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
@@ -646,13 +655,14 @@ async function reassignResidentCore({db, auth, data}) {
     const legacyPhoneQuery = db.collection("users")
       .where("communityId", "==", input.communityId)
       .where("phone", "==", phoneNumber);
-    const [buildingSnapshot, flatSnapshot, sameFlatSnapshot, phoneUsers, legacyPhoneUsers] =
+    const [buildingSnapshot, flatSnapshot, sameFlatSnapshot, phoneUsers, legacyPhoneUsers, buildingFlatsSnapshot] =
       await Promise.all([
         transaction.get(buildingRef),
         transaction.get(flatRef),
         transaction.get(sameFlatQuery),
         transaction.get(phoneQuery),
         transaction.get(legacyPhoneQuery),
+        transaction.get(buildingFlatsQuery),
       ]);
     validateBuildingAndFlat({
       buildingSnapshot,
@@ -715,6 +725,11 @@ async function reassignResidentCore({db, auth, data}) {
       ownershipType: residentType,
       updatedAt: timestamp,
     });
+    transaction.update(buildingRef, buildingOccupancyUpdate(buildingFlatsSnapshot, {
+      targetFlatId: input.flatId,
+      targetStatus: "occupied",
+      timestamp,
+    }));
     return {status: "active", occupancyStatus: "current", userId: input.userId};
   });
 }
@@ -974,6 +989,14 @@ async function moveOutResidentCore({db, auth, data}) {
     if (!userSnapshot.exists || resident?.role !== "resident" || resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
+    if (resident.approvalStatus !== "approved" || resident.isActive !== true ||
+        clean(resident.status) !== "active" ||
+        clean(resident.occupancyStatus) !== "current") {
+      throw new RegistrationError(
+        "failed-precondition",
+        "Only an active current resident can be moved out.",
+      );
+    }
     const flatId = clean(resident.flatId);
     if (!flatId) throw new RegistrationError("failed-precondition", "Resident has no current unit assignment.");
     const flatRef = db.collection("flats").doc(flatId);
@@ -983,7 +1006,13 @@ async function moveOutResidentCore({db, auth, data}) {
     if (!flatSnapshot.exists || !buildingId) {
       throw new RegistrationError("failed-precondition", "Resident unit assignment is incomplete.");
     }
-    const buildingSnapshot = await transaction.get(db.collection("buildings").doc(buildingId));
+    const buildingRef = db.collection("buildings").doc(buildingId);
+    const [buildingSnapshot, buildingFlatsSnapshot] = await Promise.all([
+      transaction.get(buildingRef),
+      transaction.get(db.collection("flats")
+        .where("communityId", "==", input.communityId)
+        .where("buildingId", "==", buildingId)),
+    ]);
     validateBuildingAndFlat({
       buildingSnapshot,
       flatSnapshot,
@@ -993,7 +1022,12 @@ async function moveOutResidentCore({db, auth, data}) {
     const type = canonicalResidentType(resident);
     if (!type) throw new RegistrationError("failed-precondition", "Resident type is invalid or ambiguous.");
     const occupant = resolveFlatOccupant(flat);
-    const clearsOccupant = occupant.uid === input.userId;
+    if (flat.status !== "occupied" || occupant.uid !== input.userId) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "Resident cannot be moved out because the unit occupant does not match.",
+      );
+    }
     const timestamp = FieldValue.serverTimestamp();
     transaction.update(userRef, {
       isActive: false,
@@ -1013,10 +1047,13 @@ async function moveOutResidentCore({db, auth, data}) {
       movedOutBy: actor.uid,
       updatedAt: timestamp,
     });
-    if (clearsOccupant) {
-      transaction.update(flatRef, vacantFlatUpdate(timestamp));
-    }
-    return {status: "moved_out", occupantCleared: clearsOccupant};
+    transaction.update(flatRef, vacantFlatUpdate(timestamp));
+    transaction.update(buildingRef, buildingOccupancyUpdate(buildingFlatsSnapshot, {
+      targetFlatId: flatId,
+      targetStatus: "vacant",
+      timestamp,
+    }));
+    return {status: "moved_out", occupantCleared: true};
   });
 }
 

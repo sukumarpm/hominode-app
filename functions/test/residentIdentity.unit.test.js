@@ -345,6 +345,23 @@ test("reactivate fails for another occupant, ineligible identity, and cross-comm
   );
 });
 
+test("reactivate requires the exact suspended lifecycle state", async () => {
+  for (const occupancyStatus of ["", "current", "moved_out"]) {
+    await assert.rejects(
+      () => reactivateResidentCore({
+        db: fakeDb(lifecycleSeed({
+          isActive: false,
+          status: "inactive",
+          occupancyStatus,
+        })),
+        auth: phoneAuth("admin-a"),
+        data: {communityId: "A", userId: "resident-a"},
+      }),
+      {code: "failed-precondition"},
+    );
+  }
+});
+
 test("Admin single onboarding creates no user and is claimed by the OTP uid", async () => {
   const db = fakeDb({
     "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
@@ -425,6 +442,8 @@ test("returning resident reassignment reuses the same profile and preserves move
   assert.ok(returning.reactivatedAt);
   assert.equal([...db.values.keys()].filter((path) => path.startsWith("users/")).length, 1);
   assert.equal(db.values.get("flats/flat-b").residentUserId, "resident-a");
+  assert.equal(db.values.get("buildings/building-a").occupied, 1);
+  assert.equal(db.values.get("buildings/building-a").vacant, 1);
 });
 
 test("returning resident reassignment fails closed for occupied, ineligible, duplicate, and cross-community state", async () => {
@@ -590,6 +609,8 @@ test("trusted approval activates optional-proof owner and blocks unverified tena
   const owner = await approveResidentRegistrationCore({db: ownerDb, auth: phoneAuth("admin-a"), data: approvalData("owner")});
   assert.equal(owner.isActive, true);
   assert.equal(ownerDb.values.get("users/resident-a").identityVerificationStatus, "not_required");
+  assert.equal(ownerDb.values.get("buildings/building-a").occupied, 1);
+  assert.equal(ownerDb.values.get("buildings/building-a").vacant, 0);
 
   const tenantDb = fakeDb(approvalSeed({declaredResidentType: "tenant"}));
   await assert.rejects(
@@ -674,7 +695,7 @@ test("all owner and tenant combinations reject a second active occupant", async 
         data: approvalData(candidateType),
       }),
       (error) => error.code === "failed-precondition" &&
-        /active resident occupant/.test(error.message),
+        /not safely vacant/.test(error.message),
     );
   }
 });
@@ -692,7 +713,10 @@ test("legacy occupant aliases reconcile safely and conflicts fail closed", async
     {residentUserId: "resident-a", residentUid: "resident-a"},
     {residentIds: ["resident-a"]},
   ]) {
-    const db = fakeDb(approvalSeed({}, {
+    const db = fakeDb(approvalSeed({
+      buildingId: "building-a",
+      flatId: "flat-a",
+    }, {
       "flats/flat-a": {
         communityId: "A",
         buildingId: "building-a",
@@ -730,7 +754,7 @@ test("legacy occupant aliases reconcile safely and conflicts fail closed", async
   );
 });
 
-test("inactive stale occupant is reconciled but ambiguous stale data is rejected", async () => {
+test("approval never takes over an inactive or suspended occupant", async () => {
   const staleDb = fakeDb(approvalSeed({}, {
     "flats/flat-a": {
       communityId: "A",
@@ -738,14 +762,21 @@ test("inactive stale occupant is reconciled but ambiguous stale data is rejected
       status: "occupied",
       residentUid: "old-resident",
     },
-    "users/old-resident": activeOccupant("owner", {isActive: false, status: "inactive"}),
+    "users/old-resident": activeOccupant("owner", {
+      isActive: false,
+      status: "inactive",
+      occupancyStatus: "suspended",
+    }),
   }));
-  await approveResidentRegistrationCore({
-    db: staleDb,
-    auth: phoneAuth("admin-a"),
-    data: approvalData("owner"),
-  });
-  assert.equal(staleDb.values.get("flats/flat-a").residentUserId, "resident-a");
+  await assert.rejects(
+    () => approveResidentRegistrationCore({
+      db: staleDb,
+      auth: phoneAuth("admin-a"),
+      data: approvalData("owner"),
+    }),
+    {code: "failed-precondition"},
+  );
+  assert.equal(staleDb.values.get("flats/flat-a").residentUid, "old-resident");
 
   const ambiguousDb = fakeDb(approvalSeed({}, {
     "flats/flat-a": {
@@ -1071,9 +1102,28 @@ test("trusted tenant move-out deactivates the resident and vacates only the matc
   assert.equal(db.values.get("users/tenant-a").occupancyStatus, "moved_out");
   assert.equal(db.values.get("flats/flat-a").status, "vacant");
   assert.equal(db.values.get("flats/flat-a").residentUserId, null);
+  assert.equal(db.values.get("buildings/building-a").occupied, 0);
+  assert.equal(db.values.get("buildings/building-a").vacant, 1);
 });
 
-test("move-out preserves another resident's occupant reference", async () => {
+test("move-out requires an active current resident", async () => {
+  for (const overrides of [
+    {isActive: false, status: "inactive", occupancyStatus: "suspended"},
+    {isActive: true, status: "active", occupancyStatus: "moved_out"},
+    {isActive: true, status: "inactive", occupancyStatus: "current"},
+  ]) {
+    await assert.rejects(
+      () => moveOutResidentCore({
+        db: fakeDb(lifecycleSeed(overrides)),
+        auth: phoneAuth("admin-a"),
+        data: {communityId: "A", userId: "resident-a"},
+      }),
+      {code: "failed-precondition"},
+    );
+  }
+});
+
+test("move-out rejects another resident's occupant reference", async () => {
   const db = fakeDb({
     "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
     "communities/A": {isActive: true},
@@ -1086,13 +1136,15 @@ test("move-out preserves another resident's occupant reference", async () => {
       status: "occupied",
     },
   });
-  const result = await moveOutResidentCore({
-    db,
-    auth: phoneAuth("admin-a"),
-    data: {communityId: "A", userId: "tenant-a"},
-  });
-  assert.equal(result.occupantCleared, false);
-  assert.equal(db.values.get("users/tenant-a").isActive, false);
+  await assert.rejects(
+    () => moveOutResidentCore({
+      db,
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "A", userId: "tenant-a"},
+    }),
+    {code: "failed-precondition"},
+  );
+  assert.equal(db.values.get("users/tenant-a").isActive, true);
   assert.equal(db.values.get("flats/flat-a").residentUserId, "other-resident");
   assert.equal(db.values.get("flats/flat-a").status, "occupied");
 });

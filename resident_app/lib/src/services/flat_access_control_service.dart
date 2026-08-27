@@ -168,6 +168,27 @@ class FlatAccessControlService {
   static AccessControlResult evaluateApprovedProfile(
     Map<String, dynamic> userData,
   ) {
+    if (userData['role'] != 'resident') {
+      return AccessControlResult.denied(
+        message: 'This app is available to resident accounts only.',
+      );
+    }
+    if (userData['approvalStatus'] != 'approved') {
+      return AccessControlResult.denied(
+        message: 'Your resident registration is not currently approved.',
+      );
+    }
+    if (userData['isActive'] != true || userData['status'] != 'active') {
+      return AccessControlResult.denied(
+        message:
+            'Your resident account is temporarily deactivated. Contact your community administrator.',
+      );
+    }
+    if (userData['occupancyStatus'] != 'current') {
+      return AccessControlResult.denied(
+        message: 'Your resident occupancy is not currently active.',
+      );
+    }
     final flatId = userData['flatId']?.toString().trim();
     if (flatId == null || flatId.isEmpty) {
       return AccessControlResult.denied(
@@ -176,6 +197,12 @@ class FlatAccessControlService {
       );
     }
     final buildingId = userData['buildingId']?.toString().trim() ?? '';
+    if (buildingId.isEmpty) {
+      return AccessControlResult.denied(
+        message:
+            'Your account is not assigned to a building. Please contact admin.',
+      );
+    }
     return AccessControlResult.granted(
       flatId: flatId,
       buildingId: buildingId,

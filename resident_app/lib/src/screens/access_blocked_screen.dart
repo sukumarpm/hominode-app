@@ -4,7 +4,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
+
 import '../services/firebase_auth_service.dart';
+import '../services/resident_auth_routing.dart';
 import '../services/tenant_resolution_service.dart';
 
 class AccessBlockedScreen extends StatelessWidget {
@@ -68,6 +70,35 @@ class AccessBlockedScreen extends StatelessWidget {
               ),
 
               SizedBox(height: 48.h),
+              SizedBox(
+                width: double.infinity,
+                height: 50.h,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final tenantResolver = context
+                        .read<TenantResolutionService>();
+
+                    final result = await FirebaseAuthService.instance
+                        .restoreResidentSession(tenantResolver);
+
+                    if (!context.mounted) return;
+
+                    Navigator.of(context).pushNamedAndRemoveUntil(
+                      ResidentAuthRouting.routeFor(result),
+                      (route) => false,
+                      arguments: result.message,
+                    );
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: Text(
+                    'Refresh Status',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
 
               // Contact Admin Button
               SizedBox(

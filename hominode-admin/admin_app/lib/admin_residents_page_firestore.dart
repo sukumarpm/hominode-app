@@ -364,6 +364,21 @@ class _AdminResidentsPageFirestoreState
   }
 
   Widget _buildResidentCard(UserModel resident) {
+    final hasAssignment =
+        resident.flatId?.trim().isNotEmpty == true &&
+        resident.buildingId?.trim().isNotEmpty == true;
+    final isActiveCurrent =
+        resident.approvalStatus == 'approved' &&
+        resident.isActive &&
+        resident.status == 'active' &&
+        resident.occupancyStatus == 'current' &&
+        hasAssignment;
+    final isSuspended =
+        resident.approvalStatus == 'approved' &&
+        !resident.isActive &&
+        resident.status == 'inactive' &&
+        resident.occupancyStatus == 'suspended' &&
+        hasAssignment;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -473,17 +488,18 @@ class _AdminResidentsPageFirestoreState
                           case 'activate':
                             _toggleResidentStatus(resident, 'active');
                             break;
+
                           case 'deactivate':
                             _toggleResidentStatus(resident, 'inactive');
                             break;
+
                           case 'move_out':
                             _moveOutResident(resident);
                             break;
                         }
                       },
                       itemBuilder: (context) => [
-                        if (resident.status == 'inactive' &&
-                            resident.occupancyStatus != 'moved_out')
+                        if (isSuspended)
                           PopupMenuItem(
                             value: 'activate',
                             child: Row(
@@ -491,14 +507,15 @@ class _AdminResidentsPageFirestoreState
                                 Icon(
                                   Icons.check_circle_outline,
                                   size: 18.w,
-                                  color: Color(0xFF10B981),
+                                  color: const Color(0xFF10B981),
                                 ),
                                 SizedBox(width: 8.w),
-                                Text('Reactivate'),
+                                const Text('Reactivate'),
                               ],
                             ),
                           ),
-                        if (resident.status == 'active')
+
+                        if (isActiveCurrent)
                           PopupMenuItem(
                             value: 'deactivate',
                             child: Row(
@@ -506,14 +523,15 @@ class _AdminResidentsPageFirestoreState
                                 Icon(
                                   Icons.block,
                                   size: 18.w,
-                                  color: Color(0xFFF4A100),
+                                  color: const Color(0xFFF4A100),
                                 ),
                                 SizedBox(width: 8.w),
-                                Text('Deactivate'),
+                                const Text('Deactivate'),
                               ],
                             ),
                           ),
-                        if (resident.flatId?.isNotEmpty == true)
+
+                        if (isActiveCurrent)
                           PopupMenuItem(
                             value: 'move_out',
                             child: Row(
@@ -521,10 +539,10 @@ class _AdminResidentsPageFirestoreState
                                 Icon(
                                   Icons.logout,
                                   size: 18.w,
-                                  color: Color(0xFFEF4444),
+                                  color: const Color(0xFFEF4444),
                                 ),
                                 SizedBox(width: 8.w),
-                                Text('Move Out'),
+                                const Text('Move Out'),
                               ],
                             ),
                           ),
@@ -868,7 +886,13 @@ class _AdminResidentsPageFirestoreState
     );
     if (confirmed != true) return;
     try {
+      // Trusted lifecycle callable:
+      // - deactivates resident
+      // - clears current assignment
+      // - vacates the flat
+      // - recalculates the building occupancy summary
       await _residentService.moveOutResident(resident.id);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${resident.name} moved out successfully')),

@@ -159,6 +159,23 @@ service cloud.firestore {
         );
     }
 
+    function flatOccupancyIsConsistent(flat) {
+      return ('status' in flat)
+        && (
+          (
+            flat.status == 'occupied'
+            && !flatHasNoOccupant(flat)
+          )
+          || (
+            (
+              flat.status == 'vacant'
+              || flat.status == 'maintenance'
+            )
+            && flatHasNoOccupant(flat)
+          )
+        );
+    }
+
     /*
      * Canonical Resident operational access requires an approved, active
      * profile in an active community, a valid owner/tenant classification,
@@ -566,13 +583,15 @@ function securityCanAccessCommunity(communityId) {
       allow create: if adminCanAccessCommunity(
           request.resource.data.communityId
         )
-        && flatHasNoOccupant(request.resource.data);
+        && flatHasNoOccupant(request.resource.data)
+        && flatOccupancyIsConsistent(request.resource.data);
 
       allow update: if adminCanAccessCommunity(
           resource.data.communityId
         )
         && request.resource.data.communityId
           == resource.data.communityId
+        && flatOccupancyIsConsistent(request.resource.data)
         && !request.resource.data.diff(resource.data)
           .affectedKeys()
           .hasAny([

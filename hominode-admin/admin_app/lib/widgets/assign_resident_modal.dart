@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -66,7 +65,6 @@ class AssignResidentNewRequest {
   final int familyMembers;
   final String? email;
   final String ownershipType;
-  final String generatedPassword;
 
   AssignResidentNewRequest({
     required this.flatId,
@@ -75,10 +73,8 @@ class AssignResidentNewRequest {
     required this.familyMembers,
     this.email,
     required this.ownershipType,
-    required this.generatedPassword,
   });
 
-  // TODO: Add toJson for API submission
   Map<String, dynamic> toJson() {
     return {
       'flatId': flatId,
@@ -87,7 +83,6 @@ class AssignResidentNewRequest {
       'familyMembers': familyMembers,
       'email': email,
       'ownershipType': ownershipType,
-      'password': generatedPassword,
     };
   }
 }
@@ -173,31 +168,28 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
   );
   final TextEditingController _emailController = TextEditingController();
 
-  // Auto-generated password
-  String _generatedPassword = '';
-
   @override
   void initState() {
     super.initState();
     _loadResidents();
-    _generatePassword();
+    // _generatePassword(); // Removed as password generation is no longer needed
   }
 
   /// Generate random password for new resident
-  void _generatePassword() {
-    // Generate Password: 8 characters (alphanumeric)
-    final random = Random();
-    const chars =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    _generatedPassword = String.fromCharCodes(
-      Iterable.generate(
-        8,
-        (_) => chars.codeUnitAt(random.nextInt(chars.length)),
-      ),
-    );
+  // void _generatePassword() {
+  //   // Generate Password: 8 characters (alphanumeric)
+  //   final random = Random();
+  //   const chars =
+  //       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  //   _generatedPassword = String.fromCharCodes(
+  //     Iterable.generate(
+  //       8,
+  //       (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+  //     ),
+  //   );
 
-    setState(() {});
-  }
+  //   setState(() {});
+  // }
 
   @override
   void dispose() {
@@ -364,14 +356,12 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               ? null
               : _emailController.text.trim(),
           ownershipType: _ownershipType,
-          generatedPassword: _generatedPassword,
         );
 
         print('🟡 Request created:');
         print('  - Name: ${newResidentRequest.name}');
         print('  - Phone: ${newResidentRequest.phone}');
         print('  - Email: ${newResidentRequest.email}');
-        print('  - Password: ${newResidentRequest.generatedPassword}');
 
         if (widget.onAssignNew != null) {
           print('🟡 Calling widget.onAssignNew...');
@@ -381,20 +371,6 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
           // Simulate API call
           await Future.delayed(const Duration(milliseconds: 1000));
         }
-
-        final username = _emailController.text.trim().isNotEmpty
-            ? _emailController.text.trim()
-            : _phoneController.text.trim();
-
-        print('=== Generated Login Credentials ===');
-        print(
-          'Username: $username (${_emailController.text.trim().isNotEmpty ? "Email" : "Phone"})',
-        );
-        print('Password: $_generatedPassword (auto-generated)');
-        print(
-          'Will be sent to: ${_phoneController.text}${_emailController.text.isNotEmpty ? " / ${_emailController.text}" : ""}',
-        );
-        print('===================================');
       }
 
       if (mounted) {
@@ -404,7 +380,8 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
             content: Text(
               _mode == AssignMode.selectExisting
                   ? 'Resident assigned successfully'
-                  : 'Resident created and assigned to ${widget.flatLabel}',
+                  : 'Resident onboarding created for ${widget.flatLabel}. '
+                        'Assignment will complete after OTP registration and Admin approval.',
             ),
             backgroundColor: const Color(0xFF10B981),
             duration: const Duration(seconds: 2),
@@ -516,7 +493,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Select an existing resident or add a new one to this flat.',
+                  'Assign an existing resident, or create an onboarding request for a new resident.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15.sp,
@@ -578,9 +555,8 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               onTap: () {
                 setState(() {
                   _mode = AssignMode.addNew;
+                  _errorMessage = null;
                 });
-                // Regenerate password when switching to Add New mode
-                _generatePassword();
               },
             ),
           ),
@@ -1109,7 +1085,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
         SizedBox(height: 20.h),
 
         // Info Card
-        _buildCredentialsInfoCard(),
+        _buildOtpRegistrationInfoCard(),
       ],
     );
   }
@@ -1171,12 +1147,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
     );
   }
 
-  Widget _buildCredentialsInfoCard() {
-    // Determine what will be used as username
-    final username = _emailController.text.trim().isNotEmpty
-        ? _emailController.text.trim()
-        : _phoneController.text.trim();
-
+  Widget _buildOtpRegistrationInfoCard() {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(16.w),
@@ -1184,43 +1155,36 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
         color: const Color(0xFFEFF6FF),
         borderRadius: BorderRadius.circular(12.r),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.auto_awesome, color: Color(0xFF061C4C), size: 22.w),
-          SizedBox(width: 12.w),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Login credentials:',
-                  style: TextStyle(
-                    fontSize: 15.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF061C4C),
-                  ),
+          Row(
+            children: [
+              Icon(
+                Icons.auto_awesome,
+                color: const Color(0xFF0E4778),
+                size: 22.w,
+              ),
+              SizedBox(width: 10.w),
+              Text(
+                'OTP registration',
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF0E4778),
                 ),
-                SizedBox(height: 8.h),
-                _buildBulletPoint(
-                  username.isNotEmpty
-                      ? 'Username: $username (Email/Phone)'
-                      : 'Username: Email or Phone (enter above)',
-                ),
-                SizedBox(height: 4.h),
-                _buildBulletPoint(
-                  'Password: $_generatedPassword (auto-generated)',
-                ),
-                SizedBox(height: 8.h),
-                Text(
-                  'Credentials will be sent via SMS/Email',
-                  style: TextStyle(
-                    fontSize: 13.sp,
-                    color: Color(0xFF061C4C),
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
+              ),
+            ],
+          ),
+          SizedBox(height: 12.h),
+          Text(
+            '• Resident registers using the phone number entered above\n'
+            '• No password or Auth account is created by Admin\n'
+            '• This flat will be assigned only after OTP registration and Admin approval',
+            style: TextStyle(
+              fontSize: 14.sp,
+              height: 1.5,
+              color: const Color(0xFF1E3A5F),
             ),
           ),
         ],
@@ -1284,7 +1248,9 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                   ),
                 )
               : Text(
-                  'Assign Resident',
+                  _mode == AssignMode.selectExisting
+                      ? 'Assign Resident'
+                      : 'Create Onboarding',
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w600,

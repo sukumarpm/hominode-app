@@ -47,6 +47,10 @@ void main() {
       final result = FlatAccessControlService.evaluateApprovedProfile({
         'role': 'resident',
         'approvalStatus': 'approved',
+        'isActive': true,
+        'status': 'active',
+        'occupancyStatus': 'current',
+        'buildingId': 'building-a',
       });
       expect(result.state, FlatAccessState.denied);
       expect(result.message, contains('not yet assigned to a flat'));
@@ -54,11 +58,56 @@ void main() {
 
     test('a non-empty flat grants access', () {
       final result = FlatAccessControlService.evaluateApprovedProfile({
+        'role': 'resident',
+        'approvalStatus': 'approved',
+        'isActive': true,
+        'status': 'active',
+        'occupancyStatus': 'current',
         'flatId': ' flat-a ',
         'buildingId': 'building-a',
       });
       expect(result.state, FlatAccessState.granted);
       expect(result.flatId, 'flat-a');
     });
+
+    test(
+      'live lifecycle changes revoke access without authentication changes',
+      () {
+        for (final profile in [
+          {
+            'role': 'resident',
+            'approvalStatus': 'pending',
+            'isActive': false,
+            'status': 'inactive',
+            'occupancyStatus': 'suspended',
+            'flatId': 'flat-a',
+            'buildingId': 'building-a',
+          },
+          {
+            'role': 'resident',
+            'approvalStatus': 'approved',
+            'isActive': false,
+            'status': 'inactive',
+            'occupancyStatus': 'suspended',
+            'flatId': 'flat-a',
+            'buildingId': 'building-a',
+          },
+          {
+            'role': 'resident',
+            'approvalStatus': 'approved',
+            'isActive': true,
+            'status': 'active',
+            'occupancyStatus': 'moved_out',
+            'flatId': null,
+            'buildingId': null,
+          },
+        ]) {
+          expect(
+            FlatAccessControlService.evaluateApprovedProfile(profile).state,
+            FlatAccessState.denied,
+          );
+        }
+      },
+    );
   });
 }

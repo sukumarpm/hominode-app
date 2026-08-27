@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import 'flat_occupancy_grid_modal.dart';
 
 /// Pixel-perfect "Flat Occupied Details" overlay modal
 /// Opens when admin taps an occupied flat in the grid
 class FlatOccupiedModal extends StatefulWidget {
   final FlatUnit unit;
-  final Function(FlatStatus newStatus)? onStatusChange;
+  final Future<void> Function(FlatStatus newStatus)? onStatusChange;
   final VoidCallback? onRemoveResident;
 
   const FlatOccupiedModal({
@@ -16,11 +17,10 @@ class FlatOccupiedModal extends StatefulWidget {
     this.onRemoveResident,
   });
 
-  /// Show the modal with fade-in and scale animation
   static Future<void> show(
     BuildContext context, {
     required FlatUnit unit,
-    Function(FlatStatus newStatus)? onStatusChange,
+    Future<void> Function(FlatStatus newStatus)? onStatusChange,
     VoidCallback? onRemoveResident,
   }) {
     return showGeneralDialog(
@@ -457,7 +457,6 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
 
       try {
         // Simulate API call
-        await Future.delayed(const Duration(milliseconds: 800));
 
         // Update status to vacant
         widget.onStatusChange?.call(FlatStatus.vacant);
@@ -473,26 +472,46 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
           );
         }
       } catch (e) {
+        if (!mounted) return;
+
         setState(() {
           _isUpdating = false;
+          _selectedStatus = 'Occupied';
         });
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to remove resident. Please try again.'),
-              backgroundColor: Color(0xFFDC2626),
-              duration: Duration(seconds: 2),
+        showDialog(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Status change not allowed'),
+            content: const Text(
+              'This flat is linked to an active resident. '
+              'Use the resident lifecycle actions to change occupancy.',
             ),
-          );
-        }
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
       }
     }
   }
 
   Future<void> _handleStatusChange(String selectedStatus) async {
     if (selectedStatus == 'Occupied') {
-      return; // No change needed
+      return;
+    }
+
+    final FlatStatus newStatus;
+
+    if (selectedStatus == 'Vacant') {
+      newStatus = FlatStatus.vacant;
+    } else if (selectedStatus == 'Maintenance') {
+      newStatus = FlatStatus.maintenance;
+    } else {
+      return;
     }
 
     setState(() {
@@ -500,49 +519,39 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
     });
 
     try {
-      // Determine new status
-      FlatStatus newStatus;
-      if (selectedStatus == 'Vacant') {
-        newStatus = FlatStatus.vacant;
-      } else if (selectedStatus == 'Maintenance') {
-        newStatus = FlatStatus.maintenance;
-      } else {
-        return;
-      }
+      // Parent owns the actual Firestore update and result messaging.
+      await widget.onStatusChange?.call(newStatus);
 
-      // Simulate API call
-      await Future.delayed(const Duration(milliseconds: 800));
-
-      // Update status via callback
-      widget.onStatusChange?.call(newStatus);
-
+      // Close only after the parent update succeeds.
       if (mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Flat ${widget.unit.id} status updated to $selectedStatus',
-            ),
-            backgroundColor: const Color(0xFF10B981),
-            duration: const Duration(seconds: 2),
-          ),
-        );
       }
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _isUpdating = false;
         _selectedStatus = 'Occupied';
       });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to update status. Please try again.'),
-            backgroundColor: Color(0xFFDC2626),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('Status change not allowed'),
+            content: const Text(
+              'This flat is currently linked to a resident. '
+              'To make the flat vacant, use Move Out from Resident Management.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
     }
   }
 }

@@ -15,6 +15,7 @@ enum ResidentAuthState {
   rejected,
   blocked,
   failed,
+  inactive,
 }
 
 class AuthResult {
@@ -288,6 +289,14 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
             state: ResidentAuthState.blocked,
           );
       }
+      if (!profile.isActive) {
+        return AuthResult.success(
+          message:
+              'Your resident account is temporarily deactivated. Contact your community administrator.',
+          user: user,
+          state: ResidentAuthState.inactive,
+        );
+      }
 
       final community = await tenantResolver.loadAssignedCommunity(profile);
       final operationalAccess = ResidentAccessPolicy.evaluate(
@@ -309,15 +318,6 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
         return AuthResult.success(
           message:
               'Your owner or tenant classification is missing. Contact your community administrator.',
-          user: user,
-          state: ResidentAuthState.blocked,
-        );
-      }
-
-      if (!profile.isActive) {
-        return AuthResult.success(
-          message:
-              'Your resident account is inactive. Contact your community administrator.',
           user: user,
           state: ResidentAuthState.blocked,
         );
@@ -366,7 +366,10 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
       );
     } catch (e) {
       debugPrint('[PhoneAuth] Unexpected error during resident resolution: $e');
-      await _rejectSession(tenantResolver);
+
+      tenantResolver.clear();
+      FlatAccessControlService.instance.clearCache();
+
       return AuthResult.failure(
         message: 'Unable to load your resident profile. Please try again.',
         errorCode: 'resident-profile-read-failed',
@@ -389,10 +392,14 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
   }
 
   Future<AuthResult> signOut([TenantResolutionService? tenantResolver]) async {
+    debugPrint('🚨 FirebaseAuthService.signOut CALLED');
+    debugPrintStack();
+
     try {
       await _auth.signOut();
       tenantResolver?.clear();
       FlatAccessControlService.instance.clearCache();
+
       return AuthResult.success(message: 'Signed out successfully.');
     } catch (_) {
       return AuthResult.failure(
@@ -402,8 +409,12 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
   }
 
   Future<void> _rejectSession(TenantResolutionService tenantResolver) async {
+    debugPrint('🚨 _rejectSession CALLED');
+    debugPrintStack();
+
     tenantResolver.clear();
     FlatAccessControlService.instance.clearCache();
+
     await _auth.signOut();
   }
 

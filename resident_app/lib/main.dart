@@ -173,6 +173,7 @@
 //   }
 // }
 import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -184,12 +185,12 @@ import 'main_navigation.dart';
 import 'src/providers/language_provider.dart';
 import 'src/providers/localization_provider.dart';
 import 'src/providers/theme_provider.dart';
+import 'src/screens/access_blocked_screen.dart';
+import 'src/screens/awaiting_approval_screen.dart';
+import 'src/screens/resident_identity_verification_screen.dart';
+import 'src/screens/resident_registration_screen.dart';
 import 'src/screens/simple_login_screen.dart';
 import 'src/screens/splash_screen_clean.dart';
-import 'src/screens/resident_registration_screen.dart';
-import 'src/screens/awaiting_approval_screen.dart';
-import 'src/screens/access_blocked_screen.dart';
-import 'src/screens/resident_identity_verification_screen.dart';
 import 'src/services/firebase_auth_service.dart';
 import 'src/services/resident_auth_routing.dart';
 import 'src/services/tenant_resolution_service.dart';
@@ -387,25 +388,36 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   }
 
   Future<void> _checkAuthStatus() async {
-    // Small delay to allow initial app setup / UI rendering.
     await Future.delayed(const Duration(milliseconds: 500));
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
+
+    debugPrint(
+      '🔐 STARTUP AUTH UID: ${FirebaseAuth.instance.currentUser?.uid}',
+    );
+    debugPrint(
+      '🔐 STARTUP AUTH PHONE: ${FirebaseAuth.instance.currentUser?.phoneNumber}',
+    );
 
     final result = await FirebaseAuthService().restoreResidentSession(
       context.read<TenantResolutionService>(),
     );
 
-    if (!mounted) {
-      return;
-    }
-
-    Navigator.of(context).pushReplacementNamed(
-      ResidentAuthRouting.routeFor(result),
-      arguments: result.message,
+    debugPrint(
+      '🔐 RESTORE RESULT: '
+      'success=${result.success}, '
+      'state=${result.state}, '
+      'message=${result.message}',
     );
+
+    if (!mounted) return;
+
+    final route = ResidentAuthRouting.routeFor(result);
+    debugPrint('🔐 RESTORE ROUTE: $route');
+
+    Navigator.of(
+      context,
+    ).pushReplacementNamed(route, arguments: result.message);
   }
 
   @override

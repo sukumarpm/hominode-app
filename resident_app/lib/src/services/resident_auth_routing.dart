@@ -16,16 +16,24 @@ class ResidentAuthRouting {
     switch (result.state) {
       case ResidentAuthState.approved:
         return '/home';
+
       case ResidentAuthState.registrationRequired:
         return '/resident-registration';
+
       case ResidentAuthState.pendingApproval:
         return '/awaiting-approval';
+
       case ResidentAuthState.identityVerificationRequired:
         return '/resident-identity-verification';
+
+      case ResidentAuthState.inactive:
+        return '/resident-access-blocked';
+
       case ResidentAuthState.rejected:
       case ResidentAuthState.blocked:
       case ResidentAuthState.flatAssignmentRequired:
         return '/resident-access-blocked';
+
       case ResidentAuthState.failed:
         return '/login';
     }

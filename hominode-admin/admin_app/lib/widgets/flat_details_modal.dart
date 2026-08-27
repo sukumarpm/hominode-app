@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'flat_occupancy_grid_modal.dart'; // Import for FlatUnit and FlatStatus
+
+import '../services/building_service.dart';
+import '../services/flat_service.dart';
+import '../services/user_service.dart';
 import 'assign_resident_modal.dart';
 import 'flat_maintenance_modal.dart';
+import 'flat_occupancy_grid_modal.dart'; // Import for FlatUnit and FlatStatus
 import 'flat_occupied_modal.dart';
-import '../services/user_service.dart';
-import '../services/flat_service.dart';
-import '../services/building_service.dart';
 
 /// Pixel-perfect "Flat Details – Vacant" overlay modal
 /// Opens when admin taps a vacant flat tile in the Flat Occupancy Grid
@@ -436,13 +437,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           print('\n🟢 onAssign callback triggered (existing resident)');
 
           if (widget.userService == null) {
-            print('⚠️  Services not available, using fallback');
-            await Future.delayed(const Duration(milliseconds: 800));
-            widget.onStatusChange?.call(FlatStatus.occupied);
-            if (mounted) {
-              Navigator.of(context).pop();
-            }
-            return;
+            throw StateError(
+              'Resident assignment service is unavailable. No flat status was changed.',
+            );
           }
 
           try {
@@ -463,16 +460,6 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
               buildingName: widget.buildingName,
               ownershipType: request.ownershipType,
             );
-
-            // Sync building occupancy
-            if (widget.buildingId != null) {
-              await widget.buildingService!.syncOccupancyFromFlats(
-                widget.buildingId!,
-              );
-            }
-
-            // Update flat status to occupied
-            widget.onStatusChange?.call(FlatStatus.occupied);
 
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -507,7 +494,6 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           print('  - Name: ${request.name}');
           print('  - Phone: ${request.phone}');
           print('  - Email: ${request.email}');
-          print('  - Password: ${request.generatedPassword}');
           print('  - FlatId: ${request.flatId}');
 
           if (widget.userService == null ||
@@ -522,7 +508,6 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
               name: request.name,
               email: request.email,
               phone: request.phone,
-              password: request.generatedPassword,
               residentType: request.ownershipType,
               buildingId: widget.buildingId,
               buildingName: widget.buildingName,
@@ -565,9 +550,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
       await FlatMaintenanceModal.show(
         context,
         unit: widget.unit,
-        onStatusChange: (newStatus) {
+        onStatusChange: (newStatus) async {
           // Update flat status
-          widget.onStatusChange?.call(newStatus);
+          await widget.onStatusChange?.call(newStatus);
 
           // Close this modal after status change
           if (mounted) {
@@ -580,9 +565,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
       await FlatOccupiedModal.show(
         context,
         unit: widget.unit,
-        onStatusChange: (newStatus) {
+        onStatusChange: (newStatus) async {
           // Update flat status
-          widget.onStatusChange?.call(newStatus);
+          await widget.onStatusChange?.call(newStatus);
 
           // Close this modal after status change
           if (mounted) {

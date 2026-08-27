@@ -1,9 +1,12 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'dart:math';
-import 'admin_service.dart';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
 import '../models/pending_resident.dart';
+import 'admin_service.dart';
 
 /// Production-ready Resident Service with Firebase Auth integration
 /// Implements full admin flow for creating and assigning residents
@@ -134,6 +137,9 @@ class ResidentService {
   }
 
   Future<void> moveOutResident(String userId) async {
+    // resident_service.dart
+    debugPrint('🚨 moveOutResident CALLED for userId=$userId');
+    debugPrintStack();
     await _functions.httpsCallable('moveOutResident').call({
       'communityId': _adminService.requireCurrentCommunityId(),
       'userId': userId,

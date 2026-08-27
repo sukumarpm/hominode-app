@@ -2,6 +2,8 @@
 // Firestore service for flat management
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+
 import '../models/flat_model.dart';
 
 class FlatService {
@@ -137,19 +139,19 @@ class FlatService {
         .where('buildingId', isEqualTo: buildingId)
         .snapshots()
         .map((snapshot) {
-      final flats = snapshot.docs
-          .map((doc) => FlatModel.fromSnapshot(doc))
-          .toList();
+          final flats = snapshot.docs
+              .map((doc) => FlatModel.fromSnapshot(doc))
+              .toList();
 
-      // Sort in memory
-      flats.sort((a, b) {
-        final floorCompare = a.floor.compareTo(b.floor);
-        if (floorCompare != 0) return floorCompare;
-        return a.flatNumber.compareTo(b.flatNumber);
-      });
+          // Sort in memory
+          flats.sort((a, b) {
+            final floorCompare = a.floor.compareTo(b.floor);
+            if (floorCompare != 0) return floorCompare;
+            return a.flatNumber.compareTo(b.flatNumber);
+          });
 
-      return flats;
-    });
+          return flats;
+        });
   }
 
   /// Update flat status
@@ -210,11 +212,17 @@ class FlatService {
     required String residentId,
   }) async {
     try {
+      // flat_service.dart
+      debugPrint('🚨 removeResident CALLED for flatId=$flatId');
+      debugPrintStack();
       // Start a batch write
       final batch = _firestore.batch();
 
       // Get flat to check remaining residents
-      final flatDoc = await _firestore.collection(collectionName).doc(flatId).get();
+      final flatDoc = await _firestore
+          .collection(collectionName)
+          .doc(flatId)
+          .get();
       final flatData = flatDoc.data();
       final residentIds = List<String>.from(flatData?['residentIds'] ?? []);
       residentIds.remove(residentId);
@@ -308,7 +316,10 @@ class FlatService {
   /// Get resident details
   Future<Map<String, dynamic>?> getResidentDetails(String residentId) async {
     try {
-      final doc = await _firestore.collection(usersCollection).doc(residentId).get();
+      final doc = await _firestore
+          .collection(usersCollection)
+          .doc(residentId)
+          .get();
       if (doc.exists) {
         final data = doc.data();
         data?['id'] = doc.id;

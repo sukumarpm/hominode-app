@@ -417,6 +417,7 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                 docId: flat.id, // Store the Firestore document ID
                 type: flat.type,
                 residentName: flat.residentName,
+                residentUserId: flat.residentUserId,
                 status: _getFlatStatus(flat.status),
                 floor: flat.floor,
                 area: flat.area,
@@ -494,11 +495,6 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                           ownershipType: request.ownershipType,
                         );
 
-                        // Sync building occupancy
-                        await _buildingService.syncOccupancyFromFlats(
-                          building.id,
-                        );
-
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -529,7 +525,6 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                       print('  - Name: ${request.name}');
                       print('  - Phone: ${request.phone}');
                       print('  - Email: ${request.email}');
-                      print('  - Password: ${request.generatedPassword}');
                       print('  - FlatId: ${request.flatId}');
                       print('  - BuildingId: ${building.id}');
                       print('  - BuildingName: ${building.name}');
@@ -539,7 +534,6 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                           name: request.name,
                           email: request.email,
                           phone: request.phone,
-                          password: request.generatedPassword,
                           residentType: request.ownershipType,
                           familyMembers: request.familyMembers,
                           buildingId: building.id,
@@ -581,32 +575,42 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                 },
                 onStatusChange: (newStatus) async {
                   try {
-                    // Update flat status in Firestore
+                    debugPrint(
+                      '🟣 onStatusChange CALLED: '
+                      'flat=${unit.id}, '
+                      'oldStatus=${unit.status}, '
+                      'newStatus=$newStatus',
+                    );
+                    debugPrintStack();
+                    final hasResidentPointer =
+                        unit.residentUserId?.trim().isNotEmpty == true;
+                    if (unit.status == FlatStatus.occupied ||
+                        hasResidentPointer) {
+                      if (newStatus == FlatStatus.occupied) return;
+                      throw StateError(
+                        'Resident-linked flats can change occupancy only through explicit resident lifecycle actions.',
+                      );
+                    }
+
+                    // Only unlinked vacant/maintenance status may be updated here.
                     String statusString;
-                    var statusUpdatedByLifecycle = false;
                     switch (newStatus) {
                       case FlatStatus.vacant:
                         statusString = 'vacant';
-                        // Remove resident if changing to vacant
-                        if (unit.status == FlatStatus.occupied) {
-                          await _flatService.removeResident(unit.docId);
-                          statusUpdatedByLifecycle = true;
-                        }
                         break;
                       case FlatStatus.occupied:
-                        statusString = 'occupied';
-                        break;
+                        throw StateError(
+                          'Assign a resident through the trusted assignment flow.',
+                        );
                       case FlatStatus.maintenance:
                         statusString = 'maintenance';
                         break;
                     }
 
-                    if (!statusUpdatedByLifecycle) {
-                      await _flatService.updateFlatStatus(
-                        flatId: unit.id,
-                        status: statusString,
-                      );
-                    }
+                    await _flatService.updateFlatStatus(
+                      flatId: unit.id,
+                      status: statusString,
+                    );
 
                     // Sync building occupancy
                     await _buildingService.syncOccupancyFromFlats(building.id);
@@ -623,15 +627,7 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                       );
                     }
                   } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Failed to update flat status: $e'),
-                          backgroundColor: const Color(0xFFEF4444),
-                          duration: const Duration(seconds: 3),
-                        ),
-                      );
-                    }
+                    rethrow;
                   }
                 },
               );
