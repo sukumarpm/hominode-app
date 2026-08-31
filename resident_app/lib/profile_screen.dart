@@ -1,28 +1,29 @@
 // lib/profile_screen.dart
 // Profile / Settings screen
 
-import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
+
 import 'community_wall_screen.dart';
-import 'src/screens/marketplace_screen.dart';
-import 'src/screens/family_vehicles_screen.dart';
+import 'src/providers/language_provider.dart';
 import 'src/screens/app_settings_screen.dart';
-import 'src/screens/domestic_staff_screen.dart';
-import 'src/screens/notifications_settings_screen.dart';
-import 'src/screens/edit_profile_screen.dart';
-import 'src/screens/my_bookings_screen.dart';
 import 'src/screens/documents_circulars_screen.dart';
+import 'src/screens/domestic_staff_screen.dart';
+import 'src/screens/edit_profile_screen.dart';
+import 'src/screens/family_vehicles_screen.dart';
+import 'src/screens/marketplace_screen.dart';
+import 'src/screens/my_bookings_screen.dart';
+import 'src/screens/notifications_settings_screen.dart';
+import 'src/services/announcements_events_service.dart';
 import 'src/services/firebase_auth_service.dart';
-import 'src/services/tenant_resolution_service.dart';
 import 'src/services/organization_service.dart';
 import 'src/services/profile_image_service.dart';
-import 'src/services/announcements_events_service.dart';
-import 'src/providers/language_provider.dart';
+import 'src/services/tenant_resolution_service.dart';
 
 // ============================================================================
 // THEME CONSTANTS
@@ -236,23 +237,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         icon: Icons.people_outline,
                                         iconBg: const Color(0xFFEDE9FF),
                                         iconColor: const Color(0xFF8B5CF6),
-                                        title: 'Family Members',
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const FamilyVehiclesScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.directions_car_outlined,
-                                        iconBg: const Color(0xFFE8FDEB),
-                                        iconColor: const Color(0xFF10B981),
-                                        title: 'My Vehicles',
+                                        title: 'family_members_vehicles'.tr(),
                                         onTap: () {
                                           Navigator.push(
                                             context,
@@ -268,7 +253,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         icon: Icons.cleaning_services_outlined,
                                         iconBg: const Color(0xFFFFF3E8),
                                         iconColor: const Color(0xFFF97316),
-                                        title: 'Domestic Staff',
+                                        title: 'domestic_staff'.tr(),
                                         onTap: () {
                                           Navigator.push(
                                             context,
@@ -284,7 +269,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         icon: Icons.bookmark_outline,
                                         iconBg: const Color(0xFFFCE7F3),
                                         iconColor: const Color(0xFFEC4899),
-                                        title: 'My Bookings',
+                                        title: 'my_bookings'.tr(),
                                         onTap: () {
                                           Navigator.push(
                                             context,
@@ -300,7 +285,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         icon: Icons.description_outlined,
                                         iconBg: const Color(0xFFDCFCE7),
                                         iconColor: const Color(0xFF16A34A),
-                                        title: 'Documents & Circulars',
+                                        title: 'documents_circulars'.tr(),
                                         onTap: () {
                                           Navigator.push(
                                             context,

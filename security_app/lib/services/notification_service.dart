@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../models/security_user_model.dart';
 
 class ShiftTime {
@@ -21,8 +19,6 @@ class NotificationService {
   }
 
   NotificationService._internal();
-
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   /// Check if user is within shift timing
   bool isWithinShiftTiming(String? shiftTiming) {
@@ -174,45 +170,5 @@ class NotificationService {
     });
 
     return notifications;
-  }
-
-  /// Log notification event to Firestore
-  Future<void> logNotification(
-    String userId,
-    String notificationType,
-    String message,
-  ) async {
-    try {
-      await _firestore.collection('notifications').add({
-        'userId': userId,
-        'type': notificationType,
-        'message': message,
-        'timestamp': FieldValue.serverTimestamp(),
-        'read': false,
-      });
-    } catch (e) {
-      print('Error logging notification: $e');
-    }
-  }
-
-  /// Get unread notifications for user
-  Stream<QuerySnapshot> getUnreadNotifications(String userId) {
-    return _firestore
-        .collection('notifications')
-        .where('userId', isEqualTo: userId)
-        .where('read', isEqualTo: false)
-        .orderBy('timestamp', descending: true)
-        .snapshots();
-  }
-
-  /// Mark notification as read
-  Future<void> markNotificationAsRead(String notificationId) async {
-    try {
-      await _firestore.collection('notifications').doc(notificationId).update({
-        'read': true,
-      });
-    } catch (e) {
-      print('Error marking notification as read: $e');
-    }
   }
 }

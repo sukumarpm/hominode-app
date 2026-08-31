@@ -1,307 +1,10 @@
-// import 'package:flutter/material.dart';
-
-// import '../theme/web_design_system.dart';
-
-// class WebDestination {
-//   const WebDestination(this.label, this.icon, this.content, {this.path});
-//   final String label;
-//   final IconData icon;
-//   final Widget content;
-//   final String? path;
-// }
-
-// class HominodeWebShell extends StatefulWidget {
-//   const HominodeWebShell({
-//     super.key,
-//     required this.title,
-//     required this.subtitle,
-//     required this.roleLabel,
-//     required this.palette,
-//     required this.destinations,
-//     required this.onLogout,
-//     this.initialIndex = 0,
-//     this.profileName,
-//     this.profileSubtitle,
-//     this.trailing,
-//   });
-//   final String title;
-//   final String subtitle;
-//   final String roleLabel;
-//   final RolePalette palette;
-//   final List<WebDestination> destinations;
-//   final Future<void> Function() onLogout;
-//   final int initialIndex;
-//   final String? profileName;
-//   final String? profileSubtitle;
-//   final Widget? trailing;
-//   @override
-//   State<HominodeWebShell> createState() => _HominodeWebShellState();
-// }
-
-// class _HominodeWebShellState extends State<HominodeWebShell> {
-//   late int index = widget.initialIndex.clamp(0, widget.destinations.length - 1);
-//   void _select(int value, bool mobile) {
-//     setState(() => index = value);
-//     if (mobile) Navigator.pop(context);
-//   }
-
-//   @override
-//   Widget build(BuildContext context) => LayoutBuilder(
-//     builder: (context, constraints) {
-//       final desktop = constraints.maxWidth >= 1100;
-//       final tablet = constraints.maxWidth >= 720;
-//       final mobile = !tablet;
-//       final navigation = _Navigation(
-//         destinations: widget.destinations,
-//         selected: index,
-//         expanded: desktop || mobile,
-//         palette: widget.palette,
-//         roleLabel: widget.roleLabel,
-//         profileName: widget.profileName,
-//         onLogout: widget.onLogout,
-//         onSelect: (value) => _select(value, mobile),
-//       );
-//       return Scaffold(
-//         backgroundColor: WebDesign.background,
-//         drawer: mobile
-//             ? Drawer(width: 260, child: SafeArea(child: navigation))
-//             : null,
-//         body: Row(
-//           children: [
-//             if (tablet) SizedBox(width: desktop ? 236 : 78, child: navigation),
-//             Expanded(
-//               child: Column(
-//                 children: [
-//                   Container(
-//                     height: mobile ? 68 : 76,
-//                     padding: EdgeInsets.symmetric(horizontal: mobile ? 12 : 24),
-//                     decoration: BoxDecoration(
-//                       gradient: mobile ? widget.palette.gradient : null,
-//                       color: mobile ? null : Colors.white,
-//                       border: mobile
-//                           ? null
-//                           : const Border(
-//                               bottom: BorderSide(color: WebDesign.border),
-//                             ),
-//                     ),
-//                     child: Row(
-//                       children: [
-//                         if (mobile)
-//                           Builder(
-//                             builder: (context) => IconButton(
-//                               onPressed: () =>
-//                                   Scaffold.of(context).openDrawer(),
-//                               icon: const Icon(Icons.menu, color: Colors.white),
-//                             ),
-//                           ),
-//                         Expanded(
-//                           child: Column(
-//                             mainAxisAlignment: MainAxisAlignment.center,
-//                             crossAxisAlignment: CrossAxisAlignment.start,
-//                             children: [
-//                               Text(
-//                                 widget.title,
-//                                 maxLines: 1,
-//                                 overflow: TextOverflow.ellipsis,
-//                                 style: TextStyle(
-//                                   color: mobile ? Colors.white : WebDesign.text,
-//                                   fontSize: mobile ? 17 : 21,
-//                                   fontWeight: FontWeight.w800,
-//                                 ),
-//                               ),
-//                               if (!mobile)
-//                                 Text(
-//                                   widget.subtitle,
-//                                   style: const TextStyle(
-//                                     color: WebDesign.muted,
-//                                     fontSize: 11,
-//                                   ),
-//                                 ),
-//                             ],
-//                           ),
-//                         ),
-//                         if (widget.trailing != null) widget.trailing!,
-//                         if (!mobile) ...[
-//                           const SizedBox(width: 14),
-//                           CircleAvatar(
-//                             radius: 17,
-//                             backgroundColor: widget.palette.soft,
-//                             child: Icon(
-//                               Icons.person_outline,
-//                               size: 18,
-//                               color: widget.palette.primary,
-//                             ),
-//                           ),
-//                           const SizedBox(width: 8),
-//                           ConstrainedBox(
-//                             constraints: const BoxConstraints(maxWidth: 150),
-//                             child: Column(
-//                               mainAxisAlignment: MainAxisAlignment.center,
-//                               crossAxisAlignment: CrossAxisAlignment.start,
-//                               children: [
-//                                 Text(
-//                                   widget.profileName ?? widget.roleLabel,
-//                                   overflow: TextOverflow.ellipsis,
-//                                   style: const TextStyle(
-//                                     fontSize: 12,
-//                                     fontWeight: FontWeight.w700,
-//                                   ),
-//                                 ),
-//                                 if (widget.profileSubtitle != null)
-//                                   Text(
-//                                     widget.profileSubtitle!,
-//                                     overflow: TextOverflow.ellipsis,
-//                                     style: const TextStyle(
-//                                       fontSize: 10,
-//                                       color: WebDesign.muted,
-//                                     ),
-//                                   ),
-//                               ],
-//                             ),
-//                           ),
-//                         ],
-//                       ],
-//                     ),
-//                   ),
-//                   Expanded(
-//                     child: SingleChildScrollView(
-//                       padding: EdgeInsets.all(
-//                         mobile ? 14 : WebDesign.pagePadding,
-//                       ),
-//                       child: widget.destinations[index].content,
-//                     ),
-//                   ),
-//                 ],
-//               ),
-//             ),
-//           ],
-//         ),
-//       );
-//     },
-//   );
-// }
-
-// class _Navigation extends StatelessWidget {
-//   const _Navigation({
-//     required this.destinations,
-//     required this.selected,
-//     required this.expanded,
-//     required this.palette,
-//     required this.roleLabel,
-//     required this.profileName,
-//     required this.onLogout,
-//     required this.onSelect,
-//   });
-//   final List<WebDestination> destinations;
-//   final int selected;
-//   final bool expanded;
-//   final RolePalette palette;
-//   final String roleLabel;
-//   final String? profileName;
-//   final Future<void> Function() onLogout;
-//   final ValueChanged<int> onSelect;
-//   @override
-//   Widget build(BuildContext context) => Container(
-//     decoration: BoxDecoration(gradient: palette.gradient),
-//     padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 9),
-//     child: Column(
-//       children: [
-//         SizedBox(
-//           height: 52,
-//           child: Row(
-//             mainAxisAlignment: MainAxisAlignment.center,
-//             children: [
-//               const Icon(
-//                 Icons.apartment_rounded,
-//                 color: Colors.white,
-//                 size: 27,
-//               ),
-//               if (expanded) ...[
-//                 const SizedBox(width: 9),
-//                 const Text(
-//                   'Hominode',
-//                   style: TextStyle(
-//                     color: Colors.white,
-//                     fontWeight: FontWeight.w800,
-//                     fontSize: 18,
-//                   ),
-//                 ),
-//               ],
-//             ],
-//           ),
-//         ),
-//         if (expanded)
-//           Padding(
-//             padding: const EdgeInsets.only(bottom: 18),
-//             child: Text(
-//               roleLabel.toUpperCase(),
-//               style: const TextStyle(
-//                 color: Colors.white60,
-//                 letterSpacing: 1.2,
-//                 fontSize: 9,
-//               ),
-//             ),
-//           ),
-//         for (var i = 0; i < destinations.length; i++)
-//           Padding(
-//             padding: const EdgeInsets.only(bottom: 5),
-//             child: ListTile(
-//               dense: true,
-//               selected: i == selected,
-//               selectedTileColor: Colors.white.withValues(alpha: .13),
-//               shape: RoundedRectangleBorder(
-//                 borderRadius: BorderRadius.circular(9),
-//               ),
-//               leading: Icon(
-//                 destinations[i].icon,
-//                 color: Colors.white,
-//                 size: 19,
-//               ),
-//               title: expanded
-//                   ? Text(
-//                       destinations[i].label,
-//                       style: const TextStyle(color: Colors.white, fontSize: 12),
-//                     )
-//                   : null,
-//               contentPadding: EdgeInsets.symmetric(
-//                 horizontal: expanded ? 12 : 16,
-//               ),
-//               onTap: () => onSelect(i),
-//             ),
-//           ),
-//         const Spacer(),
-//         if (expanded && profileName != null)
-//           Padding(
-//             padding: const EdgeInsets.all(10),
-//             child: Text(
-//               profileName!,
-//               maxLines: 1,
-//               overflow: TextOverflow.ellipsis,
-//               style: const TextStyle(color: Colors.white70, fontSize: 11),
-//             ),
-//           ),
-//         ListTile(
-//           dense: true,
-//           leading: const Icon(Icons.logout, color: Colors.white, size: 19),
-//           title: expanded
-//               ? const Text(
-//                   'Logout',
-//                   style: TextStyle(color: Colors.white, fontSize: 12),
-//                 )
-//               : null,
-//           contentPadding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 16),
-//           onTap: onLogout,
-//         ),
-//       ],
-//     ),
-//   );
-// }
 import 'package:flutter/material.dart';
 
 import '../theme/web_design_system.dart';
 
 class WebDestination {
   const WebDestination(this.label, this.icon, this.content, {this.path});
+
   final String label;
   final IconData icon;
   final Widget content;
@@ -322,6 +25,7 @@ class HominodeWebShell extends StatefulWidget {
     this.profileSubtitle,
     this.trailing,
   });
+
   final String title;
   final String subtitle;
   final String roleLabel;
@@ -332,6 +36,7 @@ class HominodeWebShell extends StatefulWidget {
   final String? profileName;
   final String? profileSubtitle;
   final Widget? trailing;
+
   @override
   State<HominodeWebShell> createState() => _HominodeWebShellState();
 }
@@ -347,37 +52,20 @@ class _HominodeWebShellState extends State<HominodeWebShell> {
   @override
   void didUpdateWidget(covariant HominodeWebShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-
     final nextIndex = _safeIndex(widget.initialIndex);
-    if (nextIndex != index) {
-      index = nextIndex;
-    }
+    if (nextIndex != index) index = nextIndex;
   }
 
   void _select(int value, bool mobile) {
     if (value < 0 || value >= widget.destinations.length) return;
-
-    if (mobile && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
-
-    setState(() {
-      index = value;
-    });
-
-    final path = widget.destinations[value].path;
-
-    debugPrint(
-      'WEB NAV: index=$value '
-      'label=${widget.destinations[value].label} '
-      'path=$path',
-    );
+    if (mobile && Navigator.of(context).canPop()) Navigator.of(context).pop();
+    setState(() => index = value);
   }
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final desktop = constraints.maxWidth >= 1100;
+      final desktop = constraints.maxWidth >= 1080;
       final tablet = constraints.maxWidth >= 720;
       final mobile = !tablet;
       final navigation = _Navigation(
@@ -390,114 +78,44 @@ class _HominodeWebShellState extends State<HominodeWebShell> {
         onLogout: widget.onLogout,
         onSelect: (value) => _select(value, mobile),
       );
+
       return Scaffold(
         backgroundColor: WebDesign.background,
         drawer: mobile
-            ? Drawer(width: 260, child: SafeArea(child: navigation))
+            ? Drawer(
+                width: 264,
+                backgroundColor: Colors.transparent,
+                child: SafeArea(child: navigation),
+              )
             : null,
         body: Row(
           children: [
-            if (tablet) SizedBox(width: desktop ? 236 : 78, child: navigation),
+            if (tablet) SizedBox(width: desktop ? 224 : 76, child: navigation),
             Expanded(
               child: Column(
                 children: [
-                  Container(
-                    height: mobile ? 68 : 76,
-                    padding: EdgeInsets.symmetric(horizontal: mobile ? 12 : 24),
-                    decoration: BoxDecoration(
-                      gradient: mobile ? widget.palette.gradient : null,
-                      color: mobile ? null : Colors.white,
-                      border: mobile
-                          ? null
-                          : const Border(
-                              bottom: BorderSide(color: WebDesign.border),
-                            ),
-                    ),
-                    child: Row(
-                      children: [
-                        if (mobile)
-                          Builder(
-                            builder: (context) => IconButton(
-                              onPressed: () =>
-                                  Scaffold.of(context).openDrawer(),
-                              icon: const Icon(Icons.menu, color: Colors.white),
-                            ),
-                          ),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: mobile ? Colors.white : WebDesign.text,
-                                  fontSize: mobile ? 17 : 21,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              if (!mobile)
-                                Text(
-                                  widget.subtitle,
-                                  style: const TextStyle(
-                                    color: WebDesign.muted,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        if (widget.trailing != null) widget.trailing!,
-                        if (!mobile) ...[
-                          const SizedBox(width: 14),
-                          CircleAvatar(
-                            radius: 17,
-                            backgroundColor: widget.palette.soft,
-                            child: Icon(
-                              Icons.person_outline,
-                              size: 18,
-                              color: widget.palette.primary,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 150),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.profileName ?? widget.roleLabel,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                if (widget.profileSubtitle != null)
-                                  Text(
-                                    widget.profileSubtitle!,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: WebDesign.muted,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                  _DashboardHeader(
+                    title: widget.title,
+                    subtitle: widget.subtitle,
+                    roleLabel: widget.roleLabel,
+                    profileName: widget.profileName,
+                    profileSubtitle: widget.profileSubtitle,
+                    palette: widget.palette,
+                    mobile: mobile,
+                    trailing: widget.trailing,
                   ),
                   Expanded(
                     child: SingleChildScrollView(
                       padding: EdgeInsets.all(
-                        mobile ? 14 : WebDesign.pagePadding,
+                        mobile ? 12 : WebDesign.pagePadding,
                       ),
-                      child: widget.destinations[index].content,
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1440),
+                          child: widget.destinations[index].content,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -507,6 +125,124 @@ class _HominodeWebShellState extends State<HominodeWebShell> {
         ),
       );
     },
+  );
+}
+
+class _DashboardHeader extends StatelessWidget {
+  const _DashboardHeader({
+    required this.title,
+    required this.subtitle,
+    required this.roleLabel,
+    required this.profileName,
+    required this.profileSubtitle,
+    required this.palette,
+    required this.mobile,
+    required this.trailing,
+  });
+
+  final String title;
+  final String subtitle;
+  final String roleLabel;
+  final String? profileName;
+  final String? profileSubtitle;
+  final RolePalette palette;
+  final bool mobile;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: mobile ? 66 : 72,
+    padding: EdgeInsets.symmetric(horizontal: mobile ? 8 : 22),
+    decoration: BoxDecoration(
+      gradient: mobile ? palette.gradient : null,
+      color: mobile ? null : Colors.white,
+      border: mobile
+          ? null
+          : const Border(bottom: BorderSide(color: WebDesign.border)),
+    ),
+    child: Row(
+      children: [
+        if (mobile)
+          Builder(
+            builder: (context) => IconButton(
+              tooltip: 'Open navigation',
+              onPressed: () => Scaffold.of(context).openDrawer(),
+              icon: const Icon(Icons.menu_rounded, color: Colors.white),
+            ),
+          ),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: mobile ? Colors.white : WebDesign.text,
+                  fontSize: mobile ? 16 : 20,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -.25,
+                ),
+              ),
+              if (!mobile)
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: WebDesign.muted, fontSize: 10),
+                ),
+            ],
+          ),
+        ),
+        if (trailing case final widget?)
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: mobile ? 118 : 220),
+            child: IconTheme(
+              data: IconThemeData(color: mobile ? Colors.white : null),
+              child: widget,
+            ),
+          ),
+        if (!mobile) ...[
+          const SizedBox(width: 16),
+          Container(width: 1, height: 32, color: WebDesign.border),
+          const SizedBox(width: 16),
+          CircleAvatar(
+            radius: 17,
+            backgroundColor: palette.soft,
+            child: Icon(Icons.person_outline, size: 18, color: palette.primary),
+          ),
+          const SizedBox(width: 9),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  profileName ?? roleLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: WebDesign.text,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (profileSubtitle case final text?)
+                  Text(
+                    text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: WebDesign.muted, fontSize: 9),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    ),
   );
 }
 
@@ -521,6 +257,7 @@ class _Navigation extends StatelessWidget {
     required this.onLogout,
     required this.onSelect,
   });
+
   final List<WebDestination> destinations;
   final int selected;
   final bool expanded;
@@ -529,30 +266,32 @@ class _Navigation extends StatelessWidget {
   final String? profileName;
   final Future<void> Function() onLogout;
   final ValueChanged<int> onSelect;
+
   @override
   Widget build(BuildContext context) => Container(
     decoration: BoxDecoration(gradient: palette.gradient),
-    padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 9),
+    padding: const EdgeInsets.fromLTRB(9, 16, 9, 12),
     child: Column(
       children: [
         SizedBox(
-          height: 52,
+          height: 48,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(
                 Icons.apartment_rounded,
                 color: Colors.white,
-                size: 27,
+                size: 26,
               ),
               if (expanded) ...[
                 const SizedBox(width: 9),
                 const Text(
-                  'Hominode',
+                  'HOMINODE',
                   style: TextStyle(
                     color: Colors.white,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
-                    fontSize: 18,
+                    letterSpacing: .8,
                   ),
                 ),
               ],
@@ -560,65 +299,87 @@ class _Navigation extends StatelessWidget {
           ),
         ),
         if (expanded)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 18),
-            child: Text(
-              roleLabel.toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white60,
-                letterSpacing: 1.2,
-                fontSize: 9,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(11, 5, 11, 13),
+              child: Text(
+                roleLabel.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 9,
+                  letterSpacing: 1.1,
+                ),
               ),
             ),
           ),
-        for (var i = 0; i < destinations.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 5),
-            child: ListTile(
-              dense: true,
-              selected: i == selected,
-              selectedTileColor: Colors.white.withValues(alpha: .13),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(9),
-              ),
-              leading: Icon(
-                destinations[i].icon,
-                color: Colors.white,
-                size: 19,
-              ),
-              title: expanded
-                  ? Text(
-                      destinations[i].label,
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    )
-                  : null,
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: expanded ? 12 : 16,
-              ),
-              onTap: () => onSelect(i),
-            ),
+        Expanded(
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            itemCount: destinations.length,
+            itemBuilder: (context, itemIndex) {
+              final destination = destinations[itemIndex];
+              final tile = ListTile(
+                dense: true,
+                visualDensity: const VisualDensity(vertical: -2),
+                selected: itemIndex == selected,
+                selectedTileColor: Colors.white.withValues(alpha: .14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                leading: Icon(destination.icon, color: Colors.white, size: 18),
+                title: expanded
+                    ? Text(
+                        destination.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    : null,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: expanded ? 11 : 16,
+                ),
+                onTap: () => onSelect(itemIndex),
+              );
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: expanded
+                    ? tile
+                    : Tooltip(message: destination.label, child: tile),
+              );
+            },
           ),
-        const Spacer(),
+        ),
         if (expanded && profileName != null)
           Padding(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.fromLTRB(11, 8, 11, 4),
             child: Text(
               profileName!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, fontSize: 11),
+              style: const TextStyle(color: Colors.white60, fontSize: 9),
             ),
           ),
         ListTile(
           dense: true,
-          leading: const Icon(Icons.logout, color: Colors.white, size: 19),
+          visualDensity: const VisualDensity(vertical: -2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+          leading: const Icon(
+            Icons.logout_rounded,
+            color: Colors.white,
+            size: 18,
+          ),
           title: expanded
               ? const Text(
                   'Logout',
-                  style: TextStyle(color: Colors.white, fontSize: 12),
+                  style: TextStyle(color: Colors.white, fontSize: 11),
                 )
               : null,
-          contentPadding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 16),
+          contentPadding: EdgeInsets.symmetric(horizontal: expanded ? 11 : 16),
           onTap: onLogout,
         ),
       ],

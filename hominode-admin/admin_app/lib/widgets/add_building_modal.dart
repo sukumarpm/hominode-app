@@ -437,13 +437,16 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
           label: semanticLabel,
           child: TextFormField(
             controller: controller,
+            readOnly: widget.isEditMode,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: TextStyle(color: Color(0xFFB9BDC1), fontSize: 16.sp),
               filled: true,
-              fillColor: Colors.white,
+              fillColor: widget.isEditMode
+                  ? const Color(0xFFF3F4F6)
+                  : Colors.white,
               contentPadding: EdgeInsets.symmetric(
                 horizontal: 16.w,
                 vertical: 14.h,

@@ -3,12 +3,11 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'user_data_service.dart';
 
 class BillFirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
   final UserDataService _userDataService = UserDataService();
 
   static const String billsCollection = 'bills';
@@ -35,6 +34,61 @@ class BillFirestoreService {
   bool get _isCacheValid {
     if (_lastFetchTime == null) return false;
     return DateTime.now().difference(_lastFetchTime!) < _cacheDuration;
+  }
+
+  Stream<Map<String, dynamic>?> streamLatestPaymentForBill(
+    String billId,
+  ) async* {
+    final scope = await _getResidentScope();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (scope == null || user == null || billId.isEmpty) {
+      yield null;
+      return;
+    }
+
+    print('💳 Streaming payments for bill: $billId');
+    print('   communityId: ${scope.communityId}');
+    print('   flatId: ${scope.flatId}');
+    print('   userId: ${user.uid}');
+
+    yield* _firestore
+        .collection(paymentsCollection)
+        .where('communityId', isEqualTo: scope.communityId)
+        .where('flatId', isEqualTo: scope.flatId)
+        .where('billId', isEqualTo: billId)
+        .where('userId', isEqualTo: user.uid)
+        .snapshots()
+        .map((snapshot) {
+          if (snapshot.docs.isEmpty) {
+            print('💳 No payment submissions found');
+            return null;
+          }
+
+          final docs = snapshot.docs.toList();
+
+          docs.sort((a, b) {
+            final aDate =
+                (a.data()['createdAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+
+            final bDate =
+                (b.data()['createdAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+
+            return bDate.compareTo(aDate);
+          });
+
+          final data = Map<String, dynamic>.from(docs.first.data());
+          data['id'] = docs.first.id;
+
+          print(
+            '💳 Latest payment: ${docs.first.id}, '
+            'status=${data['status']}',
+          );
+
+          return data;
+        });
   }
 
   /// Resolve tenant authority plus the resident's secondary flat scope.
@@ -234,52 +288,6 @@ class BillFirestoreService {
     } catch (e) {
       print('❌ Error fetching payment history: $e');
       return [];
-    }
-  }
-
-  /// Pay a bill (clears cache after payment)
-  Future<bool> payBill({
-    required String billId,
-    required String paymentMethod,
-    required String transactionId,
-    required String paymentMode,
-  }) async {
-    try {
-      // Try Firebase Auth first
-      String? userId;
-
-      final firebaseUser = _auth.currentUser;
-      if (firebaseUser != null) {
-        userId = firebaseUser.uid;
-      } else {
-        // Fallback to Firestore-only authentication
-        final prefs = await SharedPreferences.getInstance();
-        userId = prefs.getString('user_id');
-      }
-
-      if (userId == null) {
-        print('❌ No user logged in');
-        return false;
-      }
-
-      // Update bill status to paid
-      await _firestore.collection(billsCollection).doc(billId).update({
-        'status': 'paid',
-        'paidAt': FieldValue.serverTimestamp(),
-        'paymentMethod': paymentMethod,
-        'transactionId': transactionId,
-        'paymentMode': paymentMode,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Clear cache to force refresh
-      clearCache();
-
-      print('✅ Bill paid successfully: $billId (cache cleared)');
-      return true;
-    } catch (e) {
-      print('❌ Error paying bill: $e');
-      return false;
     }
   }
 

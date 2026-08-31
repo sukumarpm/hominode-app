@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
+
 import '../models/admin_profile.dart';
 import 'admin_tenant_context.dart';
 
@@ -70,17 +73,38 @@ class AuthService {
 
   Future<AuthResult> _signInAndAuthorize(AuthCredential credential) async {
     try {
-      await _auth.signInWithCredential(credential);
+      final credentialResult = await _auth.signInWithCredential(credential);
+
+      debugPrint(
+        '✅ ADMIN FIREBASE AUTH SUCCESS: ${credentialResult.user?.uid}',
+      );
+      debugPrint('   Phone: ${credentialResult.user?.phoneNumber}');
+
       final result = await resolveAdminAuthorization();
-      if (!result.success) await _auth.signOut();
+
+      debugPrint('🔐 ADMIN AUTH RESULT');
+      debugPrint('   success: ${result.success}');
+      debugPrint('   status: ${result.status}');
+      debugPrint('   message: ${result.message}');
+
+      if (!result.success) {
+        debugPrint('❌ Admin authorization failed - signing out');
+        await _auth.signOut();
+      }
+
       return result;
     } on FirebaseAuthException catch (e) {
+      debugPrint('❌ Firebase Auth error: ${e.code} / ${e.message}');
+
       return AuthResult(
         success: false,
         message: _phoneError(e.code),
         status: AdminAuthStatus.error,
       );
-    } catch (_) {
+    } catch (e, stackTrace) {
+      debugPrint('❌ Admin login unexpected error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       return const AuthResult(
         success: false,
         message: 'Unable to verify this code. Please try again.',
@@ -132,7 +156,7 @@ class AuthService {
           adminProfile: profile,
         );
       }
-      if (profile.role != 'admin') {
+      if (!profile.hasValidAdminRole) {
         return AuthResult(
           success: false,
           message: 'This account is not authorized as an administrator.',
@@ -151,7 +175,7 @@ class AuthService {
           adminProfile: profile,
         );
       }
-      if (profile.authorizedCommunityIds.isEmpty) {
+      if (profile.isAdmin && profile.authorizedCommunityIds.isEmpty) {
         return AuthResult(
           success: false,
           message: 'No communities are assigned to this admin account.',
@@ -167,10 +191,13 @@ class AuthService {
         user: user,
         adminProfile: profile,
       );
-    } catch (_) {
+    } catch (e, stackTrace) {
+      debugPrint('❌ ADMIN AUTHORIZATION ERROR: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       return AuthResult(
         success: false,
-        message: 'Admin authorization could not be verified.',
+        message: 'Admin authorization could not be verified: $e',
         status: AdminAuthStatus.error,
         user: user,
       );
@@ -185,6 +212,7 @@ class AuthService {
   }
 
   Future<void> signOut() async {
+    await HominodePushNotifications.instance.deactivateForLogout();
     AdminTenantContext.instance.clear();
     await _auth.signOut();
   }

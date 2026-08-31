@@ -3,15 +3,28 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "functions": {
     "source": "functions"
   },
   "hosting": {
-    "public": "resident_app/build/web",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "public": "hominode_web/build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
     "rewrites": [
-      { "source": "/c/**", "destination": "/index.html" },
-      { "source": "**", "destination": "/index.html" }
+      {
+        "source": "/c/**",
+        "destination": "/index.html"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
     ]
   }
 }

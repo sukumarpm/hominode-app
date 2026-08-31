@@ -4,6 +4,7 @@ const {
   normalizeCommunityId,
   validateCommunityLocationMetadata,
 } = require("./tenant_management");
+const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
 
 function activeAdminProfile(snapshot, uid) {
   const profile = snapshot.data();
@@ -130,6 +131,20 @@ async function updateCommunityLocationCore({db, auth, data}) {
     location: {
       ...input.location,
       updatedAt: FieldValue.serverTimestamp(),
+    },
+  });
+  await writeAuditLogBestEffort({
+    db,
+    actorUid: uid,
+    actorRole: "admin",
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.communityLocationUpdate,
+    targetType: "community",
+    targetId: input.communityId,
+    summary: "Community operational location updated.",
+    metadata: {
+      previouslyConfigured: community.data()?.locationConfigured === true,
+      nowConfigured: true,
     },
   });
   return {communityId: input.communityId, updatedBy: uid};

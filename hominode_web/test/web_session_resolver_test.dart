@@ -118,6 +118,14 @@ void main() {
         ),
         '/super-admin/communities',
       );
+      expect(
+        WebAuthGuardStatePolicy.guardedPath('/admin/visitors', adminSession),
+        '/admin/visitors',
+      );
+      expect(
+        WebAuthGuardStatePolicy.guardedPath('/admin/unknown', adminSession),
+        '/admin',
+      );
     },
   );
 }

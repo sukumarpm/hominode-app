@@ -1,0 +1,24 @@
+name: hominode_legal
+description: Minimal versioned Terms and Privacy acceptance shared by Hominode apps.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  cloud_firestore: ">=5.4.4 <7.0.0"
+  cloud_functions: ">=5.6.2 <7.0.0"
+  firebase_auth: ">=5.3.3 <7.0.0"
+  flutter:
+    sdk: flutter
+  printing: ">=5.11.0 <6.0.0"
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  assets:
+    - assets/legal/HOMINODE_Privacy_Policy_v1.0.pdf
+    - assets/legal/HOMINODE_Terms_and_Conditions_v1.0.pdf

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 
 import '../models/attendance_model.dart';
 import '../models/security_user_model.dart';
@@ -42,6 +43,7 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
       final user = _authService.currentUser;
       if (user != null) {
         final staffDetails = await _authService.requireSecurityProfile();
+        await HominodePushNotifications.instance.activate();
         if (mounted) {
           setState(() {
             _currentUser = staffDetails;

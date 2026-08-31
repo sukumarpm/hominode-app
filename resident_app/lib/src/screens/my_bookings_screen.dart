@@ -1,9 +1,11 @@
 // lib/src/screens/my_bookings_screen.dart
 // My Bookings Screen
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../services/user_data_service.dart';
 import '../widgets/skeleton_loader.dart';
 
@@ -133,7 +135,7 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Bookings'),
+        title: Text('my_bookings'.tr()),
         backgroundColor: const Color(0xFF0E4778),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -147,11 +149,11 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                   padding: EdgeInsets.all(16.w),
                   child: Row(
                     children: [
-                      _buildTabButton('Upcoming', 'upcoming'),
+                      _buildTabButton('upcoming'.tr(), 'upcoming'),
                       SizedBox(width: 8.w),
-                      _buildTabButton('Completed', 'completed'),
+                      _buildTabButton('completed'.tr(), 'completed'),
                       SizedBox(width: 8.w),
-                      _buildTabButton('Cancelled', 'cancelled'),
+                      _buildTabButton('cancelled'.tr(), 'cancelled'),
                     ],
                   ),
                 ),

@@ -1,0 +1,21 @@
+name: hominode_notifications
+description: Minimal trusted mobile push lifecycle shared by Hominode apps.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  cloud_functions: ">=5.6.2 <7.0.0"
+  firebase_auth: ">=5.3.3 <7.0.0"
+  firebase_core: ">=3.15.2 <5.0.0"
+  firebase_messaging: ">=15.2.10 <17.0.0"
+  flutter:
+    sdk: flutter
+  flutter_local_notifications: ^19.5.0
+  shared_preferences: ">=2.2.2 <3.0.0"
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

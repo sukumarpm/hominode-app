@@ -35,16 +35,23 @@ class RolePalette {
 }
 
 abstract final class WebDesign {
-  static const background = Color(0xFFF5F7FB);
-  static const border = Color(0xFFE6EAF1);
-  static const text = Color(0xFF0B1B3B);
-  static const muted = Color(0xFF667085);
+  static const background = Color(0xFFF6F8FC);
+  static const border = Color(0xFFE8ECF3);
+  static const text = Color(0xFF0A1837);
+  static const muted = Color(0xFF68738A);
   static const radius = 14.0;
-  static const pagePadding = 20.0;
+  static const pagePadding = 18.0;
 
   static const shadow = BoxShadow(
-    color: Color(0x0A0B1B3B),
-    blurRadius: 18,
-    offset: Offset(0, 5),
+    color: Color(0x0C0B1B3B),
+    blurRadius: 20,
+    offset: Offset(0, 6),
+  );
+
+  static BoxDecoration get cardDecoration => BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(color: border),
+    boxShadow: const [shadow],
   );
 }

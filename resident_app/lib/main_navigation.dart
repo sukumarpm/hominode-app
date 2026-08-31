@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 import 'dashboard_screen.dart';
 import 'src/screens/visitor_management_screen_new.dart';
 import 'maintenance_billing_screen.dart';
@@ -45,6 +48,7 @@ class _MainNavigationState extends State<MainNavigation>
       vsync: this,
     );
     _animationController.forward();
+    unawaited(HominodePushNotifications.instance.activate());
   }
 
   @override

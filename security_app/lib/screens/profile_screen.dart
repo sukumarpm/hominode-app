@@ -105,7 +105,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (confirmed == true && mounted) {
       try {
-        await _auth.signOut();
+        await _authService.logout();
         if (mounted) {
           Navigator.of(context).pushReplacementNamed('/login');
         }

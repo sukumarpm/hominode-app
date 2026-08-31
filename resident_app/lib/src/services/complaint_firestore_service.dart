@@ -263,9 +263,26 @@ class ComplaintFirestoreService {
         print('🆔 ComplaintService: Using stored User ID: $userId');
       }
 
+      final authenticatedUid = _auth.currentUser?.uid;
+      if (authenticatedUid == null || userId != authenticatedUid) {
+        print('❌ ComplaintService: Canonical authenticated user unavailable');
+        return [];
+      }
+      final profile = await _firestore
+          .collection('users')
+          .doc(authenticatedUid)
+          .get();
+      final communityId =
+          profile.data()?['communityId']?.toString().trim() ?? '';
+      if (!profile.exists || communityId.isEmpty) {
+        print('❌ ComplaintService: Canonical community unavailable');
+        return [];
+      }
+
       final snapshot = await _firestore
           .collection(complaintsCollection)
-          .where('userId', isEqualTo: userId)
+          .where('communityId', isEqualTo: communityId)
+          .where('userId', isEqualTo: authenticatedUid)
           .get();
 
       final complaints = snapshot.docs.map((doc) {
@@ -475,9 +492,27 @@ class ComplaintFirestoreService {
       print('🆔 ComplaintService: Using stored User ID for stream: $userId');
     }
 
+    final authenticatedUid = _auth.currentUser?.uid;
+    if (authenticatedUid == null || userId != authenticatedUid) {
+      print('❌ ComplaintService: Canonical authenticated user unavailable');
+      yield [];
+      return;
+    }
+    final profile = await _firestore
+        .collection('users')
+        .doc(authenticatedUid)
+        .get();
+    final communityId = profile.data()?['communityId']?.toString().trim() ?? '';
+    if (!profile.exists || communityId.isEmpty) {
+      print('❌ ComplaintService: Canonical community unavailable');
+      yield [];
+      return;
+    }
+
     yield* _firestore
         .collection(complaintsCollection)
-        .where('userId', isEqualTo: userId)
+        .where('communityId', isEqualTo: communityId)
+        .where('userId', isEqualTo: authenticatedUid)
         .snapshots()
         .map((snapshot) {
           final complaints = snapshot.docs.map((doc) {

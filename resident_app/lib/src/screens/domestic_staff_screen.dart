@@ -1,9 +1,11 @@
 // lib/src/screens/domestic_staff_screen.dart
 // Domestic Staff Management Screen
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../services/user_data_service.dart';
 import '../widgets/skeleton_loader.dart';
 
@@ -101,13 +103,13 @@ class _DomesticStaffScreenState extends State<DomesticStaffScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Domestic Staff'),
+        title: Text('domestic_staff'.tr()),
         backgroundColor: const Color(0xFF0E4778),
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: _flatId == null
-          ? const Center(child: Text('Unable to load staff information'))
+          ? Center(child: Text('unable_to_load_staff_information'.tr()))
           : StreamBuilder<List<Map<String, dynamic>>>(
               stream: _staffStream,
               builder: (context, snapshot) {
@@ -139,7 +141,9 @@ class _DomesticStaffScreenState extends State<DomesticStaffScreen> {
                           color: Colors.red,
                         ),
                         SizedBox(height: 16.h),
-                        Text('Error: ${snapshot.error}'),
+                        Text(
+                          'error_loading_staff'.tr(args: ['${snapshot.error}']),
+                        ),
                       ],
                     ),
                   );
@@ -160,7 +164,7 @@ class _DomesticStaffScreenState extends State<DomesticStaffScreen> {
                         ),
                         SizedBox(height: 16.h),
                         Text(
-                          'No domestic staff added',
+                          'no_domestic_staff_added'.tr(),
                           style: TextStyle(
                             fontSize: 16.sp,
                             color: Colors.grey[600],

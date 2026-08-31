@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 
 import '../models/tenant_profile.dart';
 import 'flat_access_control_service.dart';
@@ -104,6 +105,11 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     // Clear credentials from any previous OTP attempt.
     _pendingAutoCredential = null;
 
+    if (kDebugMode) {
+      await FirebaseAuth.instance.setSettings(
+        appVerificationDisabledForTesting: true,
+      );
+    }
     await _auth.verifyPhoneNumber(
       phoneNumber: phoneNumber,
       timeout: const Duration(seconds: 60),
@@ -396,6 +402,7 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     debugPrintStack();
 
     try {
+      await HominodePushNotifications.instance.deactivateForLogout();
       await _auth.signOut();
       tenantResolver?.clear();
       FlatAccessControlService.instance.clearCache();
@@ -415,6 +422,7 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     tenantResolver.clear();
     FlatAccessControlService.instance.clearCache();
 
+    await HominodePushNotifications.instance.deactivateForLogout();
     await _auth.signOut();
   }
 

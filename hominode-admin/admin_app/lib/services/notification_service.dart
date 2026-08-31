@@ -53,7 +53,11 @@ class NotificationService extends ChangeNotifier {
       _notificationSubscription = _firestore
           .collection('notifications')
           .where('communityId', isEqualTo: communityId)
-          .orderBy('timestamp', descending: true)
+          .where('recipientId', isEqualTo: user.uid)
+          .where('audience', isEqualTo: 'admin')
+          .where('role', isEqualTo: 'admin')
+          .where('appId', isEqualTo: 'admin')
+          .orderBy('createdAt', descending: true)
           .limit(50)
           .snapshots()
           .listen(
@@ -73,7 +77,7 @@ class NotificationService extends ChangeNotifier {
                     data['priority'] ?? 'medium',
                   ),
                   timestamp:
-                      (data['timestamp'] as Timestamp?)?.toDate() ??
+                      (data['createdAt'] as Timestamp?)?.toDate() ??
                       DateTime.now(),
                   isRead: data['isRead'] ?? false,
                   actionUrl: data['actionUrl'],
@@ -120,30 +124,6 @@ class NotificationService extends ChangeNotifier {
       );
     } catch (e) {
       return NotificationPriority.medium;
-    }
-  }
-
-  // Add new notification to Firestore
-  Future<void> addNotification(NotificationModel notification) async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-      final communityId = AdminTenantContext.instance.requireCommunityId();
-
-      await _firestore.collection('notifications').add({
-        'adminId': user.uid,
-        'communityId': communityId,
-        'title': notification.title,
-        'message': notification.message,
-        'type': notification.type.name,
-        'priority': notification.priority.name,
-        'timestamp': FieldValue.serverTimestamp(),
-        'isRead': false,
-        'actionUrl': notification.actionUrl,
-        'metadata': notification.metadata,
-      });
-    } catch (e) {
-      print('Error adding notification: $e');
     }
   }
 

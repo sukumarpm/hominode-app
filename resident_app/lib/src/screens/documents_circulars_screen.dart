@@ -1,6 +1,7 @@
 // lib/src/screens/documents_circulars_screen.dart
 // Documents & Circulars Screen
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -132,7 +133,7 @@ class _DocumentsCircularsScreenState extends State<DocumentsCircularsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Documents & Circulars'),
+        title: Text('documents_circulars'.tr()),
         backgroundColor: const Color(0xFF0E4778),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -146,11 +147,11 @@ class _DocumentsCircularsScreenState extends State<DocumentsCircularsScreen> {
                   padding: EdgeInsets.all(16.w),
                   child: Row(
                     children: [
-                      _buildTabButton('All', 'all'),
+                      _buildTabButton('all'.tr(), 'all'),
                       SizedBox(width: 8.w),
-                      _buildTabButton('Documents', 'documents'),
+                      _buildTabButton('documents'.tr(), 'documents'),
                       SizedBox(width: 8.w),
-                      _buildTabButton('Circulars', 'circulars'),
+                      _buildTabButton('circulars'.tr(), 'circulars'),
                     ],
                   ),
                 ),

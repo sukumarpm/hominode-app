@@ -1,6 +1,29 @@
 const { FieldValue } = require("firebase-admin/firestore");
 const { RegistrationError, verifiedPhoneAuth } = require("./register_resident");
 const { normalizeCommunityId } = require("./tenant_management");
+const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
+
+async function auditSecurityAction({
+  db,
+  actorUid,
+  communityId,
+  action,
+  targetId,
+  summary,
+  metadata,
+}) {
+  await writeAuditLogBestEffort({
+    db,
+    actorUid,
+    actorRole: "admin",
+    communityId,
+    action,
+    targetType: "security_staff",
+    targetId,
+    summary,
+    metadata,
+  });
+}
 
 function optionalString(value, maxLength = 120) {
   if (value == null) return null;
@@ -230,6 +253,16 @@ async function createSecurityStaffCore({
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    await auditSecurityAction({
+      db,
+      actorUid: actor.uid,
+      communityId: input.communityId,
+      action: AUDIT_ACTIONS.securityCreate,
+      targetId: user.uid,
+      summary: "Security staff account created.",
+      metadata: {isActive: input.isActive},
+    });
+
     return {
       uid: user.uid,
       communityId: input.communityId,
@@ -339,6 +372,8 @@ async function assignSecurityWorkCore({
 
   const staffRef = db.collection("securityStaff").doc(staffUid);
   const gateRef = db.collection("gates").doc(gateId);
+  let previousGateId = null;
+  let previousWorkStatus = null;
 
   await db.runTransaction(async (transaction) => {
     const staffSnapshot = await transaction.get(staffRef);
@@ -397,10 +432,11 @@ async function assignSecurityWorkCore({
       );
     }
 
-    const previousGateId =
+    previousGateId =
       typeof staff.gateId === "string"
         ? staff.gateId.trim()
         : "";
+    previousWorkStatus = typeof staff.status === "string" ? staff.status : null;
 
     if (previousGateId && previousGateId !== gateId) {
       const previousGateRef =
@@ -451,6 +487,21 @@ async function assignSecurityWorkCore({
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: actor.uid,
     });
+  });
+
+  await auditSecurityAction({
+    db,
+    actorUid: actor.uid,
+    communityId,
+    action: AUDIT_ACTIONS.securityAssign,
+    targetId: staffUid,
+    summary: "Security staff work assignment changed.",
+    metadata: {
+      previousGateId: previousGateId || null,
+      newGateId: gateId,
+      previousWorkStatus,
+      newWorkStatus: workStatus.status,
+    },
   });
 
   return {
@@ -591,6 +642,7 @@ async function removeSecurityAssignmentCore({
   );
 
   const staffRef = db.collection("securityStaff").doc(staffUid);
+  let removedGateId = null;
 
   await db.runTransaction(async (transaction) => {
     const staffSnapshot = await transaction.get(staffRef);
@@ -619,6 +671,7 @@ async function removeSecurityAssignmentCore({
       typeof staff.gateId === "string"
         ? staff.gateId.trim()
         : "";
+    removedGateId = gateId;
 
     if (!gateId) {
       throw new RegistrationError(
@@ -667,6 +720,16 @@ async function removeSecurityAssignmentCore({
     });
   });
 
+  await auditSecurityAction({
+    db,
+    actorUid: actor.uid,
+    communityId,
+    action: AUDIT_ACTIONS.securityAssignmentRemove,
+    targetId: staffUid,
+    summary: "Security staff work assignment removed.",
+    metadata: {previousGateId: removedGateId, newWorkStatus: "off-duty"},
+  });
+
   return {
     staffUid,
     communityId,
@@ -681,4 +744,3 @@ module.exports = {
   deleteSecurityPlaceCore,
   removeSecurityAssignmentCore,
 };
-

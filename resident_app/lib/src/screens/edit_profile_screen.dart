@@ -1,14 +1,16 @@
 // lib/src/screens/edit_profile_screen.dart
+import 'dart:io';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'dart:io';
+
 import '../components/standard_screen.dart';
-import '../services/user_data_service.dart';
 import '../services/profile_image_service.dart';
+import '../services/user_data_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -105,7 +107,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         setState(() {
           _nameController.text = userData?['name'] ?? '';
-          _emailController.text = userData?['email'] ?? '';
+          _emailController.text =
+              userData?['email'] ??
+              FirebaseAuth.instance.currentUser?.email ??
+              '';
           _phoneController.text = userData?['phone'] ?? '';
           _flatNumberController.text =
               userData?['flatLabel'] ?? userData?['flatId'] ?? '';
@@ -171,7 +176,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     hint: 'Enter your email',
                     icon: Icons.email_outlined,
                     keyboardType: TextInputType.emailAddress,
-                    enabled: false, // Email cannot be changed
+                    enabled: true, // Enabled for editing
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Email is required';
+                      }
+                      final emailRegex = RegExp(
+                        r'^[a-zA-Z0-9.]+@[a-zA-Z0-9]+\.[a-zA-Z]+',
+                      );
+                      if (!emailRegex.hasMatch(value.trim())) {
+                        return 'Enter a valid email address';
+                      }
+                      return null;
+                    },
                   ),
                   SizedBox(height: 16.h),
                   _buildTextField(
@@ -180,6 +197,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     hint: 'Enter your phone',
                     icon: Icons.phone_outlined,
                     keyboardType: TextInputType.phone,
+                    enabled: false, // Phone changes require OTP re-verification
                   ),
                   SizedBox(height: 16.h),
                   _buildTextField(
@@ -187,6 +205,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     controller: _flatNumberController,
                     hint: 'e.g., A-101',
                     icon: Icons.home_outlined,
+                    enabled: false, // Flat/unit assignment is managed by Admin
                   ),
                   SizedBox(height: 32.h),
                   _buildSaveButton(),
@@ -194,50 +213,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _buildOldHeader() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
-        ),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24.r),
-          bottomRight: Radius.circular(24.r),
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(4.w, 12.h, 16.w, 24.h),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: () => Navigator.pop(context),
-                icon: Icon(
-                  Icons.arrow_back_ios,
-                  color: Colors.white,
-                  size: 20.w,
-                ),
-                padding: EdgeInsets.all(12.w),
-              ),
-              Text(
-                'Edit Profile',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20.sp,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -263,7 +238,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       : Icon(
                           Icons.person,
                           size: 50.w,
-                          color: Color(0xFF0E4778),
+                          color: const Color(0xFF0E4778),
                         ),
                 ),
               ),
@@ -308,6 +283,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     TextInputType? keyboardType,
     int maxLines = 1,
     bool enabled = true,
+    String? Function(String?)? validator,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,7 +293,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           style: TextStyle(
             fontSize: 15.sp,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF111827),
+            color: const Color(0xFF111827),
           ),
         ),
         SizedBox(height: 8.h),
@@ -326,6 +302,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           keyboardType: keyboardType,
           maxLines: maxLines,
           enabled: enabled,
+          validator:
+              validator ??
+              (value) {
+                if (!enabled) return null;
+                if (value == null || value.trim().isEmpty) {
+                  return '$label is required';
+                }
+                return null;
+              },
           decoration: InputDecoration(
             hintText: hint,
             prefixIcon: Icon(icon, color: const Color(0xFF9CA3AF)),
@@ -352,13 +337,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               vertical: 14.h,
             ),
           ),
-          validator: (value) {
-            if (!enabled) return null; // Skip validation for disabled fields
-            if (value == null || value.trim().isEmpty) {
-              return '$label is required';
-            }
-            return null;
-          },
         ),
       ],
     );
@@ -382,7 +360,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ? SizedBox(
                 height: 20.h,
                 width: 20.w,
-                child: CircularProgressIndicator(
+                child: const CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
@@ -493,6 +471,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -500,34 +479,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _isSaving = true);
 
     try {
-      // STEP 1: Prepare updates
-      print('📋 STEP 1: Preparing profile updates...');
-      final updates = <String, dynamic>{
-        'name': _nameController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        'flatLabel': _flatNumberController.text.trim(),
-      };
-      print('✅ STEP 1 PASSED: Updates prepared');
+      final newName = _nameController.text.trim();
+      final newEmail = _emailController.text.trim();
+
+      // STEP 1: Prepare updates for Firestore
+      print('📋 Preparing profile updates for Firestore...');
+      final updates = <String, dynamic>{'name': newName, 'email': newEmail};
 
       // STEP 2: Upload image if selected
-      print('📸 STEP 2: Checking for image upload...');
+      print('📸 Checking for image upload...');
       String? uploadedImageUrl;
       if (_photoFile != null) {
-        print('   Image selected, uploading to Cloudinary...');
         final imageResult = await ProfileImageService.instance
             .uploadProfileImage(imagePath: _photoFile!.path);
 
         if (imageResult.success && imageResult.imageUrl != null) {
-          print('✅ STEP 2 PASSED: Image uploaded successfully');
-          print('   Image URL: ${imageResult.imageUrl}');
           uploadedImageUrl = imageResult.imageUrl;
           updates['profileImage'] = imageResult.imageUrl;
           _photoUrl = imageResult.imageUrl;
         } else {
-          print(
-            '⚠️  STEP 2 WARNING: Image upload failed: ${imageResult.message}',
-          );
-          // Don't fail the entire save if image upload fails
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -538,37 +508,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             );
           }
         }
-      } else {
-        print('✅ STEP 2 PASSED: No image to upload');
       }
 
-      // STEP 3: Update Firestore
-      print('💾 STEP 3: Updating user data in Firestore...');
-      print('   Updates: $updates');
+      // STEP 3: Update Firestore Document directly
+      print('💾 Updating user data in Firestore...');
       final success = await _userDataService.updateUserData(updates);
 
       if (!success) {
         throw Exception('Failed to update profile in Firestore');
       }
 
-      print('✅ STEP 3 PASSED: User data updated in Firestore');
-
-      // STEP 4: Force refresh image cache if image was uploaded
+      // STEP 4: Force refresh image cache if needed
       if (uploadedImageUrl != null) {
-        print('🔄 STEP 4: Force refreshing image cache...');
         final userId = await _getUserId();
         if (userId != null) {
           await ProfileImageService.instance.forceRefreshProfileImage(
             userId: userId,
           );
-          print('✅ STEP 4 PASSED: Image cache invalidated');
         }
-      } else {
-        print('✅ STEP 4 PASSED: No image cache refresh needed');
       }
 
-      // STEP 5: Return and show success
-      print('✅ STEP 5: Returning to profile screen...');
       setState(() => _isSaving = false);
 
       if (mounted) {
@@ -581,19 +540,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         );
       }
-
-      print('');
-      print('✅ EDIT PROFILE SAVE FLOW: COMPLETE');
-    } catch (e, stackTrace) {
+    } catch (e) {
       print('❌ ERROR in EDIT PROFILE SAVE FLOW: $e');
-      print('   Stack trace: $stackTrace');
 
       setState(() => _isSaving = false);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to update profile: $e'),
+            content: Text('Failed to update profile: ${e.toString()}'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),
@@ -602,7 +557,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-  /// Helper method to get user ID from SharedPreferences or Firebase Auth
   Future<String?> _getUserId() async {
     try {
       final prefs = await SharedPreferences.getInstance();

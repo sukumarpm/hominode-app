@@ -44,6 +44,11 @@
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
   <div id="recaptcha-container"></div>
+  <script>
+    if (['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
+      self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 

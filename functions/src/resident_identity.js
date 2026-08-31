@@ -3,6 +3,7 @@ const {FieldValue} = require("firebase-admin/firestore");
 const {RegistrationError, verifiedPhoneAuth} = require("./register_resident");
 const {normalizePhone} = require("./resident_bulk_import");
 const {residentOnboardingId} = require("./resident_import_ids");
+const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
 
 const VERIFICATION_STATUSES = new Set([
   "verification_required",
@@ -16,6 +17,28 @@ const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 const PROOF_CONTENT_TYPES = new Set(["image/jpeg", "image/png"]);
 
 const clean = (value) => typeof value === "string" ? value.trim() : "";
+
+async function auditResidentAction({
+  db,
+  actorUid,
+  communityId,
+  action,
+  targetId,
+  summary,
+  metadata,
+}) {
+  await writeAuditLogBestEffort({
+    db,
+    actorUid,
+    actorRole: "admin",
+    communityId,
+    action,
+    targetType: "resident",
+    targetId,
+    summary,
+    metadata,
+  });
+}
 
 function canonicalResidentType(profile) {
   const residentType = clean(profile?.residentType).toLowerCase();
@@ -278,7 +301,7 @@ async function approveResidentRegistrationCore({db, auth, data}) {
     .where("communityId", "==", input.communityId)
     .where("buildingId", "==", input.buildingId);
 
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const [userSnapshot, buildingSnapshot, flatSnapshot, sameFlatSnapshot, buildingFlatsSnapshot] = await Promise.all([
       transaction.get(userRef),
       transaction.get(buildingRef),
@@ -378,6 +401,22 @@ async function approveResidentRegistrationCore({db, auth, data}) {
     }));
     return {status: "approved", isActive: active, identityVerificationRequired: false};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.residentApprove,
+    targetId: input.userId,
+    summary: "Resident registration approved.",
+    metadata: {
+      previousStatus: "pending",
+      newStatus: "approved",
+      buildingId: input.buildingId,
+      flatId: input.flatId,
+      residentType: input.residentType,
+    },
+  });
+  return result;
 }
 
 function vacantFlatUpdate(timestamp) {
@@ -414,7 +453,7 @@ async function rejectResidentRegistrationCore({db, auth, data}) {
   const input = validateLifecycleInput(data, {allowReason: true});
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
@@ -479,13 +518,28 @@ async function rejectResidentRegistrationCore({db, auth, data}) {
     });
     return {status: "rejected", staleOccupantCleared};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.residentReject,
+    targetId: input.userId,
+    summary: "Resident registration rejected.",
+    metadata: {
+      previousStatus: "pending",
+      newStatus: "rejected",
+      reasonProvided: Boolean(input.reason),
+      staleOccupantCleared: result.staleOccupantCleared,
+    },
+  });
+  return result;
 }
 
 async function deactivateResidentCore({db, auth, data}) {
   const input = validateLifecycleInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
@@ -526,13 +580,23 @@ async function deactivateResidentCore({db, auth, data}) {
     });
     return {status: "inactive", occupancyStatus: "suspended", occupantRetained: true};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.residentDeactivate,
+    targetId: input.userId,
+    summary: "Resident access deactivated.",
+    metadata: {previousStatus: "active", newStatus: "inactive"},
+  });
+  return result;
 }
 
 async function reactivateResidentCore({db, auth, data}) {
   const input = validateLifecycleInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
@@ -605,6 +669,16 @@ async function reactivateResidentCore({db, auth, data}) {
     });
     return {status: "active", occupancyStatus: "current"};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.residentReactivate,
+    targetId: input.userId,
+    summary: "Resident access reactivated.",
+    metadata: {previousStatus: "inactive", newStatus: "active"},
+  });
+  return result;
 }
 
 async function reassignResidentCore({db, auth, data}) {
@@ -620,7 +694,7 @@ async function reassignResidentCore({db, auth, data}) {
     .where("communityId", "==", input.communityId)
     .where("buildingId", "==", input.buildingId);
 
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || clean(resident?.uid) !== input.userId ||
@@ -732,6 +806,21 @@ async function reassignResidentCore({db, auth, data}) {
     }));
     return {status: "active", occupancyStatus: "current", userId: input.userId};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.residentReassign,
+    targetId: input.userId,
+    summary: "Moved-out resident reassigned to a unit.",
+    metadata: {
+      previousStatus: "moved_out",
+      newStatus: "active",
+      buildingId: input.buildingId,
+      flatId: input.flatId,
+    },
+  });
+  return result;
 }
 
 async function createResidentOnboardingCore({db, auth, data}) {
@@ -932,7 +1021,7 @@ async function reviewResidentIdentityProofCore({db, auth, data}) {
   const input = validateAdminProofInput(data, {review: true});
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(userRef);
     const resident = snapshot.data();
     if (!snapshot.exists || resident?.role !== "resident" || resident?.communityId !== input.communityId) {
@@ -977,13 +1066,31 @@ async function reviewResidentIdentityProofCore({db, auth, data}) {
     });
     return {status: input.decision};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: input.decision === "verified" ?
+      AUDIT_ACTIONS.identityApprove : AUDIT_ACTIONS.identityReject,
+    targetId: input.userId,
+    summary: input.decision === "verified" ?
+      "Resident identity verification approved." :
+      "Resident identity verification rejected.",
+    metadata: {
+      previousStatus: "pending",
+      newStatus: input.decision,
+      reasonProvided: input.decision === "rejected" && Boolean(input.reason),
+    },
+  });
+  return result;
 }
 
 async function moveOutResidentCore({db, auth, data}) {
   const input = validateAdminProofInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
-  return db.runTransaction(async (transaction) => {
+  let previousFlatId;
+  const result = await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" || resident?.communityId !== input.communityId) {
@@ -998,6 +1105,7 @@ async function moveOutResidentCore({db, auth, data}) {
       );
     }
     const flatId = clean(resident.flatId);
+    previousFlatId = flatId;
     if (!flatId) throw new RegistrationError("failed-precondition", "Resident has no current unit assignment.");
     const flatRef = db.collection("flats").doc(flatId);
     const flatSnapshot = await transaction.get(flatRef);
@@ -1055,6 +1163,20 @@ async function moveOutResidentCore({db, auth, data}) {
     }));
     return {status: "moved_out", occupantCleared: true};
   });
+  await auditResidentAction({
+    db,
+    actorUid: actor.uid,
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.residentMoveOut,
+    targetId: input.userId,
+    summary: "Resident moved out and unit occupancy cleared.",
+    metadata: {
+      previousStatus: "active",
+      newStatus: "moved_out",
+      previousFlatId,
+    },
+  });
+  return result;
 }
 
 module.exports = {

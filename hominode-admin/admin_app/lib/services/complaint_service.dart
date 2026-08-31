@@ -279,17 +279,15 @@ class ComplaintService {
       final complaintTitle = complaintData['title'] ?? 'Complaint';
 
       if (residentId.isNotEmpty) {
-        await _firestore.collection('notifications').add({
-          'communityId': _adminService.requireCurrentCommunityId(),
-          'residentId': residentId,
-          'title': 'Complaint Updated',
-          'message':
+        await _notificationService.createNotification(
+          recipientId: residentId,
+          title: 'Complaint Updated',
+          message:
               '$complaintTitle status is now $status and assigned to $assignedTo',
-          'type': 'complaint_updated',
-          'complaintId': complaintId,
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+          type: NotificationType.complaint,
+          priority: NotificationPriority.high,
+          metadata: {'complaintId': complaintId},
+        );
       }
       print('✅ STEP 4 PASSED: Resident notified');
 

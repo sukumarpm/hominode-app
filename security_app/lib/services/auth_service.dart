@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 
 import '../models/security_user_model.dart';
 import '../models/security_community_model.dart';
@@ -227,11 +228,13 @@ class AuthService {
   }
 
   Future<void> logout() async {
+    await HominodePushNotifications.instance.deactivateForLogout();
     await _auth.signOut();
   }
 
   Future<void> _safeSignOut() async {
     try {
+      await HominodePushNotifications.instance.deactivateForLogout();
       await _auth.signOut();
     } catch (_) {}
   }

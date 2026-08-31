@@ -261,35 +261,41 @@ class FlatService {
 
   // Update flat status - SAFE VERSION
   Future<void> updateFlatStatus({
-    required String flatId, // Sequential ID (T001, A101, etc.)
+    required String flatDocumentId,
+    required String buildingId,
     required String status,
   }) async {
     try {
       print('\n🔵 FlatService.updateFlatStatus() called');
-      print('   - flatId (sequential): $flatId');
+      print('   - flatDocumentId: $flatDocumentId');
+      print('   - buildingId: $buildingId');
       print('   - status: $status');
 
-      // STEP 1: Query for the flat document using flatId field
-      print('   - STEP 1: Querying for flat document with flatId: $flatId');
-      final flatQuery = await _firestore
-          .collection(_collection)
-          .where('flatId', isEqualTo: flatId)
-          .limit(1)
-          .get();
-
-      if (flatQuery.docs.isEmpty) {
-        print('❌ STEP 1 FAILED: Flat not found with flatId: $flatId');
-        print('   - This means the flat document does not exist in Firestore');
-        print(
-          '   - Please ensure flats are generated before assigning residents',
-        );
-        throw Exception(
-          'Flat not found. Please ensure the flat exists in the system.',
-        );
+      final normalizedDocumentId = flatDocumentId.trim();
+      final normalizedBuildingId = buildingId.trim();
+      final selectedCommunityId = AdminTenantContext.instance
+          .requireCommunityId()
+          .trim();
+      if (normalizedDocumentId.isEmpty || normalizedBuildingId.isEmpty) {
+        throw ArgumentError('Flat and building identifiers are required.');
       }
 
-      final flatDocRef = flatQuery.docs.first.reference;
-      final flatData = flatQuery.docs.first.data();
+      // Resolve exactly one canonical Firestore document, then verify it still
+      // belongs to the Admin's selected tenant and building before mutation.
+      print('   - STEP 1: Reading canonical flat document');
+      final flatDocRef = _firestore
+          .collection(_collection)
+          .doc(normalizedDocumentId);
+      final flatDocument = await flatDocRef.get();
+      if (!flatDocument.exists || flatDocument.data() == null) {
+        throw StateError('Flat not found in the selected building.');
+      }
+      final flatData = flatDocument.data()!;
+      validateFlatMutationScope(
+        flatData: flatData,
+        expectedCommunityId: selectedCommunityId,
+        expectedBuildingId: normalizedBuildingId,
+      );
       print('   ✅ STEP 1 PASSED: Flat document found: ${flatDocRef.id}');
 
       final residentIds = flatData['residentIds'];
@@ -472,6 +478,21 @@ class FlatService {
     } catch (e) {
       throw Exception('Failed to get occupancy stats: $e');
     }
+  }
+}
+
+void validateFlatMutationScope({
+  required Map<String, dynamic> flatData,
+  required String expectedCommunityId,
+  required String expectedBuildingId,
+}) {
+  final actualCommunityId = flatData['communityId']?.toString().trim() ?? '';
+  final actualBuildingId = flatData['buildingId']?.toString().trim() ?? '';
+  if (actualCommunityId != expectedCommunityId.trim() ||
+      actualBuildingId != expectedBuildingId.trim()) {
+    throw StateError(
+      'Flat does not belong to the selected community and building.',
+    );
   }
 }
 

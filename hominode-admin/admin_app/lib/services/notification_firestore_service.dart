@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/notification_models.dart';
 import 'admin_service.dart';
 
@@ -7,6 +8,9 @@ import 'admin_service.dart';
 class NotificationFirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AdminService _adminService = AdminService();
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+    region: 'asia-southeast1',
+  );
   static const String _collection = 'notifications';
 
   // ============================================================================
@@ -41,31 +45,25 @@ class NotificationFirestoreService {
       }
       print('✅ STEP 2 PASSED: Data validated');
 
-      // STEP 3: Create Notification Document
-      print('📝 STEP 3: Creating notification document...');
-      final adminProfile = await _adminService.getAdminProfile();
-      final buildingIds = await _adminService.getAdminBuildingIds();
-
-      final docRef = await _firestore.collection(_collection).add({
+      // STEP 3: Ask the trusted backend to resolve and validate the recipient.
+      print('📝 STEP 3: Sending trusted notification request...');
+      final sourceEntityId = _sourceEntityId(metadata);
+      final result = await _functions.httpsCallable('sendNotification').call({
+        'communityId': _adminService.requireCurrentCommunityId(),
+        'recipientUid': recipientId,
         'title': title,
         'message': message,
-        'type': type.toString().split('.').last,
-        'priority': priority.toString().split('.').last,
-        'recipientId': recipientId,
-        'isRead': false,
-        'actionUrl': actionUrl,
-        'metadata': metadata ?? {},
-        // Multi-tenancy fields
-        'adminId': adminId,
-        'communityId': _adminService.requireCurrentCommunityId(),
-        'buildingIds': buildingIds,
-        'adminName': adminProfile?['name'] ?? '',
-        'adminEmail': adminProfile?['email'] ?? '',
-        'adminPhone': adminProfile?['phone'] ?? '',
-        'organization': adminProfile?['organization'] ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
+        'category': type.name,
+        'priority': priority.name,
+        if (sourceEntityId != null) 'sourceEntityId': sourceEntityId,
       });
+      final response = result.data;
+      final notificationId = response is Map
+          ? response['notificationId'] as String?
+          : null;
+      if (notificationId == null || notificationId.isEmpty) {
+        throw StateError('Notification sender returned no notification ID.');
+      }
 
       print('✅ STEP 3 PASSED: Notification created');
 
@@ -74,11 +72,32 @@ class NotificationFirestoreService {
       print('✅ NOTIFICATION CREATION: COMPLETE');
 
       // STEP 5: Return Result
-      return docRef.id;
+      return notificationId;
     } catch (e) {
       print('❌ ERROR: $e');
       throw Exception('Failed to create notification: $e');
     }
+  }
+
+  String? _sourceEntityId(Map<String, dynamic>? metadata) {
+    if (metadata == null) return null;
+    const allowedKeys = [
+      'entityId',
+      'visitorId',
+      'complaintId',
+      'billId',
+      'paymentId',
+      'maintenanceId',
+      'bookingId',
+      'slotId',
+      'violationId',
+      'vehicleId',
+    ];
+    for (final key in allowedKeys) {
+      final value = metadata[key];
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+    }
+    return null;
   }
 
   // ============================================================================
@@ -96,6 +115,10 @@ class NotificationFirestoreService {
           'communityId',
           isEqualTo: _adminService.requireCurrentCommunityId(),
         )
+        .where('recipientId', isEqualTo: adminId)
+        .where('audience', isEqualTo: 'admin')
+        .where('role', isEqualTo: 'admin')
+        .where('appId', isEqualTo: 'admin')
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) {
@@ -116,6 +139,10 @@ class NotificationFirestoreService {
           'communityId',
           isEqualTo: _adminService.requireCurrentCommunityId(),
         )
+        .where('recipientId', isEqualTo: adminId)
+        .where('audience', isEqualTo: 'admin')
+        .where('role', isEqualTo: 'admin')
+        .where('appId', isEqualTo: 'admin')
         .where('isRead', isEqualTo: false)
         .snapshots()
         .map((snapshot) => snapshot.docs.length);
@@ -136,6 +163,10 @@ class NotificationFirestoreService {
           'communityId',
           isEqualTo: _adminService.requireCurrentCommunityId(),
         )
+        .where('recipientId', isEqualTo: adminId)
+        .where('audience', isEqualTo: 'admin')
+        .where('role', isEqualTo: 'admin')
+        .where('appId', isEqualTo: 'admin')
         .where('type', isEqualTo: typeString)
         .orderBy('createdAt', descending: true)
         .snapshots()
@@ -161,6 +192,10 @@ class NotificationFirestoreService {
           'communityId',
           isEqualTo: _adminService.requireCurrentCommunityId(),
         )
+        .where('recipientId', isEqualTo: adminId)
+        .where('audience', isEqualTo: 'admin')
+        .where('role', isEqualTo: 'admin')
+        .where('appId', isEqualTo: 'admin')
         .where('priority', isEqualTo: priorityString)
         .orderBy('createdAt', descending: true)
         .snapshots()
@@ -229,6 +264,10 @@ class NotificationFirestoreService {
             'communityId',
             isEqualTo: _adminService.requireCurrentCommunityId(),
           )
+          .where('recipientId', isEqualTo: adminId)
+          .where('audience', isEqualTo: 'admin')
+          .where('role', isEqualTo: 'admin')
+          .where('appId', isEqualTo: 'admin')
           .where('isRead', isEqualTo: false)
           .get();
       print(
@@ -309,6 +348,10 @@ class NotificationFirestoreService {
             'communityId',
             isEqualTo: _adminService.requireCurrentCommunityId(),
           )
+          .where('recipientId', isEqualTo: adminId)
+          .where('audience', isEqualTo: 'admin')
+          .where('role', isEqualTo: 'admin')
+          .where('appId', isEqualTo: 'admin')
           .get();
       print('✅ STEP 2 PASSED: Found ${snapshot.docs.length} notifications');
 

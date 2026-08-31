@@ -172,13 +172,19 @@
 //     );
 //   }
 // }
+import 'dart:async';
+
 import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hominode_legal/hominode_legal.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 import 'package:provider/provider.dart';
 
 import 'main_navigation.dart';
@@ -193,6 +199,7 @@ import 'src/screens/simple_login_screen.dart';
 import 'src/screens/splash_screen_clean.dart';
 import 'src/services/firebase_auth_service.dart';
 import 'src/services/resident_auth_routing.dart';
+import 'src/services/resident_notification_router.dart';
 import 'src/services/tenant_resolution_service.dart';
 
 Future<void> main() async {
@@ -202,6 +209,21 @@ Future<void> main() async {
   // Firebase
   // ------------------------------------------------------------
   await Firebase.initializeApp();
+  await FirebaseAppCheck.instance.activate(
+    androidProvider: kDebugMode
+        ? AndroidProvider.debug
+        : AndroidProvider.playIntegrity,
+    appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
+  );
+  unawaited(
+    HominodePushNotifications.instance
+        .initialize(onAuthorizedTap: ResidentNotificationRouter.handle)
+        .timeout(const Duration(seconds: 8))
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('Notification initialization failed: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        }),
+  );
 
   // ------------------------------------------------------------
   // Localization
@@ -263,6 +285,7 @@ class MyApp extends StatelessWidget {
 
       builder: (context, child) {
         return MaterialApp(
+          navigatorKey: residentNotificationNavigatorKey,
           title: 'app_title'.tr(),
           debugShowCheckedModeBanner: false,
 
@@ -326,7 +349,10 @@ class MyApp extends StatelessWidget {
 
               case '/home':
                 return MaterialPageRoute(
-                  builder: (context) => const MainNavigation(),
+                  builder: (context) => const HominodeLegalAcceptanceGate(
+                    profileCollection: 'users',
+                    child: MainNavigation(),
+                  ),
                 );
 
               case '/resident-registration':

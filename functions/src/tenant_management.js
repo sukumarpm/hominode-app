@@ -1,5 +1,6 @@
 const { FieldValue } = require("firebase-admin/firestore");
 const { RegistrationError, verifiedPhoneAuth } = require("./register_resident");
+const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
 
 const normalizeSlug = (value) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 const normalizeCommunityId = (value) => String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^[-_]+|[-_]+$/g, "");
@@ -240,7 +241,8 @@ async function updateCommunityCore({ db, auth, data }) {
   await rejectLegacyDuplicate(db, "slug", input.slug, input.communityId);
   await rejectLegacyDuplicate(db, "websitePath", input.websitePath, input.communityId);
   const communityRef = db.collection("communities").doc(input.communityId);
-  return db.runTransaction(async (transaction) => {
+  let changedFields = [];
+  const result = await db.runTransaction(async (transaction) => {
     const currentSnapshot = await transaction.get(communityRef);
     if (!currentSnapshot.exists) throw new RegistrationError("not-found", "Community was not found.");
     const current = currentSnapshot.data();
@@ -259,6 +261,7 @@ async function updateCommunityCore({ db, auth, data }) {
     if (oldSlugRef && oldSlugReservation?.data()?.communityId === input.communityId) transaction.delete(oldSlugRef);
     if (oldPathRef && oldPathReservation?.data()?.communityId === input.communityId) transaction.delete(oldPathRef);
     const { communityId, ...metadata } = input;
+    changedFields = Object.keys(metadata);
 
     const updateData = {
       ...metadata,
@@ -280,6 +283,18 @@ async function updateCommunityCore({ db, auth, data }) {
 
     return { communityId };
   });
+  await writeAuditLogBestEffort({
+    db,
+    actorUid: uid,
+    actorRole: "superAdmin",
+    communityId: input.communityId,
+    action: AUDIT_ACTIONS.communityConfigurationUpdate,
+    targetType: "community",
+    targetId: input.communityId,
+    summary: "Critical community configuration updated.",
+    metadata: {changedFields},
+  });
+  return result;
 }
 const hasOwn = (object, key) =>
   Object.prototype.hasOwnProperty.call(object, key);
@@ -293,6 +308,20 @@ async function setCommunityActiveCore({ db, auth, data }) {
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new RegistrationError("not-found", "Community was not found.");
   await ref.update({ isActive: data.isActive, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
+  await writeAuditLogBestEffort({
+    db,
+    actorUid: uid,
+    actorRole: "superAdmin",
+    communityId,
+    action: AUDIT_ACTIONS.communityStatusUpdate,
+    targetType: "community",
+    targetId: communityId,
+    summary: data.isActive ? "Community activated." : "Community deactivated.",
+    metadata: {
+      previousIsActive: snapshot.data()?.isActive === true,
+      newIsActive: data.isActive,
+    },
+  });
   return { communityId, isActive: data.isActive };
 }
 

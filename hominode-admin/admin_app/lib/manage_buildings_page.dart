@@ -58,13 +58,7 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
 
   Future<void> _editBuilding(String id, BuildingInput buildingInput) async {
     try {
-      await _buildingService.updateBuilding(
-        id: id,
-        name: buildingInput.name,
-        floors: buildingInput.floors,
-        flatsPerFloor: buildingInput.flatsPerFloor,
-        totalFlats: buildingInput.totalFlats,
-      );
+      await _buildingService.updateBuilding(id: id, name: buildingInput.name);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -608,7 +602,8 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
                     }
 
                     await _flatService.updateFlatStatus(
-                      flatId: unit.id,
+                      flatDocumentId: unit.docId,
+                      buildingId: building.id,
                       status: statusString,
                     );
 

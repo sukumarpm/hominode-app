@@ -191,35 +191,34 @@ class BuildingService {
   Future<void> updateBuilding({
     required String id,
     required String name,
-    required int floors,
-    required int flatsPerFloor,
-    required int totalFlats,
   }) async {
     try {
-      // Get current building data to preserve occupancy and get adminId
-      final doc = await _firestore.collection(_collection).doc(id).get();
-      final currentData = doc.data();
-      final currentOccupied = (currentData?['occupied'] ?? 0) as int;
-      final adminId = currentData?['adminId'] as String?;
+      final selectedCommunityId = _adminService.requireCurrentCommunityId();
 
-      // Calculate new values
-      final occupied = currentOccupied > totalFlats
-          ? totalFlats
-          : currentOccupied;
-      final vacant = totalFlats - occupied;
-      final occupancyRate = totalFlats > 0
-          ? ((occupied / totalFlats) * 100).round()
-          : 0;
+      // Structural fields are intentionally preserved for production V1.
+      final doc = await _firestore.collection(_collection).doc(id).get();
+      if (!doc.exists) {
+        throw StateError('Building not found.');
+      }
+
+      final currentData = doc.data()!;
+      if (currentData['communityId'] != selectedCommunityId) {
+        throw StateError('Building is outside the selected community.');
+      }
+
+      final adminId = currentData['adminId'] as String?;
+      final floors = (currentData['floors'] as num?)?.toInt() ?? 0;
+      final flatsPerFloor =
+          (currentData['flatsPerFloor'] as num?)?.toInt() ?? 0;
+      final totalFlats = (currentData['totalFlats'] as num?)?.toInt() ?? 0;
+      final occupied = (currentData['occupied'] as num?)?.toInt() ?? 0;
+      final vacant = (currentData['vacant'] as num?)?.toInt() ?? 0;
+      final occupancyRate =
+          (currentData['occupancyRate'] as num?)?.toInt() ?? 0;
 
       await _firestore.collection(_collection).doc(id).update({
         'name': name,
         'buildingName': name, // Keep buildingName in sync with name
-        'floors': floors,
-        'flatsPerFloor': flatsPerFloor,
-        'totalFlats': totalFlats,
-        'occupied': occupied,
-        'vacant': vacant,
-        'occupancyRate': occupancyRate,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 

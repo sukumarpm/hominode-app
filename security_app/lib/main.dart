@@ -1,17 +1,38 @@
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:hominode_legal/hominode_legal.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 
 import 'firebase_options.dart';
 import 'models/security_user_model.dart';
 import 'screens/login_screen.dart';
 import 'screens/security_dashboard_screen.dart';
 import 'services/auth_service.dart';
+import 'services/security_notification_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await FirebaseAppCheck.instance.activate(
+    // ignore: deprecated_member_use
+    androidProvider: kDebugMode
+        ? AndroidProvider.debug
+        : AndroidProvider.playIntegrity,
+    // ignore: deprecated_member_use
+    appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
+  );
+  try {
+    await HominodePushNotifications.instance.initialize(
+      onAuthorizedTap: SecurityNotificationRouter.handle,
+    );
+  } catch (error, stackTrace) {
+    debugPrint('Notification initialization failed: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
 
   runApp(const SecurityApp());
 }
@@ -22,6 +43,7 @@ class SecurityApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: securityNotificationNavigatorKey,
       title: 'Hominode Security',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -74,7 +96,10 @@ class _SecurityAuthGateState extends State<SecurityAuthGate> {
               );
             }
 
-            return const SecurityDashboardScreen();
+            return const HominodeLegalAcceptanceGate(
+              profileCollection: 'securityStaff',
+              child: SecurityDashboardScreen(),
+            );
           },
         );
       },

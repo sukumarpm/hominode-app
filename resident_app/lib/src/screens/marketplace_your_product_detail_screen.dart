@@ -1,13 +1,15 @@
 // lib/src/screens/marketplace_your_product_detail_screen.dart
 // Product detail screen for seller's own products
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../models/listing_model.dart';
-import '../services/listing_firestore_service.dart';
+
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
+import '../models/listing_model.dart';
+import '../services/listing_firestore_service.dart';
+import 'marketplace_edit_listing_screen.dart';
 
 class MarketplaceYourProductDetailScreen extends StatefulWidget {
   final ListingModel listing;
@@ -89,8 +91,10 @@ class _MarketplaceYourProductDetailScreenState
                         _buildPhoneRequestsSection(),
                         const SizedBox(height: AppSizes.spaceBetweenSections),
 
-                        // Action Buttons
-                        _buildActionButtons(),
+                        if (widget.listing.status == 'active') ...[
+                          const SizedBox(height: AppSizes.spaceBetweenSections),
+                          _buildActionButtons(),
+                        ],
                       ],
                     ),
                   ),
@@ -595,13 +599,19 @@ class _MarketplaceYourProductDetailScreenState
   }
 
   Widget _buildActionButtons() {
+    // Historical listings are read-only.
+    // Sold/deleted listings must not be edited, sold again, or deleted.
+    if (widget.listing.status != 'active') {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       children: [
         SizedBox(
           width: double.infinity,
           height: AppSizes.buttonHeightPrimary,
           child: ElevatedButton(
-            onPressed: () => _editProduct(),
+            onPressed: _editProduct,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
@@ -617,23 +627,15 @@ class _MarketplaceYourProductDetailScreenState
           width: double.infinity,
           height: AppSizes.buttonHeightSecondary,
           child: OutlinedButton(
-            onPressed: () => _markAsSold(),
+            onPressed: _markAsSold,
             style: OutlinedButton.styleFrom(
-              foregroundColor: widget.listing.status == 'sold'
-                  ? Colors.grey
-                  : Colors.green,
-              side: BorderSide(
-                color: widget.listing.status == 'sold'
-                    ? Colors.grey
-                    : Colors.green,
-              ),
+              foregroundColor: Colors.green,
+              side: const BorderSide(color: Colors.green),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppSizes.radiusButton),
               ),
             ),
-            child: Text(
-              widget.listing.status == 'sold' ? 'Already Sold' : 'Mark as Sold',
-            ),
+            child: const Text('Mark as Sold'),
           ),
         ),
         SizedBox(height: 10.h),
@@ -641,7 +643,7 @@ class _MarketplaceYourProductDetailScreenState
           width: double.infinity,
           height: AppSizes.buttonHeightSecondary,
           child: OutlinedButton(
-            onPressed: () => _deleteProduct(),
+            onPressed: _deleteProduct,
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.red,
               side: const BorderSide(color: Colors.red),
@@ -701,10 +703,11 @@ class _MarketplaceYourProductDetailScreenState
   }
 
   void _editProduct() {
-    Navigator.pushNamed(
+    Navigator.push(
       context,
-      '/marketplace_edit_listing',
-      arguments: widget.listing,
+      MaterialPageRoute(
+        builder: (_) => MarketplaceEditListingScreen(listing: widget.listing),
+      ),
     );
   }
 

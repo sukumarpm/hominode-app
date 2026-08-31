@@ -1,7 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+
+import '../models/notification_models.dart';
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
-import '../models/notification_models.dart';
 
 class BillingService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -9,7 +14,114 @@ class BillingService {
   final AdminService _adminService = AdminService();
   final NotificationFirestoreService _notificationService =
       NotificationFirestoreService();
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+    region: 'asia-southeast1',
+  );
 
+  Stream<Map<String, dynamic>?> streamPendingPaymentForBill({
+    required String communityId,
+    required String billId,
+  }) {
+    print('💳 ADMIN PAYMENT QUERY');
+    print('   communityId: $communityId');
+    print('   billId: $billId');
+
+    return _firestore
+        .collection('payments')
+        .where('communityId', isEqualTo: communityId)
+        .where('billId', isEqualTo: billId)
+        .snapshots()
+        .map((snapshot) {
+          print(
+            '💳 ADMIN PAYMENT QUERY RESULT: '
+            '${snapshot.docs.length} documents',
+          );
+
+          for (final doc in snapshot.docs) {
+            print(
+              '   ${doc.id}: '
+              'status=${doc.data()['status']}, '
+              'receiptPath=${doc.data()['receiptPath']}',
+            );
+          }
+
+          if (snapshot.docs.isEmpty) {
+            return null;
+          }
+
+          final pending = snapshot.docs
+              .where(
+                (doc) =>
+                    doc.data()['status']?.toString().toLowerCase() == 'pending',
+              )
+              .toList();
+
+          if (pending.isEmpty) {
+            print('💳 No pending payment proof found');
+            return null;
+          }
+
+          pending.sort((a, b) {
+            final aDate =
+                (a.data()['createdAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+
+            final bDate =
+                (b.data()['createdAt'] as Timestamp?)?.toDate() ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+
+            return bDate.compareTo(aDate);
+          });
+
+          final data = Map<String, dynamic>.from(pending.first.data());
+
+          data['id'] = pending.first.id;
+
+          print(
+            '✅ Pending payment proof found: '
+            '${pending.first.id}',
+          );
+
+          return data;
+        });
+  }
+
+  Future<Uint8List> loadPaymentReceipt(String receiptPath) async {
+    if (receiptPath.trim().isEmpty) {
+      throw Exception('Payment receipt path is missing');
+    }
+
+    final data = await _storage
+        .ref()
+        .child(receiptPath)
+        .getData(10 * 1024 * 1024);
+
+    if (data == null) {
+      throw Exception('Payment receipt could not be loaded');
+    }
+
+    return data;
+  }
+
+  Future<void> verifyPaymentProof(String paymentId) async {
+    final callable = _functions.httpsCallable('verifyPaymentProof');
+
+    await callable.call({'paymentId': paymentId});
+  }
+
+  Future<void> rejectPaymentProof({
+    required String paymentId,
+    required String rejectionReason,
+  }) async {
+    final callable = _functions.httpsCallable('rejectPaymentProof');
+
+    await callable.call({
+      'paymentId': paymentId,
+      'rejectionReason': rejectionReason.trim(),
+    });
+  }
+
+  final FirebaseStorage _storage = FirebaseStorage.instance;
   // Get all bills filtered by adminId (multi-tenancy)
   Stream<List<BillModel>> getBills(String communityId) {
     return _firestore
@@ -456,6 +568,7 @@ class BillModel {
   final String? adminName;
   final String? adminEmail;
   final String? adminPhone;
+  final String communityId;
   final String? organization;
   final String flatId;
   final String flatLabel;
@@ -478,6 +591,7 @@ class BillModel {
     this.adminName,
     this.adminEmail,
     this.adminPhone,
+    required this.communityId,
     this.organization,
     required this.flatId,
     required this.flatLabel,
@@ -511,6 +625,7 @@ class BillModel {
       adminName: data['adminName'],
       adminEmail: data['adminEmail'],
       adminPhone: data['adminPhone'],
+      communityId: data['communityId'] ?? '',
       organization: data['organization'],
       flatId: data['flatId'] ?? '',
       flatLabel: data['flatLabel'] ?? '',
@@ -535,6 +650,7 @@ class BillModel {
       'adminName': adminName,
       'adminEmail': adminEmail,
       'adminPhone': adminPhone,
+      'communityId': communityId,
       'organization': organization,
       'flatId': flatId,
       'flatLabel': flatLabel,
@@ -547,6 +663,9 @@ class BillModel {
       'type': type,
       'status': status,
       'dueDate': dueDate != null ? Timestamp.fromDate(dueDate!) : null,
+      'paidAt': paidAt != null ? Timestamp.fromDate(paidAt!) : null,
+      'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : null,
+      'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
     };
   }
 }

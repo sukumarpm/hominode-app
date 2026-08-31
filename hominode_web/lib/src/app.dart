@@ -379,9 +379,20 @@ abstract final class WebAuthGuardStatePolicy {
         return '/super-admin';
 
       case WebRole.admin:
-        if (requested == '/admin') {
-          return '/admin';
-        }
+        const adminPaths = {
+          '/admin',
+          '/admin/community',
+          '/admin/buildings',
+          '/admin/residents',
+          '/admin/visitors',
+          '/admin/complaints',
+          '/admin/amenities',
+          '/admin/billing',
+          '/admin/events',
+          '/admin/reports',
+          '/admin/settings',
+        };
+        if (adminPaths.contains(requested)) return requested;
 
         final slug = session.activeTenant?.slug;
 

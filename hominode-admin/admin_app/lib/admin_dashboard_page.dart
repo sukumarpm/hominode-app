@@ -1347,6 +1347,10 @@ import 'notifications_screen.dart';
 import 'parking_management_screen.dart';
 import 'quick_access_page.dart';
 import 'security_management_screen.dart';
+import 'dart:async';
+
+import 'package:hominode_notifications/hominode_notifications.dart';
+
 import 'services/admin_tenant_context.dart';
 import 'services/dashboard_service.dart';
 import 'services/notification_service.dart';
@@ -1382,6 +1386,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _notificationService.initializeNotifications();
     _notificationService.addListener(_onNotificationUpdate);
     _loadAdminData();
+    unawaited(
+      HominodePushNotifications.instance.activate(
+        selectedCommunityId: _communityId,
+      ),
+    );
   }
 
   Future<void> _loadAdminData() async {
@@ -2473,7 +2482,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       return FirebaseFirestore.instance
           .collection('notifications')
           .where('communityId', isEqualTo: _communityId)
-          .orderBy('timestamp', descending: true)
+          .where('recipientId', isEqualTo: adminId)
+          .where('audience', isEqualTo: 'admin')
+          .where('role', isEqualTo: 'admin')
+          .where('appId', isEqualTo: 'admin')
+          .orderBy('createdAt', descending: true)
           .limit(10)
           .snapshots()
           .map((snapshot) {
@@ -2488,7 +2501,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 'message': data['message'] ?? '',
                 'type': data['type'] ?? 'general',
                 'priority': data['priority'] ?? 'medium',
-                'timestamp': data['timestamp'] as Timestamp?,
+                'timestamp': data['createdAt'] as Timestamp?,
                 'isRead': data['isRead'] ?? false,
                 'metadata': data['metadata'] ?? {},
               };

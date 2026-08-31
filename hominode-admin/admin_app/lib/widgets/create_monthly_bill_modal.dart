@@ -16,12 +16,14 @@
 /// ```
 library;
 
-import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
+
 import '../models/monthly_bill_config.dart';
+import '../services/admin_tenant_context.dart';
 
 // ============================================================================
 // CREATE MONTHLY BILL MODAL
@@ -139,30 +141,48 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
     });
 
     try {
+      final communityId = AdminTenantContext.instance.requireCommunityId();
+
       final snapshot = await _firestore
           .collection('buildings')
-          .orderBy('name')
+          .where('communityId', isEqualTo: communityId)
           .get();
 
+      final buildings = snapshot.docs.map((doc) {
+        final data = doc.data();
+
+        return <String, dynamic>{
+          'id': doc.id,
+          'name': data['buildingName'] ?? data['name'] ?? '',
+        };
+      }).toList();
+
+      buildings.sort(
+        (a, b) => (a['name'] as String).toLowerCase().compareTo(
+          (b['name'] as String).toLowerCase(),
+        ),
+      );
+
+      if (!mounted) return;
+
       setState(() {
-        _buildings = snapshot.docs.map((doc) {
-          final data = doc.data();
-          return {'id': doc.id, 'name': data['name'] ?? ''};
-        }).toList();
+        _buildings = buildings;
         _loadingBuildings = false;
       });
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _loadingBuildings = false;
+        _buildings = [];
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load buildings: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-          ),
-        );
-      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load buildings: $e'),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
+      );
     }
   }
 
@@ -175,64 +195,76 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
     });
 
     try {
-      // Fetch flats for the building
+      final communityId = AdminTenantContext.instance.requireCommunityId();
+
       final flatsSnapshot = await _firestore
           .collection('flats')
+          .where('communityId', isEqualTo: communityId)
           .where('buildingId', isEqualTo: buildingId)
           .get();
 
       final flats = <Map<String, dynamic>>[];
 
-      for (var flatDoc in flatsSnapshot.docs) {
+      for (final flatDoc in flatsSnapshot.docs) {
         final flatData = flatDoc.data();
-        final flatId = flatData['id'] ?? flatDoc.id;
+        final flatId = flatDoc.id;
 
-        // Fetch residents (users) assigned to this flat
         final usersSnapshot = await _firestore
             .collection('users')
+            .where('communityId', isEqualTo: communityId)
             .where('flatId', isEqualTo: flatId)
             .where('role', isEqualTo: 'resident')
             .get();
 
-        // Collect resident names
         final residentNames = usersSnapshot.docs
-            .map((doc) => doc.data()['name'] as String?)
-            .where((name) => name != null && name.isNotEmpty)
+            .map((doc) => doc.data()['name']?.toString() ?? '')
+            .where((name) => name.trim().isNotEmpty)
             .toList();
 
         flats.add({
           'id': flatId,
           'floor': flatData['floor'] ?? 0,
-          'flatNumber': flatData['flatNumber'] ?? 0,
+          'flatNumber':
+              flatData['flatLabel'] ??
+              flatData['unitNumber'] ??
+              flatData['flatNumber'] ??
+              flatId,
           'status': flatData['status'] ?? 'vacant',
           'residentNames': residentNames,
           'residentCount': residentNames.length,
         });
       }
 
-      // Sort by floor (descending) then flatNumber (ascending)
       flats.sort((a, b) {
-        final floorCompare = (b['floor'] as int).compareTo(a['floor'] as int);
+        final floorA = int.tryParse(a['floor'].toString()) ?? 0;
+        final floorB = int.tryParse(b['floor'].toString()) ?? 0;
+
+        final floorCompare = floorA.compareTo(floorB);
         if (floorCompare != 0) return floorCompare;
-        return (a['flatNumber'] as int).compareTo(b['flatNumber'] as int);
+
+        return a['flatNumber'].toString().compareTo(b['flatNumber'].toString());
       });
+
+      if (!mounted) return;
 
       setState(() {
         _flats = flats;
         _loadingFlats = false;
       });
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _loadingFlats = false;
+        _flats = [];
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load flats: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-          ),
-        );
-      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load flats: $e'),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
+      );
     }
   }
 

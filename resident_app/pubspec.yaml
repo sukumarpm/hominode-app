@@ -62,10 +62,16 @@ dependencies:
   
   # Firebase
   firebase_core: ^3.8.1
+  firebase_app_check: ^0.3.2+10
   firebase_analytics: ^11.3.5
   firebase_auth: ^5.3.3
+  firebase_messaging: ^15.2.10
   cloud_firestore: ^5.4.4
   cloud_functions: ^5.6.2
+  hominode_notifications:
+    path: ../packages/hominode_notifications
+  hominode_legal:
+    path: ../packages/hominode_legal
   
   # QR Code Generation
   qr_flutter: ^4.1.0
@@ -84,6 +90,7 @@ dependencies:
   easy_localization: ^3.0.7
 
   mobile_scanner: any
+  firebase_storage: ^12.4.10
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -96,7 +103,7 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   
   # App Icon Generator
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -156,29 +163,24 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-
-  image_path: "lib/assets/Resident.png"
-
-  adaptive_icon_background: "#4F46E5"
-  adaptive_icon_foreground: "lib/assets/Resident.png"
-
+  image_path: "lib/assets/Resident_New.png"
   remove_alpha_ios: true
   min_sdk_android: 21
 
   # Web
   web:
     generate: true
-    image_path: "lib/assets/Resident.png"
+    image_path: "lib/assets/Resident_New.png"
     background_color: "#4F46E5"
     theme_color: "#4F46E5"
 
   # Windows
   windows:
     generate: true
-    image_path: "lib/assets/Resident.png"
+    image_path: "lib/assets/Resident_New.png"
     icon_size: 48
 
   # macOS
   macos:
     generate: true
-    image_path: "lib/assets/Resident.png"
+    image_path: "lib/assets/Resident_New.png"

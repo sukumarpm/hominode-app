@@ -60,7 +60,10 @@ class ActivityItem {
       id: docId,
       title: 'Complaint - ${data['category'] ?? 'General'}',
       subtitle:
-          '${data['description']?.substring(0, 30) ?? ''} - ${_formatDate(timestamp)}',
+          '${(() {
+            final description = data['description']?.toString() ?? '';
+            return description.length > 30 ? '${description.substring(0, 30)}...' : description;
+          })()} - ${_formatDate(timestamp)}',
       statusText: data['status'] ?? 'Open',
       activityType: 'complaint',
       timestamp: timestamp,
@@ -268,22 +271,38 @@ class RecentActivityFlowFunction {
       print('🔐 STEP 5: Fetching complaints...');
 
       try {
-        final complaintsQuery = await _firestore
-            .collection('complaints')
-            .where('communityId', isEqualTo: communityId)
-            .where('flatId', isEqualTo: flatId)
-            .orderBy('createdAt', descending: true)
-            .limit(10)
-            .get();
+        final authenticatedUid = _auth.currentUser?.uid;
 
-        print('   Found ${complaintsQuery.docs.length} complaints');
+        if (authenticatedUid == null) {
+          print('⚠️  STEP 5 WARNING: No authenticated user for complaints');
+        } else {
+          final complaintsQuery = await _firestore
+              .collection('complaints')
+              .where('communityId', isEqualTo: communityId)
+              .where('userId', isEqualTo: authenticatedUid)
+              .get();
 
-        for (final doc in complaintsQuery.docs) {
-          final data = doc.data();
-          activities.add(ActivityItem.fromComplaint(data, doc.id));
+          print('   Found ${complaintsQuery.docs.length} complaints');
+
+          final complaintDocs = complaintsQuery.docs.toList()
+            ..sort((a, b) {
+              final aCreatedAt = a.data()['createdAt'] as Timestamp?;
+              final bCreatedAt = b.data()['createdAt'] as Timestamp?;
+
+              if (aCreatedAt == null && bCreatedAt == null) return 0;
+              if (aCreatedAt == null) return 1;
+              if (bCreatedAt == null) return -1;
+
+              return bCreatedAt.compareTo(aCreatedAt);
+            });
+
+          for (final doc in complaintDocs.take(10)) {
+            final data = doc.data();
+            activities.add(ActivityItem.fromComplaint(data, doc.id));
+          }
+
+          print('✅ STEP 5 PASSED: Complaints fetched');
         }
-
-        print('✅ STEP 5 PASSED: Complaints fetched');
       } catch (e) {
         print('⚠️  STEP 5 WARNING: Error fetching complaints: $e');
       }

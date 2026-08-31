@@ -2,6 +2,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 const { getStorage } = require("firebase-admin/storage");
+const { getMessaging } = require("firebase-admin/messaging");
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
@@ -19,6 +20,11 @@ const {
   updateCommunityCore,
   setCommunityActiveCore,
 } = require("./tenant_management");
+
+const {
+  verifyPaymentProofCore,
+  rejectPaymentProofCore,
+} = require("./payment_verification");
 
 const {
   createAdminCore,
@@ -47,7 +53,7 @@ const {
   resolveCommunityLocationPlaceCore,
   reverseGeocodeCommunityLocationCore,
 } = require("./community_geocoding");
-const {updateCommunityLocationCore} = require("./community_location_management");
+const { updateCommunityLocationCore } = require("./community_location_management");
 const {
   validateResidentBulkImportCore,
   importResidentsBulkCore,
@@ -64,6 +70,13 @@ const {
   reviewResidentIdentityProofCore,
   moveOutResidentCore,
 } = require("./resident_identity");
+const {
+  registerNotificationDeviceCore,
+  unregisterNotificationDeviceCore,
+  sendNotificationCore,
+} = require("./notifications");
+const { acceptCurrentLegalTermsCore } = require("./legal_acceptance");
+const { getResidentNoticeIdsCore } = require("./resident_notices");
 
 
 const REGION = "asia-southeast1";
@@ -76,14 +89,41 @@ const GOOGLE_GEOCODING_API_KEY = defineSecret("GOOGLE_GEOCODING_API_KEY");
  * unexpected server errors from leaking implementation details.
  */
 function callable(core, failureMessage) {
-  return onCall({ region: REGION }, async (request) => {
+  return onCall({ region: REGION }, callableHandler(core, failureMessage));
+}
+
+function appCheckedCallable(
+  core,
+  failureMessage,
+  { includeMessaging = false } = {}
+) {
+  return onCall(
+    { region: REGION, enforceAppCheck: true },
+    callableHandler(core, failureMessage, {
+      includeAppContext: true,
+      includeMessaging,
+    })
+  );
+}
+
+function callableHandler(
+  core,
+  failureMessage,
+  { includeAppContext = false, includeMessaging = false } = {}
+) {
+  return async (request) => {
     try {
-      return await core({
+      const context = {
         db: getFirestore(),
         bucket: getStorage().bucket(),
         auth: request.auth,
         data: request.data,
-      });
+      };
+      if (includeAppContext) {
+        context.app = request.app;
+      }
+      if (includeMessaging) context.messaging = getMessaging();
+      return await core(context);
     } catch (error) {
       if (error instanceof RegistrationError) {
         throw new HttpsError(error.code, error.message);
@@ -96,9 +136,17 @@ function callable(core, failureMessage) {
         failureMessage
       );
     }
-  });
+  };
 }
+exports.verifyPaymentProof = appCheckedCallable(
+  verifyPaymentProofCore,
+  "Payment proof could not be verified."
+);
 
+exports.rejectPaymentProof = appCheckedCallable(
+  rejectPaymentProofCore,
+  "Payment proof could not be rejected."
+);
 exports.assignSecurityWork = callable(
   assignSecurityWorkCore,
   "Security work could not be assigned."
@@ -111,6 +159,32 @@ exports.deleteSecurityPlace = callable(
 exports.removeSecurityAssignment = callable(
   removeSecurityAssignmentCore,
   "Security assignment could not be removed."
+);
+
+exports.registerNotificationDevice = appCheckedCallable(
+  registerNotificationDeviceCore,
+  "This notification device could not be registered."
+);
+
+exports.unregisterNotificationDevice = appCheckedCallable(
+  unregisterNotificationDeviceCore,
+  "This notification device could not be removed."
+);
+
+exports.sendNotification = appCheckedCallable(
+  sendNotificationCore,
+  "The notification could not be sent.",
+  { includeMessaging: true }
+);
+
+exports.acceptCurrentLegalTerms = appCheckedCallable(
+  acceptCurrentLegalTermsCore,
+  "Legal acceptance could not be recorded."
+);
+
+exports.getResidentNoticeIds = appCheckedCallable(
+  getResidentNoticeIdsCore,
+  "Resident notices could not be loaded."
 );
 initializeApp();
 
@@ -192,7 +266,7 @@ exports.setCommunityActive = callable(
 );
 
 exports.searchCommunityLocations = onCall(
-  {region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY]},
+  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY] },
   async (request) => {
     try {
       return await communityLocationSearchCore({
@@ -212,7 +286,7 @@ exports.searchCommunityLocations = onCall(
 );
 
 exports.resolveCommunityLocationPlace = onCall(
-  {region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY]},
+  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY] },
   async (request) => {
     try {
       return await resolveCommunityLocationPlaceCore({
@@ -232,7 +306,7 @@ exports.resolveCommunityLocationPlace = onCall(
 );
 
 exports.reverseGeocodeCommunityLocation = onCall(
-  {region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY]},
+  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY] },
   async (request) => {
     try {
       return await reverseGeocodeCommunityLocationCore({

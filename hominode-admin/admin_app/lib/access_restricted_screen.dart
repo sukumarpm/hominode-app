@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
+import 'services/auth_service.dart';
 
 /// Access Restricted Screen - Shown when user loses building/flat access
 /// Displays error message and logout option
@@ -143,7 +144,7 @@ class AccessRestrictedScreen extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: () async {
                       try {
-                        await FirebaseAuth.instance.signOut();
+                        await AuthService().signOut();
                         if (onLogout != null) {
                           onLogout!();
                         }

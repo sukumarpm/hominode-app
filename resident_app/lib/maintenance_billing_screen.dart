@@ -1,14 +1,15 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
-import 'package:easy_localization/easy_localization.dart';
+
+import 'payment_history_screen.dart';
 import 'receipt_screen.dart';
-import 'payment_method_modal.dart';
 import 'src/components/standard_screen.dart';
-import 'src/services/bill_firestore_service.dart';
-import 'src/services/payment_service.dart';
 import 'src/providers/language_provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'src/screens/submit_payment_proof_screen.dart';
+import 'src/services/bill_firestore_service.dart';
 
 // Design Constants
 const kPrimaryBlue = Color(0xFF0E4778);
@@ -38,62 +39,202 @@ class MaintenanceBillingScreen extends StatefulWidget {
 
 class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   final _billService = BillFirestoreService();
-  final PaymentService _paymentService = PaymentServiceFactory.create();
-  bool _isProcessingPayment = false;
 
-  Future<void> _handlePayment(
-    PaymentMethod paymentMethod,
-    String billId,
-    LanguageProvider languageProvider,
-  ) async {
-    if (_isProcessingPayment) return;
-    _isProcessingPayment = true;
-
-    final result = await _paymentService.processPayment(
-      paymentMethod: paymentMethod,
-      billId: billId,
+  Widget _buildSubmitPaymentCard(Map<String, dynamic> bill) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(kRadius),
+        border: Border.all(color: kDivider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Payment',
+            style: TextStyle(
+              fontSize: 18.sp,
+              fontWeight: FontWeight.w600,
+              color: kDarkTitle,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          Text(
+            'Pay using your community\'s available payment method, then upload the receipt for verification.',
+            style: TextStyle(fontSize: 14.sp, height: 1.4, color: kSubtext),
+          ),
+          SizedBox(height: 18.h),
+          SizedBox(
+            width: double.infinity,
+            height: 50.h,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SubmitPaymentProofScreen(bill: bill),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.upload_file),
+              label: const Text('Submit Payment Proof'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimaryBlue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
+  }
 
-    final methodStr = switch (result.paymentMethod) {
-      PaymentMethod.upi => 'UPI',
-      PaymentMethod.card => 'card'.tr(),
-      PaymentMethod.netBanking => 'net_banking'.tr(),
-    };
+  Widget _buildPaymentRejectedCard(
+    Map<String, dynamic> bill,
+    Map<String, dynamic> payment,
+  ) {
+    final reason = payment['rejectionReason']?.toString().trim();
 
-    final success = result.success && result.transactionId != null
-        ? await _billService.payBill(
-            billId: billId,
-            paymentMethod: methodStr,
-            transactionId: result.transactionId!,
-            paymentMode: _paymentService.mode.name,
-          )
-        : false;
-
-    _isProcessingPayment = false;
-
-    if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${result.message} (mock transaction)'),
-          backgroundColor: const Color(0xFF10B981),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10.r),
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(kRadius),
+        border: Border.all(color: kDivider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Payment Rejected',
+            style: TextStyle(
+              fontSize: 18.sp,
+              fontWeight: FontWeight.w600,
+              color: Colors.red,
+            ),
           ),
-        ),
-      );
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('payment_failed'.tr()),
-          backgroundColor: const Color(0xFFEF4444),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10.r),
+          if (reason != null && reason.isNotEmpty) ...[
+            SizedBox(height: 8.h),
+            Text(
+              'Reason: $reason',
+              style: TextStyle(fontSize: 14.sp, color: kSubtext),
+            ),
+          ],
+          SizedBox(height: 16.h),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () async {
+                await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SubmitPaymentProofScreen(bill: bill),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimaryBlue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Resubmit Payment Proof'),
+            ),
           ),
-        ),
-      );
-    }
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentSubmittedCard() {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(kRadius),
+        border: Border.all(color: kDivider),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.hourglass_top_rounded, color: kPrimaryBlue, size: 28.w),
+          SizedBox(width: 14.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Payment Submitted',
+                  style: TextStyle(
+                    fontSize: 18.sp,
+                    fontWeight: FontWeight.w600,
+                    color: kDarkTitle,
+                  ),
+                ),
+                SizedBox(height: 6.h),
+                Text(
+                  'Your payment receipt has been submitted and is awaiting administrator verification.',
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    height: 1.4,
+                    color: kSubtext,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentAction(Map<String, dynamic> bill) {
+    final billId = bill['id']?.toString() ?? '';
+
+    return StreamBuilder<Map<String, dynamic>?>(
+      stream: _billService.streamLatestPaymentForBill(billId),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          print('❌ PAYMENT STREAM ERROR: ${snapshot.error}');
+
+          return Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(20.w),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(kRadius),
+              border: Border.all(color: kDivider),
+            ),
+            child: Text(
+              'Unable to load payment status. Please try again.',
+              style: TextStyle(fontSize: 14.sp, color: kSubtext),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final payment = snapshot.data;
+        final paymentStatus = payment?['status']?.toString().toLowerCase();
+
+        if (paymentStatus == 'pending') {
+          return _buildPaymentSubmittedCard();
+        }
+
+        if (paymentStatus == 'failed' && payment != null) {
+          return _buildPaymentRejectedCard(bill, payment);
+        }
+
+        return _buildSubmitPaymentCard(bill);
+      },
+    );
   }
 
   @override
@@ -101,6 +242,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, _) {
         return StandardScreen(
+          key: ValueKey(languageProvider.currentLanguageCode),
           title: 'maintenance_billing'.tr(),
           showBackButton: false,
           isScrollable: true,
@@ -167,7 +309,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                 children: [
                   // Current Bill Card
                   if (currentBill != null)
-                    _buildCurrentBillCard(currentBill, languageProvider)
+                    _buildCurrentBillCard(currentBill)
                   else
                     _buildNoBillCard(),
 
@@ -175,6 +317,9 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
 
                   // Bill Breakdown Card
                   if (currentBill != null) _buildBillBreakdownCard(currentBill),
+
+                  if (currentBill != null) SizedBox(height: 24.h),
+                  if (currentBill != null) _buildPaymentAction(currentBill),
 
                   if (currentBill != null) SizedBox(height: 24.h),
 
@@ -193,15 +338,11 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   }
 
   /// Current Bill Card with orange gradient
-  Widget _buildCurrentBillCard(
-    Map<String, dynamic> bill,
-    LanguageProvider languageProvider,
-  ) {
+  Widget _buildCurrentBillCard(Map<String, dynamic> bill) {
     final amount = (bill['amount'] as num?)?.toDouble() ?? 0;
     final dueDate = (bill['dueDate'] as Timestamp?)?.toDate();
     final status = bill['status'] as String? ?? 'pending';
     final month = bill['month'] as String? ?? 'Current';
-    final billId = bill['id'] as String;
 
     // Format due date
     String dueDateStr = 'Due Date: Not Set';
@@ -303,47 +444,6 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
               fontWeight: FontWeight.w400,
             ),
           ),
-
-          SizedBox(height: 20.h),
-
-          // Pay Now Button
-          if (status == 'pending' || status == 'overdue')
-            Builder(
-              builder: (context) {
-                return Container(
-                  width: double.infinity,
-                  height: 50.h,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12.r),
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: () {
-                        // Show payment method modal
-                        showPaymentMethodModal(
-                          context,
-                          (method) =>
-                              _handlePayment(method, billId, languageProvider),
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(12.r),
-                      child: Center(
-                        child: Text(
-                          'Pay Now',
-                          style: TextStyle(
-                            color: kOrangeEnd,
-                            fontSize: 16.sp,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
         ],
       ),
     );
@@ -516,7 +616,14 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
               ),
             ),
             TextButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) =>
+                        PaymentHistoryScreen(paidBills: paidBills),
+                  ),
+                );
+              },
               style: TextButton.styleFrom(
                 padding: EdgeInsets.zero,
                 minimumSize: const Size(0, 0),
@@ -584,8 +691,6 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     final month = payment['month'] as String? ?? 'Unknown';
     final amount = (payment['amount'] as num?)?.toDouble() ?? 0;
     final paidAt = (payment['paidAt'] as Timestamp?)?.toDate();
-    final billId = payment['id'] as String? ?? '';
-
     // Format paid date
     String paidDateStr = 'Paid';
     if (paidAt != null) {

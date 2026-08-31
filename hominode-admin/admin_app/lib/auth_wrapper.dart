@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hominode_legal/hominode_legal.dart';
 import 'admin_dashboard_page.dart';
 import 'admin_login_screen.dart';
 import 'models/admin_profile.dart';
@@ -36,9 +37,16 @@ class AuthWrapper extends StatelessWidget {
               final profile = access.data!.adminProfile!;
               switch (AdminRoleRouter.resolve(profile)) {
                 case AdminPostAuthDestination.superAdminHome:
-                  return superAdminDestination ?? const SuperAdminHomeScreen();
+                  return HominodeLegalAcceptanceGate(
+                    profileCollection: 'admins',
+                    child:
+                        superAdminDestination ?? const SuperAdminHomeScreen(),
+                  );
                 case AdminPostAuthDestination.adminTenantFlow:
-                  return _AdminTenantFlow(profile: profile);
+                  return HominodeLegalAcceptanceGate(
+                    profileCollection: 'admins',
+                    child: _AdminTenantFlow(profile: profile),
+                  );
                 case AdminPostAuthDestination.rejected:
                   return const _AccessDenied(
                     message: 'Admin authorization could not be verified.',

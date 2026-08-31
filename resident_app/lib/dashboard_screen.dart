@@ -1212,8 +1212,6 @@ import 'package:provider/provider.dart';
 
 import 'community_wall_screen.dart';
 import 'complaints_screen.dart';
-import 'src/screens/amenities_booking_screen.dart';
-import 'src/screens/emergency_sos_screen.dart';
 import 'src/screens/marketplace_screen.dart';
 import 'src/screens/messages_screen.dart';
 import 'src/screens/notifications_screen.dart';
@@ -1446,8 +1444,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _buildQuickAccessSection(),
                 SizedBox(height: 18.h),
                 _buildRecentActivitySection(),
-                SizedBox(height: 18.h),
-                _buildEmergencyButton(),
                 SizedBox(height: 110.h),
               ],
             ),
@@ -1992,18 +1988,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         },
       ),
       _QuickAccessItemData(
-        icon: Icons.fitness_center_rounded,
-        label: 'amenities'.tr(),
-        iconColor: const Color(0xFF08A760),
-        backgroundColor: const Color(0xFFE2F8EA),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AmenitiesBookingScreen()),
-          );
-        },
-      ),
-      _QuickAccessItemData(
         icon: Icons.shopping_bag_outlined,
         label: 'marketplace'.tr(),
         iconColor: const Color(0xFF1568E9),
@@ -2354,59 +2338,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildEmergencyButton() {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 24.w),
-      child: Container(
-        height: 54.h,
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFFF3C43), Color(0xFFF01F25)],
-          ),
-          borderRadius: BorderRadius.circular(16.r),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFFF52D34).withOpacity(0.28),
-              blurRadius: 18,
-              offset: const Offset(0, 7),
-            ),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EmergencySosScreen()),
-              );
-            },
-            borderRadius: BorderRadius.circular(16.r),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.warning_amber_rounded,
-                  color: Colors.white,
-                  size: 21.w,
-                ),
-                SizedBox(width: 9.w),
-                Text(
-                  'Emergency SOS',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _QuickAccessItemData {

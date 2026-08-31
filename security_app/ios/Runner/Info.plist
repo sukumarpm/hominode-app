@@ -39,6 +39,10 @@
 	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Hominode Security uses the camera to scan visitor QR codes.</string>
 	<key>UIApplicationSceneManifest</key>
