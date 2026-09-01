@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'services/staff_vendor_service.dart';
+
 import 'services/attendance_service.dart';
+import 'services/staff_vendor_service.dart';
 
 class AttendanceDetailsScreen extends StatefulWidget {
   final String date;
@@ -20,7 +21,7 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
   String _searchQuery = '';
   String selectedFilter = 'All';
 
-  final List<String> filters = ['All', 'Present', 'Absent', 'On Leave'];
+  final List<String> filters = ['All', 'Checked In', 'Completed'];
 
   @override
   void initState() {
@@ -40,55 +41,9 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
 
   bool _matchesFilter(AttendanceRecord record) {
     if (selectedFilter == 'All') return true;
-    if (selectedFilter == 'Present') return record.status == 'present';
-    if (selectedFilter == 'Absent') return record.status == 'absent';
-    if (selectedFilter == 'On Leave') return record.status == 'onLeave';
+    if (selectedFilter == 'Checked In') return record.isCurrentlyOnDuty;
+    if (selectedFilter == 'Completed') return record.isCompleted;
     return true;
-  }
-
-  String _getStatusText(String status) {
-    switch (status) {
-      case 'present':
-        return 'Present';
-      case 'absent':
-        return 'Absent';
-      case 'onLeave':
-        return 'On Leave';
-      case 'offDuty':
-        return 'Off Duty';
-      default:
-        return 'Pending';
-    }
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'present':
-        return const Color(0xFF10B981);
-      case 'absent':
-        return const Color(0xFFEF4444);
-      case 'onLeave':
-        return const Color(0xFFF59E0B);
-      case 'offDuty':
-        return const Color(0xFF6B7280);
-      default:
-        return const Color(0xFF9CA3AF);
-    }
-  }
-
-  IconData _getStatusIcon(String status) {
-    switch (status) {
-      case 'present':
-        return Icons.check_circle;
-      case 'absent':
-        return Icons.cancel;
-      case 'onLeave':
-        return Icons.event_busy;
-      case 'offDuty':
-        return Icons.schedule;
-      default:
-        return Icons.help_outline;
-    }
   }
 
   @override
@@ -221,15 +176,21 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
                         );
                       }
 
+                      if (snapshot.hasError) {
+                        return Text(
+                          'Error loading attendance: ${snapshot.error}',
+                        );
+                      }
+
                       final records = snapshot.data ?? [];
-                      final presentCount = records
-                          .where((r) => r.status == 'present')
+                      final checkedInCount = records.length;
+
+                      final onDutyCount = records
+                          .where((record) => record.isCurrentlyOnDuty)
                           .length;
-                      final absentCount = records
-                          .where((r) => r.status == 'absent')
-                          .length;
-                      final onLeaveCount = records
-                          .where((r) => r.status == 'onLeave')
+
+                      final completedCount = records
+                          .where((record) => record.isCompleted)
                           .length;
 
                       return Column(
@@ -238,8 +199,8 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
                             children: [
                               Expanded(
                                 child: _buildSummaryCard(
-                                  'Present',
-                                  presentCount.toString(),
+                                  'Checked In',
+                                  checkedInCount.toString(),
                                   const Color(0xFF10B981),
                                   Icons.check_circle,
                                 ),
@@ -247,10 +208,10 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
                               SizedBox(width: 12.w),
                               Expanded(
                                 child: _buildSummaryCard(
-                                  'Absent',
-                                  absentCount.toString(),
-                                  const Color(0xFFEF4444),
-                                  Icons.cancel,
+                                  'Completed',
+                                  completedCount.toString(),
+                                  const Color(0xFF3B82F6),
+                                  Icons.logout,
                                 ),
                               ),
                             ],
@@ -260,10 +221,10 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
                             children: [
                               Expanded(
                                 child: _buildSummaryCard(
-                                  'On Leave',
-                                  onLeaveCount.toString(),
-                                  const Color(0xFFF59E0B),
-                                  Icons.event_busy,
+                                  'On Duty',
+                                  onDutyCount.toString(),
+                                  const Color(0xFF10B981),
+                                  Icons.schedule,
                                 ),
                               ),
                               SizedBox(width: 12.w),
@@ -456,10 +417,17 @@ class _AttendanceDetailsScreenState extends State<AttendanceDetailsScreen> {
                       return Column(
                         children: filteredRecords.map((record) {
                           return FutureBuilder<StaffMember?>(
-                            future: _staffService.getStaffMemberById(
+                            future: _staffService.getSecurityStaffMemberById(
                               record.staffId,
                             ),
                             builder: (context, staffSnapshot) {
+                              if (staffSnapshot.hasError) {
+                                return Text(
+                                  'Error loading staff profile: '
+                                  '${staffSnapshot.error}',
+                                );
+                              }
+
                               if (!staffSnapshot.hasData) {
                                 return const SizedBox.shrink();
                               }
@@ -670,18 +638,15 @@ class StaffAttendanceCard extends StatelessWidget {
                       color: Colors.grey[600],
                     ),
                   ),
-                  if (record.checkInTime != null ||
-                      record.checkOutTime != null) ...[
-                    SizedBox(height: 4.h),
-                    Text(
-                      _getTimeInfo(record),
-                      style: TextStyle(
-                        fontSize: 12.sp,
-                        fontWeight: FontWeight.w400,
-                        color: Colors.grey[500],
-                      ),
+                  SizedBox(height: 4.h),
+                  Text(
+                    _getTimeInfo(record),
+                    style: TextStyle(
+                      fontSize: 12.sp,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.grey[500],
                     ),
-                  ],
+                  ),
                 ],
               ),
             ),
@@ -724,34 +689,25 @@ class StaffAttendanceCard extends StatelessWidget {
   }
 
   String _getTimeInfo(AttendanceRecord record) {
-    if (record.checkInTime != null && record.checkOutTime == null) {
-      final hour = record.checkInTime!.hour.toString().padLeft(2, '0');
-      final minute = record.checkInTime!.minute.toString().padLeft(2, '0');
+    if (record.checkOutTime == null) {
+      final hour = record.checkInTime.hour.toString().padLeft(2, '0');
+      final minute = record.checkInTime.minute.toString().padLeft(2, '0');
       return 'In: $hour:$minute';
-    } else if (record.checkInTime != null && record.checkOutTime != null) {
-      final inHour = record.checkInTime!.hour.toString().padLeft(2, '0');
-      final inMinute = record.checkInTime!.minute.toString().padLeft(2, '0');
+    } else {
+      final inHour = record.checkInTime.hour.toString().padLeft(2, '0');
+      final inMinute = record.checkInTime.minute.toString().padLeft(2, '0');
       final outHour = record.checkOutTime!.hour.toString().padLeft(2, '0');
       final outMinute = record.checkOutTime!.minute.toString().padLeft(2, '0');
       return 'In: $inHour:$inMinute • Out: $outHour:$outMinute';
-    } else if (record.checkOutTime != null) {
-      final hour = record.checkOutTime!.hour.toString().padLeft(2, '0');
-      final minute = record.checkOutTime!.minute.toString().padLeft(2, '0');
-      return 'Out: $hour:$minute';
     }
-    return '';
   }
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'present':
-        return 'Present';
-      case 'absent':
-        return 'Absent';
-      case 'onLeave':
-        return 'On Leave';
-      case 'offDuty':
-        return 'Off Duty';
+      case 'checked_in':
+        return 'Checked In';
+      case 'completed':
+        return 'Completed';
       default:
         return 'Pending';
     }
@@ -759,14 +715,10 @@ class StaffAttendanceCard extends StatelessWidget {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'present':
+      case 'checked_in':
         return const Color(0xFF10B981);
-      case 'absent':
-        return const Color(0xFFEF4444);
-      case 'onLeave':
-        return const Color(0xFFF59E0B);
-      case 'offDuty':
-        return const Color(0xFF6B7280);
+      case 'completed':
+        return const Color(0xFF3B82F6);
       default:
         return const Color(0xFF9CA3AF);
     }
@@ -774,14 +726,10 @@ class StaffAttendanceCard extends StatelessWidget {
 
   IconData _getStatusIcon(String status) {
     switch (status) {
-      case 'present':
+      case 'checked_in':
         return Icons.check_circle;
-      case 'absent':
-        return Icons.cancel;
-      case 'onLeave':
-        return Icons.event_busy;
-      case 'offDuty':
-        return Icons.schedule;
+      case 'completed':
+        return Icons.logout;
       default:
         return Icons.help_outline;
     }
@@ -890,34 +838,30 @@ class StaffAttendanceDetailModal extends StatelessWidget {
                 SizedBox(height: 24.h),
 
                 // Time Details
-                if (record.checkInTime != null ||
-                    record.checkOutTime != null) ...[
-                  Text(
-                    'Time Details',
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF111827),
-                    ),
+                Text(
+                  'Time Details',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF111827),
                   ),
-                  SizedBox(height: 12.h),
+                ),
+                SizedBox(height: 12.h),
 
-                  if (record.checkInTime != null)
-                    _buildTimeRow(
-                      'Check In',
-                      _formatTime(record.checkInTime!),
-                      Icons.login,
-                    ),
+                _buildTimeRow(
+                  'Check In',
+                  _formatTime(record.checkInTime),
+                  Icons.login,
+                ),
 
-                  if (record.checkOutTime != null)
-                    _buildTimeRow(
-                      'Check Out',
-                      _formatTime(record.checkOutTime!),
-                      Icons.logout,
-                    ),
+                if (record.checkOutTime != null)
+                  _buildTimeRow(
+                    'Check Out',
+                    _formatTime(record.checkOutTime!),
+                    Icons.logout,
+                  ),
 
-                  SizedBox(height: 20.h),
-                ],
+                SizedBox(height: 20.h),
 
                 // Contact Info
                 Text(
@@ -1044,14 +988,10 @@ class StaffAttendanceDetailModal extends StatelessWidget {
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'present':
-        return 'Present';
-      case 'absent':
-        return 'Absent';
-      case 'onLeave':
-        return 'On Leave';
-      case 'offDuty':
-        return 'Off Duty';
+      case 'checked_in':
+        return 'Checked In';
+      case 'completed':
+        return 'Completed';
       default:
         return 'Pending';
     }
@@ -1059,14 +999,10 @@ class StaffAttendanceDetailModal extends StatelessWidget {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'present':
+      case 'checked_in':
         return const Color(0xFF10B981);
-      case 'absent':
-        return const Color(0xFFEF4444);
-      case 'onLeave':
-        return const Color(0xFFF59E0B);
-      case 'offDuty':
-        return const Color(0xFF6B7280);
+      case 'completed':
+        return const Color(0xFF3B82F6);
       default:
         return const Color(0xFF9CA3AF);
     }

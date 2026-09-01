@@ -1413,10 +1413,23 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
                 ),
               );
             } else if (index == 2) {
+              final user = _currentUser;
+
+              if (user == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Security profile is still loading. Please try again.',
+                    ),
+                  ),
+                );
+                return;
+              }
+
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const StaffAttendanceScreen(),
+                  builder: (_) => StaffAttendanceScreen(user: user),
                 ),
               );
             } else if (index == 3) {

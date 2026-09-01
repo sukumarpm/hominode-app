@@ -214,6 +214,12 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                         );
                       }
 
+                      if (snapshot.hasError) {
+                        return Text(
+                          'Error loading attendance: ${snapshot.error}',
+                        );
+                      }
+
                       final stats =
                           snapshot.data ??
                           AttendanceStats(
@@ -236,7 +242,7 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                           SizedBox(width: 12.w),
                           Expanded(
                             child: TopMetricCard(
-                              title: 'Present Today',
+                              title: 'Checked In Today',
                               value: stats.present.toString(),
                               valueColor: const Color(0xFF10B981),
                             ),
@@ -244,16 +250,16 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                           SizedBox(width: 12.w),
                           Expanded(
                             child: TopMetricCard(
-                              title: 'Absent',
-                              value: stats.absent.toString(),
+                              title: 'On Duty',
+                              value: stats.currentlyOnDuty.toString(),
                               valueColor: const Color(0xFFF59E0B),
                             ),
                           ),
                           SizedBox(width: 12.w),
                           Expanded(
                             child: TopMetricCard(
-                              title: 'On Leave',
-                              value: stats.onLeave.toString(),
+                              title: 'Completed',
+                              value: stats.completed.toString(),
                               valueColor: const Color(0xFF9333EA),
                             ),
                           ),
@@ -271,6 +277,12 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                   child: FutureBuilder<AttendanceStats>(
                     future: _attendanceService.getTodayStats(),
                     builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Text(
+                          'Error loading attendance: ${snapshot.error}',
+                        );
+                      }
+
                       final stats =
                           snapshot.data ??
                           AttendanceStats(
@@ -524,9 +536,9 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                               if (index > 0) SizedBox(height: 16.h),
                               DateAttendanceSection(
                                 date: summary.date,
-                                present: summary.present,
-                                absent: summary.absent,
-                                onLeave: summary.onLeave,
+                                checkedIn: summary.present,
+                                currentlyOnDuty: summary.currentlyOnDuty,
+                                completed: summary.completed,
                                 total: summary.totalStaff,
                                 percentage: summary.attendancePercentage,
                                 onTap: () =>
@@ -634,9 +646,9 @@ class TopMetricCard extends StatelessWidget {
 // Date Attendance Section Widget
 class DateAttendanceSection extends StatelessWidget {
   final String date;
-  final int present;
-  final int absent;
-  final int onLeave;
+  final int checkedIn;
+  final int currentlyOnDuty;
+  final int completed;
   final int total;
   final double percentage;
   final VoidCallback? onTap;
@@ -644,9 +656,9 @@ class DateAttendanceSection extends StatelessWidget {
   const DateAttendanceSection({
     super.key,
     required this.date,
-    required this.present,
-    required this.absent,
-    required this.onLeave,
+    required this.checkedIn,
+    required this.currentlyOnDuty,
+    required this.completed,
     required this.total,
     required this.percentage,
     this.onTap,
@@ -716,7 +728,7 @@ class DateAttendanceSection extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8.r),
                       ),
                       child: Text(
-                        '$present / $total',
+                        '$checkedIn / $total',
                         style: TextStyle(
                           fontSize: 12.sp,
                           fontWeight: FontWeight.w700,
@@ -744,8 +756,8 @@ class DateAttendanceSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: AttendanceSummaryCard(
-                    value: present.toString(),
-                    label: 'Present',
+                    value: checkedIn.toString(),
+                    label: 'Checked In',
                     valueColor: const Color(0xFF10B981),
                     icon: Icons.check_circle_outline,
                   ),
@@ -753,19 +765,19 @@ class DateAttendanceSection extends StatelessWidget {
                 SizedBox(width: 12.w),
                 Expanded(
                   child: AttendanceSummaryCard(
-                    value: absent.toString(),
-                    label: 'Absent',
-                    valueColor: const Color(0xFFEF4444),
-                    icon: Icons.cancel_outlined,
+                    value: currentlyOnDuty.toString(),
+                    label: 'On Duty',
+                    valueColor: const Color(0xFFF59E0B),
+                    icon: Icons.schedule,
                   ),
                 ),
                 SizedBox(width: 12.w),
                 Expanded(
                   child: AttendanceSummaryCard(
-                    value: onLeave.toString(),
-                    label: 'On Leave',
-                    valueColor: const Color(0xFF9333EA),
-                    icon: Icons.event_busy_outlined,
+                    value: completed.toString(),
+                    label: 'Completed',
+                    valueColor: const Color(0xFF3B82F6),
+                    icon: Icons.logout,
                   ),
                 ),
               ],

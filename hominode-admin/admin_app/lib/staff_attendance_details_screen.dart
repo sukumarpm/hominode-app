@@ -39,12 +39,12 @@ class _StaffAttendanceDetailsScreenState
     }
   }
 
-  Duration? _calculateDuration(dynamic entryTime, dynamic exitTime) {
-    if (entryTime == null || exitTime == null) return null;
+  Duration? _calculateDuration(dynamic checkInTime, dynamic checkOutTime) {
+    if (checkInTime == null || checkOutTime == null) return null;
     try {
-      final entry = entryTime.toDate();
-      final exit = exitTime.toDate();
-      return exit.difference(entry);
+      final checkIn = checkInTime.toDate();
+      final checkOut = checkOutTime.toDate();
+      return checkOut.difference(checkIn);
     } catch (e) {
       return null;
     }
@@ -59,9 +59,9 @@ class _StaffAttendanceDetailsScreenState
 
   Color _getStatusColor(String status) {
     switch (status.toLowerCase()) {
-      case 'inside':
+      case 'checked_in':
         return const Color(0xFF10B981);
-      case 'exited':
+      case 'completed':
         return const Color(0xFF3B82F6);
       default:
         return const Color(0xFF6B7280);
@@ -115,8 +115,8 @@ class _StaffAttendanceDetailsScreenState
             itemBuilder: (context, index) {
               final record = attendanceRecords[index];
               final duration = _calculateDuration(
-                record['entryTime'],
-                record['exitTime'],
+                record['checkInTime'],
+                record['checkOutTime'],
               );
 
               return Card(
@@ -135,7 +135,7 @@ class _StaffAttendanceDetailsScreenState
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            _formatTime(record['entryTime']).split(',')[0],
+                            _formatTime(record['checkInTime']).split(',')[0],
                             style: TextStyle(
                               fontSize: 14.sp,
                               fontWeight: FontWeight.bold,
@@ -170,20 +170,20 @@ class _StaffAttendanceDetailsScreenState
 
                       // Entry Time
                       _buildTimeRow(
-                        'Entry Time',
-                        _formatTime(record['entryTime']),
+                        'Check In',
+                        _formatTime(record['checkInTime']),
                         Icons.login,
                       ),
                       SizedBox(height: 8.h),
 
                       // Exit Time
-                      if (record['exitTime'] != null)
+                      if (record['checkOutTime'] != null)
                         _buildTimeRow(
-                          'Exit Time',
-                          _formatTime(record['exitTime']),
+                          'Check Out',
+                          _formatTime(record['checkOutTime']),
                           Icons.logout,
                         ),
-                      if (record['exitTime'] != null) SizedBox(height: 8.h),
+                      if (record['checkOutTime'] != null) SizedBox(height: 8.h),
 
                       // Duration
                       if (duration != null)

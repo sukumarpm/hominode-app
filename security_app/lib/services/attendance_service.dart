@@ -89,24 +89,29 @@ class AttendanceService {
             : AttendanceModel.fromFirestore(snapshot.docs.first),
       );
 
-  Query<Map<String, dynamic>> _todayQuery() {
+  Query<Map<String, dynamic>> _todayQuery(SecurityUserModel user) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+
     return _firestore
         .collection('staffAttendance')
+        .where('communityId', isEqualTo: user.communityId)
+        .where('staffId', isEqualTo: user.uid)
         .where('checkInTime', isGreaterThanOrEqualTo: Timestamp.fromDate(today))
         .orderBy('checkInTime', descending: true);
   }
 
-  Future<List<AttendanceModel>> getAllStaffAttendanceToday() async =>
-      (await _todayQuery().get()).docs
-          .map(AttendanceModel.fromFirestore)
-          .toList();
+  Future<List<AttendanceModel>> getAllStaffAttendanceToday(
+    SecurityUserModel user,
+  ) async => (await _todayQuery(
+    user,
+  ).get()).docs.map(AttendanceModel.fromFirestore).toList();
 
-  Stream<List<AttendanceModel>> getAllStaffAttendanceTodayStream() =>
-      _todayQuery().snapshots().map(
-        (snapshot) => snapshot.docs.map(AttendanceModel.fromFirestore).toList(),
-      );
+  Stream<List<AttendanceModel>> getAllStaffAttendanceTodayStream(
+    SecurityUserModel user,
+  ) => _todayQuery(user).snapshots().map(
+    (snapshot) => snapshot.docs.map(AttendanceModel.fromFirestore).toList(),
+  );
 
   Future<List<AttendanceModel>> getAttendanceHistory(
     String staffId, {

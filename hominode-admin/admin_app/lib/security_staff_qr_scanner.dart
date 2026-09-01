@@ -245,53 +245,12 @@ class StaffDetailsModal extends StatefulWidget {
 }
 
 class _StaffDetailsModalState extends State<StaffDetailsModal> {
-  bool _isProcessing = false;
   String? _currentStatus;
 
   @override
   void initState() {
     super.initState();
     _currentStatus = widget.staffData['status'] ?? 'unknown';
-  }
-
-  Future<void> _markEntry() async {
-    setState(() => _isProcessing = true);
-    try {
-      await widget.qrService.markStaffEntry(widget.staffId);
-      setState(() => _currentStatus = 'inside');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Entry marked successfully'),
-          backgroundColor: Color(0xFF10B981),
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
-    } finally {
-      setState(() => _isProcessing = false);
-    }
-  }
-
-  Future<void> _markExit() async {
-    setState(() => _isProcessing = true);
-    try {
-      await widget.qrService.markStaffExit(widget.staffId);
-      setState(() => _currentStatus = 'exited');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Exit marked successfully'),
-          backgroundColor: Color(0xFF10B981),
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
-    } finally {
-      setState(() => _isProcessing = false);
-    }
   }
 
   @override
@@ -404,41 +363,23 @@ class _StaffDetailsModalState extends State<StaffDetailsModal> {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _isProcessing ? null : _markEntry,
+                    onPressed: null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF10B981),
                       padding: EdgeInsets.symmetric(vertical: 12.h),
                     ),
-                    child: _isProcessing
-                        ? SizedBox(
-                            height: 20.h,
-                            width: 20.w,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation(Colors.white),
-                            ),
-                          )
-                        : const Text('Mark Entry'),
+                    child: const Text('Mark Entry'),
                   ),
                 ),
                 SizedBox(width: 12.w),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _isProcessing ? null : _markExit,
+                    onPressed: null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFEF4444),
                       padding: EdgeInsets.symmetric(vertical: 12.h),
                     ),
-                    child: _isProcessing
-                        ? SizedBox(
-                            height: 20.h,
-                            width: 20.w,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation(Colors.white),
-                            ),
-                          )
-                        : const Text('Mark Exit'),
+                    child: const Text('Mark Exit'),
                   ),
                 ),
               ],

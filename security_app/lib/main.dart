@@ -26,6 +26,16 @@ Future<void> main() async {
     appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
   );
   try {
+    final appCheckToken = await FirebaseAppCheck.instance.getToken(true);
+
+    debugPrint(
+      '🔐 SECURITY APP CHECK TOKEN AVAILABLE: '
+      '${appCheckToken?.isNotEmpty == true}',
+    );
+  } catch (e) {
+    debugPrint('❌ SECURITY APP CHECK TOKEN ERROR: $e');
+  }
+  try {
     await HominodePushNotifications.instance.initialize(
       onAuthorizedTap: SecurityNotificationRouter.handle,
     );

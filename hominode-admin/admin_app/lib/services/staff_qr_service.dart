@@ -154,11 +154,17 @@ class StaffQRService {
   /// Get staff details by ID
   Future<Map<String, dynamic>> getStaffDetails(String staffId) async {
     try {
-      final doc = await _firestore.collection('staff').doc(staffId).get();
-      if (!doc.exists) {
+      final communityId = _adminService.requireCurrentCommunityId();
+      final snapshot = await _firestore
+          .collection('securityStaff')
+          .where('communityId', isEqualTo: communityId)
+          .where(FieldPath.documentId, isEqualTo: staffId)
+          .limit(1)
+          .get();
+      if (snapshot.docs.isEmpty) {
         throw Exception('Staff member not found');
       }
-      return doc.data() ?? {};
+      return _normalizedSecurityStaff(snapshot.docs.single);
     } catch (e) {
       print('StaffQRService ERROR: Failed to get staff details: $e');
       throw Exception('Failed to get staff details: $e');
@@ -172,15 +178,22 @@ class StaffQRService {
       if (adminId == null) throw Exception('Admin not logged in');
 
       final snapshot = await _firestore
-          .collection('staff')
+          .collection('securityStaff')
           .where(
             'communityId',
             isEqualTo: _adminService.requireCurrentCommunityId(),
           )
-          .orderBy('createdAt', descending: true)
           .get();
 
-      return snapshot.docs.map((doc) => doc.data()).toList();
+      final staff = snapshot.docs.map(_normalizedSecurityStaff).toList();
+      staff.sort((a, b) {
+        final aCreatedAt = a['createdAt'] as Timestamp?;
+        final bCreatedAt = b['createdAt'] as Timestamp?;
+        return (bCreatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
+          aCreatedAt?.millisecondsSinceEpoch ?? 0,
+        );
+      });
+      return staff;
     } catch (e) {
       print('StaffQRService ERROR: Failed to get staff members: $e');
       throw Exception('Failed to get staff members: $e');
@@ -193,67 +206,18 @@ class StaffQRService {
 
   /// Mark staff entry
   Future<void> markStaffEntry(String staffId) async {
-    try {
-      final staffData = await getStaffDetails(staffId);
-      final now = DateTime.now();
-
-      await _firestore.collection('staffAttendance').add({
-        'communityId': _adminService.requireCurrentCommunityId(),
-        'staffId': staffId,
-        'staffName': staffData['name'],
-        'buildingId': staffData['buildingId'],
-        'gateName': staffData['gateName'],
-        'entryTime': Timestamp.fromDate(now),
-        'exitTime': null,
-        'status': 'inside',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      // Update staff last check-in
-      await _firestore.collection('staff').doc(staffId).update({
-        'lastCheckIn': Timestamp.fromDate(now),
-        'status': 'inside',
-      });
-
-      print('StaffQRService: Entry marked for staff: $staffId');
-    } catch (e) {
-      print('StaffQRService ERROR: Failed to mark entry: $e');
-      throw Exception('Failed to mark entry: $e');
-    }
+    throw UnsupportedError(
+      'Admin QR check-in is disabled. Security must check in from the '
+      'Security app.',
+    );
   }
 
   /// Mark staff exit
   Future<void> markStaffExit(String staffId) async {
-    try {
-      final now = DateTime.now();
-
-      // Find today's attendance record
-      final snapshot = await _firestore
-          .collection('staffAttendance')
-          .where('staffId', isEqualTo: staffId)
-          .where('status', isEqualTo: 'inside')
-          .orderBy('entryTime', descending: true)
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isNotEmpty) {
-        await snapshot.docs.first.reference.update({
-          'exitTime': Timestamp.fromDate(now),
-          'status': 'exited',
-        });
-      }
-
-      // Update staff last check-out
-      await _firestore.collection('staff').doc(staffId).update({
-        'lastCheckOut': Timestamp.fromDate(now),
-        'status': 'outside',
-      });
-
-      print('StaffQRService: Exit marked for staff: $staffId');
-    } catch (e) {
-      print('StaffQRService ERROR: Failed to mark exit: $e');
-      throw Exception('Failed to mark exit: $e');
-    }
+    throw UnsupportedError(
+      'Admin QR check-out is disabled. Security must check out from the '
+      'Security app.',
+    );
   }
 
   /// Get staff attendance records
@@ -261,8 +225,12 @@ class StaffQRService {
     try {
       final snapshot = await _firestore
           .collection('staffAttendance')
+          .where(
+            'communityId',
+            isEqualTo: _adminService.requireCurrentCommunityId(),
+          )
           .where('staffId', isEqualTo: staffId)
-          .orderBy('entryTime', descending: true)
+          .orderBy('checkInTime', descending: true)
           .limit(30)
           .get();
 
@@ -301,5 +269,23 @@ class StaffQRService {
       print('StaffQRService ERROR: Failed to delete staff: $e');
       throw Exception('Failed to delete staff: $e');
     }
+  }
+
+  Map<String, dynamic> _normalizedSecurityStaff(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = Map<String, dynamic>.from(doc.data());
+    return {
+      ...data,
+      'id': doc.id,
+      'staffId': data['staffId'] ?? data['uid'] ?? doc.id,
+      'phone': data['phone'] ?? data['phoneNumber'] ?? '',
+      'gateName':
+          data['gateName'] ??
+          data['gateAssignment'] ??
+          data['gateId'] ??
+          'Not assigned',
+      'shiftTiming': data['shiftTiming'] ?? data['shift'] ?? 'Not assigned',
+    };
   }
 }

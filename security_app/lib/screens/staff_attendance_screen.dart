@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
-import '../services/attendance_service.dart';
+import 'package:security_app/models/security_user_model.dart';
+
 import '../models/attendance_model.dart';
-import '../widgets/standard_header.dart';
+import '../services/attendance_service.dart';
 import '../utils/app_colors.dart';
+import '../widgets/standard_header.dart';
 
 class StaffAttendanceScreen extends StatefulWidget {
-  const StaffAttendanceScreen({super.key});
+  const StaffAttendanceScreen({required this.user, super.key});
+
+  final SecurityUserModel user;
 
   @override
   State<StaffAttendanceScreen> createState() => _StaffAttendanceScreenState();
@@ -112,7 +116,9 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: StreamBuilder<List<AttendanceModel>>(
-        stream: _attendanceService.getAllStaffAttendanceTodayStream(),
+        stream: _attendanceService.getAllStaffAttendanceTodayStream(
+          widget.user,
+        ),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Container(
@@ -121,14 +127,32 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
               ),
+              child: const Center(child: CircularProgressIndicator()),
+            );
+          }
+          if (snapshot.hasError) {
+            debugPrint('❌ STAFF ATTENDANCE STREAM ERROR: ${snapshot.error}');
+
+            return Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
               child: const Center(
-                child: CircularProgressIndicator(),
+                child: Text(
+                  'Unable to load attendance.',
+                  style: TextStyle(color: AppColors.errorRed),
+                ),
               ),
             );
           }
-
           final attendances = snapshot.data ?? [];
           final checkedInCount = attendances.length;
+
+          final onDutyCount = attendances
+              .where((attendance) => attendance.checkOutTime == null)
+              .length;
 
           return Container(
             padding: const EdgeInsets.all(16),
@@ -169,7 +193,7 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                     Expanded(
                       child: _buildStatItem(
                         'On Duty',
-                        '$checkedInCount',
+                        '$onDutyCount',
                         AppColors.primaryBlue,
                         Icons.person,
                       ),
@@ -242,15 +266,8 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
           controller: _searchController,
           decoration: InputDecoration(
             hintText: 'Search by staff name...',
-            hintStyle: TextStyle(
-              color: Colors.grey[500],
-              fontSize: 14,
-            ),
-            prefixIcon: Icon(
-              Icons.search,
-              color: Colors.grey[500],
-              size: 20,
-            ),
+            hintStyle: TextStyle(color: Colors.grey[500], fontSize: 14),
+            prefixIcon: Icon(Icons.search, color: Colors.grey[500], size: 20),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
                     icon: const Icon(Icons.clear, size: 20),
@@ -286,14 +303,32 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
           ),
           const SizedBox(height: 12),
           StreamBuilder<List<AttendanceModel>>(
-            stream: _attendanceService.getAllStaffAttendanceTodayStream(),
+            stream: _attendanceService.getAllStaffAttendanceTodayStream(
+              widget.user,
+            ),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: CircularProgressIndicator(),
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                debugPrint(
+                  '❌ STAFF ATTENDANCE STREAM ERROR: ${snapshot.error}',
+                );
+
+                return Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'Unable to load attendance.',
+                      style: TextStyle(color: AppColors.errorRed),
+                    ),
+                  ),
                 );
               }
-
               final attendances = snapshot.data ?? [];
 
               if (attendances.isEmpty) {
@@ -306,10 +341,7 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                   child: const Center(
                     child: Text(
                       'No check-ins today',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.textGray,
-                      ),
+                      style: TextStyle(fontSize: 14, color: AppColors.textGray),
                     ),
                   ),
                 );
@@ -317,7 +349,9 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
 
               // Filter by search query
               final filtered = attendances
-                  .where((a) => a.staffName.toLowerCase().contains(_searchQuery))
+                  .where(
+                    (a) => a.staffName.toLowerCase().contains(_searchQuery),
+                  )
                   .toList();
 
               return ListView.builder(
@@ -381,7 +415,10 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.successGreen.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
@@ -404,10 +441,7 @@ class _StaffAttendanceScreenState extends State<StaffAttendanceScreen> {
               const SizedBox(width: 8),
               Text(
                 _formatTime(attendance.checkInTime),
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textGray,
-                ),
+                style: const TextStyle(fontSize: 12, color: AppColors.textGray),
               ),
               const SizedBox(width: 16),
               Icon(Icons.location_on, size: 16, color: AppColors.textGray),

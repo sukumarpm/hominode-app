@@ -272,7 +272,14 @@ class _StaffDetailsScreenState extends State<StaffDetailsScreen> {
                   );
                 }
 
-                if (snapshot.hasError || !snapshot.hasData) {
+                if (snapshot.hasError) {
+                  return _buildSection(
+                    title: 'Attendance Summary (Last 30 Days)',
+                    child: Text('Error loading attendance: ${snapshot.error}'),
+                  );
+                }
+
+                if (!snapshot.hasData) {
                   return const SizedBox.shrink();
                 }
 
@@ -286,7 +293,7 @@ class _StaffDetailsScreenState extends State<StaffDetailsScreen> {
                         children: [
                           Expanded(
                             child: _buildAttendanceStatCard(
-                              'Present',
+                              'Checked In',
                               stats.present.toString(),
                               const Color(0xFF10B981),
                               Icons.check_circle,
@@ -295,10 +302,10 @@ class _StaffDetailsScreenState extends State<StaffDetailsScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: _buildAttendanceStatCard(
-                              'Absent',
-                              stats.absent.toString(),
-                              const Color(0xFFEF4444),
-                              Icons.cancel,
+                              'Completed',
+                              stats.completed.toString(),
+                              const Color(0xFF3B82F6),
+                              Icons.logout,
                             ),
                           ),
                         ],
@@ -308,10 +315,10 @@ class _StaffDetailsScreenState extends State<StaffDetailsScreen> {
                         children: [
                           Expanded(
                             child: _buildAttendanceStatCard(
-                              'On Leave',
-                              stats.onLeave.toString(),
+                              'On Duty',
+                              stats.currentlyOnDuty ? 'Yes' : 'No',
                               const Color(0xFFF59E0B),
-                              Icons.event_busy,
+                              Icons.schedule,
                             ),
                           ),
                           const SizedBox(width: 12),

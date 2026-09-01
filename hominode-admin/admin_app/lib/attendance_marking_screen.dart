@@ -19,13 +19,7 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
   String _searchQuery = '';
   String selectedFilter = 'All';
 
-  final List<String> filters = [
-    'All',
-    'Present',
-    'Absent',
-    'On Leave',
-    'Pending',
-  ];
+  final List<String> filters = ['All'];
 
   @override
   void initState() {
@@ -41,15 +35,6 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  bool _matchesFilter(StaffMember staff) {
-    if (selectedFilter == 'All') return true;
-    if (selectedFilter == 'Present') return staff.status == 'present';
-    if (selectedFilter == 'Absent') return staff.status == 'absent';
-    if (selectedFilter == 'On Leave') return staff.status == 'onLeave';
-    if (selectedFilter == 'Pending') return staff.status == 'pending';
-    return true;
   }
 
   @override
@@ -152,6 +137,12 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
                         );
                       }
 
+                      if (snapshot.hasError) {
+                        return Text(
+                          'Error loading attendance: ${snapshot.error}',
+                        );
+                      }
+
                       final stats =
                           snapshot.data ??
                           AttendanceStats(
@@ -166,7 +157,7 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
                         children: [
                           Expanded(
                             child: _buildQuickStatCard(
-                              'Present',
+                              'Checked In',
                               stats.present.toString(),
                               const Color(0xFF10B981),
                               Icons.check_circle,
@@ -175,10 +166,10 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
                           SizedBox(width: 12.w),
                           Expanded(
                             child: _buildQuickStatCard(
-                              'Absent',
-                              stats.absent.toString(),
-                              const Color(0xFFEF4444),
-                              Icons.cancel,
+                              'On Duty',
+                              stats.currentlyOnDuty.toString(),
+                              const Color(0xFF10B981),
+                              Icons.schedule,
                             ),
                           ),
                           SizedBox(width: 12.w),
@@ -202,7 +193,7 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
                     children: [
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: _markAllPresent,
+                          onPressed: null,
                           icon: Icon(Icons.check_circle, size: 18.w),
                           label: const Text('Mark All Present'),
                           style: ElevatedButton.styleFrom(
@@ -320,7 +311,7 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
 
                   // Staff List - Real-time from Firestore
                   StreamBuilder<List<StaffMember>>(
-                    stream: _staffService.getStaffMembers(),
+                    stream: _staffService.getSecurityStaffMembers(),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return Center(
@@ -376,7 +367,7 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
                             staff.role.toLowerCase().contains(_searchQuery) ||
                             staff.phone.contains(_searchQuery);
 
-                        return matchesSearch && _matchesFilter(staff);
+                        return matchesSearch;
                       }).toList();
 
                       if (filteredStaff.isEmpty) {
@@ -423,11 +414,7 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
                         children: filteredStaff.map((staff) {
                           return Column(
                             children: [
-                              StaffMarkingCard(
-                                staff: staff,
-                                onStatusChanged: (newStatus) =>
-                                    _updateStaffStatus(staff, newStatus),
-                              ),
+                              StaffMarkingCard(staff: staff),
                               SizedBox(height: 12.h),
                             ],
                           );
@@ -493,98 +480,6 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
     );
   }
 
-  void _updateStaffStatus(StaffMember staff, String newStatus) async {
-    try {
-      // Mark attendance in Firestore
-      if (newStatus == 'present') {
-        await _attendanceService.markPresent(staff.id);
-      } else if (newStatus == 'absent') {
-        await _attendanceService.markAbsent(staff.id);
-      } else if (newStatus == 'onLeave') {
-        await _attendanceService.markOnLeave(staff.id);
-      }
-
-      // Show feedback
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${staff.name} marked as ${_getStatusText(newStatus)}',
-            ),
-            backgroundColor: _getStatusColor(newStatus),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error marking attendance: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  void _markAllPresent() async {
-    try {
-      await _attendanceService.markAllPresent();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('All staff marked as present'),
-            backgroundColor: Color(0xFF10B981),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error marking all present: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  String _getStatusText(String status) {
-    switch (status) {
-      case 'present':
-        return 'Present';
-      case 'absent':
-        return 'Absent';
-      case 'onLeave':
-        return 'On Leave';
-      case 'offDuty':
-        return 'Off Duty';
-      default:
-        return 'Pending';
-    }
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'present':
-        return const Color(0xFF10B981);
-      case 'absent':
-        return const Color(0xFFEF4444);
-      case 'onLeave':
-        return const Color(0xFFF59E0B);
-      case 'offDuty':
-        return const Color(0xFF6B7280);
-      default:
-        return const Color(0xFF9CA3AF);
-    }
-  }
-
   void _openQRScanner() {
     Navigator.push(
       context,
@@ -607,13 +502,8 @@ class _AttendanceMarkingScreenState extends State<AttendanceMarkingScreen> {
 
 class StaffMarkingCard extends StatelessWidget {
   final StaffMember staff;
-  final Function(String) onStatusChanged;
 
-  const StaffMarkingCard({
-    super.key,
-    required this.staff,
-    required this.onStatusChanged,
-  });
+  const StaffMarkingCard({super.key, required this.staff});
 
   @override
   Widget build(BuildContext context) {
@@ -716,9 +606,7 @@ class StaffMarkingCard extends StatelessWidget {
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: staff.status == 'present'
-                      ? null
-                      : () => onStatusChanged('present'),
+                  onPressed: null,
                   icon: Icon(Icons.check_circle, size: 16.w),
                   label: const Text('Present'),
                   style: ElevatedButton.styleFrom(
@@ -734,9 +622,7 @@ class StaffMarkingCard extends StatelessWidget {
               SizedBox(width: 8.w),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: staff.status == 'absent'
-                      ? null
-                      : () => onStatusChanged('absent'),
+                  onPressed: null,
                   icon: Icon(Icons.cancel, size: 16.w),
                   label: const Text('Absent'),
                   style: OutlinedButton.styleFrom(
@@ -756,9 +642,7 @@ class StaffMarkingCard extends StatelessWidget {
               SizedBox(width: 8.w),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: staff.status == 'onLeave'
-                      ? null
-                      : () => onStatusChanged('onLeave'),
+                  onPressed: null,
                   icon: Icon(Icons.event_busy, size: 16.w),
                   label: const Text('Leave'),
                   style: OutlinedButton.styleFrom(

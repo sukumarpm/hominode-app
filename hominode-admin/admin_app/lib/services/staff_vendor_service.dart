@@ -140,6 +140,24 @@ class StaffVendorService {
         });
   }
 
+  /// Security roster for the Admin attendance flow.
+  Stream<List<StaffMember>> getSecurityStaffMembers() {
+    final communityId = _adminService.requireCurrentCommunityId();
+
+    return _firestore
+        .collection('securityStaff')
+        .where('communityId', isEqualTo: communityId)
+        .snapshots()
+        .map((snapshot) {
+          final staff = snapshot.docs
+              .map((doc) => StaffMember.fromFirestore(doc.id, doc.data()))
+              .toList(growable: false);
+          return [...staff]..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+        });
+  }
+
   /// Get staff member by ID
   Future<StaffMember?> getStaffMemberById(String staffId) async {
     try {
@@ -163,6 +181,21 @@ class StaffVendorService {
       print('StaffVendorService ERROR: Failed to fetch staff member: $e');
       return null;
     }
+  }
+
+  /// Security profile lookup scoped to the selected Admin community.
+  Future<StaffMember?> getSecurityStaffMemberById(String staffId) async {
+    final communityId = _adminService.requireCurrentCommunityId();
+    final snapshot = await _firestore
+        .collection('securityStaff')
+        .where('communityId', isEqualTo: communityId)
+        .where(FieldPath.documentId, isEqualTo: staffId)
+        .limit(1)
+        .get();
+
+    if (snapshot.docs.isEmpty) return null;
+    final doc = snapshot.docs.single;
+    return StaffMember.fromFirestore(doc.id, doc.data());
   }
 
   /// Update staff member
@@ -442,7 +475,7 @@ class StaffMember {
       id: id,
       name: data['name'] ?? '',
       role: data['role'] ?? '',
-      phone: data['phone'] ?? '',
+      phone: data['phone'] ?? data['phoneNumber'] ?? '',
       email: data['email'],
       address: data['address'],
       aadharNumber: data['aadharNumber'],
@@ -453,7 +486,8 @@ class StaffMember {
       photoUrl: data['photoUrl'],
       aadharFrontUrl: data['aadharFrontUrl'],
       aadharBackUrl: data['aadharBackUrl'],
-      status: data['status'] ?? 'pending',
+      status:
+          data['status'] ?? (data['isActive'] == true ? 'active' : 'inactive'),
       lastCheckIn: (data['lastCheckIn'] as Timestamp?)?.toDate(),
       lastCheckOut: (data['lastCheckOut'] as Timestamp?)?.toDate(),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
