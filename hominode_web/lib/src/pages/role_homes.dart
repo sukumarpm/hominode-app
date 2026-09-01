@@ -15,6 +15,11 @@ import 'admin_residents_page.dart';
 import 'admin_settings_page.dart';
 import 'admin_visitors_page.dart';
 import 'resident_dashboard.dart';
+import 'resident_bills_page.dart';
+import 'resident_events_page.dart';
+import 'resident_notices_page.dart';
+import 'resident_unit_page.dart';
+import 'resident_visitors_page.dart';
 import 'super_admin_admins_page.dart';
 import 'super_admin_communities_page.dart';
 import 'super_admin_dashboard.dart';
@@ -138,6 +143,7 @@ class AdminWebHome extends StatelessWidget {
       profileName: session.displayName ?? session.phoneNumber ?? 'Admin User',
       profileSubtitle: session.activeTenant!.name,
       onLogout: onLogout,
+      onNavigate: onNavigate,
       trailing: session.availableTenants.length > 1
           ? _TenantSwitcher(session: session, onSelect: onSelectTenant)
           : null,
@@ -228,10 +234,26 @@ class ResidentWebHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = session.displayName?.trim();
+    final currentPath = ModalRoute.of(context)?.settings.name ?? '/resident';
+    final page = switch (currentPath) {
+      '/resident/unit' => ResidentUnitPage(session: session),
+      '/resident/bills' => ResidentBillsPage(session: session),
+      '/resident/notices' => ResidentNoticesPage(session: session),
+      '/resident/events' => ResidentEventsPage(session: session),
+      '/resident/visitors' => ResidentVisitorsPage(session: session),
+      _ => ResidentDashboard(session: session),
+    };
+    final title = switch (currentPath) {
+      '/resident/unit' => 'My Unit',
+      '/resident/bills' => 'Bills',
+      '/resident/notices' => 'Notices',
+      '/resident/events' => 'Events',
+      '/resident/visitors' => 'Visitors',
+      _ =>
+        name == null || name.isEmpty ? 'Welcome Home' : 'Welcome Home, $name',
+    };
     return HominodeWebShell(
-      title: name == null || name.isEmpty
-          ? 'Welcome Home'
-          : 'Welcome Home, $name',
+      title: title,
       subtitle: 'Your home and community at a glance',
       roleLabel: 'Resident',
       palette: RolePalette.resident,
@@ -239,12 +261,7 @@ class ResidentWebHome extends StatelessWidget {
       profileSubtitle: session.flatLabel ?? session.activeTenant!.name,
       onLogout: onLogout,
       destinations: [
-        WebDestination(
-          'Home',
-          Icons.home_outlined,
-          ResidentDashboard(session: session),
-          path: '/resident',
-        ),
+        WebDestination('Home', Icons.home_outlined, page, path: '/resident'),
       ],
     );
   }

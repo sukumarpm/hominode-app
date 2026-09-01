@@ -125,6 +125,7 @@ class WebSessionResolver {
     Map<String, dynamic> data,
   ) async {
     final profile = ResidentProfile.tryParse(uid, data);
+
     if (profile == null || !profile.canEnter) {
       throw const SessionResolutionException(
         'Invalid, inactive, or unapproved resident profile.',

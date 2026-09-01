@@ -1,0 +1,13 @@
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "HEAD"],
+    "responseHeader": [
+      "Authorization",
+      "X-Firebase-AppCheck",
+      "Content-Type",
+      "Content-Length"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

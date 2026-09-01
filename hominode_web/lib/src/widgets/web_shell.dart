@@ -20,6 +20,7 @@ class HominodeWebShell extends StatefulWidget {
     required this.palette,
     required this.destinations,
     required this.onLogout,
+    this.onNavigate,
     this.initialIndex = 0,
     this.profileName,
     this.profileSubtitle,
@@ -32,6 +33,7 @@ class HominodeWebShell extends StatefulWidget {
   final RolePalette palette;
   final List<WebDestination> destinations;
   final Future<void> Function() onLogout;
+  final ValueChanged<String>? onNavigate;
   final int initialIndex;
   final String? profileName;
   final String? profileSubtitle;
@@ -42,6 +44,7 @@ class HominodeWebShell extends StatefulWidget {
 }
 
 class _HominodeWebShellState extends State<HominodeWebShell> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late int index = _safeIndex(widget.initialIndex);
 
   int _safeIndex(int value) {
@@ -58,7 +61,14 @@ class _HominodeWebShellState extends State<HominodeWebShell> {
 
   void _select(int value, bool mobile) {
     if (value < 0 || value >= widget.destinations.length) return;
-    if (mobile && Navigator.of(context).canPop()) Navigator.of(context).pop();
+    if (mobile && _scaffoldKey.currentState?.isDrawerOpen == true) {
+      _scaffoldKey.currentState!.closeDrawer();
+    }
+    final path = widget.destinations[value].path;
+    if (path != null && widget.onNavigate != null) {
+      widget.onNavigate!(path);
+      return;
+    }
     setState(() => index = value);
   }
 
@@ -80,6 +90,7 @@ class _HominodeWebShellState extends State<HominodeWebShell> {
       );
 
       return Scaffold(
+        key: _scaffoldKey,
         backgroundColor: WebDesign.background,
         drawer: mobile
             ? Drawer(

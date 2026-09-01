@@ -2,6 +2,86 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function residentMayAccessReceipt(communityId, billId, uid) {
+      let profilePath =
+        /databases/(default)/documents/users/$(request.auth.uid);
+
+      let billPath =
+        /databases/(default)/documents/bills/$(billId);
+
+      return signedIn()
+        && uid == request.auth.uid
+
+        && firestore.exists(profilePath)
+        && firestore.exists(billPath)
+
+        && firestore.get(profilePath).data.role == 'resident'
+        && firestore.get(profilePath).data.approvalStatus == 'approved'
+        && firestore.get(profilePath).data.isActive == true
+
+        && (
+          !('status' in firestore.get(profilePath).data)
+          || firestore.get(profilePath).data.status == 'active'
+        )
+
+        && firestore.get(profilePath).data.communityId == communityId
+
+        && firestore.get(billPath).data.communityId == communityId
+
+        && firestore.get(profilePath).data.flatId
+          == firestore.get(billPath).data.flatId;
+    }
+
+    function adminMayReadReceipt(communityId) {
+      let adminPath =
+        /databases/(default)/documents/admins/$(request.auth.uid);
+
+      return signedIn()
+        && firestore.exists(adminPath)
+
+        && firestore.get(adminPath).data.role == 'admin'
+        && firestore.get(adminPath).data.isActive == true
+
+        && firestore.get(adminPath).data.authorizedCommunityIds is list
+        && communityId
+          in firestore.get(adminPath).data.authorizedCommunityIds;
+    }
+
+    // ============================================================
+    // PRIVATE PAYMENT RECEIPTS
+    // ============================================================
+
+    match /payment_receipts/{communityId}/{billId}/{uid}/{fileName} {
+
+      // Resident can read only their own bill receipt.
+      // Authorized community Admin can read for verification.
+      allow read: if
+        residentMayAccessReceipt(communityId, billId, uid)
+        || adminMayReadReceipt(communityId);
+
+      // Resident can create an image receipt only for their own bill.
+      //
+      // resource == null prevents overwriting an existing receipt.
+      // request.resource != null prevents delete operations.
+      allow write: if
+        residentMayAccessReceipt(communityId, billId, uid)
+
+        && request.resource != null
+        && resource == null
+
+        && request.resource.size < 10 * 1024 * 1024
+
+        && request.resource.contentType.matches(
+          'image/(jpeg|jpg|png|heic|heif)'
+        );
+    }
+
+    // Everything else remains private.
     match /{allPaths=**} {
       allow read, write: if false;
     }

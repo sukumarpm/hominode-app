@@ -403,9 +403,15 @@ abstract final class WebAuthGuardStatePolicy {
         return '/admin';
 
       case WebRole.resident:
-        if (requested == '/resident') {
-          return '/resident';
-        }
+        const residentPaths = {
+          '/resident',
+          '/resident/unit',
+          '/resident/bills',
+          '/resident/notices',
+          '/resident/events',
+          '/resident/visitors',
+        };
+        if (residentPaths.contains(requested)) return requested;
 
         final slug = session.activeTenant?.slug;
 

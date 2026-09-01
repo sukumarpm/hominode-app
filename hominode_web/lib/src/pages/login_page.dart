@@ -129,6 +129,7 @@
 //   );
 // }
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class LoginPage extends StatefulWidget {
@@ -175,9 +176,13 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      final confirmation = await FirebaseAuth.instance.signInWithPhoneNumber(
-        phone,
-      );
+      final auth = FirebaseAuth.instance;
+
+      if (kDebugMode) {
+        await auth.setSettings(appVerificationDisabledForTesting: true);
+      }
+
+      final confirmation = await auth.signInWithPhoneNumber(phone);
 
       if (!mounted) return;
 
@@ -191,7 +196,9 @@ class _LoginPageState extends State<LoginPage> {
       setState(() {
         _message = error.message ?? 'Phone verification failed.';
       });
-    } catch (error) {
+
+      debugPrint('[WebPhoneAuth] code=${error.code} message=${error.message}');
+    } catch (error, stackTrace) {
       if (!mounted) return;
 
       setState(() {
@@ -199,6 +206,7 @@ class _LoginPageState extends State<LoginPage> {
       });
 
       debugPrint('Phone verification error: $error');
+      debugPrintStack(stackTrace: stackTrace);
     } finally {
       if (mounted) {
         setState(() {

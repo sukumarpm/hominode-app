@@ -5,10 +5,12 @@ class ResidentProfile {
     required this.isActive,
     required this.approvalStatus,
   });
+
   final String uid;
   final String communityId;
   final bool isActive;
   final String approvalStatus;
+
   bool get canEnter =>
       isActive && approvalStatus == 'approved' && communityId.isNotEmpty;
 
@@ -16,14 +18,20 @@ class ResidentProfile {
     String documentId,
     Map<String, dynamic> data,
   ) {
-    if (data['role'] != 'resident' || data['isActive'] is! bool) return null;
-    final storedUid = _string(data['uid']);
-    if (storedUid.isNotEmpty && storedUid != documentId) return null;
+    if (data['role'] != 'resident' || data['isActive'] is! bool) {
+      return null;
+    }
+
+    final isActive = data['isActive'] == true;
+    final storedApprovalStatus = _string(data['approvalStatus']);
+
     return ResidentProfile(
       uid: documentId,
       communityId: _string(data['communityId']),
-      isActive: data['isActive'] == true,
-      approvalStatus: _string(data['approvalStatus']),
+      isActive: isActive,
+      approvalStatus: storedApprovalStatus.isNotEmpty
+          ? storedApprovalStatus
+          : (isActive ? 'approved' : 'blocked'),
     );
   }
 }

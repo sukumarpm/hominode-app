@@ -126,6 +126,29 @@ void main() {
         WebAuthGuardStatePolicy.guardedPath('/admin/unknown', adminSession),
         '/admin',
       );
+      const residentSession = WebSession(
+        uid: 'resident',
+        role: WebRole.resident,
+      );
+      for (final path in const {
+        '/resident/unit',
+        '/resident/bills',
+        '/resident/notices',
+        '/resident/events',
+        '/resident/visitors',
+      }) {
+        expect(
+          WebAuthGuardStatePolicy.guardedPath(path, residentSession),
+          path,
+        );
+      }
+      expect(
+        WebAuthGuardStatePolicy.guardedPath(
+          '/resident/unknown',
+          residentSession,
+        ),
+        '/resident',
+      );
     },
   );
 }

@@ -15,11 +15,6 @@ class ResidentDashboard extends StatefulWidget {
 }
 
 class _ResidentDashboardState extends State<ResidentDashboard> {
-  final _apartmentKey = GlobalKey();
-  final _billingKey = GlobalKey();
-  final _noticesKey = GlobalKey();
-  final _eventsKey = GlobalKey();
-  final _quickKey = GlobalKey();
   late Future<ResidentDashboardData> _future;
 
   @override
@@ -46,16 +41,9 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
         flatId: widget.session.flatId,
       );
 
-  void _scrollTo(GlobalKey key) {
-    final target = key.currentContext;
-    if (target != null) {
-      Scrollable.ensureVisible(
-        target,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-        alignment: .05,
-      );
-    }
+  void _navigateTo(String path) {
+    if (ModalRoute.of(context)?.settings.name == path) return;
+    Navigator.of(context).pushNamed(path);
   }
 
   @override
@@ -96,7 +84,6 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
                 color: const Color(0xFF246BFD),
               ),
               DashboardStatCard(
-                key: _billingKey,
                 label: 'Pending bills',
                 value: metricValue(data.pendingBills),
                 caption: data.pendingAmount == null
@@ -119,13 +106,11 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
             flexes: const [1, 2],
             children: [
               SectionCard(
-                key: _apartmentKey,
                 title: 'My apartment',
                 subtitle: widget.session.activeTenant!.name,
                 child: _ApartmentCard(session: widget.session),
               ),
               SectionCard(
-                key: _quickKey,
                 title: 'Quick access',
                 subtitle: 'Jump to your dashboard information',
                 child: QuickActionGrid(
@@ -134,25 +119,31 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
                       label: 'My unit',
                       icon: Icons.apartment_outlined,
                       color: RolePalette.resident.primary,
-                      onTap: () => _scrollTo(_apartmentKey),
+                      onTap: () => _navigateTo('/resident/unit'),
                     ),
                     QuickActionCard(
                       label: 'Bills',
                       icon: Icons.receipt_long_outlined,
                       color: const Color(0xFFE66A2C),
-                      onTap: () => _scrollTo(_billingKey),
+                      onTap: () => _navigateTo('/resident/bills'),
                     ),
                     QuickActionCard(
                       label: 'Notices',
                       icon: Icons.campaign_outlined,
                       color: const Color(0xFF246BFD),
-                      onTap: () => _scrollTo(_noticesKey),
+                      onTap: () => _navigateTo('/resident/notices'),
                     ),
                     QuickActionCard(
                       label: 'Events',
                       icon: Icons.event_outlined,
                       color: const Color(0xFF08A579),
-                      onTap: () => _scrollTo(_eventsKey),
+                      onTap: () => _navigateTo('/resident/events'),
+                    ),
+                    QuickActionCard(
+                      label: 'Visitors',
+                      icon: Icons.people_outline,
+                      color: const Color(0xFF246BFD),
+                      onTap: () => _navigateTo('/resident/visitors'),
                     ),
                   ],
                 ),
@@ -163,7 +154,6 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
           DashboardPanelGrid(
             children: [
               SectionCard(
-                key: _noticesKey,
                 title: 'Recent notices',
                 subtitle: 'Published and unexpired notices for your unit',
                 child: DashboardRecordList(
@@ -174,7 +164,6 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
                 ),
               ),
               SectionCard(
-                key: _eventsKey,
                 title: 'Upcoming events',
                 subtitle: 'Dated community events',
                 child: DashboardRecordList(

@@ -74,6 +74,9 @@ class ResidentDashboardData {
     required this.pendingBills,
     required this.pendingAmount,
     required this.activeNotices,
+    required this.bills,
+    required this.notices,
+    required this.events,
     required this.recentNotices,
     required this.upcomingEvents,
   });
@@ -83,6 +86,9 @@ class ResidentDashboardData {
   final int? pendingBills;
   final double? pendingAmount;
   final int? activeNotices;
+  final List<DashboardRecord>? bills;
+  final List<DashboardRecord>? notices;
+  final List<DashboardRecord>? events;
   final List<DashboardRecord>? recentNotices;
   final List<DashboardRecord>? upcomingEvents;
 }
@@ -306,6 +312,85 @@ class DashboardRepository {
         )
         .toList();
 
+    final billRecords =
+        bills
+            ?.map(
+              (doc) => DashboardRecord(
+                title:
+                    _firstString(doc.data(), const [
+                      'title',
+                      'billTitle',
+                      'description',
+                      'billType',
+                    ]) ??
+                    'Bill ${doc.id}',
+                subtitle: _joinNonEmpty([
+                  _firstString(doc.data(), const [
+                    'billingPeriod',
+                    'period',
+                    'month',
+                    'billMonth',
+                  ]),
+                  _billAmountLabel(doc.data()),
+                ]),
+                status: _billStatus(doc.data()),
+                date: _extractDate(doc.data(), const [
+                  'dueDate',
+                  'createdAt',
+                  'billingDate',
+                  'updatedAt',
+                ]),
+              ),
+            )
+            .toList()
+          ?..sort(_newestRecordFirst);
+
+    final noticeRecords = visibleNotices
+        ?.map(
+          (doc) => DashboardRecord(
+            title:
+                _firstString(doc.data(), const ['title', 'subject', 'name']) ??
+                'Community notice',
+            subtitle:
+                _firstString(doc.data(), const [
+                  'content',
+                  'message',
+                  'description',
+                ]) ??
+                'No additional details',
+            status: _firstString(doc.data(), const ['priority', 'category']),
+            date: _extractDate(doc.data(), const [
+              'publishDate',
+              'publishedAt',
+              'createdAt',
+            ]),
+          ),
+        )
+        .toList(growable: false);
+
+    final eventRecords = upcomingEvents
+        ?.map(
+          (doc) => DashboardRecord(
+            title:
+                _firstString(doc.data(), const [
+                  'title',
+                  'name',
+                  'eventName',
+                ]) ??
+                'Community event',
+            subtitle:
+                _firstString(doc.data(), const [
+                  'location',
+                  'venue',
+                  'description',
+                ]) ??
+                'Community event',
+            status: _firstString(doc.data(), const ['status', 'category']),
+            date: _eventDate(doc.data()),
+          ),
+        )
+        .toList(growable: false);
+
     return ResidentDashboardData(
       openComplaints: complaints
           ?.where((doc) => _isOpenComplaint(_complaintStatus(doc.data())))
@@ -319,56 +404,11 @@ class DashboardRepository {
         (total, doc) => total + _billAmount(doc.data()),
       ),
       activeNotices: visibleNotices?.length,
-      recentNotices: visibleNotices
-          ?.take(4)
-          .map(
-            (doc) => DashboardRecord(
-              title:
-                  _firstString(doc.data(), const [
-                    'title',
-                    'subject',
-                    'name',
-                  ]) ??
-                  'Community notice',
-              subtitle:
-                  _firstString(doc.data(), const [
-                    'content',
-                    'message',
-                    'description',
-                  ]) ??
-                  'No additional details',
-              status: _firstString(doc.data(), const ['priority', 'category']),
-              date: _extractDate(doc.data(), const [
-                'publishDate',
-                'publishedAt',
-                'createdAt',
-              ]),
-            ),
-          )
-          .toList(growable: false),
-      upcomingEvents: upcomingEvents
-          ?.take(4)
-          .map(
-            (doc) => DashboardRecord(
-              title:
-                  _firstString(doc.data(), const [
-                    'title',
-                    'name',
-                    'eventName',
-                  ]) ??
-                  'Community event',
-              subtitle:
-                  _firstString(doc.data(), const [
-                    'location',
-                    'venue',
-                    'description',
-                  ]) ??
-                  'Community event',
-              status: _firstString(doc.data(), const ['status', 'category']),
-              date: _eventDate(doc.data()),
-            ),
-          )
-          .toList(growable: false),
+      bills: billRecords,
+      notices: noticeRecords,
+      events: eventRecords,
+      recentNotices: noticeRecords?.take(4).toList(growable: false),
+      upcomingEvents: eventRecords?.take(4).toList(growable: false),
     );
   }
 
@@ -567,6 +607,28 @@ double _billAmount(Map<String, dynamic> data) {
     }
   }
   return 0;
+}
+
+String? _billAmountLabel(Map<String, dynamic> data) {
+  for (final key in const [
+    'amount',
+    'totalAmount',
+    'billAmount',
+    'total',
+    'dueAmount',
+  ]) {
+    final value = data[key];
+    final amount = switch (value) {
+      num number => number.toDouble(),
+      String text => double.tryParse(text.replaceAll(',', '')),
+      _ => null,
+    };
+    if (amount != null) {
+      final decimals = amount == amount.roundToDouble() ? 0 : 2;
+      return '₹${amount.toStringAsFixed(decimals)}';
+    }
+  }
+  return null;
 }
 
 double? _billTotal(

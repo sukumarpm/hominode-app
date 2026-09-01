@@ -1,6 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../services/admin_payment_review_service.dart';
 import '../session/web_session.dart';
 import '../theme/web_design_system.dart';
 import '../widgets/dashboard_components.dart';
@@ -21,6 +24,12 @@ class AdminBillingPage extends StatefulWidget {
 
 class _AdminBillingPageState extends State<AdminBillingPage> {
   final TextEditingController _searchController = TextEditingController();
+  final AdminPaymentReviewService _paymentService = AdminPaymentReviewService();
+  final Set<String> _viewedPaymentReceiptIds = {};
+  final Set<String> _busyPaymentIds = {};
+
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _billsStream;
+  late Stream<List<AdminPaymentProof>> _paymentsStream;
 
   String _searchText = '';
   String _statusFilter = 'all';
@@ -30,6 +39,30 @@ class _AdminBillingPageState extends State<AdminBillingPage> {
   String get _communityName => widget.session.activeTenant!.name;
 
   @override
+  void initState() {
+    super.initState();
+    _bindStreams();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminBillingPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session.activeTenant?.communityId != _communityId) {
+      _viewedPaymentReceiptIds.clear();
+      _busyPaymentIds.clear();
+      _bindStreams();
+    }
+  }
+
+  void _bindStreams() {
+    _billsStream = FirebaseFirestore.instance
+        .collection('bills')
+        .where('communityId', isEqualTo: _communityId)
+        .snapshots();
+    _paymentsStream = _paymentService.watchCommunityPayments(widget.session);
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -37,248 +70,557 @@ class _AdminBillingPageState extends State<AdminBillingPage> {
 
   @override
   Widget build(BuildContext context) {
-    //
-    // SECURITY:
-    // Bills are queried only for the validated active community.
-    //
-    final billsQuery = FirebaseFirestore.instance
-        .collection('bills')
-        .where('communityId', isEqualTo: _communityId);
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: billsQuery.snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return const SectionCard(
+    return StreamBuilder<List<AdminPaymentProof>>(
+      stream: _paymentsStream,
+      builder: (context, paymentSnapshot) {
+        if (paymentSnapshot.hasError) {
+          return SectionCard(
             title: 'Billing',
             child: EmptyState(
               icon: Icons.error_outline,
-              message: 'Unable to load billing records for this community.',
+              message:
+                  'Unable to load payment proofs: ${_errorMessage(paymentSnapshot.error!)}',
             ),
           );
         }
-
-        if (!snapshot.hasData) {
+        if (!paymentSnapshot.hasData) {
           return const SectionCard(
             title: 'Billing',
             child: Center(child: CircularProgressIndicator()),
           );
         }
-
-        final bills = snapshot.data!.docs.where((doc) {
-          return doc.data()['communityId']?.toString() == _communityId;
-        }).toList();
-
-        final pendingCount = bills.where((doc) {
-          final status = _billStatus(doc.data());
-
-          return status == 'pending' || status == 'due' || status == 'unpaid';
-        }).length;
-
-        final paidCount = bills.where((doc) {
-          final status = _billStatus(doc.data());
-
-          return status == 'paid' ||
-              status == 'settled' ||
-              status == 'approved';
-        }).length;
-
-        final approvalCount = bills.where((doc) {
-          return _paymentApprovalStatus(doc.data()) == 'pendingapproval';
-        }).length;
-
-        final overdueCount = bills.where((doc) {
-          final status = _billStatus(doc.data());
-
-          return status == 'overdue';
-        }).length;
-
-        final filteredBills =
-            bills.where((doc) {
-              final data = doc.data();
-
-              final query = _searchText.trim().toLowerCase();
-
-              if (query.isNotEmpty) {
-                final searchable = [
-                  _billTitle(doc.id, data),
-                  _residentName(data),
-                  _building(data),
-                  _flat(data),
-                  _billStatus(data),
-                  _paymentApprovalStatus(data),
-                  _paymentReference(data),
-                  _paymentSource(data),
-                ].join(' ').toLowerCase();
-
-                if (!searchable.contains(query)) {
-                  return false;
-                }
-              }
-
-              if (_statusFilter != 'all') {
-                final billStatus = _billStatus(data);
-                final approvalStatus = _paymentApprovalStatus(data);
-
-                if (_statusFilter == 'pendingapproval') {
-                  if (approvalStatus != 'pendingapproval') {
-                    return false;
-                  }
-                } else if (_statusFilter == 'paid') {
-                  if (billStatus != 'paid' &&
-                      billStatus != 'settled' &&
-                      billStatus != 'approved') {
-                    return false;
-                  }
-                } else if (_statusFilter == 'pending') {
-                  if (billStatus != 'pending' &&
-                      billStatus != 'due' &&
-                      billStatus != 'unpaid') {
-                    return false;
-                  }
-                } else if (billStatus != _statusFilter) {
-                  return false;
-                }
-              }
-
-              return true;
-            }).toList()..sort(
-              (a, b) =>
-                  _billSortDate(b.data()).compareTo(_billSortDate(a.data())),
-            );
-
-        final totalAmount = bills.fold<double>(
-          0,
-          (sum, doc) => sum + _billAmount(doc.data()),
+        final latestProofByBill = _paymentService.latestProofByBill(
+          paymentSnapshot.data!,
         );
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _billsStream,
+          builder: (context, billSnapshot) {
+            if (billSnapshot.hasError) {
+              return const SectionCard(
+                title: 'Billing',
+                child: EmptyState(
+                  icon: Icons.error_outline,
+                  message: 'Unable to load billing records for this community.',
+                ),
+              );
+            }
+            if (!billSnapshot.hasData) {
+              return const SectionCard(
+                title: 'Billing',
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
 
-        final paidAmount = bills
-            .where((doc) {
-              final status = _billStatus(doc.data());
+            final bills = billSnapshot.data!.docs
+                .where(
+                  (doc) =>
+                      doc.data()['communityId']?.toString() == _communityId,
+                )
+                .map(
+                  (doc) => _BillingRecord(
+                    document: doc,
+                    payment: latestProofByBill[doc.id],
+                  ),
+                )
+                .toList();
+
+            final pendingCount = bills.where((doc) {
+              final status = _billStatus(doc.data);
+
+              return status == 'pending' ||
+                  status == 'due' ||
+                  status == 'unpaid';
+            }).length;
+
+            final paidCount = bills.where((doc) {
+              final status = _billStatus(doc.data);
 
               return status == 'paid' ||
                   status == 'settled' ||
                   status == 'approved';
-            })
-            .fold<double>(0, (sum, doc) => sum + _billAmount(doc.data()));
+            }).length;
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _BillingHero(
-              communityName: _communityName,
-              totalBills: bills.length,
-              pendingBills: pendingCount,
-              paidBills: paidCount,
-              approvalPending: approvalCount,
-              overdueBills: overdueCount,
-            ),
+            final approvalCount = bills.where((doc) {
+              return doc.payment?.isPending == true;
+            }).length;
 
-            const SizedBox(height: 16),
+            final overdueCount = bills.where((doc) {
+              final status = _billStatus(doc.data);
 
-            _QuickNavigation(onNavigate: widget.onNavigate),
+              return status == 'overdue';
+            }).length;
 
-            const SizedBox(height: 16),
+            final filteredBills =
+                bills.where((doc) {
+                  final data = doc.data;
+                  final payment = doc.payment;
 
-            ResponsiveMetricGrid(
-              children: [
-                DashboardStatCard(
-                  label: 'Billed Amount',
-                  value: _money(totalAmount),
-                  icon: Icons.receipt_long_outlined,
-                  color: const Color(0xFF246BFD),
-                ),
-                DashboardStatCard(
-                  label: 'Paid Amount',
-                  value: _money(paidAmount),
-                  icon: Icons.check_circle_outline,
-                  color: const Color(0xFF08A579),
-                ),
-                DashboardStatCard(
-                  label: 'Outstanding',
-                  value: _money(
-                    (totalAmount - paidAmount).clamp(0, double.infinity),
-                  ),
-                  icon: Icons.account_balance_wallet_outlined,
-                  color: const Color(0xFFE66A2C),
-                ),
-                DashboardStatCard(
-                  label: 'Receipt Approvals',
-                  value: approvalCount.toString(),
-                  icon: Icons.fact_check_outlined,
-                  color: const Color(0xFF7A42D8),
-                ),
-              ],
-            ),
+                  final query = _searchText.trim().toLowerCase();
 
-            const SizedBox(height: 16),
+                  if (query.isNotEmpty) {
+                    final searchable = [
+                      _billTitle(doc.id, data),
+                      _residentName(data),
+                      _building(data),
+                      _flat(data),
+                      _billStatus(data),
+                      _paymentApprovalStatus(payment, data),
+                      _paymentReference(payment, data),
+                      _paymentSource(payment, data),
+                    ].join(' ').toLowerCase();
 
-            SectionCard(
-              title: 'Billing Directory',
-              action: _BillingToolbar(
-                searchController: _searchController,
-                searchText: _searchText,
-                statusFilter: _statusFilter,
-                onSearchChanged: (value) {
-                  setState(() {
-                    _searchText = value;
-                  });
-                },
-                onSearchClear: () {
-                  _searchController.clear();
-
-                  setState(() {
-                    _searchText = '';
-                  });
-                },
-                onStatusChanged: (value) {
-                  if (value == null) {
-                    return;
+                    if (!searchable.contains(query)) {
+                      return false;
+                    }
                   }
 
-                  setState(() {
-                    _statusFilter = value;
-                  });
-                },
-              ),
-              child: filteredBills.isEmpty
-                  ? EmptyState(
-                      icon: Icons.receipt_long_outlined,
-                      message:
-                          _searchText.trim().isNotEmpty ||
-                              _statusFilter != 'all'
-                          ? 'No billing records match the selected filters.'
-                          : 'No billing records are available for this community.',
-                    )
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        if (constraints.maxWidth >= 1000) {
-                          return _BillingTable(
-                            bills: filteredBills,
-                            onNavigate: widget.onNavigate,
-                          );
-                        }
+                  if (_statusFilter != 'all') {
+                    final billStatus = _billStatus(data);
+                    final approvalStatus = _paymentApprovalStatus(
+                      payment,
+                      data,
+                    );
 
-                        return Column(
-                          children: [
-                            for (var i = 0; i < filteredBills.length; i++) ...[
-                              _BillingMobileCard(
-                                document: filteredBills[i],
-                                onNavigate: widget.onNavigate,
-                              ),
-                              if (i != filteredBills.length - 1)
-                                const SizedBox(height: 10),
-                            ],
-                          ],
-                        );
-                      },
+                    if (_statusFilter == 'pendingapproval') {
+                      if (approvalStatus != 'pendingapproval') {
+                        return false;
+                      }
+                    } else if (_statusFilter == 'paid') {
+                      if (billStatus != 'paid' &&
+                          billStatus != 'settled' &&
+                          billStatus != 'approved') {
+                        return false;
+                      }
+                    } else if (_statusFilter == 'pending') {
+                      if (billStatus != 'pending' &&
+                          billStatus != 'due' &&
+                          billStatus != 'unpaid') {
+                        return false;
+                      }
+                    } else if (billStatus != _statusFilter) {
+                      return false;
+                    }
+                  }
+
+                  return true;
+                }).toList()..sort(
+                  (a, b) =>
+                      _billSortDate(b.data).compareTo(_billSortDate(a.data)),
+                );
+
+            final totalAmount = bills.fold<double>(
+              0,
+              (total, doc) => total + _billAmount(doc.data),
+            );
+
+            final paidAmount = bills
+                .where((doc) {
+                  final status = _billStatus(doc.data);
+
+                  return status == 'paid' ||
+                      status == 'settled' ||
+                      status == 'approved';
+                })
+                .fold<double>(0, (total, doc) => total + _billAmount(doc.data));
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _BillingHero(
+                  communityName: _communityName,
+                  totalBills: bills.length,
+                  pendingBills: pendingCount,
+                  paidBills: paidCount,
+                  approvalPending: approvalCount,
+                  overdueBills: overdueCount,
+                ),
+
+                const SizedBox(height: 16),
+
+                _QuickNavigation(onNavigate: widget.onNavigate),
+
+                const SizedBox(height: 16),
+
+                ResponsiveMetricGrid(
+                  children: [
+                    DashboardStatCard(
+                      label: 'Billed Amount',
+                      value: _money(totalAmount),
+                      icon: Icons.receipt_long_outlined,
+                      color: const Color(0xFF246BFD),
                     ),
-            ),
-          ],
+                    DashboardStatCard(
+                      label: 'Paid Amount',
+                      value: _money(paidAmount),
+                      icon: Icons.check_circle_outline,
+                      color: const Color(0xFF08A579),
+                    ),
+                    DashboardStatCard(
+                      label: 'Outstanding',
+                      value: _money(
+                        (totalAmount - paidAmount).clamp(0, double.infinity),
+                      ),
+                      icon: Icons.account_balance_wallet_outlined,
+                      color: const Color(0xFFE66A2C),
+                    ),
+                    DashboardStatCard(
+                      label: 'Receipt Approvals',
+                      value: approvalCount.toString(),
+                      icon: Icons.fact_check_outlined,
+                      color: const Color(0xFF7A42D8),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+
+                SectionCard(
+                  title: 'Billing Directory',
+                  action: _BillingToolbar(
+                    searchController: _searchController,
+                    searchText: _searchText,
+                    statusFilter: _statusFilter,
+                    onSearchChanged: (value) {
+                      setState(() {
+                        _searchText = value;
+                      });
+                    },
+                    onSearchClear: () {
+                      _searchController.clear();
+
+                      setState(() {
+                        _searchText = '';
+                      });
+                    },
+                    onStatusChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+
+                      setState(() {
+                        _statusFilter = value;
+                      });
+                    },
+                  ),
+                  child: filteredBills.isEmpty
+                      ? EmptyState(
+                          icon: Icons.receipt_long_outlined,
+                          message:
+                              _searchText.trim().isNotEmpty ||
+                                  _statusFilter != 'all'
+                              ? 'No billing records match the selected filters.'
+                              : 'No billing records are available for this community.',
+                        )
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            if (constraints.maxWidth >= 1000) {
+                              return _BillingTable(
+                                bills: filteredBills,
+                                onNavigate: widget.onNavigate,
+                                viewedPaymentIds: _viewedPaymentReceiptIds,
+                                busyPaymentIds: _busyPaymentIds,
+                                onViewReceipt: _viewPaymentReceipt,
+                                onApprove: _approvePaymentProof,
+                                onReject: _rejectPaymentProof,
+                              );
+                            }
+
+                            return Column(
+                              children: [
+                                for (
+                                  var i = 0;
+                                  i < filteredBills.length;
+                                  i++
+                                ) ...[
+                                  _BillingMobileCard(
+                                    record: filteredBills[i],
+                                    onNavigate: widget.onNavigate,
+                                    receiptViewed:
+                                        filteredBills[i].payment != null &&
+                                        _viewedPaymentReceiptIds.contains(
+                                          filteredBills[i].payment!.id,
+                                        ),
+                                    busy:
+                                        filteredBills[i].payment != null &&
+                                        _busyPaymentIds.contains(
+                                          filteredBills[i].payment!.id,
+                                        ),
+                                    onViewReceipt: _viewPaymentReceipt,
+                                    onApprove: _approvePaymentProof,
+                                    onReject: _rejectPaymentProof,
+                                  ),
+                                  if (i != filteredBills.length - 1)
+                                    const SizedBox(height: 10),
+                                ],
+                              ],
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
   }
+
+  Future<void> _viewPaymentReceipt(AdminPaymentProof payment) async {
+    if (payment.communityId != _communityId || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _ReceiptReviewDialog(
+        payment: payment,
+        receiptFuture: _paymentService.loadPaymentReceipt(
+          session: widget.session,
+          payment: payment,
+        ),
+        onViewed: () {
+          if (!mounted || payment.communityId != _communityId) return;
+          setState(() => _viewedPaymentReceiptIds.add(payment.id));
+        },
+      ),
+    );
+  }
+
+  Future<void> _approvePaymentProof(_BillingRecord record) async {
+    final payment = record.payment;
+    if (payment == null ||
+        !payment.isPending ||
+        payment.communityId != _communityId ||
+        !_viewedPaymentReceiptIds.contains(payment.id) ||
+        _busyPaymentIds.contains(payment.id)) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Verify Payment'),
+        content: Text(
+          'Confirm payment of ${_money(_billAmount(record.data))} '
+          'for ${_residentName(record.data).isEmpty ? 'this resident' : _residentName(record.data)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF08A579),
+            ),
+            child: const Text('Verify'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busyPaymentIds.add(payment.id));
+    try {
+      await _paymentService.verifyPaymentProof(
+        session: widget.session,
+        payment: payment,
+      );
+      if (!mounted) return;
+      setState(() {
+        _busyPaymentIds.remove(payment.id);
+        _viewedPaymentReceiptIds.remove(payment.id);
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Payment proof verified.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busyPaymentIds.remove(payment.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Verification failed: ${_errorMessage(error)}')),
+      );
+    }
+  }
+
+  Future<void> _rejectPaymentProof(_BillingRecord record) async {
+    final payment = record.payment;
+    if (payment == null ||
+        !payment.isPending ||
+        payment.communityId != _communityId ||
+        _busyPaymentIds.contains(payment.id)) {
+      return;
+    }
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Reject Payment Proof'),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          maxLength: 250,
+          decoration: const InputDecoration(
+            labelText: 'Reason for rejection',
+            hintText: 'Example: Receipt amount does not match the bill.',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) Navigator.of(context).pop(value);
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFC43D3D),
+            ),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (reason == null || reason.trim().isEmpty || !mounted) return;
+    setState(() => _busyPaymentIds.add(payment.id));
+    try {
+      await _paymentService.rejectPaymentProof(
+        session: widget.session,
+        payment: payment,
+        rejectionReason: reason,
+      );
+      if (!mounted) return;
+      setState(() {
+        _busyPaymentIds.remove(payment.id);
+        _viewedPaymentReceiptIds.remove(payment.id);
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Payment proof rejected.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busyPaymentIds.remove(payment.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Rejection failed: ${_errorMessage(error)}')),
+      );
+    }
+  }
+}
+
+class _BillingRecord {
+  const _BillingRecord({required this.document, required this.payment});
+
+  final QueryDocumentSnapshot<Map<String, dynamic>> document;
+  final AdminPaymentProof? payment;
+
+  String get id => document.id;
+  Map<String, dynamic> get data => document.data();
+}
+
+class _ReceiptReviewDialog extends StatefulWidget {
+  const _ReceiptReviewDialog({
+    required this.payment,
+    required this.receiptFuture,
+    required this.onViewed,
+  });
+
+  final AdminPaymentProof payment;
+  final Future<Uint8List> receiptFuture;
+  final VoidCallback onViewed;
+
+  @override
+  State<_ReceiptReviewDialog> createState() => _ReceiptReviewDialogState();
+}
+
+class _ReceiptReviewDialogState extends State<_ReceiptReviewDialog> {
+  bool _markedViewed = false;
+
+  void _markViewed() {
+    if (_markedViewed) return;
+    _markedViewed = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onViewed();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    insetPadding: const EdgeInsets.all(20),
+    child: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: 900,
+        maxHeight: MediaQuery.sizeOf(context).height * .82,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Payment Receipt',
+                    style: TextStyle(
+                      color: WebDesign.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const Divider(color: WebDesign.border),
+            Flexible(
+              child: FutureBuilder<Uint8List>(
+                future: widget.receiptFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError || !snapshot.hasData) {
+                    return EmptyState(
+                      icon: Icons.broken_image_outlined,
+                      message: snapshot.hasError
+                          ? 'Receipt could not be loaded: ${_errorMessage(snapshot.error!)}'
+                          : 'Receipt could not be loaded.',
+                    );
+                  }
+                  return InteractiveViewer(
+                    minScale: .5,
+                    maxScale: 4,
+                    child: Image.memory(
+                      snapshot.data!,
+                      fit: BoxFit.contain,
+                      frameBuilder:
+                          (context, child, frame, loadedSynchronously) {
+                            if (loadedSynchronously || frame != null) {
+                              _markViewed();
+                            }
+                            return child;
+                          },
+                      errorBuilder: (context, error, stackTrace) => EmptyState(
+                        icon: Icons.broken_image_outlined,
+                        message:
+                            'This receipt image could not be displayed: ${_errorMessage(error)}',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 //
@@ -582,10 +924,23 @@ class _BillingToolbar extends StatelessWidget {
 //
 
 class _BillingTable extends StatelessWidget {
-  const _BillingTable({required this.bills, required this.onNavigate});
+  const _BillingTable({
+    required this.bills,
+    required this.onNavigate,
+    required this.viewedPaymentIds,
+    required this.busyPaymentIds,
+    required this.onViewReceipt,
+    required this.onApprove,
+    required this.onReject,
+  });
 
-  final List<QueryDocumentSnapshot<Map<String, dynamic>>> bills;
+  final List<_BillingRecord> bills;
   final ValueChanged<String> onNavigate;
+  final Set<String> viewedPaymentIds;
+  final Set<String> busyPaymentIds;
+  final ValueChanged<AdminPaymentProof> onViewReceipt;
+  final ValueChanged<_BillingRecord> onApprove;
+  final ValueChanged<_BillingRecord> onReject;
 
   @override
   Widget build(BuildContext context) {
@@ -620,13 +975,14 @@ class _BillingTable extends StatelessWidget {
     );
   }
 
-  TableRow _billRow(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data();
+  TableRow _billRow(_BillingRecord record) {
+    final data = record.data;
+    final payment = record.payment;
 
     return TableRow(
       children: [
         _BillCell(
-          title: _billTitle(doc.id, data),
+          title: _billTitle(record.id, data),
           period: _billingPeriod(data),
           date: _billDateLabel(data),
         ),
@@ -634,15 +990,22 @@ class _BillingTable extends StatelessWidget {
         _LocationCell(building: _building(data), flat: _flat(data)),
         _AmountCell(amount: _billAmount(data)),
         _PaymentCell(
-          source: _paymentSource(data),
-          approvalStatus: _paymentApprovalStatus(data),
-          reference: _paymentReference(data),
+          source: _paymentSource(payment, data),
+          approvalStatus: _paymentApprovalStatus(payment, data),
+          reference: _paymentReference(payment, data),
         ),
         _StatusCell(
           status: _billStatus(data),
-          approvalStatus: _paymentApprovalStatus(data),
+          approvalStatus: _paymentApprovalStatus(payment, data),
         ),
         _BillingActionsCell(
+          payment: payment,
+          receiptViewed:
+              payment != null && viewedPaymentIds.contains(payment.id),
+          busy: payment != null && busyPaymentIds.contains(payment.id),
+          onViewReceipt: payment == null ? null : () => onViewReceipt(payment),
+          onApprove: () => onApprove(record),
+          onReject: () => onReject(record),
           onResident: () => onNavigate('/admin/residents'),
           onReports: () => onNavigate('/admin/reports'),
         ),
@@ -875,9 +1238,7 @@ class _StatusCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final displayStatus = approvalStatus == 'pendingapproval'
-        ? 'Receipt Pending'
-        : _titleCase(status);
+    final displayStatus = _displayBillingStatus(status, approvalStatus);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
@@ -889,14 +1250,41 @@ class _StatusCell extends StatelessWidget {
   }
 }
 
-class _BillingActionsCell extends StatelessWidget {
+class _BillingActionsCell extends StatefulWidget {
   const _BillingActionsCell({
+    required this.payment,
+    required this.receiptViewed,
+    required this.busy,
+    required this.onViewReceipt,
+    required this.onApprove,
+    required this.onReject,
     required this.onResident,
     required this.onReports,
   });
 
+  final AdminPaymentProof? payment;
+  final bool receiptViewed;
+  final bool busy;
+  final VoidCallback? onViewReceipt;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
   final VoidCallback onResident;
   final VoidCallback onReports;
+
+  @override
+  State<_BillingActionsCell> createState() => _BillingActionsCellState();
+}
+
+class _BillingActionsCellState extends State<_BillingActionsCell> {
+  final MenuController _menuController = MenuController();
+
+  void _runMenuAction(VoidCallback? action) {
+    if (action == null) return;
+    _menuController.close();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) action();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -904,44 +1292,65 @@ class _BillingActionsCell extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Align(
         alignment: Alignment.centerRight,
-        child: PopupMenuButton<String>(
-          tooltip: 'Billing actions',
-          onSelected: (value) {
-            switch (value) {
-              case 'resident':
-                onResident();
-                break;
-
-              case 'reports':
-                onReports();
-                break;
-            }
-          },
-          itemBuilder: (_) {
-            return const [
-              PopupMenuItem(
-                value: 'resident',
-                child: Row(
-                  children: [
-                    Icon(Icons.people_outline, size: 18),
-                    SizedBox(width: 8),
-                    Text('Residents'),
-                  ],
+        child: MenuAnchor(
+          controller: _menuController,
+          consumeOutsideTap: true,
+          menuChildren: [
+            if (widget.payment?.isPending == true) ...[
+              MenuItemButton(
+                closeOnActivate: false,
+                onPressed: widget.busy
+                    ? null
+                    : () => _runMenuAction(widget.onViewReceipt),
+                leadingIcon: const Icon(Icons.visibility_outlined, size: 18),
+                child: const Text('View receipt'),
+              ),
+              MenuItemButton(
+                closeOnActivate: false,
+                onPressed: widget.receiptViewed && !widget.busy
+                    ? () => _runMenuAction(widget.onApprove)
+                    : null,
+                leadingIcon: const Icon(Icons.verified_outlined, size: 18),
+                child: Text(
+                  widget.receiptViewed ? 'Approve' : 'View receipt first',
                 ),
               ),
-              PopupMenuItem(
-                value: 'reports',
-                child: Row(
-                  children: [
-                    Icon(Icons.analytics_outlined, size: 18),
-                    SizedBox(width: 8),
-                    Text('Reports'),
-                  ],
-                ),
+              MenuItemButton(
+                closeOnActivate: false,
+                onPressed: widget.busy
+                    ? null
+                    : () => _runMenuAction(widget.onReject),
+                leadingIcon: const Icon(Icons.cancel_outlined, size: 18),
+                child: const Text('Reject'),
               ),
-            ];
+            ] else ...[
+              MenuItemButton(
+                closeOnActivate: false,
+                onPressed: () => _runMenuAction(widget.onResident),
+                leadingIcon: const Icon(Icons.people_outline, size: 18),
+                child: const Text('Residents'),
+              ),
+              MenuItemButton(
+                closeOnActivate: false,
+                onPressed: () => _runMenuAction(widget.onReports),
+                leadingIcon: const Icon(Icons.analytics_outlined, size: 18),
+                child: const Text('Reports'),
+              ),
+            ],
+          ],
+          builder: (context, controller, child) {
+            return IconButton(
+              tooltip: 'Billing actions',
+              onPressed: () {
+                if (_menuController.isOpen) {
+                  _menuController.close();
+                } else {
+                  _menuController.open();
+                }
+              },
+              icon: const Icon(Icons.more_vert, size: 18),
+            );
           },
-          icon: const Icon(Icons.more_vert, size: 18),
         ),
       ),
     );
@@ -955,16 +1364,30 @@ class _BillingActionsCell extends StatelessWidget {
 //
 
 class _BillingMobileCard extends StatelessWidget {
-  const _BillingMobileCard({required this.document, required this.onNavigate});
+  const _BillingMobileCard({
+    required this.record,
+    required this.onNavigate,
+    required this.receiptViewed,
+    required this.busy,
+    required this.onViewReceipt,
+    required this.onApprove,
+    required this.onReject,
+  });
 
-  final QueryDocumentSnapshot<Map<String, dynamic>> document;
+  final _BillingRecord record;
   final ValueChanged<String> onNavigate;
+  final bool receiptViewed;
+  final bool busy;
+  final ValueChanged<AdminPaymentProof> onViewReceipt;
+  final ValueChanged<_BillingRecord> onApprove;
+  final ValueChanged<_BillingRecord> onReject;
 
   @override
   Widget build(BuildContext context) {
-    final data = document.data();
+    final data = record.data;
+    final payment = record.payment;
 
-    final title = _billTitle(document.id, data);
+    final title = _billTitle(record.id, data);
 
     final resident = _residentName(data);
     final building = _building(data);
@@ -973,16 +1396,14 @@ class _BillingMobileCard extends StatelessWidget {
     final amount = _billAmount(data);
     final status = _billStatus(data);
 
-    final approvalStatus = _paymentApprovalStatus(data);
+    final approvalStatus = _paymentApprovalStatus(payment, data);
 
-    final displayStatus = approvalStatus == 'pendingapproval'
-        ? 'Receipt Pending'
-        : _titleCase(status);
+    final displayStatus = _displayBillingStatus(status, approvalStatus);
 
     final period = _billingPeriod(data);
     final date = _billDateLabel(data);
-    final source = _paymentSource(data);
-    final reference = _paymentReference(data);
+    final source = _paymentSource(payment, data);
+    final reference = _paymentReference(payment, data);
 
     return Container(
       width: double.infinity,
@@ -1071,18 +1492,40 @@ class _BillingMobileCard extends StatelessWidget {
           Wrap(
             spacing: 4,
             runSpacing: 4,
-            children: [
-              TextButton.icon(
-                onPressed: () => onNavigate('/admin/residents'),
-                icon: const Icon(Icons.people_outline, size: 16),
-                label: const Text('Residents'),
-              ),
-              TextButton.icon(
-                onPressed: () => onNavigate('/admin/reports'),
-                icon: const Icon(Icons.analytics_outlined, size: 16),
-                label: const Text('Reports'),
-              ),
-            ],
+            children: payment?.isPending == true
+                ? [
+                    TextButton.icon(
+                      onPressed: busy ? null : () => onViewReceipt(payment!),
+                      icon: const Icon(Icons.visibility_outlined, size: 16),
+                      label: const Text('View receipt'),
+                    ),
+                    TextButton.icon(
+                      onPressed: receiptViewed && !busy
+                          ? () => onApprove(record)
+                          : null,
+                      icon: const Icon(Icons.verified_outlined, size: 16),
+                      label: Text(
+                        receiptViewed ? 'Approve' : 'View receipt first',
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: busy ? null : () => onReject(record),
+                      icon: const Icon(Icons.cancel_outlined, size: 16),
+                      label: const Text('Reject'),
+                    ),
+                  ]
+                : [
+                    TextButton.icon(
+                      onPressed: () => onNavigate('/admin/residents'),
+                      icon: const Icon(Icons.people_outline, size: 16),
+                      label: const Text('Residents'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => onNavigate('/admin/reports'),
+                      icon: const Icon(Icons.analytics_outlined, size: 16),
+                      label: const Text('Reports'),
+                    ),
+                  ],
           ),
         ],
       ),
@@ -1295,7 +1738,18 @@ String _billStatus(Map<String, dynamic> data) {
   return 'pending';
 }
 
-String _paymentApprovalStatus(Map<String, dynamic> data) {
+String _paymentApprovalStatus(
+  AdminPaymentProof? payment,
+  Map<String, dynamic> data,
+) {
+  if (payment != null) {
+    return switch (payment.status) {
+      'pending' => 'pendingapproval',
+      'completed' => 'approved',
+      'failed' => 'rejected',
+      _ => '',
+    };
+  }
   final value = data['paymentStatus']?.toString().trim().toLowerCase();
 
   if (value == null || value.isEmpty) {
@@ -1305,7 +1759,8 @@ String _paymentApprovalStatus(Map<String, dynamic> data) {
   return value.replaceAll('_', '').replaceAll(' ', '');
 }
 
-String _paymentSource(Map<String, dynamic> data) {
+String _paymentSource(AdminPaymentProof? payment, Map<String, dynamic> data) {
+  if (payment != null) return payment.method;
   for (final key in const [
     'paymentSource',
     'paymentMethod',
@@ -1322,7 +1777,11 @@ String _paymentSource(Map<String, dynamic> data) {
   return '';
 }
 
-String _paymentReference(Map<String, dynamic> data) {
+String _paymentReference(
+  AdminPaymentProof? payment,
+  Map<String, dynamic> data,
+) {
+  if (payment != null) return payment.transactionId;
   for (final key in const [
     'paymentReference',
     'reference',
@@ -1418,6 +1877,20 @@ String _approvalLabel(String value) {
     default:
       return _titleCase(value);
   }
+}
+
+String _displayBillingStatus(String billStatus, String approvalStatus) {
+  return switch (approvalStatus) {
+    'pendingapproval' => 'Receipt Pending',
+    'rejected' => 'Receipt Rejected',
+    'approved' when billStatus == 'pending' => 'Payment Approved',
+    _ => _titleCase(billStatus),
+  };
+}
+
+String _errorMessage(Object error) {
+  if (error is AdminPaymentReviewException) return error.message;
+  return error.toString().replaceFirst('FirebaseException: ', '');
 }
 
 String _titleCase(String value) {
