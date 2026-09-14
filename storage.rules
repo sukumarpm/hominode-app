@@ -52,22 +52,54 @@ service firebase.storage {
           in firestore.get(adminPath).data.authorizedCommunityIds;
     }
 
+    function adminMayAccessCommunity(communityId) {
+  let adminPath =
+    /databases/(default)/documents/admins/$(request.auth.uid);
+
+  return signedIn()
+    && firestore.exists(adminPath)
+    && firestore.get(adminPath).data.role == 'admin'
+    && firestore.get(adminPath).data.isActive == true
+    && firestore.get(adminPath).data.authorizedCommunityIds is list
+    && communityId
+      in firestore.get(adminPath).data.authorizedCommunityIds;
+}
+
+function residentMayAccessCommunity(communityId) {
+  let profilePath =
+    /databases/(default)/documents/users/$(request.auth.uid);
+
+  return signedIn()
+    && firestore.exists(profilePath)
+    && firestore.get(profilePath).data.role == 'resident'
+    && firestore.get(profilePath).data.approvalStatus == 'approved'
+    && firestore.get(profilePath).data.isActive == true
+    && (
+      !('status' in firestore.get(profilePath).data)
+      || firestore.get(profilePath).data.status == 'active'
+    )
+    && firestore.get(profilePath).data.communityId == communityId;
+}
+
+function adminMayManageFacilityImage(communityId, facilityId) {
+  let facilityPath =
+    /databases/(default)/documents/amenities/$(facilityId);
+
+  return adminMayAccessCommunity(communityId)
+    && firestore.exists(facilityPath)
+    && firestore.get(facilityPath).data.communityId == communityId;
+}
+
     // ============================================================
     // PRIVATE PAYMENT RECEIPTS
     // ============================================================
 
     match /payment_receipts/{communityId}/{billId}/{uid}/{fileName} {
 
-      // Resident can read only their own bill receipt.
-      // Authorized community Admin can read for verification.
       allow read: if
         residentMayAccessReceipt(communityId, billId, uid)
         || adminMayReadReceipt(communityId);
 
-      // Resident can create an image receipt only for their own bill.
-      //
-      // resource == null prevents overwriting an existing receipt.
-      // request.resource != null prevents delete operations.
       allow write: if
         residentMayAccessReceipt(communityId, billId, uid)
 
@@ -80,6 +112,38 @@ service firebase.storage {
           'image/(jpeg|jpg|png|heic|heif)'
         );
     }
+
+    // ============================================================
+    // FACILITY IMAGES
+    // ============================================================
+
+    match /facility_images/{communityId}/{facilityId}/{fileName} {
+
+  // Reading the image only needs community authorization.
+  //
+  // Admin:    admins/{uid}       -> 1 document
+  // Resident: admins/{uid} miss
+  //           + users/{uid}      -> at most 2 documents
+  allow read: if
+    adminMayAccessCommunity(communityId)
+    || residentMayAccessCommunity(communityId);
+
+  // Creating/replacing/deleting requires:
+  // admins/{uid} + amenities/{facilityId} -> 2 documents.
+  allow write: if
+    adminMayManageFacilityImage(communityId, facilityId)
+    && (
+      request.resource == null
+      ||
+      (
+        request.resource != null
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches(
+          'image/(jpeg|png|webp)'
+        )
+      )
+    );
+}
 
     // Everything else remains private.
     match /{allPaths=**} {
