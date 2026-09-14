@@ -1,5 +1,5 @@
-const {FieldValue} = require("firebase-admin/firestore");
-const {residentOnboardingId} = require("./resident_import_ids");
+const { FieldValue } = require("firebase-admin/firestore");
+const { residentOnboardingId } = require("./resident_import_ids");
 
 class RegistrationError extends Error {
   constructor(code, message) {
@@ -26,7 +26,7 @@ function validateInput(data) {
   if (!unitReference || unitReference.length > 120) throw new RegistrationError("invalid-argument", "Unit reference is required.");
   if (!["owner", "tenant"].includes(declaredResidentType)) throw new RegistrationError("invalid-argument", "Resident type must be owner or tenant.");
   if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new RegistrationError("invalid-argument", "Enter a valid email address.");
-  return {inviteCode, fullName, buildingReference, unitReference, email, declaredResidentType};
+  return { inviteCode, fullName, buildingReference, unitReference, email, declaredResidentType };
 }
 
 function verifiedPhoneAuth(auth) {
@@ -35,7 +35,7 @@ function verifiedPhoneAuth(auth) {
   if (!auth?.uid || typeof phoneNumber !== "string" || provider !== "phone") {
     throw new RegistrationError("unauthenticated", "A verified Firebase Phone Auth session is required.");
   }
-  return {uid: auth.uid, phoneNumber};
+  return { uid: auth.uid, phoneNumber };
 }
 
 function timestampMillis(value) {
@@ -58,7 +58,7 @@ function isIdempotentExisting(existing, expected) {
     (existing.email ?? null) === expected.email;
 }
 
-function validateResidentOnboarding(onboarding, identity, {fallbackFullName = ""} = {}) {
+function validateResidentOnboarding(onboarding, identity, { fallbackFullName = "" } = {}) {
   const communityId = typeof onboarding?.communityId === "string" ? onboarding.communityId.trim() : "";
   const storedName = typeof onboarding?.residentName === "string" ? onboarding.residentName.trim() : "";
   const fullName = storedName || String(fallbackFullName).trim();
@@ -70,9 +70,9 @@ function validateResidentOnboarding(onboarding, identity, {fallbackFullName = ""
   const residentType = typeof onboarding?.residentType === "string" ? onboarding.residentType.trim().toLowerCase() : "";
   const singleOnboarding = onboarding?.creationSource === "admin_single_onboarding";
   if (!communityId || onboarding?.phoneNumber !== identity.phoneNumber ||
-      fullName.length < 2 || fullName.length > 120 ||
-      (!singleOnboarding && (!buildingId || !buildingName || !flatId || !flatLabel || !unitId)) ||
-      !["owner", "tenant"].includes(residentType)) {
+    fullName.length < 2 || fullName.length > 120 ||
+    (!singleOnboarding && (!buildingId || !buildingName || !flatId || !flatLabel || !unitId)) ||
+    !["owner", "tenant"].includes(residentType)) {
     throw new RegistrationError("failed-precondition", "Resident onboarding data is incomplete or invalid.");
   }
   return {
@@ -94,7 +94,7 @@ function validateResidentOnboarding(onboarding, identity, {fallbackFullName = ""
   };
 }
 
-async function claimImportedOnboardingCore({db, identity}) {
+async function claimImportedOnboardingCore({ db, identity }) {
   const result = await db.collection("residentOnboarding")
     .where("phoneNumber", "==", identity.phoneNumber).get();
   const candidates = result.docs.filter((doc) => {
@@ -124,12 +124,20 @@ async function claimImportedOnboardingCore({db, identity}) {
     if (!communitySnapshot.exists || communitySnapshot.data()?.isActive !== true) {
       throw new RegistrationError("failed-precondition", "Community is inactive or unavailable.");
     }
+    const community = communitySnapshot.data();
+
+    const identityRequired =
+      onboardingData.residentType === "tenant" ||
+      (
+        onboardingData.residentType === "owner" &&
+        community?.ownerIdentityVerificationRequired === true
+      );
     if (userSnapshot.exists) {
       const user = userSnapshot.data();
       if (user?.uid === identity.uid && user?.phoneNumber === identity.phoneNumber &&
-          user?.role === "resident" && user?.communityId === onboardingData.communityId &&
-          onboarding?.status === "claimed" && onboarding?.claimedByUid === identity.uid) {
-        return {status: user.approvalStatus ?? "pending", communityId: onboardingData.communityId, idempotent: true, imported: !onboardingData.singleOnboarding};
+        user?.role === "resident" && user?.communityId === onboardingData.communityId &&
+        onboarding?.status === "claimed" && onboarding?.claimedByUid === identity.uid) {
+        return { status: user.approvalStatus ?? "pending", communityId: onboardingData.communityId, idempotent: true, imported: !onboardingData.singleOnboarding };
       }
       throw new RegistrationError("already-exists", "A resident profile already exists for this account.");
     }
@@ -149,7 +157,9 @@ async function claimImportedOnboardingCore({db, identity}) {
       isActive: false,
       approvalStatus: "pending",
       identityVerified: false,
-      identityVerificationStatus: "verification_required",
+      identityVerificationStatus: identityRequired
+        ? "verification_required"
+        : "not_required",
       declaredResidentType: onboardingData.residentType,
       buildingReference: onboardingData.buildingReference,
       unitReference: onboardingData.unitReference,
@@ -172,18 +182,18 @@ async function claimImportedOnboardingCore({db, identity}) {
       claimedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    return {status: "pending", communityId: onboardingData.communityId, idempotent: false, imported: !onboardingData.singleOnboarding};
+    return { status: "pending", communityId: onboardingData.communityId, idempotent: false, imported: !onboardingData.singleOnboarding };
   });
 }
 
-async function registerResidentCore({db, auth, data, now = Date.now()}) {
+async function registerResidentCore({ db, auth, data, now = Date.now() }) {
   const identity = verifiedPhoneAuth(auth);
   if (data?.claimImportedOnboarding === true) {
     if (!data || typeof data !== "object" || Array.isArray(data) ||
-        Object.keys(data).some((key) => key !== "claimImportedOnboarding")) {
+      Object.keys(data).some((key) => key !== "claimImportedOnboarding")) {
       throw new RegistrationError("invalid-argument", "Only the imported onboarding claim flag is accepted.");
     }
-    return claimImportedOnboardingCore({db, identity});
+    return claimImportedOnboardingCore({ db, identity });
   }
   const input = validateInput(data);
   const inviteRef = db.collection("communityInvites").doc(input.inviteCode);
@@ -195,10 +205,10 @@ async function registerResidentCore({db, auth, data, now = Date.now()}) {
     const inviteData = invite.data();
     const communityId = typeof inviteData.communityId === "string" ? inviteData.communityId : "";
     const existing = await transaction.get(userRef);
-    const expected = {...identity, ...input, communityId};
+    const expected = { ...identity, ...input, communityId };
     if (existing.exists) {
       if (isIdempotentExisting(existing.data(), expected)) {
-        return {status: existing.data().approvalStatus ?? "pending", communityId, idempotent: true};
+        return { status: existing.data().approvalStatus ?? "pending", communityId, idempotent: true };
       }
       throw new RegistrationError("already-exists", "A resident profile already exists for this account.");
     }
@@ -229,7 +239,7 @@ async function registerResidentCore({db, auth, data, now = Date.now()}) {
       onboarding.status === "pending_registration" &&
       onboarding.claimedByUid == null;
     const onboardingData = hasOnboarding
-      ? validateResidentOnboarding(onboarding, identity, {fallbackFullName: input.fullName})
+      ? validateResidentOnboarding(onboarding, identity, { fallbackFullName: input.fullName })
       : null;
 
     transaction.set(userRef, {
@@ -266,8 +276,8 @@ async function registerResidentCore({db, auth, data, now = Date.now()}) {
     transaction.update(inviteRef, {
       useCount: useCount + 1, usedCount: useCount + 1, updatedAt: FieldValue.serverTimestamp(),
     });
-    return {status: "pending", communityId, idempotent: false};
+    return { status: "pending", communityId, idempotent: false };
   });
 }
 
-module.exports = {RegistrationError, normalizeInviteCode, validateInput, verifiedPhoneAuth, isIdempotentExisting, validateResidentOnboarding, claimImportedOnboardingCore, registerResidentCore};
+module.exports = { RegistrationError, normalizeInviteCode, validateInput, verifiedPhoneAuth, isIdempotentExisting, validateResidentOnboarding, claimImportedOnboardingCore, registerResidentCore };

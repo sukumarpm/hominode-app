@@ -60,8 +60,24 @@ class TenantResolutionService extends ChangeNotifier {
 
   Future<TenantProfile?> loadAuthenticatedProfile() async {
     final user = _auth.currentUser;
+
+    debugPrint(
+      '[TenantProfile] authUid=${user?.uid} '
+      'phone=${user?.phoneNumber} '
+      'project=${_firestore.app.options.projectId}',
+    );
+
     if (user == null) return null;
-    final data = await _loadProfile(user.uid);
+
+    final snapshot = await _firestore.collection('users').doc(user.uid).get();
+
+    debugPrint(
+      '[TenantProfile] users/${user.uid} '
+      'exists=${snapshot.exists} '
+      'data=${snapshot.data()}',
+    );
+
+    final data = snapshot.data();
     return data == null ? null : TenantProfile.fromMap(user.uid, data);
   }
 

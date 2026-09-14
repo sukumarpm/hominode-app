@@ -1,12 +1,14 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'theme/hominode_theme.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'widgets/standard_bottom_nav.dart';
-import 'widgets/edit_profile_modal.dart';
-import 'services/auth_service.dart';
+
+import 'desktop/admin_desktop_page_frame.dart';
 import 'services/admin_service.dart';
+import 'services/auth_service.dart';
+import 'theme/hominode_theme.dart';
+import 'widgets/edit_profile_modal.dart';
+import 'widgets/standard_bottom_nav.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -90,6 +92,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
       print('✅ STEP 4 PASSED: UI updated');
       print('✅ PROFILE LOAD: COMPLETE');
     } catch (e) {
+      // During logout, in-flight reads can fail after auth is cleared.
+      final isSignedOut = FirebaseAuth.instance.currentUser == null;
+      final errorText = e.toString();
+      final isExpectedTeardownError =
+          errorText.contains('permission-denied') ||
+          errorText.contains('User not authenticated');
+      if (isSignedOut && isExpectedTeardownError) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
       print('❌ ERROR: $e');
       if (mounted) {
         setState(() {
@@ -117,6 +134,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Profile',
+        subtitle: 'Review administrator details and account options.',
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildDesktopProfileSummary(),
+                    _buildQuickActions(),
+                    _buildAccountSection(),
+                    _buildSupportSection(),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: _isLoading
@@ -140,6 +177,81 @@ class _ProfileScreenState extends State<ProfileScreen> {
       bottomNavigationBar: const StandardBottomNav(selectedIndex: 4),
     );
   }
+
+  Widget _buildDesktopProfileSummary() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE1E8EF)),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            radius: 30,
+            backgroundColor: Color(0xFFE7F4F6),
+            child: Icon(
+              Icons.person_outline,
+              size: 30,
+              color: Color(0xFF176B7A),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _userName,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF102A43),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _userEmail,
+                  style: const TextStyle(color: Color(0xFF66788A)),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _userRole,
+                  style: const TextStyle(color: Color(0xFF247B8A)),
+                ),
+              ],
+            ),
+          ),
+          _buildDesktopProfileMetric('Properties', '$_totalProperties'),
+          _buildDesktopProfileMetric('Residents', '$_totalResidents'),
+          _buildDesktopProfileMetric('Member Since', _joinYear),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDesktopProfileMetric(String label, String value) => Padding(
+    padding: const EdgeInsets.only(left: 28),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: Color(0xFF102A43),
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFF8293A3), fontSize: 11),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildProfileHeader() {
     return SliverToBoxAdapter(
@@ -656,58 +768,48 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showSignOutDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Sign Out'),
         content: const Text(
           'Are you sure you want to sign out of your account?',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(dialogContext);
 
-              // Show loading indicator
+              if (!mounted) return;
+
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => WillPopScope(
-                  onWillPop: () async => false,
-                  child: const Center(child: CircularProgressIndicator()),
-                ),
+                builder: (_) =>
+                    const Center(child: CircularProgressIndicator()),
               );
 
               try {
-                // Sign out using AuthService
                 await AuthService().signOut();
 
-                // Wait a moment for Firebase to process the sign out
-                await Future.delayed(const Duration(milliseconds: 300));
+                if (!mounted) return;
 
-                if (mounted) {
-                  // Close loading dialog
-                  Navigator.of(context).pop();
+                Navigator.of(context, rootNavigator: true).pop();
 
-                  // Navigate to login and remove all previous routes
-                  Navigator.of(
-                    context,
-                  ).pushNamedAndRemoveUntil('/login', (route) => false);
-                }
+                Navigator.of(context).popUntil((route) => route.isFirst);
               } catch (e) {
-                if (mounted) {
-                  // Close loading dialog
-                  Navigator.of(context).pop();
+                if (!mounted) return;
 
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Sign out failed: ${e.toString()}'),
-                      backgroundColor: const Color(0xFFEF4444),
-                    ),
-                  );
-                }
+                Navigator.of(context, rootNavigator: true).pop();
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Sign out failed: ${e.toString()}'),
+                    backgroundColor: const Color(0xFFEF4444),
+                  ),
+                );
               }
             },
             style: TextButton.styleFrom(

@@ -1,10 +1,14 @@
+import '../models/unit_schema.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // Data models
-enum FlatStatus { occupied, vacant, maintenance }
+enum FlatStatus { occupied, reserved, vacant, maintenance }
 
 class FlatUnit {
+  final HousingUnitType unitType;
+  final int? unitIndex;
+  bool get usesFloors => unitIndex == null;
   final String id; // Sequential ID like "T001", "A101"
   final String docId; // Firestore document ID
   final String type;
@@ -12,9 +16,14 @@ class FlatUnit {
   final String? residentUserId;
   FlatStatus status;
   final int floor;
+  final String? reservedOnboardingId;
+  final String? reservedForName;
+  final String? reservedResidentType;
   final String area; // e.g., "1500 Sqft"
 
   FlatUnit({
+    this.unitType = HousingUnitType.apartment,
+    this.unitIndex,
     required this.id,
     required this.docId,
     required this.type,
@@ -22,6 +31,9 @@ class FlatUnit {
     this.residentUserId,
     required this.status,
     required this.floor,
+    this.reservedOnboardingId,
+    this.reservedForName,
+    this.reservedResidentType,
     required this.area,
   });
 
@@ -45,20 +57,20 @@ enum ViewMode { grid, list }
 
 class FlatOccupancyGridModal extends StatefulWidget {
   final String towerName;
-  final List<FloorOccupancy> data;
+  final Stream<List<FloorOccupancy>> dataStream;
   final void Function(FlatUnit unit) onFlatTap;
 
   const FlatOccupancyGridModal({
     super.key,
     required this.towerName,
-    required this.data,
+    required this.dataStream,
     required this.onFlatTap,
   });
 
   static Future<void> show(
     BuildContext context, {
     required String towerName,
-    required List<FloorOccupancy> data,
+    required Stream<List<FloorOccupancy>> dataStream,
     required void Function(FlatUnit unit) onFlatTap,
   }) {
     return showGeneralDialog(
@@ -70,7 +82,7 @@ class FlatOccupancyGridModal extends StatefulWidget {
       pageBuilder: (context, animation, secondaryAnimation) {
         return FlatOccupancyGridModal(
           towerName: towerName,
-          data: data,
+          dataStream: dataStream,
           onFlatTap: onFlatTap,
         );
       },
@@ -97,20 +109,18 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
   String _searchQuery = '';
   FlatStatus? _statusFilter;
 
-  List<FloorOccupancy> get _filteredData {
-    return widget.data
+  List<FloorOccupancy> _filterData(List<FloorOccupancy> source) {
+    return source
         .map((floor) {
           final filteredFlats = floor.flats.where((flat) {
-            // Search filter
+            final query = _searchQuery.toLowerCase();
+
             final matchesSearch =
                 _searchQuery.isEmpty ||
-                flat.id.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-                (flat.residentName?.toLowerCase().contains(
-                      _searchQuery.toLowerCase(),
-                    ) ??
-                    false);
+                flat.id.toLowerCase().contains(query) ||
+                (flat.residentName?.toLowerCase().contains(query) ?? false) ||
+                (flat.reservedForName?.toLowerCase().contains(query) ?? false);
 
-            // Status filter
             final matchesStatus =
                 _statusFilter == null || flat.status == _statusFilter;
 
@@ -146,23 +156,85 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
             children: [
               _buildHeader(),
               Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 16.h),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildViewToggle(),
-                      SizedBox(height: 14.h),
-                      _buildLegend(),
-                      SizedBox(height: 14.h),
-                      _buildSearchAndFilter(),
-                      SizedBox(height: 16.h),
-                      _viewMode == ViewMode.grid
-                          ? _buildGridView()
-                          : _buildListView(),
-                    ],
-                  ),
+                child: StreamBuilder<List<FloorOccupancy>>(
+                  stream: widget.dataStream,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting &&
+                        !snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24.w),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.error_outline,
+                                color: Color(0xFFEF4444),
+                                size: 40,
+                              ),
+                              SizedBox(height: 12.h),
+                              Text(
+                                'Unable to load units.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF374151),
+                                ),
+                              ),
+                              SizedBox(height: 6.h),
+                              Text(
+                                '${snapshot.error}',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: const Color(0xFF6B7280),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    final data = snapshot.data ?? const <FloorOccupancy>[];
+
+                    if (data.isEmpty) {
+                      return Center(
+                        child: Text(
+                          'No units found in this building.',
+                          style: TextStyle(
+                            fontSize: 15.sp,
+                            color: const Color(0xFF6B7280),
+                          ),
+                        ),
+                      );
+                    }
+
+                    return SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 16.h),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildViewToggle(),
+                          SizedBox(height: 14.h),
+                          _buildLegend(),
+                          SizedBox(height: 14.h),
+                          _buildSearchAndFilter(),
+                          SizedBox(height: 16.h),
+
+                          _viewMode == ViewMode.grid
+                              ? _buildGridView(data)
+                              : _buildListView(data),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -183,7 +255,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${widget.towerName} - Flat Occupancy Grid',
+                  '${widget.towerName} - Unit Occupancy',
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w700,
@@ -192,7 +264,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  'Visual representation of all flats. Click on any flat to view or edit details.',
+                  'Visual representation of all units. Click on any unit to view or edit details.',
                   style: TextStyle(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w400,
@@ -300,6 +372,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
       runSpacing: 8,
       children: [
         _buildLegendItem('Occupied', const Color(0xFF10B981)),
+        _buildLegendItem('Reserved', const Color(0xFF3B82F6)),
         _buildLegendItem('Vacant', const Color(0xFFD1D5DB)),
         _buildLegendItem('Maintenance', const Color(0xFFFBBF24)),
       ],
@@ -340,7 +413,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
             onChanged: (value) => setState(() => _searchQuery = value),
             style: TextStyle(fontSize: 13.sp),
             decoration: InputDecoration(
-              hintText: 'Search by flat or resident',
+              hintText: 'Search by unit or resident',
               hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13.sp),
               prefixIcon: Icon(
                 Icons.search,
@@ -420,6 +493,10 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
           value: FlatStatus.maintenance,
           child: Text('Maintenance'),
         ),
+        const PopupMenuItem(
+          value: FlatStatus.reserved,
+          child: Text('Reserved'),
+        ),
       ],
     );
   }
@@ -428,6 +505,8 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
     switch (status) {
       case FlatStatus.occupied:
         return 'Occupied';
+      case FlatStatus.reserved:
+        return 'Reserved';
       case FlatStatus.vacant:
         return 'Vacant';
       case FlatStatus.maintenance:
@@ -435,15 +514,15 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
     }
   }
 
-  Widget _buildGridView() {
-    final filteredData = _filteredData;
+  Widget _buildGridView(List<FloorOccupancy> source) {
+    final filteredData = _filterData(source);
 
     if (filteredData.isEmpty) {
       return Center(
         child: Padding(
           padding: EdgeInsets.all(40.w),
           child: Text(
-            'No flats found',
+            'No units found',
             style: TextStyle(fontSize: 16.sp, color: Color(0xFF6B7280)),
           ),
         ),
@@ -466,7 +545,9 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                   borderRadius: BorderRadius.circular(8.r),
                 ),
                 child: Text(
-                  'Floor ${floor.floorNumber}',
+                  floor.floorNumber == 0
+                      ? 'Units'
+                      : 'Floor ${floor.floorNumber}',
                   style: TextStyle(
                     fontSize: 13.sp,
                     fontWeight: FontWeight.w600,
@@ -553,15 +634,15 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
     );
   }
 
-  Widget _buildListView() {
-    final filteredData = _filteredData;
+  Widget _buildListView(List<FloorOccupancy> source) {
+    final filteredData = _filterData(source);
 
     if (filteredData.isEmpty) {
       return Center(
         child: Padding(
           padding: EdgeInsets.all(40.w),
           child: Text(
-            'No flats found',
+            'No units found',
             style: TextStyle(fontSize: 16.sp, color: Color(0xFF6B7280)),
           ),
         ),
@@ -584,7 +665,9 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                   borderRadius: BorderRadius.circular(10.r),
                 ),
                 child: Text(
-                  'Floor ${floor.floorNumber}',
+                  floor.floorNumber == 0
+                      ? 'Units'
+                      : 'Floor ${floor.floorNumber}',
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.w600,
@@ -670,6 +753,8 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
         return const Color(0xFFE5E7EB);
       case FlatStatus.maintenance:
         return const Color(0xFFFBBF24);
+      case FlatStatus.reserved:
+        return const Color(0xFF3B82F6); // Blue color for reserved flats
     }
   }
 }

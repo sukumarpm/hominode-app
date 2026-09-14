@@ -4,8 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
 
-import '../models/security_user_model.dart';
 import '../models/security_community_model.dart';
+import '../models/security_user_model.dart';
 
 class SecurityAuthException implements Exception {
   final String code;
@@ -44,7 +44,7 @@ class AuthService {
     if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
       throw const SecurityAuthException(
         'invalid-phone-number',
-        'Enter a valid phone number with country code.',
+        'Enter a valid phone number.',
       );
     }
 
@@ -157,7 +157,7 @@ class AuthService {
 
       throw const SecurityAuthException(
         'profile-not-found',
-        'No Security account is registered for this phone number.',
+        'No Security account is linked to this phone number. Please contact your Community Admin.',
       );
     }
 
@@ -177,7 +177,7 @@ class AuthService {
 
       throw const SecurityAuthException(
         'wrong-role',
-        'This account is not registered as Security staff.',
+        'This phone number is not registered as a Security account.',
       );
     }
 
@@ -186,7 +186,7 @@ class AuthService {
 
       throw const SecurityAuthException(
         'account-disabled',
-        'This Security account has been disabled.',
+        'Your Security account is not active. Please contact your Community Admin.',
       );
     }
 
@@ -246,17 +246,18 @@ class AuthService {
       case 'too-many-requests':
         return 'Too many attempts. Please try again later.';
       case 'quota-exceeded':
-        return 'OTP service is temporarily unavailable.';
+        return 'OTP service is temporarily unavailable. Please try again later.';
       case 'invalid-verification-code':
-        return 'The OTP you entered is incorrect.';
+        return 'Invalid verification code. Please check the OTP and try again.';
       case 'session-expired':
-        return 'This OTP has expired. Request a new one.';
+      case 'code-expired':
+        return 'This verification session has expired. Please request a new OTP.';
       case 'network-request-failed':
-        return 'Check your internet connection and try again.';
+        return 'Network error. Check your connection and try again.';
       case 'app-not-authorized':
         return 'This app is not authorized for phone authentication.';
       default:
-        return error.message ?? 'Authentication failed. Please try again.';
+        return 'Authentication failed. Please try again.';
     }
   }
 }

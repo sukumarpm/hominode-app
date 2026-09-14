@@ -5,12 +5,17 @@ const { getStorage } = require("firebase-admin/storage");
 const { getMessaging } = require("firebase-admin/messaging");
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 
 const {
   RegistrationError,
   registerResidentCore,
 } = require("./register_resident");
+
+const {
+  createMaintenanceBillsCore,
+} = require("./billing_management");
 
 const {
   createCommunityCore,
@@ -69,6 +74,11 @@ const {
   getResidentIdentityProofUrlCore,
   reviewResidentIdentityProofCore,
   moveOutResidentCore,
+  auditResidentAction,
+  assignResidentOnboardingToFlatCore,
+  listAssignableResidentOnboardingsCore,
+  cancelResidentOnboardingReservationCore,
+  renameUnitCore,
 } = require("./resident_identity");
 const {
   registerNotificationDeviceCore,
@@ -77,6 +87,9 @@ const {
 } = require("./notifications");
 const { acceptCurrentLegalTermsCore } = require("./legal_acceptance");
 const { getResidentNoticeIdsCore } = require("./resident_notices");
+const {
+  resolveResidentCommunityCore,
+} = require("./resident_community_resolution");
 
 
 const REGION = "asia-southeast1";
@@ -143,6 +156,16 @@ exports.verifyPaymentProof = appCheckedCallable(
   "Payment proof could not be verified."
 );
 
+const { triggerSosCore, transitionSosCore, getSosContextCore } = require('./sos');
+const { dispatchSosEventCore } = require('./sos_notifications');
+exports.getSosContext = appCheckedCallable(getSosContextCore, 'Emergency context is unavailable.');
+exports.triggerSos = appCheckedCallable(triggerSosCore, 'The emergency alert could not be confirmed. Retry or call Security.');
+exports.transitionSos = appCheckedCallable(transitionSosCore, 'The emergency action could not be confirmed. Refresh and retry.');
+exports.dispatchSosNotifications = onDocumentCreated({
+  region: REGION, document: 'sosNotificationEvents/{eventId}',
+  retry: true, timeoutSeconds: 300
+}, (event) => dispatchSosEventCore({ db: getFirestore(), messaging: getMessaging(), eventId: event.params.eventId }));
+
 exports.rejectPaymentProof = appCheckedCallable(
   rejectPaymentProofCore,
   "Payment proof could not be rejected."
@@ -185,6 +208,16 @@ exports.acceptCurrentLegalTerms = appCheckedCallable(
 exports.getResidentNoticeIds = appCheckedCallable(
   getResidentNoticeIdsCore,
   "Resident notices could not be loaded."
+);
+
+exports.resolveResidentCommunity = appCheckedCallable(
+  resolveResidentCommunityCore,
+  "Community hostname could not be resolved."
+);
+
+exports.createMaintenanceBills = appCheckedCallable(
+  createMaintenanceBillsCore,
+  "Maintenance bills could not be created.",
 );
 initializeApp();
 
@@ -229,6 +262,38 @@ exports.reassignResident = callable(
 exports.createResidentOnboarding = callable(
   createResidentOnboardingCore,
   "Resident onboarding could not be created."
+);
+
+exports.auditResidentAction = callable(
+  auditResidentAction,
+  "Resident action could not be audited."
+);
+
+exports.assignResidentOnboardingToFlat = callable(
+  assignResidentOnboardingToFlatCore,
+  "Resident onboarding could not be assigned to the unit.",
+);
+exports.cancelResidentOnboardingReservation = callable(
+  cancelResidentOnboardingReservationCore,
+  "Resident onboarding reservation could not be cancelled.",
+);
+const { reconcileBuildingCore, createBuildingCore } = require("./building_reconciliation");
+const { deleteBuildingCore, validateBuildingDeletionCore } = require("./building_deletion");
+exports.validateBuildingDeletion = appCheckedCallable(validateBuildingDeletionCore, "Unable to check building deletion.");
+exports.deleteBuilding = appCheckedCallable(deleteBuildingCore, "Unable to delete building.");
+exports.createBuilding = appCheckedCallable(createBuildingCore, "Unable to create building.");
+exports.reconcileBuilding = appCheckedCallable(
+  reconcileBuildingCore,
+  "Unable to update building."
+);
+exports.renameUnit = appCheckedCallable(
+  renameUnitCore,
+  "Unable to rename unit."
+);
+
+exports.listAssignableResidentOnboardings = callable(
+  listAssignableResidentOnboardingsCore,
+  "Assignable resident onboardings could not be loaded.",
 );
 exports.submitResidentIdentityProof = callable(
   submitResidentIdentityProofCore,

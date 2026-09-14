@@ -18,6 +18,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final AuthService _authService = AuthService();
   SecurityUserModel? _currentUser;
   bool _isLoading = true;
+  bool _isLoggingOut = false;
 
   @override
   void initState() {
@@ -78,24 +79,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _logout() async {
+  Future<void> _logout() async {
+    if (_isLoggingOut) return;
+
     HapticFeedback.mediumImpact();
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Logout'),
         content: const Text('Are you sure you want to logout?'),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.errorRed,
+              foregroundColor: Colors.white,
             ),
             child: const Text('Logout'),
           ),
@@ -103,22 +107,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
 
-    if (confirmed == true && mounted) {
-      try {
-        await _authService.logout();
-        if (mounted) {
-          Navigator.of(context).pushReplacementNamed('/login');
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Logout failed: $e'),
-              backgroundColor: AppColors.errorRed,
-            ),
-          );
-        }
-      }
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _isLoggingOut = true;
+    });
+
+    try {
+      await _authService.logout();
+
+      if (!mounted) return;
+
+      Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoggingOut = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Logout failed: $e'),
+          backgroundColor: AppColors.errorRed,
+        ),
+      );
     }
   }
 
@@ -660,21 +673,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildLogoutButton() {
     return SizedBox(
       width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: _logout,
-        icon: const Icon(Icons.logout, size: 20),
-        label: const Text(
-          'Logout',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
+      child: OutlinedButton(
+        onPressed: _isLoggingOut ? null : _logout,
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.errorRed,
-          side: const BorderSide(color: AppColors.errorRed, width: 1.5),
+          side: BorderSide(
+            color: _isLoggingOut
+                ? AppColors.errorRed.withValues(alpha: 0.45)
+                : AppColors.errorRed,
+            width: 1.5,
+          ),
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
         ),
+        child: _isLoggingOut
+            ? const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: AppColors.errorRed,
+                    ),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Signing out…',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              )
+            : const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.logout, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    'Logout',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
       ),
     );
   }

@@ -1222,6 +1222,9 @@ import 'src/services/recent_activity_flow_function.dart';
 import 'src/services/tenant_resolution_service.dart';
 import 'src/services/visitor_firestore_service.dart';
 
+import 'package:hominode_sos/hominode_sos.dart';
+import 'src/screens/emergency_sos_screen.dart';
+
 class DashboardScreen extends StatefulWidget {
   final Function(int)? onTabChange;
 
@@ -1439,6 +1442,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 _buildHeroAndBanner(),
                 SizedBox(height: 12.h),
+                SosEntryButton(onPressed: () => Navigator.push(context,
+                  MaterialPageRoute<void>(builder: (_) => const EmergencySosScreen()))),
                 _buildSummaryCards(),
                 SizedBox(height: 20.h),
                 _buildQuickAccessSection(),

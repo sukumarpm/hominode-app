@@ -63,6 +63,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic>? _userProfile;
   String _organizationName = 'Your Apartment'; // Default fallback
   bool _isLoading = true;
+  late bool _isLoggingOut = false;
   String? _userId; // Track user ID for image streaming
   int _points = 0;
   int _eventsCount = 0;
@@ -707,18 +708,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
       width: double.infinity,
       height: 52.h,
       child: OutlinedButton(
-        onPressed: () => _handleLogout(context),
+        onPressed: _isLoggingOut ? null : () => _handleLogout(context),
         style: OutlinedButton.styleFrom(
           foregroundColor: kPrimaryBlue,
-          side: const BorderSide(color: kPrimaryBlue, width: 1.5),
+          side: BorderSide(
+            color: _isLoggingOut
+                ? kPrimaryBlue.withValues(alpha: 0.4)
+                : kPrimaryBlue,
+            width: 1.5,
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(kCardRadius),
           ),
         ),
-        child: Text(
-          'logout'.tr(),
-          style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
-        ),
+        child: _isLoggingOut
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 20.w,
+                    height: 20.w,
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: kPrimaryBlue,
+                    ),
+                  ),
+                  SizedBox(width: 10.w),
+                  Text(
+                    'Signing out…',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              )
+            : Text(
+                'logout'.tr(),
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
+              ),
       ),
     );
   }
@@ -746,16 +775,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
 
-    if (confirmed == true) {
-      // Clear login state using Firestore auth service
+    if (confirmed != true || _isLoggingOut) return;
+
+    setState(() {
+      _isLoggingOut = true;
+    });
+
+    try {
       await _authService.signOut(context.read<TenantResolutionService>());
 
-      if (context.mounted) {
-        // Navigate to login screen and clear all previous routes
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil('/login', (route) => false);
-      }
+      if (!mounted) return;
+
+      Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoggingOut = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to logout. Please try again.')),
+      );
     }
   }
 

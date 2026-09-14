@@ -1332,10 +1332,14 @@
 //     }
 //   }
 // }
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
+import 'package:hominode_sos/hominode_sos.dart';
 
 import 'admin_residents_page_firestore.dart';
 import 'amenities_management_screen.dart';
@@ -1347,18 +1351,14 @@ import 'notifications_screen.dart';
 import 'parking_management_screen.dart';
 import 'quick_access_page.dart';
 import 'security_management_screen.dart';
-import 'dart:async';
-
-import 'package:hominode_notifications/hominode_notifications.dart';
-
 import 'services/admin_tenant_context.dart';
 import 'services/dashboard_service.dart';
 import 'services/notification_service.dart';
 import 'theme/hominode_theme.dart';
 import 'visitor_management_screen.dart';
+import 'widgets/community_switcher_dialog.dart';
 import 'widgets/notification_badge.dart';
 import 'widgets/standard_bottom_nav.dart';
-import 'widgets/community_switcher_dialog.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -1383,9 +1383,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   @override
   void initState() {
     super.initState();
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return;
+    }
+
     _notificationService.initializeNotifications();
     _notificationService.addListener(_onNotificationUpdate);
     _loadAdminData();
+
     unawaited(
       HominodePushNotifications.instance.activate(
         selectedCommunityId: _communityId,
@@ -1471,13 +1479,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   void _onNotificationUpdate() {
-    if (mounted) {
-      setState(() {});
-    }
+    if (!mounted) return;
+    if (FirebaseAuth.instance.currentUser == null) return;
+
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
+    if (FirebaseAuth.instance.currentUser == null) {
+      return const SizedBox.shrink();
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFD),
       body: SafeArea(
@@ -1492,6 +1505,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (AdminTenantContext.instance.communityId != null)
+                      SosActiveBanner(communityId: AdminTenantContext.instance.requireCommunityId()),
                     _buildDashboardStats(),
                     SizedBox(height: 22.h),
                     _buildQuickActions(),

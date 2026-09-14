@@ -30,29 +30,23 @@ Widget _app(_FakePhoneAuthGateway gateway) => ScreenUtilInit(
   builder: (_, __) => MaterialApp(
     home: SimpleLoginScreen(
       authGateway: gateway,
-      otpScreenBuilder: (_, __, intent) =>
-          Scaffold(body: Text('OTP intent: ${intent.name}')),
+      otpScreenBuilder: (_, __) => const Scaffold(body: Text('OTP started')),
     ),
   ),
 );
 
 void main() {
-  testWidgets('Register link is visible and starts OTP with register intent', (
+  testWidgets('Register link is not shown in active resident login', (
     tester,
   ) async {
     final gateway = _FakePhoneAuthGateway();
     await tester.pumpWidget(_app(gateway));
 
-    expect(find.byKey(const Key('resident-register-link')), findsOneWidget);
-    expect(find.text('Create account'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('resident-register-link')));
-    await tester.pumpAndSettle();
-
-    expect(gateway.sendCount, 1);
-    expect(find.text('OTP intent: register'), findsOneWidget);
+    expect(find.byKey(const Key('resident-register-link')), findsNothing);
+    expect(find.text('New resident? Register'), findsNothing);
   });
 
-  testWidgets('existing Send OTP action keeps login intent', (tester) async {
+  testWidgets('Send OTP starts resident OTP screen', (tester) async {
     final gateway = _FakePhoneAuthGateway();
     await tester.pumpWidget(_app(gateway));
 
@@ -60,6 +54,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.sendCount, 1);
-    expect(find.text('OTP intent: login'), findsOneWidget);
+    expect(find.text('OTP started'), findsOneWidget);
   });
 }

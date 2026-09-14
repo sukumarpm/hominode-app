@@ -34,7 +34,7 @@ class FlatDetailsModal extends StatefulWidget {
   });
 
   /// Show the modal with fade-in and scale animation
-  static Future<void> show(
+  static Future<bool?> show(
     BuildContext context, {
     required FlatUnit unit,
     VoidCallback? onAssignResident,
@@ -48,7 +48,7 @@ class FlatDetailsModal extends StatefulWidget {
     return showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close flat details',
+      barrierLabel: 'Close unit details',
       barrierColor: const Color(0x59000000), // rgba(0, 0, 0, 0.35)
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
@@ -82,7 +82,7 @@ class FlatDetailsModal extends StatefulWidget {
 }
 
 class _FlatDetailsModalState extends State<FlatDetailsModal> {
-  final bool _isLoading = false;
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -114,8 +114,18 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
                       _buildDetailsGrid(),
                       SizedBox(height: 24.h),
                       _buildInfoBanner(),
-                      SizedBox(height: 20.h),
-                      _buildPrimaryButton(),
+
+                      if (widget.unit.status == FlatStatus.reserved) ...[
+                        SizedBox(height: 20.h),
+                        _buildReservationDetails(),
+                        SizedBox(height: 20.h),
+                        _buildCancelReservationButton(),
+                      ],
+
+                      if (widget.unit.status != FlatStatus.reserved) ...[
+                        SizedBox(height: 20.h),
+                        _buildPrimaryButton(),
+                      ],
                     ],
                   ),
                 ),
@@ -127,6 +137,320 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
     );
   }
 
+  Widget _buildCancelReservationButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 56.h,
+      child: OutlinedButton(
+        onPressed: _isLoading ? null : _confirmCancelReservation,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFFB91C1C),
+          side: const BorderSide(color: Color(0xFFFCA5A5)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14.r),
+          ),
+        ),
+        child: _isLoading
+            ? SizedBox(
+                width: 24.w,
+                height: 24.h,
+                child: const CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Color(0xFFB91C1C),
+                ),
+              )
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cancel_outlined),
+                  SizedBox(width: 8.w),
+                  Text(
+                    'Cancel Reservation',
+                    style: TextStyle(
+                      fontSize: 17.sp,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Future<void> _confirmCancelReservation() async {
+    final onboardingId = widget.unit.reservedOnboardingId?.trim();
+
+    if (onboardingId == null || onboardingId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Reservation information is incomplete. Cancellation was not performed.',
+          ),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      return;
+    }
+
+    final residentName = widget.unit.reservedForName?.trim().isNotEmpty == true
+        ? widget.unit.reservedForName!.trim()
+        : 'this resident';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Cancel Reservation?'),
+          content: Text(
+            '$residentName\'s reservation for ${widget.unit.id} will be cancelled. '
+            'The unit will become vacant and the resident will remain available for reassignment.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Keep Reservation'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Cancel Reservation'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    await _cancelReservation(onboardingId);
+  }
+
+  Future<void> _cancelReservation(String onboardingId) async {
+    if (widget.userService == null ||
+        widget.buildingId == null ||
+        widget.buildingId!.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Reservation service is unavailable. No changes were made.',
+          ),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      debugPrint('🔴 CANCEL RESERVATION PAYLOAD');
+      debugPrint('   onboardingId: $onboardingId');
+      debugPrint('   buildingId: ${widget.buildingId}');
+      debugPrint('   unit.id: ${widget.unit.id}');
+      debugPrint('   unit.docId: ${widget.unit.docId}');
+      debugPrint(
+        '   reservedOnboardingId: ${widget.unit.reservedOnboardingId}',
+      );
+      debugPrint('   reservedForName: ${widget.unit.reservedForName}');
+      debugPrint('   unit.status: ${widget.unit.status}');
+      await widget.userService!.cancelResidentOnboardingReservation(
+        onboardingId: onboardingId,
+        buildingId: widget.buildingId!.trim(),
+        flatId: widget.unit.docId,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Reservation for ${widget.unit.id} cancelled successfully.',
+          ),
+          backgroundColor: const Color(0xFF10B981),
+        ),
+      );
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to cancel reservation: $e'),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editUnitName() async {
+    if (widget.flatService == null ||
+        widget.buildingId == null ||
+        widget.buildingId!.trim().isEmpty) {
+      return;
+    }
+
+    final controller = TextEditingController(text: widget.unit.id);
+
+    final newLabel = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit Unit Name'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Unit Name',
+              hintText: 'Example: A-101, Villa-03',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(controller.text.trim());
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (newLabel == null || newLabel.trim().isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await widget.flatService!.renameUnit(
+        flatDocumentId: widget.unit.docId,
+        buildingId: widget.buildingId!,
+        newLabel: newLabel,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unit renamed to ${newLabel.trim()} successfully.'),
+          backgroundColor: const Color(0xFF10B981),
+        ),
+      );
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Bad state: ', '')),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
+      );
+    }
+  }
+
+  Widget _buildReservationDetails() {
+    final name = widget.unit.reservedForName?.trim();
+    final residentType = widget.unit.reservedResidentType?.trim();
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(18.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Reservation Details',
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF9A3412),
+            ),
+          ),
+          SizedBox(height: 14.h),
+
+          _buildReservationRow(
+            'Reserved For',
+            name?.isNotEmpty == true ? name! : 'Pending resident',
+          ),
+
+          if (residentType?.isNotEmpty == true) ...[
+            SizedBox(height: 10.h),
+            _buildReservationRow(
+              'Resident Type',
+              _formatResidentType(residentType!),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReservationRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 110.w,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14.sp,
+              fontWeight: FontWeight.w500,
+              color: const Color(0xFF78716C),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 14.sp,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF292524),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatResidentType(String value) {
+    if (value.isEmpty) return value;
+
+    return value[0].toUpperCase() + value.substring(1).toLowerCase();
+  }
+
   Widget _buildHeader() {
     return Container(
       padding: EdgeInsets.fromLTRB(24.w, 24.h, 24.w, 16.h),
@@ -136,18 +460,35 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             padding: EdgeInsets.only(right: 44.w),
             child: Column(
               children: [
-                Text(
-                  widget.unit.id,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 24.sp,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF111827),
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.unit.id,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 24.sp,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF111827),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8.w),
+                    IconButton(
+                      tooltip: 'Edit unit name',
+                      onPressed: _isLoading ? null : _editUnitName,
+                      icon: const Icon(
+                        Icons.edit_outlined,
+                        color: Color(0xFF0E4778),
+                      ),
+                    ),
+                  ],
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'View and manage flat details, resident information, and status.',
+                  'View and manage unit details, resident information, and status.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15.sp,
@@ -163,7 +504,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             top: -8,
             right: -8,
             child: Semantics(
-              label: 'Close flat details',
+              label: 'Close unit details',
               button: true,
               child: InkWell(
                 onTap: () => Navigator.of(context).pop(),
@@ -192,16 +533,26 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         // Row 1: Labels
         Row(
           children: [
-            Expanded(child: _buildLabel('Floors')),
+            Expanded(
+              child: _buildLabel(
+                widget.unit.usesFloors ? 'Floor' : 'Unit Type',
+              ),
+            ),
             SizedBox(width: 16.w),
-            Expanded(child: _buildLabel('Flats per Floor')),
+            Expanded(child: _buildLabel('Configuration')),
           ],
         ),
         SizedBox(height: 16.h),
         // Row 2: Values
         Row(
           children: [
-            Expanded(child: _buildValue('Floor ${widget.unit.floor}')),
+            Expanded(
+              child: _buildValue(
+                widget.unit.usesFloors
+                    ? 'Floor ${widget.unit.floor}'
+                    : widget.unit.unitType.label,
+              ),
+            ),
             SizedBox(width: 16.w),
             Expanded(child: _buildValue(widget.unit.type)),
           ],
@@ -285,6 +636,8 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         return 'Occupied';
       case FlatStatus.maintenance:
         return 'Maintenance';
+      case FlatStatus.reserved:
+        return 'Reserved';
     }
   }
 
@@ -296,6 +649,8 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         return const Color(0xFF10B981);
       case FlatStatus.maintenance:
         return const Color(0xFFFBBF24);
+      case FlatStatus.reserved:
+        return const Color(0xFF3B82F6); // Blue color for reserved flats
     }
   }
 
@@ -307,6 +662,8 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         return Colors.white;
       case FlatStatus.maintenance:
         return const Color(0xFF78350F);
+      case FlatStatus.reserved:
+        return Colors.white;
     }
   }
 
@@ -336,11 +693,19 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
   String _getBannerText(FlatStatus status) {
     switch (status) {
       case FlatStatus.vacant:
-        return 'This flat is currently vacant. You can assign a resident or change its status.';
+        return 'This unit is currently vacant. You can assign a resident or change its status.';
       case FlatStatus.occupied:
-        return 'This flat is currently occupied. View resident details or update information.';
+        return 'This unit is currently occupied. View resident details or update information.';
       case FlatStatus.maintenance:
-        return 'This flat is under maintenance. Update status when work is complete.';
+        return 'This unit is under maintenance. Update status when work is complete.';
+      case FlatStatus.reserved:
+        final residentName = widget.unit.reservedForName?.trim();
+
+        if (residentName != null && residentName.isNotEmpty) {
+          return 'This unit is reserved for $residentName. The resident onboarding is still pending.';
+        }
+
+        return 'This unit is reserved for a pending resident onboarding.';
     }
   }
 
@@ -393,10 +758,17 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         return 'Update Status';
       case FlatStatus.occupied:
         return 'View Details';
+      case FlatStatus.reserved:
+        return 'Reserved';
     }
   }
 
   Future<void> _handlePrimaryAction() async {
+    if (widget.unit.status == FlatStatus.reserved) {
+      throw StateError(
+        'Reserved units cannot be assigned or manually changed.',
+      );
+    }
     if (widget.unit.status == FlatStatus.vacant) {
       // ONLY vacant flats can assign residents
       print('\n🟡 FlatDetailsModal: Opening AssignResidentModal');
@@ -414,44 +786,79 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         loadResidents: widget.userService != null
             ? () async {
                 print('\n🔵 loadResidents callback triggered');
+
                 final users = await widget.userService!
                     .getAvailableUsers()
                     .first;
-                print('🔵 Fetched ${users.length} returning residents');
-                return users.map((user) {
-                  final isAssigned =
-                      user.flatId != null && user.flatId!.isNotEmpty;
+
+                final registeredResidents = users.map((user) {
                   return ResidentSummary(
                     id: user.id,
                     name: user.name,
                     uniqueId: user.residentId,
-                    status: isAssigned
-                        ? ResidentStatus.assigned
-                        : ResidentStatus.available,
+                    status: ResidentStatus.available,
                     flatLabel: user.flatLabel,
+                    source: ResidentSource.registered,
+                    residentType: user.ownershipType,
                   );
                 }).toList();
+
+                final onboardings = await widget.userService!
+                    .getUnassignedPendingOnboardings();
+
+                final pendingResidents = onboardings.map((resident) {
+                  return ResidentSummary(
+                    id: resident.id,
+                    name: resident.name,
+                    uniqueId: resident.phone,
+                    status: ResidentStatus.pendingRegistration,
+                    source: ResidentSource.onboarding,
+                    residentType: resident.residentType,
+                  );
+                }).toList();
+
+                print(
+                  '🔵 Loaded ${registeredResidents.length} registered '
+                  'and ${pendingResidents.length} pending residents',
+                );
+
+                return [...registeredResidents, ...pendingResidents];
               }
             : null,
         onAssign: (request) async {
-          print('\n🟢 onAssign callback triggered (existing resident)');
+          print('\n🟢 onAssign callback triggered');
 
           if (widget.userService == null) {
             throw StateError(
-              'Resident assignment service is unavailable. No flat status was changed.',
+              'Resident assignment service is unavailable. '
+              'No unit status was changed.',
+            );
+          }
+
+          if (widget.buildingId == null || widget.buildingId!.trim().isEmpty) {
+            throw StateError(
+              'Building is unavailable for resident assignment.',
             );
           }
 
           try {
-            // Get user details
+            if (request.source == ResidentSource.onboarding) {
+              await widget.userService!.assignOnboardingToFlat(
+                onboardingId: request.residentId,
+                buildingId: widget.buildingId!,
+                flatId: widget.unit.docId,
+              );
+              return;
+            }
+
             final user = await widget.userService!.getUserById(
               request.residentId,
             );
+
             if (user == null) {
               throw Exception('User not found');
             }
 
-            // Assign user to flat in users collection
             await widget.userService!.assignUserToFlat(
               userId: user.id,
               flatId: widget.unit.docId,

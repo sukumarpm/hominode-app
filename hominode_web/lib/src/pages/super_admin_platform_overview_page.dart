@@ -49,7 +49,7 @@ class SuperAdminPlatformOverviewPage extends StatelessWidget {
                   label: 'Community Admins',
                   value: data.admins.toString(),
                   icon: Icons.admin_panel_settings_outlined,
-                  color: const Color(0xFF7A42D8),
+                  color: const Color(0xFF2C73E8),
                 ),
                 DashboardStatCard(
                   label: 'Active Admins',
@@ -60,53 +60,67 @@ class SuperAdminPlatformOverviewPage extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            SectionCard(
-              title: 'Platform Registry',
-              child: Column(
-                children: [
-                  _OverviewRow(
-                    icon: Icons.apartment_outlined,
-                    title: 'Communities',
-                    value: '${data.communities}',
+            DashboardPanelGrid(
+              flexes: const [2, 1],
+              children: [
+                SectionCard(
+                  title: 'Platform Registry',
+                  subtitle: 'Current platform account composition',
+                  child: Column(
+                    children: [
+                      _OverviewRow(
+                        icon: Icons.apartment_outlined,
+                        title: 'Communities',
+                        value: '${data.communities}',
+                      ),
+                      const Divider(height: 20),
+                      _OverviewRow(
+                        icon: Icons.verified_outlined,
+                        title: 'Active Communities',
+                        value: '${data.activeCommunities}',
+                      ),
+                      const Divider(height: 20),
+                      _OverviewRow(
+                        icon: Icons.pause_circle_outline,
+                        title: 'Inactive Communities',
+                        value: '${data.inactiveCommunities}',
+                      ),
+                      const Divider(height: 20),
+                      _OverviewRow(
+                        icon: Icons.admin_panel_settings_outlined,
+                        title: 'Community Administrators',
+                        value: '${data.admins}',
+                      ),
+                    ],
                   ),
-                  const Divider(height: 24),
-                  _OverviewRow(
-                    icon: Icons.verified_outlined,
-                    title: 'Active Communities',
-                    value: '${data.activeCommunities}',
+                ),
+                const SectionCard(
+                  title: 'Platform Boundary',
+                  subtitle: 'Tenant-safe responsibilities',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Super Admin manages the Hominode platform registry, community configuration, and administrator assignments.',
+                        style: TextStyle(
+                          color: WebDesign.text,
+                          fontSize: 11,
+                          height: 1.45,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        'Resident, visitor, billing, complaint, amenity and other operational community records remain controlled by the respective community administrators.',
+                        style: TextStyle(
+                          color: WebDesign.muted,
+                          fontSize: 10,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
                   ),
-                  const Divider(height: 24),
-                  _OverviewRow(
-                    icon: Icons.pause_circle_outline,
-                    title: 'Inactive Communities',
-                    value: '${data.inactiveCommunities}',
-                  ),
-                  const Divider(height: 24),
-                  _OverviewRow(
-                    icon: Icons.admin_panel_settings_outlined,
-                    title: 'Community Administrators',
-                    value: '${data.admins}',
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            const SectionCard(
-              title: 'Platform Boundary',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Super Admin manages the Hominode platform registry, community configuration, and administrator assignments.',
-                    style: TextStyle(color: WebDesign.text, height: 1.5),
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Resident, visitor, billing, complaint, amenity and other operational community records remain controlled by the respective community administrators.',
-                    style: TextStyle(color: WebDesign.muted, height: 1.5),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         );

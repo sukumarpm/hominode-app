@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'desktop/admin_desktop_page_frame.dart';
 import 'widgets/create_event_modal.dart';
 import 'widgets/edit_announcement_modal.dart';
 import 'widgets/create_announcement_modal.dart';
@@ -82,9 +83,44 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_isInitialized) {
+      if (AdminDesktopPresentationScope.isActive(context)) {
+        return const Center(child: CircularProgressIndicator());
+      }
       return Scaffold(
         backgroundColor: const Color(0xFFF7F8FA),
         body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Events & Announcements',
+        subtitle: 'Create and manage community communications.',
+        actions: [
+          AdminDesktopPrimaryAction(
+            label: selectedTab == 0 ? 'Create Event' : 'Create Announcement',
+            icon: selectedTab == 0
+                ? Icons.event_available_outlined
+                : Icons.campaign_outlined,
+            onPressed: _createSelectedItem,
+          ),
+        ],
+        child: Column(
+          children: [
+            SegmentedControlExamples.eventsSegmentedControl(
+              selectedIndex: selectedTab,
+              onChanged: (index) => setState(() => selectedTab = index),
+            ),
+            SizedBox(height: 16.h),
+            Expanded(
+              child: SingleChildScrollView(
+                child: selectedTab == 0
+                    ? _buildEventsList()
+                    : _buildAnnouncementsList(),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -227,6 +263,59 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _createSelectedItem() async {
+    try {
+      if (selectedTab == 0) {
+        final result = await showCreateEventModal(context);
+        if (result == null || !context.mounted) return;
+        await _service.createEvent(
+          title: result['title'],
+          category: result['category'] ?? 'General',
+          description: result['description'] ?? '',
+          date: result['date'] ?? DateTime.now(),
+          time: result['time'] ?? '6:00 PM',
+          location: result['location'] ?? 'Community Hall',
+          imageUrl: result['imageUrl'],
+          localImagePath: result['localImagePath'],
+        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Event created successfully'),
+              backgroundColor: Color(0xFF10B981),
+            ),
+          );
+        }
+        return;
+      }
+
+      final result = await showCreateAnnouncementModal(context);
+      if (result == null || !context.mounted) return;
+      await _service.createAnnouncement(
+        title: result['title'],
+        category: result['category'] ?? 'General',
+        priority: result['priority'] ?? 'medium',
+        description: result['message'] ?? '',
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Announcement created successfully'),
+            backgroundColor: Color(0xFF10B981),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to create item: $error'),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
+      );
+    }
   }
 
   Widget _buildEventsList() {

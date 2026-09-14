@@ -5,9 +5,13 @@ import 'notification_firestore_service.dart';
 import '../models/notification_models.dart';
 
 class AmenityService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final AdminService _adminService = AdminService();
-  final NotificationFirestoreService _notificationService =
+  AmenityService({FirebaseFirestore? firestore, AdminService? adminService})
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _adminService = adminService ?? AdminService();
+
+  final FirebaseFirestore _firestore;
+  final AdminService _adminService;
+  late final NotificationFirestoreService _notificationService =
       NotificationFirestoreService();
   final String _amenitiesCollection = 'amenities';
   final String _bookingsCollection = 'bookings';
@@ -34,14 +38,152 @@ class AmenityService {
         });
   }
 
-  // Add new amenity
+  static const _editableFields = {
+    'name',
+    'type',
+    'description',
+    'iconName',
+    'imageUrl',
+    'isAvailable',
+    'isFree',
+    'pricingMode',
+    'pricePerDay',
+    'ownerPricePerDay',
+    'tenantPricePerDay',
+    'timeSlots',
+    'bookingDurations',
+    'maxCapacity',
+    'allowMultipleBookings',
+    'hasSubscriptionPackages',
+    'subscriptionPackages',
+  };
+
+  static String? priceValidationError(String? text) {
+    final value = double.tryParse(text?.trim() ?? '');
+    return value == null || !value.isFinite || value < 0
+        ? 'Enter a finite price of 0 or more'
+        : null;
+  }
+
+  static String? imageUrlValidationError(String? text) {
+    final value = text?.trim() ?? '';
+    if (value.isEmpty) return null;
+    final uri = Uri.tryParse(value);
+    return uri == null ||
+            !{'http', 'https'}.contains(uri.scheme.toLowerCase()) ||
+            uri.host.isEmpty ||
+            RegExp(r'\s').hasMatch(value)
+        ? 'Enter a valid http:// or https:// image URL'
+        : null;
+  }
+
+  static num _price(dynamic value) {
+    if (value is! num || !value.isFinite || value < 0) {
+      throw ArgumentError('Price must be a finite number of 0 or more.');
+    }
+    return value;
+  }
+
+  static String _pricingMode(dynamic value) {
+    if (value == 'free' || value == 'flat' || value == 'resident_type') {
+      return value as String;
+    }
+
+    throw ArgumentError('pricingMode must be free, flat, or resident_type.');
+  }
+
+  static List<String> _strings(dynamic value, String field) {
+    if (value is! List ||
+        value.any((item) => item is! String || item.trim().isEmpty)) {
+      throw ArgumentError('$field must contain only nonempty strings.');
+    }
+    return value.cast<String>().map((item) => item.trim()).toList();
+  }
+
+  static Map<String, dynamic> _facilityFields(Map<String, dynamic> input) {
+    final fields = <String, dynamic>{};
+    for (final entry in input.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (!_editableFields.contains(key)) {
+        throw ArgumentError('Facility field is not editable: $key');
+      }
+      switch (key) {
+        case 'name':
+        case 'type':
+          if (value is! String || value.trim().isEmpty) {
+            throw ArgumentError('$key is required.');
+          }
+          fields[key] = value.trim();
+        case 'description':
+        case 'iconName':
+        case 'imageUrl':
+          if (value != null && value is! String) {
+            throw ArgumentError('$key must be a string.');
+          }
+          final text = (value as String?)?.trim() ?? '';
+          if (key == 'imageUrl' && imageUrlValidationError(text) != null) {
+            throw ArgumentError(imageUrlValidationError(text));
+          }
+          fields[key] = text;
+        case 'isFree':
+        case 'isAvailable':
+        case 'allowMultipleBookings':
+        case 'hasSubscriptionPackages':
+          if (value is! bool) throw ArgumentError('$key must be a boolean.');
+          fields[key] = value;
+
+        case 'pricingMode':
+          fields[key] = _pricingMode(value);
+
+        case 'pricePerDay':
+        case 'ownerPricePerDay':
+        case 'tenantPricePerDay':
+          fields[key] = _price(value);
+        case 'timeSlots':
+        case 'bookingDurations':
+          fields[key] = _strings(value, key);
+          if (key == 'bookingDurations' && (fields[key] as List).isEmpty) {
+            throw ArgumentError('Select at least one booking duration.');
+          }
+        case 'maxCapacity':
+          if (value is! int || value <= 0) {
+            throw ArgumentError('Capacity must be a positive integer.');
+          }
+          fields[key] = value;
+        case 'subscriptionPackages':
+          if (value is! Map) throw ArgumentError('Packages must be a map.');
+          final packages = <String, num>{};
+          for (final package in value.entries) {
+            if (package.key is! String ||
+                (package.key as String).trim().isEmpty) {
+              throw ArgumentError('Package names must not be empty.');
+            }
+            packages[package.key as String] = _price(package.value);
+          }
+          fields[key] = packages;
+      }
+    }
+    return fields;
+  }
+
+  void _checkCurrentCommunity(String communityId) {
+    if (_adminService.getCurrentAdminId() == null ||
+        _adminService.requireCurrentCommunityId() != communityId) {
+      throw StateError('Your selected community changed. Reopen the facility.');
+    }
+  }
+
   Future<String> addAmenity({
     required String name,
     required String type,
     required bool isFree,
     required String buildingId,
-    required String buildingName,
+    bool isAvailable = true,
     double? pricePerDay,
+    String? pricingMode,
+    double? ownerPricePerDay,
+    double? tenantPricePerDay,
     String? description,
     String? iconName,
     String? imageUrl,
@@ -52,68 +194,175 @@ class AmenityService {
     bool? hasSubscriptionPackages,
     Map<String, double>? subscriptionPackages,
   }) async {
-    try {
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null) throw Exception('Admin not logged in');
-
-      final adminProfile = await _adminService.getAdminProfile();
-
-      print(
-        'AmenityService: Adding amenity - $name for building $buildingName',
-      );
-
-      final docRef = await _firestore.collection(_amenitiesCollection).add({
-        'name': name,
-        'type': type,
-        'isFree': isFree,
-        'pricePerDay': pricePerDay ?? 0,
-        'description': description,
-        'iconName': iconName,
-        'imageUrl': imageUrl,
-        'timeSlots': timeSlots,
-        'isAvailable': true,
-        'buildingId': buildingId,
-        'buildingName': buildingName,
-        'adminId': adminId,
-        'communityId': _adminService.requireCurrentCommunityId(),
-        'adminName': adminProfile?['name'] ?? '',
-        'adminEmail': adminProfile?['email'] ?? '',
-        'organization': adminProfile?['organization'] ?? '',
-        // Booking Configuration
-        'maxCapacity': maxCapacity ?? 1,
-        'allowMultipleBookings': allowMultipleBookings ?? false,
-        'bookingDurations': bookingDurations ?? ['1 hour'],
-        // Subscription Packages
-        'hasSubscriptionPackages': hasSubscriptionPackages ?? false,
-        'subscriptionPackages': subscriptionPackages ?? {},
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      print('AmenityService: Amenity added with ID: ${docRef.id}');
-      return docRef.id;
-    } catch (e) {
-      print('AmenityService ERROR: Failed to add amenity: $e');
-      throw Exception('Failed to add amenity: $e');
+    final communityId = _adminService.requireCurrentCommunityId();
+    final adminId = _adminService.getCurrentAdminId();
+    if (adminId == null) throw StateError('Admin not logged in');
+    final id = buildingId.trim();
+    if (id.isEmpty || id.contains('/')) {
+      throw ArgumentError('Select a valid building.');
     }
+    final mode = _pricingMode(pricingMode ?? (isFree ? 'free' : 'flat'));
+
+    if ((mode == 'free') != isFree) {
+      throw ArgumentError(
+        'Facility pricing mode does not match its free/chargeable setting.',
+      );
+    }
+
+    final input = <String, dynamic>{
+      'name': name,
+      'type': type,
+      'isFree': isFree,
+      'isAvailable': isAvailable,
+      'pricingMode': mode,
+      'pricePerDay': mode == 'flat' ? pricePerDay : 0,
+      'description': description,
+      'iconName': iconName,
+      'imageUrl': imageUrl,
+      'timeSlots': timeSlots ?? <String>[],
+      'maxCapacity': maxCapacity ?? 1,
+      'allowMultipleBookings': allowMultipleBookings ?? false,
+      'bookingDurations': bookingDurations ?? ['1 hour'],
+      'hasSubscriptionPackages': hasSubscriptionPackages ?? false,
+      'subscriptionPackages': subscriptionPackages ?? <String, double>{},
+    };
+
+    if (mode == 'resident_type') {
+      input['ownerPricePerDay'] = ownerPricePerDay;
+      input['tenantPricePerDay'] = tenantPricePerDay;
+    }
+
+    final fields = _facilityFields(input);
+    final building = (await _firestore.collection('buildings').doc(id).get())
+        .data();
+    if (building == null) throw StateError('Building no longer exists.');
+    if (building['communityId'] != communityId) {
+      throw StateError('Building is outside your selected community.');
+    }
+    final buildingName = [
+      building['buildingName'],
+      building['name'],
+      id,
+    ].whereType<String>().firstWhere((name) => name.trim().isNotEmpty).trim();
+    final profile = await _adminService.getAdminProfile();
+    _checkCurrentCommunity(communityId);
+    final record = await _firestore.collection(_amenitiesCollection).add({
+      ...fields,
+      'buildingId': id,
+      'buildingName': buildingName,
+      'communityId': communityId,
+      'adminId': adminId,
+      'adminName': profile?['name'] ?? '',
+      'adminEmail': profile?['email'] ?? '',
+      'organization': profile?['organization'] ?? '',
+      'authorId': adminId,
+      'authorName': profile?['name'] ?? '',
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    return record.id;
   }
 
-  // Update amenity
+  // Only explicitly edited fields are written; tenant/building and legacy data
+  // are never copied from a form into the update.
   Future<void> updateAmenity(
     String amenityId,
     Map<String, dynamic> updates,
   ) async {
-    try {
-      updates['updatedAt'] = FieldValue.serverTimestamp();
-      await _firestore
-          .collection(_amenitiesCollection)
-          .doc(amenityId)
-          .update(updates);
-      print('AmenityService: Amenity updated successfully');
-    } catch (e) {
-      print('AmenityService ERROR: Failed to update amenity: $e');
-      throw Exception('Failed to update amenity: $e');
+    final communityId = _adminService.requireCurrentCommunityId();
+    _checkCurrentCommunity(communityId);
+    final record = _firestore.collection(_amenitiesCollection).doc(amenityId);
+    final existing = (await record.get()).data();
+    if (existing == null) throw StateError('Facility no longer exists.');
+    if (existing['communityId'] != communityId) {
+      throw StateError('Facility is outside your selected community.');
     }
+    final fields = _facilityFields(updates);
+    final pricingEdited = {
+      'isFree',
+      'pricingMode',
+      'pricePerDay',
+      'ownerPricePerDay',
+      'tenantPricePerDay',
+    }.any(fields.containsKey);
+
+    if (pricingEdited) {
+      final storedMode = existing['pricingMode'];
+
+      final existingMode =
+          storedMode == 'free' ||
+              storedMode == 'flat' ||
+              storedMode == 'resident_type'
+          ? storedMode as String
+          : existing['isFree'] == true
+          ? 'free'
+          : 'flat';
+
+      var mode = fields.containsKey('pricingMode')
+          ? _pricingMode(fields['pricingMode'])
+          : existingMode;
+
+      // Compatibility with existing Flutter callers which only change isFree.
+      if (!fields.containsKey('pricingMode') && fields.containsKey('isFree')) {
+        final requestedIsFree = fields['isFree'];
+
+        if (requestedIsFree is! bool) {
+          throw ArgumentError('isFree must be a boolean.');
+        }
+
+        if (requestedIsFree) {
+          mode = 'free';
+        } else if (existingMode == 'free') {
+          mode = 'flat';
+        }
+      }
+
+      final expectedIsFree = mode == 'free';
+
+      if (fields.containsKey('isFree')) {
+        final requestedIsFree = fields['isFree'];
+
+        if (requestedIsFree is! bool) {
+          throw ArgumentError('isFree must be a boolean.');
+        }
+
+        if (requestedIsFree != expectedIsFree) {
+          throw ArgumentError(
+            'Facility pricing mode does not match its free/chargeable setting.',
+          );
+        }
+      }
+
+      fields['pricingMode'] = mode;
+      fields['isFree'] = expectedIsFree;
+
+      if (mode == 'free') {
+        fields['pricePerDay'] = 0;
+      } else if (mode == 'flat') {
+        fields['pricePerDay'] = _price(
+          fields.containsKey('pricePerDay')
+              ? fields['pricePerDay']
+              : existing['pricePerDay'],
+        );
+      } else {
+        fields['pricePerDay'] = 0;
+
+        fields['ownerPricePerDay'] = _price(
+          fields.containsKey('ownerPricePerDay')
+              ? fields['ownerPricePerDay']
+              : existing['ownerPricePerDay'],
+        );
+
+        fields['tenantPricePerDay'] = _price(
+          fields.containsKey('tenantPricePerDay')
+              ? fields['tenantPricePerDay']
+              : existing['tenantPricePerDay'],
+        );
+      }
+    }
+    _checkCurrentCommunity(communityId);
+    if (fields.isEmpty) return;
+    await record.update({...fields, 'updatedAt': FieldValue.serverTimestamp()});
   }
 
   // Delete amenity
@@ -595,6 +844,9 @@ class AmenityModel {
   final String type;
   final bool isFree;
   final double pricePerDay;
+  final String pricingMode;
+  final double? ownerPricePerDay;
+  final double? tenantPricePerDay;
   final String? description;
   final String? iconName;
   final String? imageUrl;
@@ -623,6 +875,9 @@ class AmenityModel {
     required this.type,
     required this.isFree,
     required this.pricePerDay,
+    String? pricingMode,
+    this.ownerPricePerDay,
+    this.tenantPricePerDay,
     this.description,
     this.iconName,
     this.imageUrl,
@@ -638,15 +893,39 @@ class AmenityModel {
     required this.subscriptionPackages,
     this.createdAt,
     this.updatedAt,
-  });
+  }) : pricingMode = pricingMode ?? (isFree ? 'free' : 'flat');
 
   factory AmenityModel.fromFirestore(String id, Map<String, dynamic> data) {
+    final rawPricingMode = data['pricingMode'];
+
+    final pricingMode =
+        rawPricingMode == 'free' ||
+            rawPricingMode == 'flat' ||
+            rawPricingMode == 'resident_type'
+        ? rawPricingMode as String
+        : null;
+
+    final rawOwnerPrice = data['ownerPricePerDay'];
+    final rawTenantPrice = data['tenantPricePerDay'];
+
+    final ownerPricePerDay =
+        rawOwnerPrice is num && rawOwnerPrice.isFinite && rawOwnerPrice >= 0
+        ? rawOwnerPrice.toDouble()
+        : null;
+
+    final tenantPricePerDay =
+        rawTenantPrice is num && rawTenantPrice.isFinite && rawTenantPrice >= 0
+        ? rawTenantPrice.toDouble()
+        : null;
     return AmenityModel(
       id: id,
       name: data['name'] ?? '',
       type: data['type'] ?? '',
       isFree: data['isFree'] ?? true,
       pricePerDay: (data['pricePerDay'] ?? 0).toDouble(),
+      pricingMode: pricingMode,
+      ownerPricePerDay: ownerPricePerDay,
+      tenantPricePerDay: tenantPricePerDay,
       description: data['description'],
       iconName: data['iconName'],
       imageUrl: data['imageUrl'],
@@ -677,11 +956,22 @@ class AmenityModel {
   }
 
   String get priceDisplay {
-    if (isFree) return 'Free';
+    if (pricingMode == 'free' || isFree) return 'Free';
+
+    if (pricingMode == 'resident_type') {
+      if (ownerPricePerDay == null || tenantPricePerDay == null) {
+        return 'Price unavailable';
+      }
+
+      return 'Owner ₹${ownerPricePerDay!.toStringAsFixed(0)} • '
+          'Tenant / Lease ₹${tenantPricePerDay!.toStringAsFixed(0)}/day';
+    }
+
     if (hasSubscriptionPackages && subscriptionPackages.isNotEmpty) {
       final firstPackage = subscriptionPackages.entries.first;
       return '₹${firstPackage.value.toStringAsFixed(0)}/${firstPackage.key}';
     }
+
     return '₹${pricePerDay.toStringAsFixed(0)}/day';
   }
 

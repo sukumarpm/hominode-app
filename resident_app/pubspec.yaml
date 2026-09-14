@@ -28,6 +28,8 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  hominode_sos:
+    path: ../packages/hominode_sos
   flutter:
     sdk: flutter
   flutter_screenutil: any
@@ -57,6 +59,8 @@ dependencies:
   # Image Picker
   image_picker: ^1.0.7
   
+  geolocator: ^11.0.0
+
   # URL Launcher for phone calls
   url_launcher: ^6.2.5
   
@@ -125,6 +129,9 @@ flutter:
     - assets/logo1.png
     - assets/Android.png
     - assets/translations/
+    - lib/assets/Resident_New.png
+    - lib/assets/images/resident_login_background.png
+    - lib/assets/reference/resident_login_reference.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
@@ -163,24 +170,26 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
+
   image_path: "lib/assets/Resident_New.png"
+
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "lib/assets/Resident_New.png"
+
   remove_alpha_ios: true
   min_sdk_android: 21
 
-  # Web
   web:
     generate: true
     image_path: "lib/assets/Resident_New.png"
-    background_color: "#4F46E5"
-    theme_color: "#4F46E5"
+    background_color: "#000000"
+    theme_color: "#000000"
 
-  # Windows
   windows:
     generate: true
     image_path: "lib/assets/Resident_New.png"
     icon_size: 48
 
-  # macOS
   macos:
     generate: true
     image_path: "lib/assets/Resident_New.png"

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
+import 'desktop/admin_desktop_page_frame.dart';
 import 'widgets/standard_bottom_nav.dart';
 import 'widgets/standard_header.dart';
 import 'services/parking_service.dart';
@@ -47,6 +48,37 @@ class _ParkingManagementScreenEnhancedState
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Parking',
+        subtitle: 'Manage parking slots, vehicles, and violations.',
+        actions: [
+          AdminDesktopPrimaryAction(
+            label: 'Add Parking Slot',
+            icon: Icons.add_road_outlined,
+            onPressed: _showAddParkingSlotModal,
+          ),
+        ],
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSearchBar(),
+              SizedBox(height: 16.h),
+              _buildStatisticsSection(),
+              SizedBox(height: 16.h),
+              _buildUnauthorizedVehicleAlert(),
+              SizedBox(height: 18.h),
+              _buildTabBar(),
+              SizedBox(height: 14.h),
+              _buildTabContent(),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: CustomScrollView(

@@ -197,10 +197,7 @@ class _CommunityHero extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        gradient: RolePalette.admin.gradient,
-        borderRadius: BorderRadius.circular(WebDesign.radius + 2),
-      ),
+      decoration: WebDesign.adminPageHeader,
       child: Wrap(
         spacing: 18,
         runSpacing: 14,
@@ -215,15 +212,15 @@ class _CommunityHero extends StatelessWidget {
                 Text(
                   brand,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 26,
+                    color: WebDesign.text,
+                    fontSize: 24,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   tenant.name,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                  style: const TextStyle(color: WebDesign.muted, fontSize: 13),
                 ),
                 const SizedBox(height: 10),
                 Wrap(
@@ -380,21 +377,21 @@ class _HeroPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .12),
+        color: RolePalette.admin.soft,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(color: WebDesign.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: Colors.white),
+          Icon(icon, size: 14, color: WebDesign.text),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Colors.white,
+                color: WebDesign.text,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
               ),

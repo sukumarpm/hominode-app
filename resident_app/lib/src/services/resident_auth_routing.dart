@@ -50,7 +50,7 @@ class ResidentAuthRouting {
         result.state == ResidentAuthState.registrationRequired) {
       return AuthResult.failure(
         message:
-            'No resident profile is registered for this phone number. Use Register to create or claim one.',
+            'No resident account is linked to this phone number. Please contact your Community Admin.',
         errorCode: 'resident-registration-required',
       );
     }

@@ -10,11 +10,13 @@ class HominodeLegalAcceptanceGate extends StatefulWidget {
   const HominodeLegalAcceptanceGate({
     required this.profileCollection,
     required this.child,
+    this.loadingWidget,
     super.key,
   });
 
   final String profileCollection;
   final Widget child;
+  final Widget? loadingWidget;
 
   @override
   State<HominodeLegalAcceptanceGate> createState() =>
@@ -71,7 +73,7 @@ class _HominodeLegalAcceptanceGateState
       future: _status,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const _LegalLoadingScreen();
+          return widget.loadingWidget ?? const _LegalLoadingScreen();
         }
         if (snapshot.hasError) {
           return _LegalLoadError(onRetry: _retry);

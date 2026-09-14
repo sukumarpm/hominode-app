@@ -2,14 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // Data models
-enum ResidentStatus { available, assigned, inactive }
+enum ResidentStatus { available, assigned, inactive, pendingRegistration }
+
+enum ResidentSource { registered, onboarding }
 
 class ResidentSummary {
   final String id;
   final String name;
-  final String uniqueId; // e.g., "RES-001", "UID-12345"
+  final String uniqueId;
   final ResidentStatus status;
-  final String? flatLabel; // Current flat if assigned
+  final String? flatLabel;
+
+  final ResidentSource source;
+  final String? residentType;
 
   ResidentSummary({
     required this.id,
@@ -17,45 +22,55 @@ class ResidentSummary {
     required this.uniqueId,
     required this.status,
     this.flatLabel,
+    this.source = ResidentSource.registered,
+    this.residentType,
   });
 
   String get statusLabel {
     switch (status) {
       case ResidentStatus.available:
         return 'Available';
+
       case ResidentStatus.assigned:
         return flatLabel != null ? 'Assigned to $flatLabel' : 'Assigned';
+
       case ResidentStatus.inactive:
         return 'Inactive';
+
+      case ResidentStatus.pendingRegistration:
+        return 'Pending registration';
     }
   }
 
   Color get statusColor {
     switch (status) {
       case ResidentStatus.available:
-        return const Color(0xFF10B981); // Green
+        return const Color(0xFF10B981);
+
       case ResidentStatus.assigned:
-        return const Color(0xFF0E4778); // Blue
+        return const Color(0xFF0E4778);
+
       case ResidentStatus.inactive:
-        return const Color(0xFF9CA3AF); // Grey
+        return const Color(0xFF9CA3AF);
+
+      case ResidentStatus.pendingRegistration:
+        return const Color(0xFFF59E0B);
     }
   }
-
-  // TODO: Add toJson/fromJson for API integration
 }
 
 class AssignResidentRequest {
   final String flatId;
   final String residentId;
   final String ownershipType;
+  final ResidentSource source;
 
   AssignResidentRequest({
     required this.flatId,
     required this.residentId,
     required this.ownershipType,
+    required this.source,
   });
-
-  // TODO: Add toJson for API submission
 }
 
 class AssignResidentNewRequest {
@@ -108,7 +123,7 @@ class AssignResidentModal extends StatefulWidget {
   });
 
   /// Show the modal with fade-in and scale animation
-  static Future<void> show(
+  static Future<bool?> show(
     BuildContext context, {
     required String flatId,
     required String flatLabel,
@@ -261,12 +276,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
   }
 
   bool get _isFormValid {
-    if (_mode == AssignMode.selectExisting) {
-      return _selectedResidentId != null && _ownershipType.isNotEmpty;
-    } else {
-      // Add New mode validation
-      return _isAddNewFormValid;
-    }
+    return _selectedResidentId != null;
   }
 
   bool get _isAddNewFormValid {
@@ -304,96 +314,61 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
   }
 
   Future<void> _handleAssign() async {
-    print('\n🟡 _handleAssign() called');
-    print('Mode: $_mode');
-    print('Form valid: $_isFormValid');
-
     if (!_isFormValid) {
-      print('❌ Form validation failed');
       setState(() {
-        if (_mode == AssignMode.selectExisting) {
-          _errorMessage = 'Please select a resident and ownership type.';
-        } else {
-          _errorMessage = 'Please fill in all required fields correctly.';
-        }
+        _errorMessage = 'Please select a resident.';
       });
       return;
     }
 
-    print('✅ Form validation passed');
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
     });
 
     try {
-      if (_mode == AssignMode.selectExisting) {
-        print('🟡 Mode: Select Existing');
-        final request = AssignResidentRequest(
-          flatId: widget.flatId,
-          residentId: _selectedResidentId!,
-          ownershipType: _ownershipType,
-        );
+      final selectedResident = _residents.firstWhere(
+        (resident) => resident.id == _selectedResidentId,
+      );
 
-        if (widget.onAssign != null) {
-          print('🟡 Calling widget.onAssign...');
-          await widget.onAssign!(request);
-        } else {
-          print('⚠️  widget.onAssign is null, simulating...');
-          // Simulate API call
-          await Future.delayed(const Duration(milliseconds: 800));
-        }
-      } else {
-        print('🟡 Mode: Add New');
-        // Add New mode
-        final newResidentRequest = AssignResidentNewRequest(
-          flatId: widget.flatId,
-          name: _nameController.text.trim(),
-          phone: _phoneController.text.trim(),
-          familyMembers:
-              int.tryParse(_familyMembersController.text.trim()) ?? 1,
-          email: _emailController.text.trim().isEmpty
-              ? null
-              : _emailController.text.trim(),
-          ownershipType: _ownershipType,
-        );
+      final ownershipType = selectedResident.residentType?.trim();
 
-        print('🟡 Request created:');
-        print('  - Name: ${newResidentRequest.name}');
-        print('  - Phone: ${newResidentRequest.phone}');
-        print('  - Email: ${newResidentRequest.email}');
-
-        if (widget.onAssignNew != null) {
-          print('🟡 Calling widget.onAssignNew...');
-          await widget.onAssignNew!(newResidentRequest);
-        } else {
-          print('⚠️  widget.onAssignNew is null, simulating...');
-          // Simulate API call
-          await Future.delayed(const Duration(milliseconds: 1000));
-        }
-      }
-
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _mode == AssignMode.selectExisting
-                  ? 'Resident assigned successfully'
-                  : 'Resident onboarding created for ${widget.flatLabel}. '
-                        'Assignment will complete after OTP registration and Admin approval.',
-            ),
-            backgroundColor: const Color(0xFF10B981),
-            duration: const Duration(seconds: 2),
-          ),
+      if (ownershipType == null || ownershipType.isEmpty) {
+        throw StateError(
+          'The selected resident does not have a valid ownership type.',
         );
       }
+
+      final request = AssignResidentRequest(
+        flatId: widget.flatId,
+        residentId: selectedResident.id,
+        ownershipType: ownershipType,
+        source: selectedResident.source,
+      );
+
+      if (widget.onAssign == null) {
+        throw StateError('Resident assignment service is unavailable.');
+      }
+
+      await widget.onAssign!(request);
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop(true);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Resident assigned successfully'),
+          backgroundColor: Color(0xFF10B981),
+          duration: Duration(seconds: 2),
+        ),
+      );
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _isSubmitting = false;
-        _errorMessage = _mode == AssignMode.selectExisting
-            ? 'Failed to assign resident. Please try again.'
-            : 'Failed to create resident. Please try again.';
+        _errorMessage = 'Failed to assign resident. Please try again.';
       });
     }
   }
@@ -433,30 +408,12 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _buildSegmentedControl(),
-                        SizedBox(height: 24.h),
                         if (_errorMessage != null) ...[
                           _buildErrorBanner(),
                           SizedBox(height: 16.h),
                         ],
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 250),
-                          transitionBuilder: (child, animation) {
-                            return FadeTransition(
-                              opacity: animation,
-                              child: SlideTransition(
-                                position: Tween<Offset>(
-                                  begin: const Offset(0.05, 0),
-                                  end: Offset.zero,
-                                ).animate(animation),
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: _mode == AssignMode.selectExisting
-                              ? _buildSelectExistingForm()
-                              : _buildAddNewForm(),
-                        ),
+
+                        _buildSelectExistingForm(),
                         SizedBox(height: 24.h),
                         _buildPrimaryButton(),
                         SizedBox(height: 12.h),
@@ -493,7 +450,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Assign an existing resident, or create an onboarding request for a new resident.',
+                  'Select an available resident to assign to this unit.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15.sp,
@@ -637,17 +594,13 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
         _buildResidentCardList(),
         SizedBox(height: 6.h),
         Text(
-          'Choose from registered residents in the system',
+          'Choose an available resident or pending onboarding resident',
           style: TextStyle(
             fontSize: 13.sp,
             fontWeight: FontWeight.w400,
-            color: Color(0xFF9CA3AF),
+            color: const Color(0xFF9CA3AF),
           ),
         ),
-        SizedBox(height: 20.h),
-        _buildLabel('Ownership Type'),
-        SizedBox(height: 8.h),
-        _buildOwnershipDropdown(),
       ],
     );
   }
@@ -1077,12 +1030,6 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
           keyboardType: TextInputType.emailAddress,
         ),
         SizedBox(height: 18.h),
-
-        // Ownership Type
-        _buildLabel('Ownership Type'),
-        SizedBox(height: 8.h),
-        _buildOwnershipDropdown(),
-        SizedBox(height: 20.h),
 
         // Info Card
         _buildOtpRegistrationInfoCard(),

@@ -102,10 +102,7 @@ class _SettingsHero extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        gradient: RolePalette.admin.gradient,
-        borderRadius: BorderRadius.circular(WebDesign.radius + 2),
-      ),
+      decoration: WebDesign.adminPageHeader,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 700;
@@ -117,13 +114,13 @@ class _SettingsHero extends StatelessWidget {
                 width: 58,
                 height: 58,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: .14),
+                  color: RolePalette.admin.soft,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white24),
+                  border: Border.all(color: WebDesign.border),
                 ),
                 child: const Icon(
                   Icons.settings_outlined,
-                  color: Colors.white,
+                  color: WebDesign.text,
                   size: 31,
                 ),
               ),
@@ -135,8 +132,8 @@ class _SettingsHero extends StatelessWidget {
                     const Text(
                       'Settings',
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
+                        color: WebDesign.text,
+                        fontSize: 24,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -145,7 +142,7 @@ class _SettingsHero extends StatelessWidget {
                       displayBrand,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Colors.white70,
+                        color: WebDesign.muted,
                         fontSize: 13,
                       ),
                     ),
@@ -186,9 +183,9 @@ class _HeroStatus extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .12),
+        color: RolePalette.admin.soft,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(color: WebDesign.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -196,13 +193,13 @@ class _HeroStatus extends StatelessWidget {
           Icon(
             active ? Icons.check_circle_outline : Icons.pause_circle_outline,
             size: 15,
-            color: Colors.white,
+            color: WebDesign.text,
           ),
           const SizedBox(width: 6),
           Text(
             active ? 'Active community' : 'Inactive community',
             style: const TextStyle(
-              color: Colors.white,
+              color: WebDesign.text,
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),

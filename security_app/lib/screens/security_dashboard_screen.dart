@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:hominode_sos/hominode_sos.dart';
 import 'package:flutter/services.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
 
@@ -267,6 +268,8 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildPageHeader(),
+              if (_currentUser?.communityId.isNotEmpty == true)
+                SosActiveBanner(communityId: _currentUser!.communityId),
               _buildNotificationsSection(),
               _buildAttendanceCard(),
               _buildStatisticsCards(),

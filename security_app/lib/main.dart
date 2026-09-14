@@ -61,9 +61,18 @@ class SecurityApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const SecurityAuthGate(),
-      routes: {
-        '/login': (_) => const SecurityAuthGate(),
-        '/dashboard': (_) => const SecurityAuthGate(),
+      routes: {'/dashboard': (_) => const SecurityAuthGate()},
+      onGenerateRoute: (settings) {
+        if (settings.name == '/login') {
+          return PageRouteBuilder<void>(
+            settings: settings,
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, __, ___) => const SecurityAuthGate(),
+          );
+        }
+
+        return null;
       },
     );
   }
@@ -108,6 +117,7 @@ class _SecurityAuthGateState extends State<SecurityAuthGate> {
 
             return const HominodeLegalAcceptanceGate(
               profileCollection: 'securityStaff',
+              loadingWidget: _SecurityLegalLoadingScreen(),
               child: SecurityDashboardScreen(),
             );
           },
@@ -117,21 +127,98 @@ class _SecurityAuthGateState extends State<SecurityAuthGate> {
   }
 }
 
+class _SecurityLegalLoadingScreen extends StatelessWidget {
+  const _SecurityLegalLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF073B35),
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 34,
+                height: 34,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  color: Color(0xFF58E3BE),
+                ),
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Preparing Security workspace...',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _LoadingScreen extends StatelessWidget {
   const _LoadingScreen();
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Verifying Security access...'),
-          ],
-        ),
+    return Scaffold(
+      backgroundColor: const Color(0xFF02102B),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'lib/assets/images/security_login_background.png',
+            fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
+          ),
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xAA02102B),
+                  Color(0xCC031632),
+                  Color(0xE603132D),
+                ],
+              ),
+            ),
+          ),
+          const SafeArea(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: Color(0xFF30D3FF),
+                    ),
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    'Verifying Security access...',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

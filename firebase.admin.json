@@ -1,0 +1,19 @@
+{
+  "hosting": [
+    {
+      "target": "hominode_app",
+      "public": "hominode-admin/admin_app/build/web",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ]
+}

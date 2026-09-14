@@ -1,4 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+
+import '../models/unit_schema.dart';
 import 'admin_tenant_context.dart';
 
 class FlatService {
@@ -195,6 +198,115 @@ class FlatService {
     }
   }
 
+  Future<void> renameUnit({
+    required String flatDocumentId,
+    required String buildingId,
+    required String newLabel,
+  }) async {
+    final communityId = AdminTenantContext.instance.requireCommunityId().trim();
+
+    final normalizedLabel = newLabel.trim();
+
+    if (normalizedLabel.isEmpty) {
+      throw ArgumentError('Unit name cannot be empty.');
+    }
+
+    final callable = FirebaseFunctions.instanceFor(
+      region: 'asia-southeast1',
+    ).httpsCallable('renameUnit');
+
+    await callable.call({
+      'communityId': communityId,
+      'buildingId': buildingId.trim(),
+      'flatId': flatDocumentId.trim(),
+      'newLabel': normalizedLabel,
+    });
+  }
+
+  Future<FlatModel?> getFlatFromServer(String flatDocumentId) async {
+    final snapshot = await _firestore
+        .collection(_collection)
+        .doc(flatDocumentId)
+        .get(const GetOptions(source: Source.server));
+
+    if (!snapshot.exists || snapshot.data() == null) {
+      return null;
+    }
+
+    final data = snapshot.data()!;
+
+    return FlatModel(
+      id: snapshot.id,
+      unitType: HousingUnitType.fromValue(data['unitType']),
+      unitIndex: (data['unitIndex'] as num?)?.toInt(),
+      flatId: visibleUnitLabel(data, snapshot.id),
+      buildingId: data['buildingId'] ?? '',
+      buildingName: data['buildingName'] ?? '',
+      floor: data['floor'] ?? 0,
+      flatNumber: data['flatNumber'] ?? 0,
+      type: data['type'] ?? '',
+      area: data['area'] ?? '',
+      status: data['status'] ?? 'vacant',
+      residentName: data['residentName'],
+      residentId: data['residentId'],
+      residentUserId: FlatModel.resolveResidentUserId(data),
+      reservedOnboardingId: data['reservedOnboardingId'],
+      reservedForName: data['reservedForName'],
+      reservedResidentType: data['reservedResidentType'],
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+    );
+  }
+
+  Future<List<FlatModel>> getFlatsForBuildingFromServer(
+    String buildingId,
+  ) async {
+    final communityId = AdminTenantContext.instance.requireCommunityId();
+
+    final snapshot = await _firestore
+        .collection(_collection)
+        .where('buildingId', isEqualTo: buildingId)
+        .where('communityId', isEqualTo: communityId)
+        .get(const GetOptions(source: Source.server));
+
+    final flats = snapshot.docs.map((doc) {
+      final data = doc.data();
+
+      return FlatModel(
+        id: doc.id,
+        unitType: HousingUnitType.fromValue(data['unitType']),
+        unitIndex: (data['unitIndex'] as num?)?.toInt(),
+        flatId: visibleUnitLabel(data, doc.id),
+        buildingId: data['buildingId'] ?? '',
+        buildingName: data['buildingName'] ?? '',
+        floor: data['floor'] ?? 0,
+        flatNumber: data['flatNumber'] ?? 0,
+        type: data['bhkType'] ?? data['type'] ?? '',
+        area: data['area'] ?? '',
+        status: data['status'] ?? 'vacant',
+
+        residentName: data['residentName'],
+        residentId: data['residentId'],
+        residentUserId: FlatModel.resolveResidentUserId(data),
+
+        reservedOnboardingId: data['reservedOnboardingId'],
+        reservedForName: data['reservedForName'],
+        reservedResidentType: data['reservedResidentType'],
+
+        createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+        updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+      );
+    }).toList();
+
+    flats.sort((a, b) {
+      final floorCompare = b.floor.compareTo(a.floor);
+      if (floorCompare != 0) return floorCompare;
+      return a.flatNumber.compareTo(b.flatNumber);
+    });
+
+    return flats;
+  }
+
   String _getAreaForBhk(String bhkType) {
     switch (bhkType) {
       case '1BHK':
@@ -232,7 +344,9 @@ class FlatService {
             final data = doc.data();
             return FlatModel(
               id: doc.id,
-              flatId: data['flatId'] ?? '', // Sequential ID like A001, A002
+              unitType: HousingUnitType.fromValue(data['unitType']),
+              unitIndex: (data['unitIndex'] as num?)?.toInt(),
+              flatId: visibleUnitLabel(data, doc.id),
               buildingId: data['buildingId'] ?? '',
               buildingName: data['buildingName'] ?? '',
               floor: data['floor'] ?? 0,
@@ -243,6 +357,9 @@ class FlatService {
               residentName: data['residentName'],
               residentId: data['residentId'],
               residentUserId: FlatModel.resolveResidentUserId(data),
+              reservedOnboardingId: data['reservedOnboardingId'],
+              reservedForName: data['reservedForName'],
+              reservedResidentType: data['reservedResidentType'],
               createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
               updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
             );
@@ -455,6 +572,7 @@ class FlatService {
       int total = snapshot.docs.length;
       int occupied = 0;
       int vacant = 0;
+      int reserved = 0;
       int maintenance = 0;
 
       for (var doc in snapshot.docs) {
@@ -465,6 +583,8 @@ class FlatService {
           vacant++;
         } else if (status == 'maintenance') {
           maintenance++;
+        } else if (status == 'reserved') {
+          reserved++;
         }
       }
 
@@ -472,6 +592,7 @@ class FlatService {
         total: total,
         occupied: occupied,
         vacant: vacant,
+        reserved: reserved,
         maintenance: maintenance,
         occupancyRate: total > 0 ? ((occupied / total) * 100).round() : 0,
       );
@@ -498,22 +619,33 @@ void validateFlatMutationScope({
 
 // Flat Model
 class FlatModel {
+  final HousingUnitType unitType;
+  final int? unitIndex;
+  bool get usesFloors => unitIndex == null;
   final String id;
-  final String flatId; // Sequential ID like A001, A002, etc.
+  final String flatId;
   final String buildingId;
   final String buildingName;
   final int floor;
   final int flatNumber;
   final String type;
   final String area;
-  final String status; // vacant, occupied, maintenance
+  final String status;
+
   final String? residentName;
   final String? residentId;
   final String? residentUserId;
+
+  final String? reservedOnboardingId;
+  final String? reservedForName;
+  final String? reservedResidentType;
+
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
   FlatModel({
+    this.unitType = HousingUnitType.apartment,
+    this.unitIndex,
     required this.id,
     required this.flatId,
     required this.buildingId,
@@ -526,6 +658,9 @@ class FlatModel {
     this.residentName,
     this.residentId,
     this.residentUserId,
+    this.reservedOnboardingId,
+    this.reservedForName,
+    this.reservedResidentType,
     this.createdAt,
     this.updatedAt,
   });
@@ -555,6 +690,8 @@ class FlatModel {
 
   Map<String, dynamic> toMap() {
     return {
+      'unitType': unitType.value,
+      if (unitIndex != null) 'unitIndex': unitIndex,
       'id': id,
       'flatId': flatId,
       'buildingId': buildingId,
@@ -567,6 +704,9 @@ class FlatModel {
       'residentName': residentName,
       'residentId': residentId,
       'residentUserId': residentUserId,
+      'reservedOnboardingId': reservedOnboardingId,
+      'reservedForName': reservedForName,
+      'reservedResidentType': reservedResidentType,
     };
   }
 }
@@ -576,6 +716,7 @@ class OccupancyStats {
   final int total;
   final int occupied;
   final int vacant;
+  final int reserved;
   final int maintenance;
   final int occupancyRate;
 
@@ -583,6 +724,7 @@ class OccupancyStats {
     required this.total,
     required this.occupied,
     required this.vacant,
+    required this.reserved,
     required this.maintenance,
     required this.occupancyRate,
   });

@@ -212,21 +212,37 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    await HominodePushNotifications.instance.deactivateForLogout();
-    AdminTenantContext.instance.clear();
-    await _auth.signOut();
+    // 1. Notification cleanup MUST happen while Firebase user is still authenticated.
+    try {
+      await HominodePushNotifications.instance.deactivateForLogout();
+    } catch (e, stackTrace) {
+      debugPrint('Notification device removal failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      // Notification cleanup failure must not block logout.
+    }
+
+    // 2. Sign out from Firebase.
+    await FirebaseAuth.instance.signOut();
+
+    // 3. Clear Admin tenant/session state only after auth sign-out.
+    AdminTenantContext.instance.clear(notify: false);
   }
 
   String _phoneError(String code) {
     switch (code) {
       case 'invalid-phone-number':
-        return 'Enter a valid phone number including country code.';
+        return 'Enter a valid phone number.';
       case 'invalid-verification-code':
-        return 'The OTP is incorrect or expired.';
+        return 'Invalid verification code. Please check the OTP and try again.';
+      case 'session-expired':
+      case 'code-expired':
+        return 'This verification session has expired. Please request a new OTP.';
       case 'too-many-requests':
         return 'Too many attempts. Please try again later.';
+      case 'network-request-failed':
+        return 'Network error. Check your connection and try again.';
       case 'quota-exceeded':
-        return 'OTP quota has been exceeded. Contact support.';
+        return 'OTP service is temporarily unavailable. Please try again later.';
       case 'user-disabled':
         return 'This authentication account has been disabled.';
       default:

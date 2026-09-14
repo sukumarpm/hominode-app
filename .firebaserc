@@ -1,0 +1,16 @@
+{
+  "projects": {},
+  "targets": {
+    "hominode-prod": {
+      "hosting": {
+        "hominode_prod": [
+          "hominode-prod"
+        ],
+        "hominode_app": [
+          "hominode-app-prod"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

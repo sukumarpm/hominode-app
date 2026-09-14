@@ -177,6 +177,7 @@ test("resident payments and amenity bookings are read-only for V1", { skip: !ena
       status: "pending",
     }));
     await assertFails(collection.doc(existingIds[index]).update({ status: "cancelled" }));
+    await assertFails(collection.doc(existingIds[index]).delete());
   }
 
   await assertSucceeds(dbFor("admin-a").collection("bills").doc("bill-a").update({
@@ -369,11 +370,290 @@ test("amenity definitions no longer inherit broad resident writes", { skip: !ena
   const amenity = dbFor("resident-a").collection("amenities").doc("amenity-a");
   await assertSucceeds(amenity.get());
   await assertFails(amenity.update({ name: "Tampered" }));
+  await assertFails(amenity.delete());
   await assertFails(dbFor("resident-a").collection("amenities").doc("forged-amenity").set({ communityId: "community-a", buildingId: "building-a", name: "Forged" }));
   await assertSucceeds(dbFor("admin-a").collection("amenities").doc("amenity-a").update({ name: "Updated clubhouse" }));
   await assertFails(dbFor("admin-b").collection("amenities").doc("amenity-a").update({ name: "Cross tenant" }));
 });
 
+test("amenity Admin writes retain Flutter fields and allow same-community buildings", { skip: !enabled }, async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().collection("buildings").doc("amenity-building-a2").set({ communityId: "community-a" });
+  });
+  const amenity = dbFor("admin-a").collection("amenities").doc("flutter-amenity");
+  const flutterFields = {
+    communityId: "community-a", buildingId: "building-a", buildingName: "A",
+    name: "Pool", type: "Recreation", isFree: true, pricePerDay: 0,
+    description: null, iconName: "pool", imageUrl: null,
+    timeSlots: null, isAvailable: true,
+    adminId: "admin-a", adminName: "Admin A", adminEmail: "", organization: "",
+    maxCapacity: 1, allowMultipleBookings: false, bookingDurations: ["1 hour"],
+    hasSubscriptionPackages: false, subscriptionPackages: {},
+    createdAt: new Date(), updatedAt: new Date(),
+  };
+  await assertSucceeds(amenity.set(flutterFields));
+  await assertSucceeds(amenity.update({
+    name: "Updated pool", buildingId: "amenity-building-a2", buildingName: "A2",
+    isAvailable: false, timeSlots: ["6:00 AM - 7:00 AM"],
+    maxCapacity: 10, allowMultipleBookings: true,
+    hasSubscriptionPackages: true, subscriptionPackages: { Weekly: 500 },
+    updatedAt: new Date(),
+  }));
+  await assertSucceeds(amenity.update({ isAvailable: true }));
+  assert.equal((await amenity.get()).data().adminId, "admin-a");
+  await assertSucceeds(amenity.delete());
+});
+
+test("amenity writes reject cross-community Admins", { skip: !enabled }, async () => {
+  const amenities = dbFor("admin-b").collection("amenities");
+  await assertFails(amenities.doc("cross-community-amenity").set({
+    communityId: "community-a", buildingId: "building-a", name: "Forged",
+  }));
+  await assertFails(amenities.doc("amenity-a").update({ isAvailable: false }));
+  await assertFails(amenities.doc("amenity-a").delete());
+});
+
+test("amenity communityId is immutable even for an Admin authorized in both communities", { skip: !enabled }, async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().collection("admins").doc("amenity-admin-ab").set({
+      uid: "amenity-admin-ab", role: "admin", isActive: true,
+      authorizedCommunityIds: ["community-a", "community-b"],
+    });
+  });
+  for (const uid of ["admin-a", "amenity-admin-ab"]) {
+    const amenity = dbFor(uid).collection("amenities").doc("amenity-a");
+    await assertFails(amenity.update({ communityId: "community-b" }));
+    await assertFails(amenity.update({ communityId: "community-b", buildingId: "building-b" }));
+    await assertFails(amenity.set({ buildingId: "building-a", name: "Missing community" }));
+  }
+});
+
+test("amenity create and update require an existing building in the same community", { skip: !enabled }, async () => {
+  const amenities = dbFor("admin-a").collection("amenities");
+  const invalidBuildings = [
+    { buildingId: "building-b" }, { buildingId: "missing-building" },
+    { buildingId: "" }, { buildingId: null }, { buildingId: 123 }, {},
+  ];
+  for (const [index, building] of invalidBuildings.entries()) {
+    const data = { communityId: "community-a", name: "Invalid building", ...building };
+    await assertFails(amenities.doc(`invalid-building-${index}`).set(data));
+    // A replacement also verifies that removing buildingId is rejected on update.
+    await assertFails(amenities.doc("amenity-a").set(data));
+  }
+  await assertFails(amenities.doc("amenity-a").update({ buildingId: "building-b" }));
+});
+
+test("amenity writes reject inactive and revoked Admins using their current profile", { skip: !enabled }, async () => {
+  const uid = "amenity-admin-revoked";
+  const profile = { uid, role: "admin", isActive: true, authorizedCommunityIds: ["community-a"] };
+  const setProfile = (data) => environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().collection("admins").doc(uid).set(data);
+  });
+  await setProfile(profile);
+  const amenities = dbFor(uid).collection("amenities");
+  const data = {
+    communityId: "community-a",
+    buildingId: "building-a",
+    name: "Admin amenity",
+    isFree: true,
+    pricePerDay: 0,
+  };
+  const amenity = amenities.doc("revoked-admin-amenity");
+  await assertSucceeds(amenity.set(data));
+  for (const changes of [
+    { isActive: false },
+    { authorizedCommunityIds: ["community-b"] },
+    { authorizedCommunityIds: [] },
+  ]) {
+    await setProfile({ ...profile, ...changes });
+    await assertFails(amenities.doc("revoked-admin-create").set(data));
+    await assertFails(amenity.update({ isAvailable: false }));
+    await assertFails(amenity.delete());
+  }
+});
+
+test("amenity writes preserve role restrictions and inactive-community denial", { skip: !enabled }, async () => {
+  const data = { communityId: "community-a", buildingId: "building-a", name: "Restricted" };
+  for (const db of [dbFor("super"), dbFor("security-a"), environment.unauthenticatedContext().firestore()]) {
+    await assertFails(db.collection("amenities").doc("restricted-amenity").set(data));
+    await assertFails(db.collection("amenities").doc("amenity-a").update({ isAvailable: false }));
+    await assertFails(db.collection("amenities").doc("amenity-a").delete());
+  }
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().collection("amenities").doc("amenity-off").set({
+      communityId: "community-off", buildingId: "building-off", name: "Inactive community",
+    });
+  });
+  const amenities = dbFor("admin-off").collection("amenities");
+  await assertFails(amenities.doc("inactive-community-create").set({
+    communityId: "community-off", buildingId: "building-off", name: "Inactive community",
+  }));
+  await assertFails(amenities.doc("amenity-off").update({ isAvailable: false }));
+  await assertFails(amenities.doc("amenity-off").delete());
+});
+test("amenity pricing supports legacy, flat, free, and resident-type modes", { skip: !enabled }, async () => {
+  const amenities = dbFor("admin-a").collection("amenities");
+
+  const base = {
+    communityId: "community-a",
+    buildingId: "building-a",
+    name: "Pricing Test Facility",
+    type: "Gym",
+    isAvailable: true,
+  };
+
+  // Legacy free.
+  await assertSucceeds(amenities.doc("pricing-legacy-free").set({
+    ...base,
+    isFree: true,
+    pricePerDay: 0,
+  }));
+
+  // Legacy paid.
+  await assertSucceeds(amenities.doc("pricing-legacy-paid").set({
+    ...base,
+    isFree: false,
+    pricePerDay: 125.5,
+  }));
+
+  // New free mode.
+  await assertSucceeds(amenities.doc("pricing-free").set({
+    ...base,
+    isFree: true,
+    pricingMode: "free",
+    pricePerDay: 0,
+  }));
+
+  await assertFails(amenities.doc("pricing-free-invalid").set({
+    ...base,
+    isFree: true,
+    pricingMode: "free",
+    pricePerDay: 100,
+  }));
+
+  // Flat pricing.
+  await assertSucceeds(amenities.doc("pricing-flat").set({
+    ...base,
+    isFree: false,
+    pricingMode: "flat",
+    pricePerDay: 125.5,
+  }));
+
+  await assertFails(amenities.doc("pricing-flat-negative").set({
+    ...base,
+    isFree: false,
+    pricingMode: "flat",
+    pricePerDay: -1,
+  }));
+
+  await assertFails(amenities.doc("pricing-flat-string").set({
+    ...base,
+    isFree: false,
+    pricingMode: "flat",
+    pricePerDay: "100",
+  }));
+
+  // Owner / Tenant pricing.
+  await assertSucceeds(amenities.doc("pricing-resident-type").set({
+    ...base,
+    isFree: false,
+    pricingMode: "resident_type",
+    pricePerDay: 0,
+    ownerPricePerDay: 100,
+    tenantPricePerDay: 150,
+  }));
+
+  await assertFails(amenities.doc("pricing-no-owner").set({
+    ...base,
+    isFree: false,
+    pricingMode: "resident_type",
+    pricePerDay: 0,
+    tenantPricePerDay: 150,
+  }));
+
+  await assertFails(amenities.doc("pricing-no-tenant").set({
+    ...base,
+    isFree: false,
+    pricingMode: "resident_type",
+    pricePerDay: 0,
+    ownerPricePerDay: 100,
+  }));
+
+  await assertFails(amenities.doc("pricing-negative-owner").set({
+    ...base,
+    isFree: false,
+    pricingMode: "resident_type",
+    pricePerDay: 0,
+    ownerPricePerDay: -1,
+    tenantPricePerDay: 150,
+  }));
+
+  await assertFails(amenities.doc("pricing-negative-tenant").set({
+    ...base,
+    isFree: false,
+    pricingMode: "resident_type",
+    pricePerDay: 0,
+    ownerPricePerDay: 100,
+    tenantPricePerDay: -1,
+  }));
+
+  await assertFails(amenities.doc("pricing-resident-type-flat-price").set({
+    ...base,
+    isFree: false,
+    pricingMode: "resident_type",
+    pricePerDay: 50,
+    ownerPricePerDay: 100,
+    tenantPricePerDay: 150,
+  }));
+
+  await assertFails(amenities.doc("pricing-invalid-mode").set({
+    ...base,
+    isFree: false,
+    pricingMode: "special",
+    pricePerDay: 100,
+  }));
+
+  // Update from legacy pricing to resident-type pricing.
+  const editable = amenities.doc("pricing-update");
+
+  await assertSucceeds(editable.set({
+    ...base,
+    isFree: false,
+    pricePerDay: 100,
+    description: "Legacy facility",
+  }));
+
+  // Non-pricing edit remains valid.
+  await assertSucceeds(editable.update({
+    description: "Updated description",
+  }));
+
+  // Invalid pricing update is rejected.
+  await assertFails(editable.update({
+    pricePerDay: -10,
+  }));
+
+  // Valid conversion to differentiated pricing.
+  await assertSucceeds(editable.update({
+    pricingMode: "resident_type",
+    pricePerDay: 0,
+    ownerPricePerDay: 100,
+    tenantPricePerDay: 150,
+  }));
+
+  await assertFails(editable.update({
+    tenantPricePerDay: -50,
+  }));
+
+  // Existing very old facility with no pricing fields should still allow
+  // an unrelated edit.
+  await assertSucceeds(
+    dbFor("admin-a")
+      .collection("amenities")
+      .doc("amenity-a")
+      .update({ description: "Legacy facility description" }),
+  );
+});
 test("superAdmin has registry access but no operational access", { skip: !enabled }, async () => {
   await assertSucceeds(dbFor("super").collection("communities").get());
   await assertSucceeds(dbFor("super").collection("admins").get());
@@ -512,4 +792,15 @@ test("notification recipients may delete only their own private inbox records", 
   await assertFails(dbFor("resident-b").collection("notifications").doc("notification-a").delete());
   await assertFails(dbFor("admin-a").collection("notifications").doc("notification-a").delete());
   await assertSucceeds(dbFor("resident-a").collection("notifications").doc("notification-a").delete());
+});
+
+
+test("building and canonical unit deletion require the trusted lifecycle callable", { skip: !enabled }, async () => {
+  await assertFails(dbFor("admin-a").collection("buildings").doc("building-a").delete());
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().collection("flats").doc("deletion-vacant").set({ communityId: "community-a", buildingId: "building-a", status: "vacant" });
+  });
+  await assertFails(dbFor("admin-a").collection("flats").doc("deletion-vacant").delete());
+  await assertFails(dbFor("admin-a").collection("flats").doc("orphan-unit").set({ communityId: "community-a", buildingId: "deleted-building", status: "vacant" }));
+  await assertFails(dbFor("admin-a").collection("flats").doc("foreign-parent-unit").set({ communityId: "community-a", buildingId: "building-b", status: "vacant" }));
 });

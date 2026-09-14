@@ -1,19 +1,29 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
+import '../models/unit_schema.dart';
 import '../services/building_service.dart';
+import '../services/flat_service.dart';
 
 // Input model for the modal (without id)
 class BuildingInput {
+  final HousingStructureType structureType;
+  final HousingUnitType? unitType;
   final String name;
   final int floors;
   final int flatsPerFloor;
   final int totalFlats;
-  final Map<String, String> flatBhkConfig; // Map of flatId to BHK type
+  // Existing units use doc:<document ID>; new units use pos:<floor>:<number>
+  // or index:<unitIndex>. Labels never identify configurations.
+  final Map<String, String> flatBhkConfig;
 
   BuildingInput({
+    this.structureType = HousingStructureType.apartmentBuilding,
+    this.unitType,
     required this.name,
     required this.floors,
     required this.flatsPerFloor,
@@ -26,18 +36,21 @@ class AddBuildingModal extends StatefulWidget {
   final FutureOr<void> Function(BuildingInput building) onSave;
   final BuildingModel? existingBuilding;
   final bool isEditMode;
+  final List<FlatModel> existingFlats;
 
   const AddBuildingModal({
     super.key,
     required this.onSave,
     this.existingBuilding,
     this.isEditMode = false,
+    this.existingFlats = const [],
   });
 
   static Future<void> show(
     BuildContext context, {
     required FutureOr<void> Function(BuildingInput building) onSave,
     BuildingModel? existingBuilding,
+    List<FlatModel> existingFlats = const [],
   }) {
     final isEditMode = existingBuilding != null;
     return showGeneralDialog(
@@ -50,6 +63,7 @@ class AddBuildingModal extends StatefulWidget {
         return AddBuildingModal(
           onSave: onSave,
           existingBuilding: existingBuilding,
+          existingFlats: existingFlats,
           isEditMode: isEditMode,
         );
       },
@@ -80,6 +94,44 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
   bool _isLoading = false;
   bool _isFormValid = false;
 
+  HousingStructureType _structureType = HousingStructureType.apartmentBuilding;
+  HousingUnitType _unitType = HousingUnitType.apartment;
+  bool _unitTypeChanged = false;
+  bool get _usesFloors => _structureType.usesFloors;
+  int get _layoutFloors =>
+      _usesFloors ? int.tryParse(_floorsController.text) ?? 0 : 1;
+  int get _layoutUnits => int.tryParse(_flatsPerFloorController.text) ?? 0;
+
+  FlatModel? _existingFlat(int floor, int number) {
+    final original = widget.existingBuilding;
+    if (original == null) return null;
+    if (original.structureType.usesFloors && _usesFloors) {
+      return _existingByPosition['$floor:$number'];
+    }
+    final index = _usesFloors ? (floor - 1) * _layoutUnits + number : number;
+    for (final flat in widget.existingFlats) {
+      final originalIndex = original.structureType.usesFloors
+          ? (flat.floor - 1) * original.flatsPerFloor + flat.flatNumber
+          : flat.unitIndex;
+      if (originalIndex == index) return flat;
+    }
+    return null;
+  }
+
+  String? _saveError;
+  bool _applyBhkToAll = false;
+  final Map<String, FlatModel> _existingByPosition = {};
+  final Set<String> _changedBhkKeys = {};
+
+  String _configurationKey(int floor, int number) {
+    final flat = _existingFlat(floor, number);
+    return flat != null
+        ? 'doc:${flat.id}'
+        : _usesFloors
+        ? 'pos:$floor:$number'
+        : 'index:$number';
+  }
+
   String? _nameError;
   String? _floorsError;
   String? _flatsError;
@@ -97,10 +149,26 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
 
     // Pre-fill form if editing
     if (widget.isEditMode && widget.existingBuilding != null) {
+      _structureType = widget.existingBuilding!.structureType;
+      _unitType = widget.existingFlats.isNotEmpty
+          ? widget.existingFlats.first.unitType
+          : _structureType.defaultUnitType;
       _nameController.text = widget.existingBuilding!.name;
-      _floorsController.text = widget.existingBuilding!.floors.toString();
-      _flatsPerFloorController.text = widget.existingBuilding!.flatsPerFloor
-          .toString();
+      _floorsController.text =
+          (_usesFloors ? widget.existingBuilding!.floors : 1).toString();
+      _flatsPerFloorController.text =
+          (_usesFloors
+                  ? widget.existingBuilding!.flatsPerFloor
+                  : widget.existingBuilding!.totalFlats)
+              .toString();
+    }
+
+    for (final flat in widget.existingFlats) {
+      _existingByPosition['${flat.floor}:${flat.flatNumber}'] = flat;
+      _customBhkConfig['doc:${flat.id}'] = flat.type;
+    }
+    if (widget.isEditMode && widget.existingFlats.isNotEmpty) {
+      _bhkMode = 'custom';
     }
 
     _nameController.addListener(_validateForm);
@@ -110,7 +178,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     // Validate initial values if editing
     if (widget.isEditMode) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _validateForm();
+        if (mounted) _validateForm();
       });
     }
   }
@@ -130,7 +198,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
       _flatsError = null;
 
       final name = _nameController.text.trim();
-      final floors = int.tryParse(_floorsController.text);
+      final floors = _layoutFloors;
       final flats = int.tryParse(_flatsPerFloorController.text);
 
       bool isValid = true;
@@ -142,9 +210,9 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
         isValid = false;
       }
 
-      if (_floorsController.text.isEmpty) {
+      if (_usesFloors && _floorsController.text.isEmpty) {
         isValid = false;
-      } else if (floors == null || floors <= 0) {
+      } else if (floors <= 0) {
         _floorsError = 'Must be a positive number';
         isValid = false;
       }
@@ -156,11 +224,16 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
         isValid = false;
       }
 
+      if (flats != null && floors * flats > 499) {
+        _flatsError = 'A building can contain at most 499 units';
+        isValid = false;
+      }
       _isFormValid = isValid;
     });
   }
 
   Future<void> _handleAddBuilding() async {
+    if (_isLoading) return;
     if (!_isFormValid) {
       _validateForm();
       return;
@@ -168,19 +241,24 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
 
     setState(() {
       _isLoading = true;
+      _saveError = null;
     });
 
     // Generate flat BHK configuration
     final flatBhkConfig = <String, String>{};
-    final buildingPrefix = _nameController.text.trim()[0];
 
-    for (int floor = 1; floor <= int.parse(_floorsController.text); floor++) {
-      for (
-        int flatNum = 1;
-        flatNum <= int.parse(_flatsPerFloorController.text);
-        flatNum++
-      ) {
-        final flatId = '$buildingPrefix${floor}0$flatNum';
+    for (int floor = 1; floor <= _layoutFloors; floor++) {
+      for (int flatNum = 1; flatNum <= _layoutUnits; flatNum++) {
+        final flatId = _configurationKey(floor, flatNum);
+        if (widget.isEditMode) {
+          if (_bhkMode == 'same' && _applyBhkToAll) {
+            flatBhkConfig[flatId] = _defaultBhk;
+          } else if (_changedBhkKeys.contains(flatId) ||
+              !flatId.startsWith('doc:')) {
+            flatBhkConfig[flatId] = _customBhkConfig[flatId] ?? _defaultBhk;
+          }
+          continue;
+        }
 
         if (_bhkMode == 'custom' && _customBhkConfig.containsKey(flatId)) {
           flatBhkConfig[flatId] = _customBhkConfig[flatId]!;
@@ -191,9 +269,11 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     }
 
     final building = BuildingInput(
+      structureType: _structureType,
+      unitType: !widget.isEditMode || _unitTypeChanged ? _unitType : null,
       name: _nameController.text.trim(),
-      floors: int.parse(_floorsController.text),
-      flatsPerFloor: int.parse(_flatsPerFloorController.text),
+      floors: _usesFloors ? _layoutFloors : 0,
+      flatsPerFloor: _usesFloors ? _layoutUnits : 0,
       totalFlats: _totalFlats,
       flatBhkConfig: flatBhkConfig,
     );
@@ -201,16 +281,22 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     try {
       await widget.onSave(building);
       if (mounted) Navigator.of(context).pop();
-    } catch (_) {
-      if (mounted) setState(() => _isLoading = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _saveError = error is FirebaseFunctionsException
+              ? error.message ?? 'Unable to update building. Please try again.'
+              : error.toString().replaceFirst(
+                  RegExp(r'^(Exception|Bad state): '),
+                  '',
+                );
+        });
+      }
     }
   }
 
-  int get _totalFlats {
-    final floors = int.tryParse(_floorsController.text) ?? 0;
-    final flats = int.tryParse(_flatsPerFloorController.text) ?? 0;
-    return floors * flats;
-  }
+  int get _totalFlats => _layoutFloors * _layoutUnits;
 
   @override
   Widget build(BuildContext context) {
@@ -243,12 +329,24 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
                     SizedBox(height: 24.h),
                     _buildNameField(),
                     SizedBox(height: 20.h),
+                    _buildStructureSelector(),
+                    SizedBox(height: 20.h),
                     _buildNumericFields(),
                     SizedBox(height: 20.h),
                     _buildBhkSelector(),
                     SizedBox(height: 20.h),
                     _buildAmountStrip(),
                     SizedBox(height: 16.h),
+                    if (_saveError != null) ...[
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          _saveError!,
+                          style: const TextStyle(color: Color(0xFFEF4444)),
+                        ),
+                      ),
+                      SizedBox(height: 12.h),
+                    ],
                     _buildAddButton(),
                     SizedBox(height: 12.h),
                     _buildCancelButton(),
@@ -280,7 +378,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
             Text(
               widget.isEditMode
                   ? 'Update building or tower details'
-                  : 'Configure your new building or tower with floor and flat details',
+                  : 'Configure your new building or tower with structure and unit details',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14.sp,
@@ -297,7 +395,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
             label: 'Close add building form',
             button: true,
             child: InkWell(
-              onTap: () => Navigator.of(context).pop(),
+              onTap: _isLoading ? null : () => Navigator.of(context).pop(),
               borderRadius: BorderRadius.circular(22.r),
               child: Container(
                 width: 44.w,
@@ -329,6 +427,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
           label: 'Building or tower name',
           child: TextFormField(
             controller: _nameController,
+            readOnly: _isLoading,
             decoration: InputDecoration(
               hintText: 'e.g., Tower D',
               hintStyle: TextStyle(color: Color(0xFFB9BDC1), fontSize: 16.sp),
@@ -387,7 +486,80 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     );
   }
 
+  Widget _buildStructureSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<HousingStructureType>(
+          initialValue: _structureType,
+          decoration: const InputDecoration(
+            labelText: 'Structure type',
+            border: OutlineInputBorder(),
+          ),
+          items: HousingStructureType.values
+              .map(
+                (type) =>
+                    DropdownMenuItem(value: type, child: Text(type.label)),
+              )
+              .toList(),
+          onChanged: _isLoading
+              ? null
+              : (type) {
+                  if (type == null) return;
+                  final total = _totalFlats;
+                  setState(() {
+                    _structureType = type;
+                    _unitType = type.defaultUnitType;
+                    _unitTypeChanged = true;
+                    _floorsController.text = '1';
+                    _flatsPerFloorController.text = total > 0
+                        ? total.toString()
+                        : '';
+                  });
+                  _validateForm();
+                },
+        ),
+        if (_structureType == HousingStructureType.mixed ||
+            _structureType == HousingStructureType.other) ...[
+          SizedBox(height: 12.h),
+          DropdownButtonFormField<HousingUnitType>(
+            key: ValueKey(_structureType),
+            initialValue: _unitType,
+            decoration: const InputDecoration(
+              labelText: 'Unit type',
+              border: OutlineInputBorder(),
+            ),
+            items: HousingUnitType.values
+                .map(
+                  (type) =>
+                      DropdownMenuItem(value: type, child: Text(type.label)),
+                )
+                .toList(),
+            onChanged: _isLoading
+                ? null
+                : (type) {
+                    if (type != null)
+                      setState(() {
+                        _unitType = type;
+                        _unitTypeChanged = true;
+                      });
+                  },
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildNumericFields() {
+    if (!_usesFloors) {
+      return _buildNumericField(
+        label: _structureType.countLabel,
+        controller: _flatsPerFloorController,
+        hint: '10',
+        error: _flatsError,
+        semanticLabel: _structureType.countLabel,
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -403,11 +575,11 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
         SizedBox(width: 16.w),
         Expanded(
           child: _buildNumericField(
-            label: 'Flats per Floor',
+            label: 'Units per Floor',
             controller: _flatsPerFloorController,
             hint: '4',
             error: _flatsError,
-            semanticLabel: 'Flats per floor',
+            semanticLabel: 'Units per floor',
           ),
         ),
       ],
@@ -437,16 +609,14 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
           label: semanticLabel,
           child: TextFormField(
             controller: controller,
-            readOnly: widget.isEditMode,
+            readOnly: _isLoading,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: TextStyle(color: Color(0xFFB9BDC1), fontSize: 16.sp),
               filled: true,
-              fillColor: widget.isEditMode
-                  ? const Color(0xFFF3F4F6)
-                  : Colors.white,
+              fillColor: Colors.white,
               contentPadding: EdgeInsets.symmetric(
                 horizontal: 16.w,
                 vertical: 14.h,
@@ -505,7 +675,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Flat Type (BHK)',
+          'Unit Configuration (BHK)',
           style: TextStyle(
             fontSize: 16.sp,
             fontWeight: FontWeight.w600,
@@ -538,8 +708,10 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     final isSelected = _bhkMode == mode;
     return GestureDetector(
       onTap: () {
+        if (_isLoading) return;
         setState(() {
           _bhkMode = mode;
+          _applyBhkToAll = mode == 'same';
         });
       },
       child: Container(
@@ -586,7 +758,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Select BHK type for all flats',
+          'Select BHK type for all units',
           style: TextStyle(fontSize: 13.sp, color: Color(0xFF6B7280)),
         ),
         SizedBox(height: 12.h),
@@ -597,8 +769,10 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
             final isSelected = _defaultBhk == bhk;
             return GestureDetector(
               onTap: () {
+                if (_isLoading) return;
                 setState(() {
                   _defaultBhk = bhk;
+                  _applyBhkToAll = true;
                 });
               },
               child: Container(
@@ -630,8 +804,9 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
   }
 
   Widget _buildCustomBhkSelector() {
-    if (_floorsController.text.isEmpty ||
-        _flatsPerFloorController.text.isEmpty) {
+    final floors = _layoutFloors;
+    final flatsPerFloor = _layoutUnits;
+    if (floors <= 0 || flatsPerFloor <= 0 || floors * flatsPerFloor > 499) {
       return Container(
         padding: EdgeInsets.all(16.w),
         decoration: BoxDecoration(
@@ -644,7 +819,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
             SizedBox(width: 12.w),
             Expanded(
               child: Text(
-                'Please enter floors and flats per floor first',
+                'Enter positive dimensions for up to 499 units',
                 style: TextStyle(fontSize: 13.sp, color: Color(0xFF92400E)),
               ),
             ),
@@ -653,8 +828,6 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
       );
     }
 
-    final floors = int.parse(_floorsController.text);
-    final flatsPerFloor = int.parse(_flatsPerFloorController.text);
     final buildingPrefix = _nameController.text.trim().isNotEmpty
         ? _nameController.text.trim()[0]
         : 'A';
@@ -663,7 +836,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Click each flat to set its BHK type',
+          'Click each unit to set its BHK type',
           style: TextStyle(fontSize: 13.sp, color: Color(0xFF6B7280)),
         ),
         SizedBox(height: 12.h),
@@ -710,7 +883,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
                       SizedBox(
                         width: 40.w,
                         child: Text(
-                          'F$floor',
+                          _usesFloors ? 'F$floor' : 'Units',
                           style: TextStyle(
                             fontSize: 12.sp,
                             fontWeight: FontWeight.w600,
@@ -725,11 +898,16 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
                           runSpacing: 8,
                           children: List.generate(flatsPerFloor, (flatIndex) {
                             final flatNum = flatIndex + 1;
-                            final flatId = '$buildingPrefix${floor}0$flatNum';
+                            final flatId = _configurationKey(floor, flatNum);
+                            final visibleLabel =
+                                _existingFlat(floor, flatNum)?.flatId ??
+                                (_usesFloors
+                                    ? '$buildingPrefix${floor}0$flatNum'
+                                    : '${_unitType.label}-$flatNum');
                             final bhk = _customBhkConfig[flatId] ?? _defaultBhk;
 
                             return GestureDetector(
-                              onTap: () => _showBhkPicker(flatId),
+                              onTap: () => _showBhkPicker(flatId, visibleLabel),
                               child: Container(
                                 width: 60.w,
                                 padding: EdgeInsets.symmetric(vertical: 8.h),
@@ -744,7 +922,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
                                 child: Column(
                                   children: [
                                     Text(
-                                      flatId,
+                                      visibleLabel,
                                       style: TextStyle(
                                         fontSize: 11.sp,
                                         fontWeight: FontWeight.w600,
@@ -795,11 +973,12 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     }
   }
 
-  void _showBhkPicker(String flatId) {
+  void _showBhkPicker(String flatId, String visibleLabel) {
+    if (_isLoading) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Select BHK for $flatId'),
+        title: Text('Select BHK for $visibleLabel'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: _bhkOptions.map((bhk) {
@@ -816,6 +995,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
               onTap: () {
                 setState(() {
                   _customBhkConfig[flatId] = bhk;
+                  _changedBhkKeys.add(flatId);
                 });
                 Navigator.pop(context);
               },
@@ -832,7 +1012,21 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
     if (_bhkMode == 'custom' && _customBhkConfig.isNotEmpty) {
       // Count BHK types
       final bhkCounts = <String, int>{};
-      for (final bhk in _customBhkConfig.values) {
+      final configurations = <String>[];
+      if (widget.isEditMode && _totalFlats > 0 && _totalFlats <= 499) {
+        final floors = _layoutFloors;
+        final perFloor = int.tryParse(_flatsPerFloorController.text) ?? 0;
+        for (var floor = 1; floor <= floors; floor++) {
+          for (var number = 1; number <= perFloor; number++) {
+            configurations.add(
+              _customBhkConfig[_configurationKey(floor, number)] ?? _defaultBhk,
+            );
+          }
+        }
+      } else {
+        configurations.addAll(_customBhkConfig.values);
+      }
+      for (final bhk in configurations) {
         bhkCounts[bhk] = (bhkCounts[bhk] ?? 0) + 1;
       }
 
@@ -855,7 +1049,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Total Flats:',
+                'Total Units:',
                 style: TextStyle(
                   fontSize: 14.sp,
                   fontWeight: FontWeight.w500,
@@ -904,7 +1098,7 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
 
   Widget _buildAddButton() {
     return Semantics(
-      label: 'Add building',
+      label: widget.isEditMode ? 'Update building' : 'Add building',
       button: true,
       enabled: _isFormValid && !_isLoading,
       child: ElevatedButton(

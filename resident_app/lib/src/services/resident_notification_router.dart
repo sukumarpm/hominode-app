@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
+import 'package:hominode_sos/hominode_sos.dart';
 
 import '../screens/notifications_screen.dart';
 
@@ -9,6 +10,17 @@ final residentNotificationNavigatorKey = GlobalKey<NavigatorState>();
 
 class ResidentNotificationRouter {
   const ResidentNotificationRouter._();
+
+  static Future<NavigatorState?> _waitForNavigator() async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final navigator = residentNotificationNavigatorKey.currentState;
+      if (navigator != null) return navigator;
+
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    return residentNotificationNavigatorKey.currentState;
+  }
 
   static Future<void> handle(HominodeNotificationPayload payload) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -44,9 +56,24 @@ class ResidentNotificationRouter {
         notification['role'] == 'resident' &&
         notification['appId'] == 'resident';
     if (!authorized) return;
+    final navigator = await _waitForNavigator();
+    if (navigator == null) {
+      throw StateError('Resident navigation is not ready.');
+    }
+    final sosId = sosAlertIdFromNotification(notification);
+    if (sosId != null) {
+      await navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => SosDetailPage(
+            communityId: payload.communityId,
+            alertId: sosId,
+            responder: false,
+          ),
+        ),
+      );
+      return;
+    }
 
-    final navigator = residentNotificationNavigatorKey.currentState;
-    if (navigator == null) return;
     await navigator.push(
       MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
     );

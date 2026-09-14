@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import 'desktop/admin_desktop_page_frame.dart';
 import 'services/building_service.dart';
 import 'services/flat_service.dart';
 import 'services/user_service.dart';
 import 'widgets/add_building_modal.dart';
+import 'widgets/building_deletion_dialog.dart';
 import 'widgets/assign_resident_modal.dart';
 import 'widgets/flat_details_modal.dart';
 import 'widgets/flat_occupancy_grid_modal.dart';
@@ -31,6 +33,8 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
         flatsPerFloor: buildingInput.flatsPerFloor,
         totalFlats: buildingInput.totalFlats,
         flatBhkConfig: buildingInput.flatBhkConfig,
+        structureType: buildingInput.structureType,
+        unitType: buildingInput.unitType,
       );
 
       if (mounted) {
@@ -57,86 +61,76 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
   }
 
   Future<void> _editBuilding(String id, BuildingInput buildingInput) async {
-    try {
-      await _buildingService.updateBuilding(id: id, name: buildingInput.name);
+    await _buildingService.updateBuilding(
+      id: id,
+      name: buildingInput.name,
+      floors: buildingInput.floors,
+      flatsPerFloor: buildingInput.flatsPerFloor,
+      totalFlats: buildingInput.totalFlats,
+      flatBhkConfig: buildingInput.flatBhkConfig,
+      structureType: buildingInput.structureType,
+      unitType: buildingInput.unitType,
+    );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Building ${buildingInput.name} updated successfully',
-            ),
-            backgroundColor: const Color(0xFF0E4778),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update building: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Building ${buildingInput.name} updated successfully'),
+          backgroundColor: const Color(0xFF0E4778),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
   }
 
+  bool _deletionOpen = false;
+
   Future<void> _deleteBuilding(String id, String name) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Building'),
-        content: Text(
-          'Are you sure you want to delete $name? This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+    if (_deletionOpen) return;
+    _deletionOpen = true;
+    try {
+      final deleted = await showBuildingDeletionDialog(
+        context: context,
+        buildingName: name,
+        validate: () => _buildingService.validateBuildingDeletion(id),
+        delete: () => _buildingService.deleteBuilding(id),
+      );
+      if (deleted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Building $name deleted successfully'),
+            backgroundColor: const Color(0xFF10B981),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFEF4444),
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        await _buildingService.deleteBuilding(id);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Building $name deleted successfully'),
-              backgroundColor: const Color(0xFF10B981),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to delete building: $e'),
-              backgroundColor: const Color(0xFFEF4444),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
+        );
       }
+    } finally {
+      _deletionOpen = false;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Buildings & Flats',
+        subtitle: 'Manage community buildings, flats, and occupancy.',
+        actions: [
+          AdminDesktopPrimaryAction(
+            label: 'Add Building',
+            icon: Icons.add_business_outlined,
+            onPressed: () =>
+                AddBuildingModal.show(context, onSave: _addNewBuilding),
+          ),
+        ],
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [_buildBuildingsList(), const SizedBox(height: 24)],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: CustomScrollView(
@@ -264,10 +258,31 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
           );
         }
 
+        if (AdminDesktopPresentationScope.isActive(context)) {
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 1180 ? 3 : 2;
+              const spacing = 12.0;
+              final itemWidth =
+                  (constraints.maxWidth - spacing * (columns - 1)) / columns;
+              return Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: buildings
+                    .map(
+                      (building) => SizedBox(
+                        width: itemWidth,
+                        child: _buildBuildingCard(building),
+                      ),
+                    )
+                    .toList(growable: false),
+              );
+            },
+          );
+        }
+
         return Column(
-          children: buildings.map((building) {
-            return _buildBuildingCard(building);
-          }).toList(),
+          children: buildings.map(_buildBuildingCard).toList(growable: false),
         );
       },
     );
@@ -329,7 +344,9 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
               ),
               SizedBox(height: 4.h),
               Text(
-                '${building.floors} Floors • ${building.flatsPerFloor} Flats/Floor',
+                building.structureType.usesFloors
+                    ? '${building.floors} Floors • ${building.flatsPerFloor} Units/Floor'
+                    : building.structureType.label,
                 style: TextStyle(
                   fontSize: 13.sp,
                   fontWeight: FontWeight.w400,
@@ -363,291 +380,306 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
     );
   }
 
-  void _handleEditBuilding(BuildingModel building) {
-    AddBuildingModal.show(
-      context,
-      existingBuilding: building,
-      onSave: (updatedBuilding) => _editBuilding(building.id, updatedBuilding),
-    );
+  bool _isOpeningBuildingEdit = false;
+
+  Future<void> _handleEditBuilding(BuildingModel building) async {
+    if (_isOpeningBuildingEdit) return;
+    _isOpeningBuildingEdit = true;
+    try {
+      final flats = await _flatService.getFlatsForBuildingFromServer(
+        building.id,
+      );
+      if (!mounted) return;
+      await AddBuildingModal.show(
+        context,
+        existingBuilding: building,
+        existingFlats: flats,
+        onSave: (updatedBuilding) =>
+            _editBuilding(building.id, updatedBuilding),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to load building units: $error')),
+        );
+      }
+    } finally {
+      _isOpeningBuildingEdit = false;
+    }
+  }
+
+  List<FloorOccupancy> _toFloorOccupancy(List<FlatModel> flats) {
+    final floorMap = <int, List<FlatUnit>>{};
+
+    for (final flat in flats) {
+      floorMap.putIfAbsent(
+        flat.usesFloors ? flat.floor : 0,
+        () => <FlatUnit>[],
+      );
+
+      floorMap[flat.usesFloors ? flat.floor : 0]!.add(
+        FlatUnit(
+          id: flat.flatId ?? flat.id,
+          docId: flat.id,
+          type: flat.type,
+          unitType: flat.unitType,
+          unitIndex: flat.unitIndex,
+          residentName: flat.residentName,
+          residentUserId: flat.residentUserId,
+          reservedOnboardingId: flat.reservedOnboardingId,
+          reservedForName: flat.reservedForName,
+          reservedResidentType: flat.reservedResidentType,
+          status: _getFlatStatus(flat.status),
+          floor: flat.floor,
+          area: flat.area,
+        ),
+      );
+    }
+
+    final result = floorMap.entries
+        .map(
+          (entry) => FloorOccupancy(floorNumber: entry.key, flats: entry.value),
+        )
+        .toList();
+
+    result.sort((a, b) => b.floorNumber.compareTo(a.floorNumber));
+
+    return result;
   }
 
   void _showFlatOccupancyGrid(BuildingModel building) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    // Load real flat data from Firestore
-    _flatService
+    final occupancyStream = _flatService
         .getFlatsForBuilding(building.id)
-        .first
-        .then((flats) {
-          Navigator.pop(context); // Close loading
+        .map(_toFloorOccupancy);
 
-          if (flats.isEmpty) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('No flats found for this building'),
-                backgroundColor: Color(0xFFEF4444),
-              ),
-            );
-            return;
-          }
+    FlatOccupancyGridModal.show(
+      context,
+      towerName: building.name,
+      dataStream: occupancyStream,
+      onFlatTap: (unit) async {
+        await FlatDetailsModal.show(
+          context,
+          unit: unit,
+          userService: _userService,
+          flatService: _flatService,
+          buildingService: _buildingService,
+          buildingId: building.id,
+          buildingName: building.name,
 
-          // Convert to FloorOccupancy format
-          final floorMap = <int, List<FlatUnit>>{};
+          onAssignResident: () async {
+            final latestFlat = await _flatService.getFlatFromServer(unit.docId);
 
-          for (var flat in flats) {
-            if (!floorMap.containsKey(flat.floor)) {
-              floorMap[flat.floor] = [];
+            if (latestFlat == null) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Unable to verify the unit. Please try again.',
+                    ),
+                  ),
+                );
+              }
+              return;
             }
 
-            floorMap[flat.floor]!.add(
-              FlatUnit(
-                id:
-                    flat.flatId ??
-                    flat.id, // Use flatId (A001, A002, etc.) if available, fallback to document ID
-                docId: flat.id, // Store the Firestore document ID
-                type: flat.type,
-                residentName: flat.residentName,
-                residentUserId: flat.residentUserId,
-                status: _getFlatStatus(flat.status),
-                floor: flat.floor,
-                area: flat.area,
-              ),
-            );
-          }
+            final isSafelyVacant =
+                latestFlat.status == 'vacant' &&
+                latestFlat.reservedOnboardingId == null &&
+                latestFlat.residentUserId == null;
 
-          // Convert to list and sort by floor descending
-          final floorOccupancy =
-              floorMap.entries
-                  .map(
-                    (entry) => FloorOccupancy(
-                      floorNumber: entry.key,
-                      flats: entry.value,
+            if (!isSafelyVacant) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      latestFlat.status == 'reserved'
+                          ? 'This unit is already reserved.'
+                          : 'This unit is no longer available.',
                     ),
-                  )
-                  .toList()
-                ..sort((a, b) => b.floorNumber.compareTo(a.floorNumber));
+                  ),
+                );
+              }
+              return;
+            }
 
-          FlatOccupancyGridModal.show(
-            context,
-            towerName: building.name,
-            data: floorOccupancy,
-            onFlatTap: (unit) async {
-              await FlatDetailsModal.show(
-                context,
-                unit: unit,
-                userService: _userService,
-                flatService: _flatService,
-                buildingService: _buildingService,
-                buildingId: building.id,
-                buildingName: building.name,
-                onAssignResident: () async {
-                  Navigator.of(context).pop(); // Close flat details modal
+            Navigator.of(context).pop();
 
-                  // Show assign resident modal with real data
-                  await AssignResidentModal.show(
-                    context,
-                    flatId: unit.id,
-                    flatLabel: unit.id,
-                    loadResidents: () async {
-                      // Fetch real users from Firestore
-                      final users = await _userService
-                          .getAvailableUsers()
-                          .first;
-                      return users.map((user) {
-                        return ResidentSummary(
-                          id: user.id,
-                          name: user.name,
-                          uniqueId: user.residentId,
-                          status: user.isAssigned
-                              ? ResidentStatus.assigned
-                              : ResidentStatus.available,
-                          flatLabel: user.flatLabel,
-                        );
-                      }).toList();
-                    },
-                    onAssign: (request) async {
-                      try {
-                        // Get user details
-                        final user = await _userService.getUserById(
-                          request.residentId,
-                        );
-                        if (user == null) {
-                          throw Exception('User not found');
-                        }
+            await AssignResidentModal.show(
+              context,
+              flatId: unit.id,
+              flatLabel: unit.id,
 
-                        // Assign user to flat in users collection
-                        await _userService.assignUserToFlat(
-                          userId: user.id,
-                          flatId: unit.docId,
-                          flatLabel: unit.id,
-                          buildingId: building.id,
-                          buildingName: building.name,
-                          ownershipType: request.ownershipType,
-                        );
+              loadResidents: () async {
+                final users = await _userService.getAvailableUsers().first;
 
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '${user.name} assigned to ${unit.id} successfully',
-                              ),
-                              backgroundColor: const Color(0xFF10B981),
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Failed to assign resident: $e'),
-                              backgroundColor: const Color(0xFFEF4444),
-                              duration: const Duration(seconds: 3),
-                            ),
-                          );
-                        }
-                        rethrow;
-                      }
-                    },
-                    onAssignNew: (request) async {
-                      print('\n🔵 onAssignNew callback triggered!');
-                      print('Request data:');
-                      print('  - Name: ${request.name}');
-                      print('  - Phone: ${request.phone}');
-                      print('  - Email: ${request.email}');
-                      print('  - FlatId: ${request.flatId}');
-                      print('  - BuildingId: ${building.id}');
-                      print('  - BuildingName: ${building.name}');
-
-                      try {
-                        await _userService.createUser(
-                          name: request.name,
-                          email: request.email,
-                          phone: request.phone,
-                          residentType: request.ownershipType,
-                          familyMembers: request.familyMembers,
-                          buildingId: building.id,
-                          buildingName: building.name,
-                          unitReference: request.flatId,
-                        );
-
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '${request.name} onboarding created. Unit assignment waits for OTP registration and Admin approval.',
-                              ),
-                              backgroundColor: const Color(0xFF10B981),
-                              duration: const Duration(seconds: 3),
-                            ),
-                          );
-                        }
-                      } catch (e, stackTrace) {
-                        print('\n❌ ERROR in onAssignNew callback!');
-                        print('Error: $e');
-                        print('Stack trace: $stackTrace');
-
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Failed to create resident onboarding: $e',
-                              ),
-                              backgroundColor: const Color(0xFFEF4444),
-                              duration: const Duration(seconds: 3),
-                            ),
-                          );
-                        }
-                        rethrow;
-                      }
-                    },
+                final registeredResidents = users.map((user) {
+                  return ResidentSummary(
+                    id: user.id,
+                    name: user.name,
+                    uniqueId: user.residentId,
+                    status: ResidentStatus.available,
+                    flatLabel: user.flatLabel,
+                    source: ResidentSource.registered,
+                    residentType: user.ownershipType,
                   );
-                },
-                onStatusChange: (newStatus) async {
-                  try {
-                    debugPrint(
-                      '🟣 onStatusChange CALLED: '
-                      'flat=${unit.id}, '
-                      'oldStatus=${unit.status}, '
-                      'newStatus=$newStatus',
-                    );
-                    debugPrintStack();
-                    final hasResidentPointer =
-                        unit.residentUserId?.trim().isNotEmpty == true;
-                    if (unit.status == FlatStatus.occupied ||
-                        hasResidentPointer) {
-                      if (newStatus == FlatStatus.occupied) return;
-                      throw StateError(
-                        'Resident-linked flats can change occupancy only through explicit resident lifecycle actions.',
-                      );
-                    }
+                }).toList();
 
-                    // Only unlinked vacant/maintenance status may be updated here.
-                    String statusString;
-                    switch (newStatus) {
-                      case FlatStatus.vacant:
-                        statusString = 'vacant';
-                        break;
-                      case FlatStatus.occupied:
-                        throw StateError(
-                          'Assign a resident through the trusted assignment flow.',
-                        );
-                      case FlatStatus.maintenance:
-                        statusString = 'maintenance';
-                        break;
-                    }
+                final onboardings = await _userService
+                    .getUnassignedPendingOnboardings();
 
-                    await _flatService.updateFlatStatus(
-                      flatDocumentId: unit.docId,
-                      buildingId: building.id,
-                      status: statusString,
-                    );
+                final pendingResidents = onboardings.map((resident) {
+                  return ResidentSummary(
+                    id: resident.id,
+                    name: resident.name,
+                    uniqueId: resident.phone,
+                    status: ResidentStatus.pendingRegistration,
+                    source: ResidentSource.onboarding,
+                    residentType: resident.residentType,
+                  );
+                }).toList();
 
-                    // Sync building occupancy
-                    await _buildingService.syncOccupancyFromFlats(building.id);
+                return [...registeredResidents, ...pendingResidents];
+              },
 
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Flat ${unit.id} status updated to $statusString',
-                          ),
-                          backgroundColor: const Color(0xFF10B981),
-                          duration: const Duration(seconds: 2),
+              onAssign: (request) async {
+                if (request.source == ResidentSource.onboarding) {
+                  await _userService.assignOnboardingToFlat(
+                    onboardingId: request.residentId,
+                    buildingId: building.id,
+                    flatId: unit.docId,
+                  );
+
+                  return;
+                }
+
+                final user = await _userService.getUserById(request.residentId);
+
+                if (user == null) {
+                  throw Exception('User not found');
+                }
+
+                await _userService.assignUserToFlat(
+                  userId: user.id,
+                  flatId: unit.docId,
+                  flatLabel: unit.id,
+                  buildingId: building.id,
+                  buildingName: building.name,
+                  ownershipType: request.ownershipType,
+                );
+              },
+
+              onAssignNew: (request) async {
+                try {
+                  await _userService.createUser(
+                    name: request.name,
+                    email: request.email,
+                    phone: request.phone,
+                    residentType: request.ownershipType,
+                    familyMembers: request.familyMembers,
+                    buildingId: building.id,
+                    buildingName: building.name,
+                    unitReference: request.flatId,
+                  );
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '${request.name} onboarding created. '
+                          'Unit assignment waits for OTP registration '
+                          'and Admin approval.',
                         ),
-                      );
-                    }
-                  } catch (e) {
-                    rethrow;
+                        backgroundColor: const Color(0xFF10B981),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
                   }
-                },
+                } catch (e) {
+                  rethrow;
+                }
+              },
+            );
+          },
+
+          onStatusChange: (newStatus) async {
+            final hasResidentPointer =
+                unit.residentUserId?.trim().isNotEmpty == true;
+
+            if (unit.status == FlatStatus.occupied ||
+                unit.status == FlatStatus.reserved ||
+                hasResidentPointer) {
+              if (newStatus == FlatStatus.occupied) {
+                return;
+              }
+
+              throw StateError(
+                'Resident-linked units can change occupancy '
+                'only through explicit resident lifecycle actions.',
               );
-            },
-          );
-        })
-        .catchError((error) {
-          Navigator.pop(context); // Close loading
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to load flats: $error'),
-              backgroundColor: const Color(0xFFEF4444),
-            ),
-          );
-        });
+            }
+
+            String statusString;
+
+            switch (newStatus) {
+              case FlatStatus.vacant:
+                statusString = 'vacant';
+                break;
+
+              case FlatStatus.reserved:
+                throw StateError(
+                  'A unit can be reserved only through '
+                  'resident onboarding assignment.',
+                );
+
+              case FlatStatus.occupied:
+                throw StateError(
+                  'Assign a resident through the trusted '
+                  'assignment flow.',
+                );
+
+              case FlatStatus.maintenance:
+                statusString = 'maintenance';
+                break;
+            }
+
+            await _flatService.updateFlatStatus(
+              flatDocumentId: unit.docId,
+              buildingId: building.id,
+              status: statusString,
+            );
+
+            await _buildingService.syncOccupancyFromFlats(building.id);
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Unit ${unit.id} status updated to '
+                    '$statusString',
+                  ),
+                  backgroundColor: const Color(0xFF10B981),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          },
+        );
+      },
+    );
   }
 
   FlatStatus _getFlatStatus(String status) {
     switch (status.toLowerCase()) {
       case 'occupied':
         return FlatStatus.occupied;
+      case 'reserved':
+        return FlatStatus.reserved;
       case 'maintenance':
         return FlatStatus.maintenance;
-      default:
+      case 'vacant':
         return FlatStatus.vacant;
+      default:
+        return FlatStatus.maintenance;
     }
   }
 
@@ -668,7 +700,7 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
       children: [
         Expanded(
           child: _buildStatChip(
-            label: 'Total Flats',
+            label: 'Total Units',
             value: building.totalFlats.toString(),
             bgColor: const Color(0xFFECFDF3),
             textColor: const Color(0xFF15803D),
@@ -690,6 +722,14 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
             value: building.vacant.toString(),
             bgColor: const Color(0xFFFEF9C3),
             textColor: const Color(0xFFA16207),
+          ),
+        ),
+        Expanded(
+          child: _buildStatChip(
+            label: 'Reserved',
+            value: building.reserved.toString(),
+            bgColor: const Color(0xFFFFF4E5),
+            textColor: const Color(0xFF92400E),
           ),
         ),
       ],

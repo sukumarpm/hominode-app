@@ -2,78 +2,166 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hominode_legal/hominode_legal.dart';
+
 import 'admin_dashboard_page.dart';
+import 'admin_desktop_shell.dart';
 import 'admin_login_screen.dart';
+import 'admin_residents_page_firestore.dart';
+import 'amenities_management_screen.dart';
+import 'billing_screen.dart';
+import 'complaint_management_screen.dart';
+import 'events_announcements_screen.dart';
+import 'manage_buildings_page.dart';
 import 'models/admin_profile.dart';
 import 'models/tenant_config.dart';
-import 'services/auth_service.dart';
-import 'services/admin_tenant_context.dart';
+import 'navigation/admin_module_destinations.dart';
+import 'parking_management_screen.dart';
+import 'profile_screen.dart';
+import 'resident_vehicle_management_screen.dart';
 import 'services/admin_role_router.dart';
+import 'services/admin_tenant_context.dart';
 import 'services/admin_tenant_session.dart';
+import 'services/auth_service.dart';
+import 'settings_screen.dart';
 import 'splash_screen.dart';
 import 'super_admin_home_screen.dart';
+import 'visitor_management_screen.dart';
+
+typedef AdminAuthStreamFactory = Stream<User?> Function(AuthService service);
+typedef AdminAuthResolver = Future<AuthResult> Function();
+typedef AdminTenantSessionFactory = AdminTenantSession Function();
+typedef AdminTenantDestinationBuilder =
+    Widget Function(double width, AdminModuleId? requestedModule);
+typedef AdminLegalGateBuilder = Widget Function(Widget child);
 
 class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({this.superAdminDestination, super.key});
+  const AuthWrapper({
+    this.superAdminDestination,
+    this.requestedModule,
+    this.authenticatedOverride,
+    this.resolvedAuthOverride,
+    this.loginBuilder,
+    this.authStreamFactory,
+    this.authResolver,
+    this.tenantSessionFactory,
+    this.adminDestinationBuilder,
+    this.legalGateBuilder,
+    this.authService,
+    super.key,
+  });
 
   final Widget? superAdminDestination;
+  final AdminModuleId? requestedModule;
+  final bool? authenticatedOverride;
+  final AuthResult? resolvedAuthOverride;
+  final WidgetBuilder? loginBuilder;
+  final AdminAuthStreamFactory? authStreamFactory;
+  final AdminAuthResolver? authResolver;
+  final AdminTenantSessionFactory? tenantSessionFactory;
+  final AdminTenantDestinationBuilder? adminDestinationBuilder;
+  final AdminLegalGateBuilder? legalGateBuilder;
+  final AuthService? authService;
+
+  Widget _withLegalGate(Widget child) {
+    if (legalGateBuilder case final builder?) {
+      return builder(child);
+    }
+    return HominodeLegalAcceptanceGate(
+      profileCollection: 'admins',
+      child: child,
+    );
+  }
+
+  Widget _buildLogin(BuildContext context) =>
+      loginBuilder?.call(context) ?? const AdminLoginScreen();
+
+  Widget _resolvedAccessView(AuthResult? access) {
+    if (access?.success == true) {
+      final profile = access!.adminProfile!;
+      switch (AdminRoleRouter.resolve(profile)) {
+        case AdminPostAuthDestination.superAdminHome:
+          return _withLegalGate(
+            superAdminDestination ?? const SuperAdminHomeScreen(),
+          );
+        case AdminPostAuthDestination.adminTenantFlow:
+          return _withLegalGate(
+            _AdminTenantFlow(
+              profile: profile,
+              requestedModule: requestedModule,
+              session: tenantSessionFactory?.call(),
+              destinationBuilder: adminDestinationBuilder,
+            ),
+          );
+        case AdminPostAuthDestination.rejected:
+          return const _AccessDenied(
+            message: 'Admin authorization could not be verified.',
+          );
+      }
+    }
+    return _AccessDenied(
+      message: access?.message ?? 'Admin authorization could not be verified.',
+    );
+  }
+
+  Widget _buildPostAuth([AuthService? service]) {
+    if (resolvedAuthOverride != null) {
+      return _resolvedAccessView(resolvedAuthOverride);
+    }
+    return FutureBuilder<AuthResult>(
+      future:
+          authResolver?.call() ??
+          (service ?? authService ?? AuthService()).resolveAdminAuthorization(),
+      builder: (context, access) {
+        if (access.connectionState != ConnectionState.done) {
+          return const SplashScreen();
+        }
+        return _resolvedAccessView(access.data);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (authenticatedOverride != null) {
+      if (!authenticatedOverride!) {
+        return _buildLogin(context);
+      }
+      return _buildPostAuth();
+    }
     final service = AuthService();
     return StreamBuilder<User?>(
-      stream: service.authStateChanges,
+      stream: authStreamFactory?.call(service) ?? service.authStateChanges,
       builder: (context, auth) {
         if (auth.connectionState == ConnectionState.waiting) {
           return const SplashScreen();
         }
-        if (auth.data == null) return const AdminLoginScreen();
-        return FutureBuilder<AuthResult>(
-          future: service.resolveAdminAuthorization(),
-          builder: (context, access) {
-            if (access.connectionState != ConnectionState.done) {
-              return const SplashScreen();
-            }
-            if (access.data?.success == true) {
-              final profile = access.data!.adminProfile!;
-              switch (AdminRoleRouter.resolve(profile)) {
-                case AdminPostAuthDestination.superAdminHome:
-                  return HominodeLegalAcceptanceGate(
-                    profileCollection: 'admins',
-                    child:
-                        superAdminDestination ?? const SuperAdminHomeScreen(),
-                  );
-                case AdminPostAuthDestination.adminTenantFlow:
-                  return HominodeLegalAcceptanceGate(
-                    profileCollection: 'admins',
-                    child: _AdminTenantFlow(profile: profile),
-                  );
-                case AdminPostAuthDestination.rejected:
-                  return const _AccessDenied(
-                    message: 'Admin authorization could not be verified.',
-                  );
-              }
-            }
-            return _AccessDenied(
-              message:
-                  access.data?.message ??
-                  'Admin authorization could not be verified.',
-            );
-          },
-        );
+        if (auth.data == null) return _buildLogin(context);
+        return _buildPostAuth(service);
       },
     );
   }
 }
 
 class _AdminTenantFlow extends StatefulWidget {
-  const _AdminTenantFlow({required this.profile});
+  const _AdminTenantFlow({
+    required this.profile,
+    this.requestedModule,
+    this.session,
+    this.destinationBuilder,
+  });
+
   final AdminProfile profile;
+  final AdminModuleId? requestedModule;
+  final AdminTenantSession? session;
+  final AdminTenantDestinationBuilder? destinationBuilder;
+
   @override
   State<_AdminTenantFlow> createState() => _AdminTenantFlowState();
 }
 
 class _AdminTenantFlowState extends State<_AdminTenantFlow> {
-  final _session = AdminTenantSession();
+  late final AdminTenantSession _session =
+      widget.session ?? AdminTenantSession();
   late final Future<AdminTenantResolution> _resolution = _session.resolve(
     widget.profile,
   );
@@ -87,7 +175,19 @@ class _AdminTenantFlowState extends State<_AdminTenantFlow> {
       }
       switch (snapshot.data) {
         case AdminTenantResolution.selected:
-          return const AdminDashboardPage();
+          final destinationBuilder =
+              widget.destinationBuilder ??
+              (double width, AdminModuleId? requestedModule) =>
+                  adminTenantDestinationForWidth(
+                    width,
+                    requestedModule: requestedModule,
+                  );
+          return LayoutBuilder(
+            builder: (context, constraints) => destinationBuilder(
+              constraints.maxWidth,
+              widget.requestedModule,
+            ),
+          );
         case AdminTenantResolution.selectionRequired:
           return _CommunitySelectionRequired(session: _session);
         case AdminTenantResolution.noValidTenants:
@@ -102,6 +202,42 @@ class _AdminTenantFlowState extends State<_AdminTenantFlow> {
       }
     },
   );
+}
+
+Widget adminTenantDestinationForWidth(
+  double width, {
+  AdminModuleId? requestedModule,
+}) {
+  final module = requestedModule ?? AdminModuleId.dashboard;
+  if (width < adminDesktopBreakpoint) {
+    switch (module) {
+      case AdminModuleId.dashboard:
+        return const AdminDashboardPage();
+      case AdminModuleId.buildings:
+        return const ManageBuildingsPage();
+      case AdminModuleId.residents:
+        return const AdminResidentsPageFirestore();
+      case AdminModuleId.billing:
+        return const BillingScreen();
+      case AdminModuleId.visitors:
+        return const VisitorManagementScreen();
+      case AdminModuleId.complaints:
+        return const ComplaintManagementScreen();
+      case AdminModuleId.events:
+        return const EventsAnnouncementsScreen();
+      case AdminModuleId.parking:
+        return const ParkingManagementScreenEnhanced();
+      case AdminModuleId.residentVehicles:
+        return const ResidentVehicleManagementScreen();
+      case AdminModuleId.amenities:
+        return const AmenitiesManagementScreen();
+      case AdminModuleId.profile:
+        return const ProfileScreen();
+      case AdminModuleId.settings:
+        return const SettingsScreen();
+    }
+  }
+  return AdminDesktopShell(initialModule: module);
 }
 
 class _CommunitySelectionRequired extends StatefulWidget {

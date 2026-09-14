@@ -24,7 +24,11 @@ class DashboardStatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(14),
-    decoration: WebDesign.cardDecoration,
+    decoration: WebDesign.cardFor(context).copyWith(
+      color: WebRoleStyle.maybeOf(context) == null
+          ? Colors.white
+          : color.withValues(alpha: .055),
+    ),
     child: Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,18 +44,22 @@ class DashboardStatCard extends StatelessWidget {
               ),
               child: Icon(icon, color: color, size: 19),
             ),
-            const Spacer(),
-            Flexible(
-              child: Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: WebDesign.text,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -.4,
+            const SizedBox(width: 8),
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: WebDesign.text,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.4,
+                  ),
                 ),
               ),
             ),
@@ -90,13 +98,15 @@ class ResponsiveMetricGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (_, box) {
-      final columns = box.maxWidth >= 1180
+      final communityRole = WebRoleStyle.maybeOf(context) != null;
+      final availableColumns = box.maxWidth >= (communityRole ? 650 : 1180)
           ? 5
-          : box.maxWidth >= 760
+          : box.maxWidth >= (communityRole ? 500 : 760)
           ? 3
           : box.maxWidth >= 320
           ? 2
           : 1;
+      final columns = math.max(1, math.min(availableColumns, children.length));
       return GridView.builder(
         itemCount: children.length,
         shrinkWrap: true,
@@ -132,40 +142,53 @@ class SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     padding: padding,
-    decoration: WebDesign.cardDecoration,
+    decoration: WebDesign.cardFor(context),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final heading = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: WebDesign.text,
+                  ),
+                ),
+                if (subtitle case final text?) ...[
+                  const SizedBox(height: 3),
                   Text(
-                    title,
+                    text,
                     style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: WebDesign.text,
+                      color: WebDesign.muted,
+                      fontSize: 11,
                     ),
                   ),
-                  if (subtitle case final text?) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      text,
-                      style: const TextStyle(
-                        color: WebDesign.muted,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
                 ],
-              ),
-            ),
-            ?action,
-          ],
+              ],
+            );
+            final actionBreakpoint =
+                WebRoleStyle.maybeOf(context) != null && action is TextButton
+                ? 300
+                : 680;
+            if (action != null && constraints.maxWidth < actionBreakpoint) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [heading, const SizedBox(height: 10), action!],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: heading),
+                ?action,
+              ],
+            );
+          },
         ),
         const SizedBox(height: 16),
         child,
@@ -270,13 +293,17 @@ class QuickActionGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-    builder: (_, constraints) {
+    builder: (context, constraints) {
       final width = constraints.maxWidth;
-      final columns = width >= 620
+      final communityRole = WebRoleStyle.maybeOf(context) != null;
+      final availableColumns = width >= 620
           ? 4
-          : width >= 300
+          : communityRole && width >= 420 && children.length == 6
+          ? 3
+          : width >= (communityRole ? 240 : 300)
           ? 2
           : 1;
+      final columns = math.max(1, math.min(availableColumns, children.length));
       return GridView.builder(
         itemCount: children.length,
         shrinkWrap: true,
@@ -288,6 +315,113 @@ class QuickActionGrid extends StatelessWidget {
           mainAxisExtent: 84,
         ),
         itemBuilder: (_, index) => children[index],
+      );
+    },
+  );
+}
+
+class WebSearchToolbar extends StatelessWidget {
+  const WebSearchToolbar({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    required this.onChanged,
+    required this.onClear,
+    this.trailing,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: SizedBox(
+          height: 46,
+          child: TextField(
+            controller: controller,
+            onChanged: onChanged,
+            style: const TextStyle(color: WebDesign.text, fontSize: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: const Color(0xFFFAFBFD),
+              hintText: hintText,
+              hintStyle: const TextStyle(color: WebDesign.muted, fontSize: 12),
+              prefixIcon: const Icon(
+                Icons.search_rounded,
+                size: 20,
+                color: WebDesign.muted,
+              ),
+              suffixIcon: controller.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: onClear,
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: WebDesign.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: WebDesign.border),
+              ),
+            ),
+          ),
+        ),
+      ),
+      if (trailing case final widget?) ...[const SizedBox(width: 10), widget],
+    ],
+  );
+}
+
+class DesktopListHeader extends StatelessWidget {
+  const DesktopListHeader({
+    super.key,
+    required this.labels,
+    this.flexes = const [],
+  });
+
+  final List<String> labels;
+  final List<int> flexes;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (constraints.maxWidth < 620) return const SizedBox.shrink();
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F9FC),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: WebDesign.border),
+        ),
+        child: Row(
+          children: [
+            for (var index = 0; index < labels.length; index++)
+              Expanded(
+                flex: index < flexes.length ? flexes[index] : 1,
+                child: Text(
+                  labels[index].toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: WebDesign.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .45,
+                  ),
+                ),
+              ),
+          ],
+        ),
       );
     },
   );
@@ -413,7 +547,7 @@ class DashboardStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     constraints: const BoxConstraints(maxWidth: 86),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
     decoration: BoxDecoration(
       color: color.withValues(alpha: .09),
       borderRadius: BorderRadius.circular(20),
@@ -422,7 +556,7 @@ class DashboardStatusPill extends StatelessWidget {
       titleCase(label),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w700),
+      style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700),
     ),
   );
 }
@@ -598,16 +732,16 @@ class EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 14),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: WebDesign.muted, size: 24),
-          const SizedBox(height: 8),
+          Icon(icon, color: WebDesign.muted, size: 28),
+          const SizedBox(height: 10),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: WebDesign.muted, fontSize: 11),
+            style: const TextStyle(color: WebDesign.muted, fontSize: 12),
           ),
         ],
       ),

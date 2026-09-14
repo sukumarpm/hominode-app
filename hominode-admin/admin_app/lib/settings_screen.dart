@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-import 'widgets/standard_header.dart';
+
+import 'community_settings_screen.dart';
+import 'desktop/admin_desktop_page_frame.dart';
+import 'services/auth_service.dart';
 import 'widgets/edit_profile_modal.dart';
 import 'widgets/login_history_modal.dart';
+import 'widgets/standard_header.dart';
 import 'widgets/storage_usage_modal.dart';
-import 'services/auth_service.dart';
-import 'community_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -44,6 +46,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Settings',
+        subtitle:
+            'Configure account, notifications, security, and system preferences.',
+        child: SingleChildScrollView(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    _buildProfileSection(),
+                    _buildNotificationSettings(),
+                    _buildAppearanceSettings(),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  children: [
+                    _buildSecuritySettings(),
+                    _buildDataSettings(),
+                    _buildSystemSettings(),
+                    _buildSupportSection(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: CustomScrollView(
@@ -680,60 +717,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showSignOutDialog() {
-    showDialog(
+    showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Sign Out'),
         content: const Text(
           'Are you sure you want to sign out of your account?',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(dialogContext);
 
-              // Show loading indicator
-              showDialog(
+              if (!mounted) return;
+
+              final rootNavigator = Navigator.of(context, rootNavigator: true);
+              final messenger = ScaffoldMessenger.of(context);
+
+              showDialog<void>(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => WillPopScope(
-                  onWillPop: () async => false,
-                  child: const Center(child: CircularProgressIndicator()),
+                builder: (_) => const PopScope(
+                  canPop: false,
+                  child: Center(
+                    child: Card(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 22,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                              ),
+                            ),
+                            SizedBox(width: 14),
+                            Text('Signing out…'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               );
 
               try {
-                // Sign out using AuthService
                 await AuthService().signOut();
 
-                // Wait a moment for Firebase to process the sign out
-                await Future.delayed(const Duration(milliseconds: 300));
-
-                if (mounted) {
-                  // Close loading dialog
-                  Navigator.of(context).pop();
-
-                  // Navigate to login and remove all previous routes
-                  Navigator.of(
-                    context,
-                  ).pushNamedAndRemoveUntil('/login', (route) => false);
+                if (rootNavigator.canPop()) {
+                  rootNavigator.pop();
                 }
               } catch (e) {
-                if (mounted) {
-                  // Close loading dialog
-                  Navigator.of(context).pop();
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Sign out failed: ${e.toString()}'),
-                      backgroundColor: const Color(0xFFEF4444),
-                    ),
-                  );
+                if (rootNavigator.canPop()) {
+                  rootNavigator.pop();
                 }
+
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Sign out failed: ${e.toString()}'),
+                    backgroundColor: const Color(0xFFEF4444),
+                  ),
+                );
               }
             },
             style: TextButton.styleFrom(

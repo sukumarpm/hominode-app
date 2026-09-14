@@ -545,5 +545,6 @@ module.exports = {
   registerNotificationDeviceCore,
   unregisterNotificationDeviceCore,
   sendCanonicalNotification,
+  requireCanonicalRecipient,
   sendNotificationCore,
 };

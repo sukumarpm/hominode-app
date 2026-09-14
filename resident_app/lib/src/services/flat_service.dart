@@ -154,6 +154,7 @@ class FlatService {
         });
   }
 
+
   /// Update flat status
   Future<bool> updateFlatStatus(String flatId, String status) async {
     try {
@@ -205,6 +206,7 @@ class FlatService {
       return false;
     }
   }
+
 
   /// Remove resident from flat
   Future<bool> removeResident({

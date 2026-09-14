@@ -14,8 +14,9 @@ import 'admin_reports_page.dart';
 import 'admin_residents_page.dart';
 import 'admin_settings_page.dart';
 import 'admin_visitors_page.dart';
-import 'resident_dashboard.dart';
 import 'resident_bills_page.dart';
+import 'resident_complaints_page.dart';
+import 'resident_dashboard.dart';
 import 'resident_events_page.dart';
 import 'resident_notices_page.dart';
 import 'resident_unit_page.dart';
@@ -24,6 +25,50 @@ import 'super_admin_admins_page.dart';
 import 'super_admin_communities_page.dart';
 import 'super_admin_dashboard.dart';
 import 'super_admin_platform_overview_page.dart';
+
+const residentSidebarLabels = <String>[
+  'Home',
+  'My Unit',
+  'Bills',
+  'Visitors',
+  'Complaints',
+  'Notices',
+  'Events',
+];
+
+const residentRoutePaths = <String>{
+  '/resident',
+  '/resident/unit',
+  '/resident/bills',
+  '/resident/visitors',
+  '/resident/complaints',
+  '/resident/notices',
+  '/resident/events',
+};
+
+int residentIndexForPath(String path) => switch (path) {
+  '/resident/unit' => 1,
+  '/resident/bills' => 2,
+  '/resident/visitors' => 3,
+  '/resident/complaints' => 4,
+  '/resident/notices' => 5,
+  '/resident/events' => 6,
+  _ => 0,
+};
+
+String residentTitleForPath(String path, String? residentName) =>
+    switch (path) {
+      '/resident/unit' => 'My Unit',
+      '/resident/bills' => 'Bills',
+      '/resident/visitors' => 'Visitors',
+      '/resident/complaints' => 'Complaints',
+      '/resident/notices' => 'Notices',
+      '/resident/events' => 'Events',
+      _ =>
+        residentName == null || residentName.isEmpty
+            ? 'Welcome Home'
+            : 'Welcome Home, $residentName',
+    };
 
 class SuperAdminWebHome extends StatelessWidget {
   const SuperAdminWebHome({
@@ -223,45 +268,72 @@ class ResidentWebHome extends StatelessWidget {
   const ResidentWebHome({
     super.key,
     required this.session,
+    required this.currentPath,
     required this.onNavigate,
     required this.onLogout,
   });
 
   final WebSession session;
+  final String currentPath;
   final ValueChanged<String> onNavigate;
   final Future<void> Function() onLogout;
 
   @override
   Widget build(BuildContext context) {
     final name = session.displayName?.trim();
-    final currentPath = ModalRoute.of(context)?.settings.name ?? '/resident';
-    final page = switch (currentPath) {
-      '/resident/unit' => ResidentUnitPage(session: session),
-      '/resident/bills' => ResidentBillsPage(session: session),
-      '/resident/notices' => ResidentNoticesPage(session: session),
-      '/resident/events' => ResidentEventsPage(session: session),
-      '/resident/visitors' => ResidentVisitorsPage(session: session),
-      _ => ResidentDashboard(session: session),
-    };
-    final title = switch (currentPath) {
-      '/resident/unit' => 'My Unit',
-      '/resident/bills' => 'Bills',
-      '/resident/notices' => 'Notices',
-      '/resident/events' => 'Events',
-      '/resident/visitors' => 'Visitors',
-      _ =>
-        name == null || name.isEmpty ? 'Welcome Home' : 'Welcome Home, $name',
-    };
     return HominodeWebShell(
-      title: title,
+      title: residentTitleForPath(currentPath, name),
       subtitle: 'Your home and community at a glance',
       roleLabel: 'Resident',
       palette: RolePalette.resident,
+      initialIndex: residentIndexForPath(currentPath),
       profileName: name == null || name.isEmpty ? 'Resident' : name,
       profileSubtitle: session.flatLabel ?? session.activeTenant!.name,
       onLogout: onLogout,
+      onNavigate: onNavigate,
       destinations: [
-        WebDestination('Home', Icons.home_outlined, page, path: '/resident'),
+        WebDestination(
+          residentSidebarLabels[0],
+          Icons.home_outlined,
+          ResidentDashboard(session: session),
+          path: '/resident',
+        ),
+        WebDestination(
+          residentSidebarLabels[1],
+          Icons.apartment_outlined,
+          ResidentUnitPage(session: session),
+          path: '/resident/unit',
+        ),
+        WebDestination(
+          residentSidebarLabels[2],
+          Icons.receipt_long_outlined,
+          ResidentBillsPage(session: session),
+          path: '/resident/bills',
+        ),
+        WebDestination(
+          residentSidebarLabels[3],
+          Icons.people_outline,
+          ResidentVisitorsPage(session: session),
+          path: '/resident/visitors',
+        ),
+        WebDestination(
+          residentSidebarLabels[4],
+          Icons.report_problem_outlined,
+          ResidentComplaintsPage(session: session),
+          path: '/resident/complaints',
+        ),
+        WebDestination(
+          residentSidebarLabels[5],
+          Icons.campaign_outlined,
+          ResidentNoticesPage(session: session),
+          path: '/resident/notices',
+        ),
+        WebDestination(
+          residentSidebarLabels[6],
+          Icons.event_outlined,
+          ResidentEventsPage(session: session),
+          path: '/resident/events',
+        ),
       ],
     );
   }

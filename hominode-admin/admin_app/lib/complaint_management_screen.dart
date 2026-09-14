@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'desktop/admin_desktop_page_frame.dart';
 import 'widgets/standard_bottom_nav.dart';
 import 'widgets/complaint_list_card.dart';
 import 'widgets/standard_header.dart';
@@ -61,9 +62,11 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
   Future<ComplaintEntry> _convertToComplaintEntry(
     ComplaintModel complaint,
   ) async {
-    // Fetch flat number if flatId exists
-    String unitNumber = 'N/A';
-    if (complaint.flatId != null && complaint.flatId!.isNotEmpty) {
+    // Retained complaint history can outlive its canonical unit document.
+    String unitNumber = complaint.flatLabel ?? complaint.flatId ?? 'N/A';
+    if (complaint.flatLabel?.isNotEmpty != true &&
+        complaint.flatId != null &&
+        complaint.flatId!.isNotEmpty) {
       try {
         final flatDoc = await FirebaseFirestore.instance
             .collection('flats')
@@ -72,7 +75,12 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
 
         if (flatDoc.exists) {
           final flatData = flatDoc.data();
-          unitNumber = flatData?['flatNumber'] ?? complaint.flatId ?? 'N/A';
+          unitNumber =
+              (flatData?['flatLabel'] ??
+                      flatData?['flatId'] ??
+                      flatData?['flatNumber'] ??
+                      unitNumber)
+                  .toString();
           print(
             'ComplaintManagementScreen: Fetched flat number: $unitNumber for flatId: ${complaint.flatId}',
           );
@@ -199,6 +207,30 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Complaints',
+        subtitle: 'Track, filter, and update resident complaints.',
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildStatisticCards(),
+                    SizedBox(height: 12.h),
+                    _buildFilterTabs(),
+                    SizedBox(height: 16.h),
+                    _buildSearchAndActions(),
+                    SizedBox(height: 16.h),
+                    _buildComplaintList(),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: _isLoading

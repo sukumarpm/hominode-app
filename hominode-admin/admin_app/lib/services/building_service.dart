@@ -1,6 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'flat_service.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+
+import '../models/unit_schema.dart';
+import '../models/building_deletion.dart';
 import 'admin_service.dart';
+import 'flat_service.dart';
 
 class BuildingService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -8,119 +12,31 @@ class BuildingService {
   final FlatService _flatService = FlatService();
   final AdminService _adminService = AdminService();
 
-  // Add a new building
+  // Trusted creation shares the reconciliation generator and tenant checks.
   Future<String> addBuilding({
     required String name,
     required int floors,
     required int flatsPerFloor,
     required int totalFlats,
     required Map<String, String> flatBhkConfig,
+    HousingStructureType structureType = HousingStructureType.apartmentBuilding,
+    HousingUnitType? unitType,
   }) async {
-    try {
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null) {
-        throw StateError('Admin not logged in');
-      }
-      final communityId = _adminService.requireCurrentCommunityId();
-      if (floors <= 0 || flatsPerFloor <= 0) {
-        throw ArgumentError('Floors and flats per floor must be positive.');
-      }
-      if (totalFlats != floors * flatsPerFloor) {
-        throw ArgumentError('Total flats does not match the building layout.');
-      }
-      // A Firestore batch supports at most 500 writes. Reserve one for the
-      // building so its canonical document and every flat commit atomically.
-      if (totalFlats > 499) {
-        throw ArgumentError(
-          'A building can contain at most 499 flats per atomic creation.',
-        );
-      }
-
-      // Fetch admin details
-      final adminProfile = await _adminService.getAdminProfile();
-      final docRef = _firestore.collection(_collection).doc();
-
-      final buildingData = {
-        'buildingId': docRef.id,
-        'buildingName': name,
-        'name': name,
-        'floors': floors,
-        'flatsPerFloor': flatsPerFloor,
-        'totalFlats': totalFlats,
-        'occupied': 0,
-        'vacant': totalFlats,
-        'occupancyRate': 0,
-        'adminId': adminId, // Link building to admin
-        'communityId': communityId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      // Add admin details if available
-      if (adminProfile != null) {
-        buildingData['adminName'] = adminProfile['name'] ?? '';
-        buildingData['adminEmail'] = adminProfile['email'] ?? '';
-        buildingData['adminPhone'] = adminProfile['phone'] ?? '';
-        buildingData['organization'] = adminProfile['organization'] ?? '';
-      }
-
-      final batch = _firestore.batch();
-      batch.set(docRef, buildingData);
-      final queuedFlatWrites = _flatService.addFlatsToBatch(
-        batch: batch,
-        adminId: adminId,
-        buildingId: docRef.id,
-        buildingName: name,
-        floors: floors,
-        flatsPerFloor: flatsPerFloor,
-        flatBhkConfig: flatBhkConfig,
-        communityId: communityId,
-      );
-      if (queuedFlatWrites != totalFlats) {
-        throw StateError(
-          'Generated $queuedFlatWrites flat writes; expected $totalFlats.',
-        );
-      }
-      print(
-        'BuildingService: generated flats=$totalFlats, '
-        'queued flat writes=$queuedFlatWrites, target=flats, '
-        'buildingId=${docRef.id}, communityId=$communityId',
-      );
-      await batch.commit();
-
-      print(
-        'BuildingService: batch commit succeeded for buildings/${docRef.id} '
-        'and $queuedFlatWrites flats',
-      );
-
-      final verification = await _firestore
-          .collection('flats')
-          .where('buildingId', isEqualTo: docRef.id)
-          .where('communityId', isEqualTo: communityId)
-          .get(const GetOptions(source: Source.server));
-      print(
-        'BuildingService: post-commit flat verification '
-        'count=${verification.docs.length}, expected=$totalFlats, '
-        'buildingId=${docRef.id}, communityId=$communityId',
-      );
-      if (verification.docs.length != totalFlats) {
-        throw StateError(
-          'Building committed but flat verification returned '
-          '${verification.docs.length} of $totalFlats documents.',
-        );
-      }
-
-      return docRef.id;
-    } on FirebaseException catch (error, stackTrace) {
-      print(
-        'BuildingService Firebase failure: plugin=${error.plugin}, '
-        'code=${error.code}, message=${error.message}\n$stackTrace',
-      );
-      rethrow;
-    } catch (error, stackTrace) {
-      print('BuildingService failure: $error\n$stackTrace');
-      rethrow;
-    }
+    final communityId = _adminService.requireCurrentCommunityId();
+    final response =
+        await FirebaseFunctions.instanceFor(
+          region: 'asia-southeast1',
+        ).httpsCallable('createBuilding').call({
+          'communityId': communityId,
+          'name': name,
+          'floors': floors,
+          'flatsPerFloor': flatsPerFloor,
+          'totalFlats': totalFlats,
+          'flatBhkConfig': flatBhkConfig,
+          'structureType': structureType.value,
+          if (unitType != null) 'unitType': unitType.value,
+        });
+    return (response.data as Map)['buildingId'] as String;
   }
 
   // Get all buildings for the selected community.
@@ -143,12 +59,16 @@ class BuildingService {
               name: building['name'] ?? '',
               buildingId: building['buildingId'] ?? doc.id,
               buildingName: building['buildingName'] ?? building['name'] ?? '',
+              structureType: HousingStructureType.fromValue(
+                building['structureType'],
+              ),
               floors: building['floors'] ?? 0,
               flatsPerFloor: building['flatsPerFloor'] ?? 0,
               totalFlats: building['totalFlats'] ?? 0,
-              occupied: building['occupied'] ?? 0,
-              vacant: building['vacant'] ?? 0,
-              occupancyRate: building['occupancyRate'] ?? 0,
+              occupied: (building['occupied'] as num?)?.toInt() ?? 0,
+              reserved: (building['reserved'] as num?)?.toInt() ?? 0,
+              vacant: (building['vacant'] as num?)?.toInt() ?? 0,
+              occupancyRate: (building['occupancyRate'] as num?)?.toInt() ?? 0,
               createdAt: (building['createdAt'] as Timestamp?)?.toDate(),
               updatedAt: (building['updatedAt'] as Timestamp?)?.toDate(),
             );
@@ -175,157 +95,67 @@ class BuildingService {
         name: data['name'] ?? '',
         buildingId: data['buildingId'] ?? doc.id,
         buildingName: data['buildingName'] ?? data['name'] ?? '',
+        structureType: HousingStructureType.fromValue(data['structureType']),
         floors: data['floors'] ?? 0,
         flatsPerFloor: data['flatsPerFloor'] ?? 0,
         totalFlats: data['totalFlats'] ?? 0,
-        occupied: data['occupied'] ?? 0,
-        vacant: data['vacant'] ?? 0,
-        occupancyRate: data['occupancyRate'] ?? 0,
+        occupied: (data['occupied'] as num?)?.toInt() ?? 0,
+        reserved: (data['reserved'] as num?)?.toInt() ?? 0,
+        vacant: (data['vacant'] as num?)?.toInt() ?? 0,
+        occupancyRate: (data['occupancyRate'] as num?)?.toInt() ?? 0,
         createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
         updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
       );
     }).toList();
   }
 
-  // Update building
+  /// Reconciles canonical units on the server in one authorized transaction.
   Future<void> updateBuilding({
     required String id,
     required String name,
+    required int floors,
+    required int flatsPerFloor,
+    required int totalFlats,
+    required Map<String, String> flatBhkConfig,
+    HousingStructureType? structureType,
+    HousingUnitType? unitType,
   }) async {
-    try {
-      final selectedCommunityId = _adminService.requireCurrentCommunityId();
-
-      // Structural fields are intentionally preserved for production V1.
-      final doc = await _firestore.collection(_collection).doc(id).get();
-      if (!doc.exists) {
-        throw StateError('Building not found.');
-      }
-
-      final currentData = doc.data()!;
-      if (currentData['communityId'] != selectedCommunityId) {
-        throw StateError('Building is outside the selected community.');
-      }
-
-      final adminId = currentData['adminId'] as String?;
-      final floors = (currentData['floors'] as num?)?.toInt() ?? 0;
-      final flatsPerFloor =
-          (currentData['flatsPerFloor'] as num?)?.toInt() ?? 0;
-      final totalFlats = (currentData['totalFlats'] as num?)?.toInt() ?? 0;
-      final occupied = (currentData['occupied'] as num?)?.toInt() ?? 0;
-      final vacant = (currentData['vacant'] as num?)?.toInt() ?? 0;
-      final occupancyRate =
-          (currentData['occupancyRate'] as num?)?.toInt() ?? 0;
-
-      await _firestore.collection(_collection).doc(id).update({
-        'name': name,
-        'buildingName': name, // Keep buildingName in sync with name
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Update building info in admin's document
-      if (adminId != null) {
-        await _updateBuildingInAdminDocument(
-          adminId: adminId,
-          buildingId: id,
-          buildingName: name,
-          floors: floors,
-          flatsPerFloor: flatsPerFloor,
-          totalFlats: totalFlats,
-          occupied: occupied,
-          vacant: vacant,
-          occupancyRate: occupancyRate,
-        );
-      }
-
-      print('BuildingService: Building $id updated successfully');
-    } catch (e) {
-      throw Exception('Failed to update building: $e');
-    }
+    final communityId = _adminService.requireCurrentCommunityId();
+    await FirebaseFunctions.instanceFor(
+      region: 'asia-southeast1',
+    ).httpsCallable('reconcileBuilding').call({
+      'communityId': communityId,
+      'buildingId': id,
+      'name': name,
+      'floors': floors,
+      'flatsPerFloor': flatsPerFloor,
+      'totalFlats': totalFlats,
+      'flatBhkConfig': flatBhkConfig,
+      if (structureType != null) 'structureType': structureType.value,
+      if (unitType != null) 'unitType': unitType.value,
+    });
   }
 
-  // Delete building
-  Future<void> deleteBuilding(String id) async {
-    try {
-      final communityId = _adminService.requireCurrentCommunityId();
-      print('🔵 BUILDING DELETION FLOW: Starting...');
-
-      // STEP 1: Validate building exists
-      print('📋 STEP 1: Validating building...');
-      final buildingDoc = await _firestore
-          .collection(_collection)
-          .doc(id)
-          .get();
-      if (!buildingDoc.exists) {
-        throw Exception('Building not found');
-      }
-      final buildingData = buildingDoc.data();
-      if (buildingData?['communityId'] != communityId) {
-        throw StateError('Building does not belong to the active community.');
-      }
-      final adminId = buildingData?['adminId'] as String?;
-      final buildingName = buildingData?['name'] as String?;
-      print('✅ STEP 1 PASSED: Building validated - $buildingName');
-
-      // STEP 2: Delete all flats for this building
-      print('📝 STEP 2: Deleting all flats...');
-      final flatsSnapshot = await _firestore
-          .collection('flats')
-          .where('buildingId', isEqualTo: id)
-          .where('communityId', isEqualTo: communityId)
-          .get();
-      print('   - Found ${flatsSnapshot.docs.length} flats to delete');
-
-      final flatBatch = _firestore.batch();
-      for (var flatDoc in flatsSnapshot.docs) {
-        flatBatch.delete(flatDoc.reference);
-      }
-      await flatBatch.commit();
-      print('✅ STEP 2 PASSED: All flats deleted');
-
-      // STEP 3: Update all users assigned to this building
-      print('🔔 STEP 3: Updating users assigned to building...');
-      final usersSnapshot = await _firestore
-          .collection('users')
-          .where('buildingId', isEqualTo: id)
-          .where('communityId', isEqualTo: communityId)
-          .get();
-      print('   - Found ${usersSnapshot.docs.length} users to update');
-
-      final userBatch = _firestore.batch();
-      for (var userDoc in usersSnapshot.docs) {
-        userBatch.update(userDoc.reference, {
-          'buildingId': null,
-          'flatId': null,
-          'status': 'unassigned',
-          'updatedAt': FieldValue.serverTimestamp(),
+  Future<BuildingDeletionCheck> validateBuildingDeletion(String id) async {
+    final response =
+        await FirebaseFunctions.instanceFor(
+          region: 'asia-southeast1',
+        ).httpsCallable('validateBuildingDeletion').call({
+          'communityId': _adminService.requireCurrentCommunityId(),
+          'buildingId': id,
         });
-      }
-      await userBatch.commit();
-      print('✅ STEP 3 PASSED: All users updated - status set to unassigned');
+    return BuildingDeletionCheck.fromMap(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
 
-      // STEP 4: Remove building from admin's document
-      print('📋 STEP 4: Removing building from admin document...');
-      if (adminId != null) {
-        await _removeBuildingFromAdminDocument(
-          adminId: adminId,
-          buildingId: id,
-        );
-      }
-      print('✅ STEP 4 PASSED: Building removed from admin document');
-
-      // STEP 5: Delete the building document
-      print('📝 STEP 5: Deleting building document...');
-      await _firestore.collection(_collection).doc(id).delete();
-      print('✅ STEP 5 PASSED: Building document deleted');
-
-      print('✅ BUILDING DELETION FLOW: COMPLETE');
-      print('   - Building: $buildingName');
-      print('   - Flats deleted: ${flatsSnapshot.docs.length}');
-      print('   - Users updated: ${usersSnapshot.docs.length}');
-    } catch (e) {
-      print('❌ ERROR: $e');
-      throw Exception('Failed to delete building: $e');
-    }
+  Future<void> deleteBuilding(String id) async {
+    await FirebaseFunctions.instanceFor(
+      region: 'asia-southeast1',
+    ).httpsCallable('deleteBuilding').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'buildingId': id,
+    });
   }
 
   // Update occupancy (called when residents are assigned/removed)
@@ -375,6 +205,7 @@ class BuildingService {
       await _firestore.collection(_collection).doc(buildingId).update({
         'occupied': stats.occupied,
         'vacant': stats.vacant,
+        'reserved': stats.reserved,
         'occupancyRate': stats.occupancyRate,
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -389,6 +220,7 @@ class BuildingService {
           flatsPerFloor: flatsPerFloor,
           totalFlats: stats.total,
           occupied: stats.occupied,
+          reserved: stats.reserved,
           vacant: stats.vacant,
           occupancyRate: stats.occupancyRate,
         );
@@ -447,6 +279,7 @@ class BuildingService {
               'flatsPerFloor': flatsPerFloor,
               'totalFlats': totalFlats,
               'occupied': 0,
+              'reserved': 0,
               'vacant': totalFlats,
               'occupancyRate': 0,
               'addedAt': FieldValue.serverTimestamp(),
@@ -487,6 +320,7 @@ class BuildingService {
         'flatsPerFloor': flatsPerFloor,
         'totalFlats': totalFlats,
         'occupied': 0,
+        'reserved': 0,
         'vacant': totalFlats,
         'occupancyRate': 0,
         'addedAt': FieldValue.serverTimestamp(),
@@ -570,61 +404,6 @@ class BuildingService {
     }
   }
 
-  // Remove building from admin's document
-  Future<void> _removeBuildingFromAdminDocument({
-    required String adminId,
-    required String buildingId,
-  }) async {
-    try {
-      print('\n🔵 Removing building from admin document...');
-      print('   - AdminId: $adminId');
-      print('   - BuildingId: $buildingId');
-
-      final adminDoc = await _firestore.collection('admins').doc(adminId).get();
-
-      if (!adminDoc.exists) {
-        print('⚠️  Admin document not found');
-        return;
-      }
-
-      final adminData = adminDoc.data()!;
-      final currentBuildings = (adminData['buildings'] as List<dynamic>?) ?? [];
-      final currentBuildingNames =
-          (adminData['buildingNames'] as List<dynamic>?) ?? [];
-
-      // Find the building to remove
-      Map<String, dynamic>? buildingToRemove;
-      String? buildingNameToRemove;
-
-      for (var building in currentBuildings) {
-        if (building['buildingId'] == buildingId) {
-          buildingToRemove = Map<String, dynamic>.from(building);
-          buildingNameToRemove = building['buildingName'];
-          break;
-        }
-      }
-
-      if (buildingToRemove == null) {
-        print('⚠️  Building not found in admin document');
-        return;
-      }
-
-      // Use FieldValue.arrayRemove() to remove from arrays
-      await _firestore.collection('admins').doc(adminId).update({
-        'buildingIds': FieldValue.arrayRemove([buildingId]),
-        'buildings': FieldValue.arrayRemove([buildingToRemove]),
-        'buildingNames': buildingNameToRemove != null
-            ? FieldValue.arrayRemove([buildingNameToRemove])
-            : FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      print('✅ Building removed from admin document successfully\n');
-    } catch (e) {
-      print('❌ Failed to remove building from admin document: $e');
-    }
-  }
-
   // Update building info in admin's document
   Future<void> _updateBuildingInAdminDocument({
     required String adminId,
@@ -634,6 +413,7 @@ class BuildingService {
     required int flatsPerFloor,
     required int totalFlats,
     required int occupied,
+    required int reserved,
     required int vacant,
     required int occupancyRate,
   }) async {
@@ -677,6 +457,7 @@ class BuildingService {
         'flatsPerFloor': flatsPerFloor,
         'totalFlats': totalFlats,
         'occupied': occupied,
+        'reserved': reserved,
         'vacant': vacant,
         'occupancyRate': occupancyRate,
         'addedAt': oldBuildingData['addedAt'], // Preserve original timestamp
@@ -715,6 +496,7 @@ class BuildingService {
 
 // Building Model
 class BuildingModel {
+  final HousingStructureType structureType;
   final String id;
   final String name;
   final String? buildingId; // Same as id, stored for consistency
@@ -723,12 +505,14 @@ class BuildingModel {
   final int flatsPerFloor;
   final int totalFlats;
   final int occupied;
+  final int reserved;
   final int vacant;
   final int occupancyRate;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
   BuildingModel({
+    this.structureType = HousingStructureType.apartmentBuilding,
     required this.id,
     required this.name,
     this.buildingId,
@@ -737,6 +521,7 @@ class BuildingModel {
     required this.flatsPerFloor,
     required this.totalFlats,
     required this.occupied,
+    this.reserved = 0,
     required this.vacant,
     required this.occupancyRate,
     this.createdAt,
@@ -745,6 +530,7 @@ class BuildingModel {
 
   Map<String, dynamic> toMap() {
     return {
+      'structureType': structureType.value,
       'id': id,
       'name': name,
       'buildingId': buildingId ?? id,
@@ -753,6 +539,7 @@ class BuildingModel {
       'flatsPerFloor': flatsPerFloor,
       'totalFlats': totalFlats,
       'occupied': occupied,
+      'reserved': reserved,
       'vacant': vacant,
       'occupancyRate': occupancyRate,
     };

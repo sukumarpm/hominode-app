@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../services/super_admin_service.dart';
+import '../tenant/web_host.dart';
 import '../theme/web_design_system.dart';
 import '../widgets/dashboard_components.dart';
 
@@ -100,6 +101,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
             const SizedBox(height: 16),
             SectionCard(
               title: 'Communities',
+              subtitle: 'Platform registry and resident web identities',
               action: FilledButton.icon(
                 onPressed: _busy ? null : () => _openCommunityDialog(),
                 icon: const Icon(Icons.add, size: 18),
@@ -107,53 +109,61 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
               ),
               child: Column(
                 children: [
-                  TextField(
+                  WebSearchToolbar(
                     controller: _searchController,
+                    hintText: 'Search communities, slugs, or domains',
                     onChanged: (value) {
                       setState(() {
                         _search = value;
                       });
                     },
-                    decoration: InputDecoration(
-                      hintText: 'Search communities...',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _search.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: () {
-                                _searchController.clear();
-
-                                setState(() {
-                                  _search = '';
-                                });
-                              },
-                              icon: const Icon(Icons.close),
-                            ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                    onClear: () {
+                      _searchController.clear();
+                      setState(() => _search = '');
+                    },
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   if (filtered.isEmpty)
                     const EmptyState(
                       icon: Icons.apartment_outlined,
                       message: 'No communities found.',
                     )
-                  else
-                    ...filtered.map(
-                      (doc) => _CommunityRow(
-                        id: doc.id,
-                        data: doc.data(),
-                        busy: _busy,
-                        onEdit: () =>
-                            _openCommunityDialog(id: doc.id, data: doc.data()),
-                        onStatus: () => _toggleCommunity(
-                          doc.id,
-                          doc.data()['isActive'] == true,
-                        ),
+                  else ...[
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: WebDesign.border),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        children: [
+                          const DesktopListHeader(
+                            labels: [
+                              'Community',
+                              'Resident URL',
+                              'Status',
+                              'Actions',
+                            ],
+                            flexes: [2, 1, 1, 1],
+                          ),
+                          ...filtered.map(
+                            (doc) => _CommunityRow(
+                              id: doc.id,
+                              data: doc.data(),
+                              busy: _busy,
+                              onEdit: () => _openCommunityDialog(
+                                id: doc.id,
+                                data: doc.data(),
+                              ),
+                              onStatus: () => _toggleCommunity(
+                                doc.id,
+                                doc.data()['isActive'] == true,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                  ],
                 ],
               ),
             ),
@@ -223,6 +233,8 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
     );
 
     final slug = TextEditingController(text: data?['slug']?.toString() ?? '');
+    final slugIsAssigned = slug.text.trim().isNotEmpty;
+    String? slugError;
 
     final website = TextEditingController(
       text: data?['websitePath']?.toString() ?? '',
@@ -236,41 +248,53 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(editing ? 'Edit Community' : 'Add Community'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _Field(controller: name, label: 'Community Name *'),
-                  _Field(controller: brand, label: 'Brand Name'),
-                  _Field(controller: slug, label: 'Slug *'),
-                  _Field(controller: website, label: 'Website Path *'),
-                  _Field(controller: database, label: 'Database ID'),
-                ],
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text(editing ? 'Edit Community' : 'Add Community'),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Field(controller: name, label: 'Community Name *'),
+                    _Field(controller: brand, label: 'Brand Name'),
+                    _Field(
+                      controller: slug,
+                      label: 'Resident URL slug *',
+                      readOnly: slugIsAssigned,
+                      errorText: slugError,
+                    ),
+                    _Field(controller: website, label: 'Website Path *'),
+                    _Field(controller: database, label: 'Database ID'),
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (name.text.trim().isEmpty ||
-                    slug.text.trim().isEmpty ||
-                    website.text.trim().isEmpty) {
-                  return;
-                }
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final candidate = slug.text.trim();
+                  final validationError = CommunitySlugPolicy.validationError(
+                    candidate,
+                  );
+                  if (name.text.trim().isEmpty ||
+                      website.text.trim().isEmpty ||
+                      validationError != null) {
+                    setDialogState(() => slugError = validationError);
+                    return;
+                  }
 
-                Navigator.pop(dialogContext, true);
-              },
-              child: Text(editing ? 'Save Changes' : 'Create Community'),
-            ),
-          ],
+                  Navigator.pop(dialogContext, true);
+                },
+                child: Text(editing ? 'Save Changes' : 'Create Community'),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -332,73 +356,125 @@ class _CommunityRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = data['isActive'] == true;
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          data['name']?.toString() ?? id,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: WebDesign.text,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          data['websitePath']?.toString() ?? '—',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: WebDesign.muted, fontSize: 10),
+        ),
+      ],
+    );
+    final menu = PopupMenuButton<String>(
+      enabled: !busy,
+      iconSize: 19,
+      onSelected: (value) {
+        if (value == 'edit') {
+          onEdit();
+        } else if (value == 'status') {
+          onStatus();
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'edit', child: Text('Edit')),
+        PopupMenuItem(
+          value: 'status',
+          child: Text(active ? 'Deactivate' : 'Activate'),
+        ),
+      ],
+    );
 
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: WebDesign.border)),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: RolePalette.superAdmin.soft,
-            child: Icon(
-              Icons.apartment_outlined,
-              color: RolePalette.superAdmin.primary,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data['name']?.toString() ?? id,
-                  style: const TextStyle(
-                    color: WebDesign.text,
-                    fontWeight: FontWeight.w700,
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: WebDesign.border)),
+        ),
+        child: constraints.maxWidth < 760
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const _CommunityAvatar(),
+                      const SizedBox(width: 12),
+                      Expanded(child: identity),
+                      StatusBadge(active: active),
+                      menu,
+                    ],
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  data['websitePath']?.toString() ?? '—',
-                  style: const TextStyle(color: WebDesign.muted, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Expanded(child: Text(data['slug']?.toString() ?? '—')),
-          StatusBadge(active: active),
-          const SizedBox(width: 12),
-          PopupMenuButton<String>(
-            enabled: !busy,
-            onSelected: (value) {
-              if (value == 'edit') {
-                onEdit();
-              } else if (value == 'status') {
-                onStatus();
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'edit', child: Text('Edit')),
-              PopupMenuItem(
-                value: 'status',
-                child: Text(active ? 'Deactivate' : 'Activate'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Resident URL: ${data['slug']?.toString() ?? '—'}',
+                    style: const TextStyle(
+                      color: WebDesign.muted,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  const _CommunityAvatar(),
+                  const SizedBox(width: 12),
+                  Expanded(flex: 2, child: identity),
+                  Expanded(
+                    child: Text(
+                      data['slug']?.toString() ?? '—',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  Expanded(
+                    child: Align(child: StatusBadge(active: active)),
+                  ),
+                  Expanded(child: Align(child: menu)),
+                ],
               ),
-            ],
-          ),
-        ],
       ),
     );
   }
 }
 
+class _CommunityAvatar extends StatelessWidget {
+  const _CommunityAvatar();
+
+  @override
+  Widget build(BuildContext context) => CircleAvatar(
+    radius: 18,
+    backgroundColor: RolePalette.superAdmin.soft,
+    child: Icon(
+      Icons.apartment_outlined,
+      size: 18,
+      color: RolePalette.superAdmin.primary,
+    ),
+  );
+}
+
 class _Field extends StatelessWidget {
-  const _Field({required this.controller, required this.label});
+  const _Field({
+    required this.controller,
+    required this.label,
+    this.readOnly = false,
+    this.errorText,
+  });
 
   final TextEditingController controller;
   final String label;
+  final bool readOnly;
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
@@ -406,8 +482,10 @@ class _Field extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: controller,
+        readOnly: readOnly,
         decoration: InputDecoration(
           labelText: label,
+          errorText: errorText,
           border: const OutlineInputBorder(),
         ),
       ),

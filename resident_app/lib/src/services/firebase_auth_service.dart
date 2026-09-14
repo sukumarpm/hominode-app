@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
+import 'package:resident_app/src/services/resident_registration_service.dart';
 
 import '../models/tenant_profile.dart';
 import 'flat_access_control_service.dart';
@@ -242,22 +243,34 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     TenantResolutionService tenantResolver,
   ) async {
     try {
-      final profile = await tenantResolver.loadAuthenticatedProfile();
+      var profile = await tenantResolver.loadAuthenticatedProfile();
 
-      // 1. If profile does not exist in Firestore, route to registration
       if (profile == null) {
-        return AuthResult.success(
-          message: 'Complete resident registration.',
-          user: user,
-          state: ResidentAuthState.registrationRequired,
-        );
+        final claimed = await ResidentRegistrationService()
+            .claimImportedOnboarding();
+
+        if (claimed) {
+          // The callable has now created users/{uid}. Clear any cached tenant/profile
+          // state before reading the newly created canonical resident profile.
+          tenantResolver.clear();
+          profile = await tenantResolver.loadAuthenticatedProfile();
+        }
+
+        if (profile == null) {
+          return AuthResult.success(
+            message:
+                'No resident account is linked to this phone number. Please contact your Community Admin.',
+            user: user,
+            state: ResidentAuthState.registrationRequired,
+          );
+        }
       }
 
       // 2. Validate Role
       if (profile.role != 'resident') {
         await _rejectSession(tenantResolver);
         return AuthResult.success(
-          message: 'This app is available to resident accounts only.',
+          message: 'This phone number is not registered as a Resident account.',
           user: user,
           state: ResidentAuthState.blocked,
         );
@@ -266,15 +279,23 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
       // 3. Validate Status
       switch (profile.approvalStatus) {
         case 'pending':
-          if ((profile.residentType ?? profile.declaredResidentType) ==
-                  'tenant' &&
-              !ResidentAccessPolicy.identitySatisfied(profile)) {
+          if (!ResidentAccessPolicy.identitySatisfied(profile) &&
+              profile.identityVerificationStatus != 'not_required') {
+            final message = switch (profile.identityVerificationStatus) {
+              'pending' =>
+                'Your identity proof is awaiting administrator verification.',
+              'rejected' =>
+                'Your identity proof was rejected. Upload a new proof to continue.',
+              _ => 'Upload identity proof to continue verification.',
+            };
+
             return AuthResult.success(
-              message: 'Upload identity proof to continue tenant verification.',
+              message: message,
               user: user,
               state: ResidentAuthState.identityVerificationRequired,
             );
           }
+
           return AuthResult.success(
             message: 'Your registration is awaiting admin approval.',
             user: user,
@@ -298,9 +319,24 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
       if (!profile.isActive) {
         return AuthResult.success(
           message:
-              'Your resident account is temporarily deactivated. Contact your community administrator.',
+              'Your Resident account is not active. Please contact your Community Admin.',
           user: user,
           state: ResidentAuthState.inactive,
+        );
+      }
+      // Tenants always require verified identity before operational
+      // community access. Route them to the verification workflow before
+      // attempting protected community reads.
+      final residentType = profile.residentType ?? profile.declaredResidentType;
+
+      if (residentType == 'tenant' &&
+          !ResidentAccessPolicy.identitySatisfied(profile)) {
+        return AuthResult.success(
+          message: profile.identityVerificationStatus == 'rejected'
+              ? 'Your identity proof was rejected. Upload a new proof to continue.'
+              : 'Identity verification is required before resident access is enabled.',
+          user: user,
+          state: ResidentAuthState.identityVerificationRequired,
         );
       }
 
@@ -386,13 +422,13 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
   @visibleForTesting
   static String? validateResidentProfile(TenantProfile profile) {
     if (!profile.isActive) {
-      return 'This resident account is inactive.';
+      return 'Your Resident account is not active. Please contact your Community Admin.';
     }
     if (profile.communityId.isEmpty) {
       return 'This account is not assigned to a community.';
     }
     if (profile.role != 'resident') {
-      return 'This app is available to resident accounts only.';
+      return 'This phone number is not registered as a Resident account.';
     }
     return null;
   }
@@ -437,15 +473,17 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
   String _messageForCode(String code) {
     switch (code) {
       case 'invalid-phone-number':
-        return 'Enter a valid phone number with country code.';
+        return 'Enter a valid phone number.';
       case 'invalid-verification-code':
-        return 'The OTP is incorrect. Please try again.';
+        return 'Invalid verification code. Please check the OTP and try again.';
       case 'session-expired':
+      case 'code-expired':
       case 'missing-verification-id':
-        return 'The OTP expired. Request a new code.';
+        return 'This verification session has expired. Please request a new OTP.';
       case 'too-many-requests':
-      case 'quota-exceeded':
         return 'Too many attempts. Please try again later.';
+      case 'quota-exceeded':
+        return 'OTP service is temporarily unavailable. Please try again later.';
       case 'user-disabled':
         return 'This account has been disabled. Please contact support.';
       case 'network-request-failed':

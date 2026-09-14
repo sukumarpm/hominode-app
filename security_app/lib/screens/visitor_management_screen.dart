@@ -1055,7 +1055,7 @@ class _MetricCard extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-              fontSize: 22,
+              fontSize: 16,
               fontWeight: FontWeight.w700,
               color: iconColor,
             ),
@@ -1067,7 +1067,7 @@ class _MetricCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 12,
+              fontSize: 10,
               fontWeight: FontWeight.w600,
               color: AppColors.textDark,
             ),
@@ -1079,7 +1079,7 @@ class _MetricCard extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 10,
+              fontSize: 8,
               fontWeight: FontWeight.w400,
               color: AppColors.textGray,
               height: 1.2,

@@ -6,7 +6,9 @@ import 'package:hominode_web/src/widgets/web_shell.dart';
 
 void main() {
   for (final size in <Size>[
+    const Size(1920, 1080),
     const Size(1440, 900),
+    const Size(1366, 768),
     const Size(1024, 768),
     const Size(768, 900),
     const Size(390, 844),

@@ -123,7 +123,7 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'View and manage flat details, resident information, and status.',
+                  'View and manage unit details, resident information, and status.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 14.sp,
@@ -168,16 +168,26 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
         // Row 1: Labels
         Row(
           children: [
-            Expanded(child: _buildLabel('Floors')),
+            Expanded(
+              child: _buildLabel(
+                widget.unit.usesFloors ? 'Floor' : 'Unit Type',
+              ),
+            ),
             SizedBox(width: 16.w),
-            Expanded(child: _buildLabel('Flats per Floor')),
+            Expanded(child: _buildLabel('Configuration')),
           ],
         ),
         SizedBox(height: 16.h),
         // Row 2: Values
         Row(
           children: [
-            Expanded(child: _buildValue('Floor ${widget.unit.floor}')),
+            Expanded(
+              child: _buildValue(
+                widget.unit.usesFloors
+                    ? 'Floor ${widget.unit.floor}'
+                    : widget.unit.unitType.label,
+              ),
+            ),
             SizedBox(width: 16.w),
             Expanded(child: _buildValue(widget.unit.type)),
           ],
@@ -276,7 +286,12 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
           SizedBox(height: 16.h),
           _buildResidentRow('Flat :', widget.unit.id),
           SizedBox(height: 16.h),
-          _buildResidentRow('Floor :', 'Floor ${widget.unit.floor}'),
+          _buildResidentRow(
+            widget.unit.usesFloors ? 'Floor :' : 'Unit Type :',
+            widget.unit.usesFloors
+                ? 'Floor ${widget.unit.floor}'
+                : widget.unit.unitType.label,
+          ),
         ],
       ),
     );
@@ -484,7 +499,7 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
           builder: (dialogContext) => AlertDialog(
             title: const Text('Status change not allowed'),
             content: const Text(
-              'This flat is linked to an active resident. '
+              'This unit is linked to an active resident. '
               'Use the resident lifecycle actions to change occupancy.',
             ),
             actions: [
@@ -540,7 +555,7 @@ class _FlatOccupiedModalState extends State<FlatOccupiedModal> {
           return AlertDialog(
             title: const Text('Status change not allowed'),
             content: const Text(
-              'This flat is currently linked to a resident. '
+              'This unit is currently linked to a resident. '
               'To make the flat vacant, use Move Out from Resident Management.',
             ),
             actions: [

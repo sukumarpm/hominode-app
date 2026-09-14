@@ -270,10 +270,7 @@ class _ComplaintsHero extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        gradient: RolePalette.admin.gradient,
-        borderRadius: BorderRadius.circular(WebDesign.radius + 2),
-      ),
+      decoration: WebDesign.adminPageHeader,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 760;
@@ -285,13 +282,13 @@ class _ComplaintsHero extends StatelessWidget {
                 width: 58,
                 height: 58,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: .14),
+                  color: RolePalette.admin.soft,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white24),
+                  border: Border.all(color: WebDesign.border),
                 ),
                 child: const Icon(
                   Icons.report_problem_outlined,
-                  color: Colors.white,
+                  color: WebDesign.text,
                   size: 31,
                 ),
               ),
@@ -303,8 +300,8 @@ class _ComplaintsHero extends StatelessWidget {
                     const Text(
                       'Complaints',
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
+                        color: WebDesign.text,
+                        fontSize: 24,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -313,7 +310,7 @@ class _ComplaintsHero extends StatelessWidget {
                       communityName,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Colors.white70,
+                        color: WebDesign.muted,
                         fontSize: 13,
                       ),
                     ),
@@ -366,9 +363,9 @@ class _HeroMetric extends StatelessWidget {
       width: 108,
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .12),
+        color: RolePalette.admin.soft,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(color: WebDesign.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -376,7 +373,7 @@ class _HeroMetric extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(
-              color: Colors.white70,
+              color: WebDesign.muted,
               fontSize: 10,
               fontWeight: FontWeight.w600,
             ),
@@ -385,7 +382,7 @@ class _HeroMetric extends StatelessWidget {
           Text(
             value,
             style: const TextStyle(
-              color: Colors.white,
+              color: WebDesign.text,
               fontSize: 20,
               fontWeight: FontWeight.w800,
             ),

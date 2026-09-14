@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../services/dashboard_repository.dart';
 import '../session/web_session.dart';
+import '../tenant/web_host.dart';
 import '../theme/web_design_system.dart';
 import 'dashboard_components.dart';
+import 'community_visuals.dart';
 
 class ResidentPageLayout extends StatelessWidget {
   const ResidentPageLayout({
@@ -21,44 +23,23 @@ class ResidentPageLayout extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
-        decoration: WebDesign.cardDecoration,
-        child: Row(
-          children: [
-            IconButton(
+      Stack(
+        children: [
+          CommunityWelcome(
+            title: title,
+            subtitle: subtitle,
+            palette: RolePalette.resident,
+          ),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: IconButton.filledTonal(
               tooltip: 'Back',
               onPressed: () => _goBack(context),
               icon: const Icon(Icons.arrow_back_rounded),
-              color: RolePalette.resident.primary,
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: WebDesign.text,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: WebDesign.muted,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
       const SizedBox(height: 14),
       child,
@@ -70,7 +51,10 @@ class ResidentPageLayout extends StatelessWidget {
     if (navigator.canPop()) {
       navigator.pop();
     } else {
-      navigator.pushReplacementNamed('/resident');
+      final homePath = WebHostScope.maybeOf(
+        context,
+      )?.externalPathFor('/resident');
+      navigator.pushReplacementNamed(homePath ?? '/resident');
     }
   }
 }

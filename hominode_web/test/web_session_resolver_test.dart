@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hominode_web/src/app.dart';
 import 'package:hominode_web/src/session/web_session.dart';
 import 'package:hominode_web/src/session/web_session_resolver.dart';
-import 'package:hominode_web/src/app.dart';
 
 void main() {
   late FakeProfiles profiles;
@@ -108,7 +108,21 @@ void main() {
         '/admin',
       );
       expect(
+        WebAuthGuardStatePolicy.guardedPath(
+          '/resident/complaints',
+          adminSession,
+        ),
+        '/admin',
+      );
+      expect(
         WebAuthGuardStatePolicy.guardedPath('/resident', superSession),
+        '/super-admin',
+      );
+      expect(
+        WebAuthGuardStatePolicy.guardedPath(
+          '/resident/complaints',
+          superSession,
+        ),
         '/super-admin',
       );
       expect(
@@ -133,6 +147,7 @@ void main() {
       for (final path in const {
         '/resident/unit',
         '/resident/bills',
+        '/resident/complaints',
         '/resident/notices',
         '/resident/events',
         '/resident/visitors',
@@ -151,6 +166,21 @@ void main() {
       );
     },
   );
+
+  test('non-resident user profiles fail closed in resolver', () async {
+    profiles.residents['security-user'] = {
+      'uid': 'security-user',
+      'role': 'security',
+      'isActive': true,
+      'approvalStatus': 'approved',
+      'communityId': 'a',
+    };
+
+    await expectLater(
+      resolver.resolve('security-user'),
+      throwsA(isA<SessionResolutionException>()),
+    );
+  });
 }
 
 Map<String, dynamic> admin(String uid, String role, List<String> ids) => {

@@ -146,12 +146,12 @@ class AdminTenantContext extends ChangeNotifier {
     return selected;
   }
 
-  void clear() {
+  void clear({bool notify = true}) {
     _authorizedCommunityIds = const [];
     _selectedCommunityId = null;
     _activeTenant = null;
     _authorizedTenants = const [];
     _adminUid = null;
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 }

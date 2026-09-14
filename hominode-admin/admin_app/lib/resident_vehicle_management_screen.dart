@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'desktop/admin_desktop_page_frame.dart';
 import 'services/parking_service.dart';
 import 'services/auth_service.dart';
 import 'widgets/standard_header.dart';
@@ -89,6 +90,24 @@ class _ResidentVehicleManagementScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Resident Vehicles',
+        subtitle: 'Register and manage vehicles associated with residents.',
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildAddVehicleSection(),
+              SizedBox(height: 24.h),
+              _buildMyVehiclesSection(),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: CustomScrollView(

@@ -98,8 +98,12 @@ class VisitorService {
           return snapshot.docs
               .where((doc) {
                 final data = doc.data();
+                final status =
+                    data['status']?.toString().trim().toLowerCase() ?? '';
 
                 return data['isApproved'] == false &&
+                    status != 'rejected' &&
+                    status != 'cancelled' &&
                     data['actualArrival'] == null;
               })
               .map((doc) => VisitorModel.fromFirestore(doc.id, doc.data()))
@@ -220,8 +224,15 @@ class VisitorService {
   Future<void> rejectVisitor(String visitorId) async {
     try {
       print('VisitorService: Rejecting visitor - $visitorId');
+      final rejectedBy = _auth.currentUser?.uid;
+      if (rejectedBy == null || rejectedBy.isEmpty) {
+        throw Exception('Security user is not authenticated.');
+      }
+
       await _firestore.collection(_collection).doc(visitorId).update({
+        'status': 'rejected',
         'isApproved': false,
+        'rejectedBy': rejectedBy,
         'rejectedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });

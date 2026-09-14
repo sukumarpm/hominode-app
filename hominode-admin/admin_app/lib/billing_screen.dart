@@ -15,6 +15,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'desktop/admin_desktop_page_frame.dart';
 import 'services/admin_tenant_context.dart';
 import 'services/billing_service.dart';
 import 'services/invoice_generator_service.dart';
@@ -2861,6 +2862,53 @@ class _BillingScreenState extends State<BillingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Billing & Payments',
+        subtitle: 'Review bills, payment history, and collection performance.',
+        actions: [
+          AdminDesktopPrimaryAction(
+            label: 'Add Bill',
+            icon: Icons.post_add_outlined,
+            onPressed: _onAddBill,
+          ),
+        ],
+        child: StreamBuilder<List<BillModel>>(
+          stream: _billsStream,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return const Center(child: Text('Unable to load billing data.'));
+            }
+            final bills = snapshot.data ?? [];
+            final kpiData = _billingService.calculateKPIs(bills);
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildKPICards(kpiData),
+                  SizedBox(height: 16.h),
+                  _buildBillingSearch(bills),
+                  SizedBox(height: 16.h),
+                  _buildTabs(),
+                  SizedBox(height: 12.h),
+                  _buildDesktopBillTable(
+                    bills,
+                    paymentHistory: _selectedTab == 1,
+                  ),
+                  SizedBox(height: 12.h),
+                  _buildExportSection(bills),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: StreamBuilder<List<BillModel>>(
@@ -2927,6 +2975,77 @@ class _BillingScreenState extends State<BillingScreen> {
       ),
       bottomNavigationBar: const StandardBottomNav(
         selectedIndex: 3, // Billing tab
+      ),
+    );
+  }
+
+  Widget _buildDesktopBillTable(
+    List<BillModel> allBills, {
+    required bool paymentHistory,
+  }) {
+    final bills = _filterBills(allBills, paymentHistory: paymentHistory);
+    if (bills.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(32),
+        child: Center(child: Text('No matching billing records')),
+      );
+    }
+
+    Widget cell(String value, {int flex = 1, FontWeight? weight}) => Expanded(
+      flex: flex,
+      child: Text(
+        value,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: const Color(0xFF334E68),
+          fontSize: 12,
+          fontWeight: weight,
+        ),
+      ),
+    );
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE1E8EF)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: const Color(0xFFF3F6F9),
+            child: Row(
+              children: [
+                cell('Resident', flex: 2, weight: FontWeight.w700),
+                cell('Unit', weight: FontWeight.w700),
+                cell('Period', weight: FontWeight.w700),
+                cell('Amount', weight: FontWeight.w700),
+                cell('Status', weight: FontWeight.w700),
+                const SizedBox(width: 250, child: Text('Actions')),
+              ],
+            ),
+          ),
+          for (final bill in bills)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Color(0xFFEDF1F5))),
+              ),
+              child: Row(
+                children: [
+                  cell(bill.residentName, flex: 2, weight: FontWeight.w600),
+                  cell(bill.flatLabel),
+                  cell('${bill.month} ${bill.year}'),
+                  cell('₹${bill.amount.toStringAsFixed(0)}'),
+                  cell(bill.status),
+                  SizedBox(width: 250, child: _buildActionButtons(bill)),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

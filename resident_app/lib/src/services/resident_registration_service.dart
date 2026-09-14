@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/community_model.dart';
 import '../models/resident_registration_model.dart';
@@ -46,9 +46,8 @@ class ResidentRegistrationService {
     'claimImportedOnboarding': true,
   };
 
-  /// Claims a trusted bulk-import onboarding for the currently OTP-verified
-  /// phone. Returns false when this phone has no imported onboarding, allowing
-  /// the existing invite-code registration form to continue unchanged.
+  /// Claims a trusted Admin-created onboarding for the currently OTP-verified
+  /// phone. Returns false when this phone has no pending onboarding.
   Future<bool> claimImportedOnboarding() async {
     final user = _auth.currentUser;
     if (user == null || user.phoneNumber == null) {
@@ -61,7 +60,7 @@ class ResidentRegistrationService {
           .httpsCallable('registerResident')
           .call(importedOnboardingPayload);
       final data = response.data;
-      return data is Map && data['imported'] == true;
+      return data is Map && data['communityId'] is String;
     } on FirebaseFunctionsException catch (error) {
       if (error.code == 'not-found') return false;
       throw ResidentRegistrationException(

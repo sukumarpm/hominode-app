@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:admin_app/services/admin_tenant_context.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +8,20 @@ import 'package:flutter/material.dart';
 
 import '../models/pending_resident.dart';
 import 'admin_service.dart';
+
+class PendingResidentOnboarding {
+  final String id;
+  final String name;
+  final String phone;
+  final String residentType;
+
+  const PendingResidentOnboarding({
+    required this.id,
+    required this.name,
+    required this.phone,
+    required this.residentType,
+  });
+}
 
 /// Production-ready Resident Service with Firebase Auth integration
 /// Implements full admin flow for creating and assigning residents
@@ -28,6 +43,72 @@ class ResidentService {
   final AdminService _adminService;
   final FirebaseFunctions _functions;
   final String _collection = 'users';
+  Future<List<PendingResidentOnboarding>>
+  getUnassignedPendingOnboardings() async {
+    final communityId = _adminService.requireCurrentCommunityId();
+
+    final response = await _functions
+        .httpsCallable('listAssignableResidentOnboardings')
+        .call({'communityId': communityId});
+
+    final data = response.data;
+
+    if (data is! Map) {
+      throw StateError('Invalid assignable resident onboarding response.');
+    }
+
+    final residents = data['residents'];
+
+    if (residents is! List) {
+      return const <PendingResidentOnboarding>[];
+    }
+
+    return residents
+        .map((item) {
+          final value = Map<String, dynamic>.from(item as Map);
+
+          return PendingResidentOnboarding(
+            id: value['id']?.toString() ?? '',
+            name: value['residentName']?.toString() ?? '',
+            phone: value['phoneNumber']?.toString() ?? '',
+            residentType: value['residentType']?.toString() ?? '',
+          );
+        })
+        .where((resident) => resident.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> assignOnboardingToFlat({
+    required String onboardingId,
+    required String buildingId,
+    required String flatId,
+  }) async {
+    await _functions.httpsCallable('assignResidentOnboardingToFlat').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'onboardingId': onboardingId,
+      'buildingId': buildingId,
+      'flatId': flatId,
+    });
+  }
+
+  Future<void> cancelResidentOnboardingReservation({
+    required String onboardingId,
+    required String buildingId,
+    required String flatId,
+  }) async {
+    final communityId = AdminTenantContext.instance.requireCommunityId();
+
+    final callable = FirebaseFunctions.instanceFor(
+      region: 'asia-southeast1',
+    ).httpsCallable('cancelResidentOnboardingReservation');
+
+    await callable.call({
+      'communityId': communityId,
+      'onboardingId': onboardingId,
+      'buildingId': buildingId,
+      'flatId': flatId,
+    });
+  }
 
   Stream<List<PendingResident>> watchPendingResidents() {
     final communityId = _adminService.getCurrentCommunityId();

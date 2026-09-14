@@ -1,25 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:hominode_sos/hominode_sos.dart';
 
 import '../services/dashboard_repository.dart';
 import '../session/web_session.dart';
 import '../theme/web_design_system.dart';
 import '../widgets/dashboard_components.dart';
+import '../widgets/community_visuals.dart';
 
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({
     super.key,
     required this.session,
     required this.onNavigate,
+    this.dataFuture,
+    this.sosClient,
   });
 
   final WebSession session;
   final ValueChanged<String> onNavigate;
+  final Future<AdminDashboardData>? dataFuture;
+  final SosClient? sosClient;
 
   @override
   Widget build(BuildContext context) => FutureBuilder<AdminDashboardData>(
-    future: DashboardRepository().adminDashboard(
-      session.activeTenant!.communityId,
-    ),
+    future:
+        dataFuture ??
+        DashboardRepository().adminDashboard(session.activeTenant!.communityId),
     builder: (context, snapshot) {
       if (snapshot.connectionState != ConnectionState.done) {
         return const Center(child: CircularProgressIndicator());
@@ -35,191 +41,194 @@ class AdminDashboard extends StatelessWidget {
       }
 
       final data = snapshot.data!;
+      final overview = SectionCard(
+        title: 'Society overview',
+        subtitle: session.activeTenant!.name,
+        action: TextButton(
+          onPressed: () => onNavigate('/admin/community'),
+          child: const Text('View'),
+        ),
+        child: Column(
+          children: [
+            _OverviewRow(
+              icon: Icons.people_outline,
+              label: 'Residents',
+              value: metricValue(data.residents),
+              onTap: () => onNavigate('/admin/residents'),
+            ),
+            const Divider(height: 20, color: WebDesign.border),
+            _OverviewRow(
+              icon: Icons.apartment_outlined,
+              label: 'Buildings',
+              value: metricValue(data.buildings),
+              onTap: () => onNavigate('/admin/buildings'),
+            ),
+            const Divider(height: 20, color: WebDesign.border),
+            _OverviewRow(
+              icon: Icons.badge_outlined,
+              label: 'Pending visitors',
+              value: metricValue(data.pendingVisitors),
+              onTap: () => onNavigate('/admin/visitors'),
+            ),
+            const Divider(height: 20, color: WebDesign.border),
+            _OverviewRow(
+              icon: Icons.report_problem_outlined,
+              label: 'Open complaints',
+              value: metricValue(data.openComplaints),
+              onTap: () => onNavigate('/admin/complaints'),
+            ),
+          ],
+        ),
+      );
+      final visitors = SectionCard(
+        title: 'Visitors today',
+        action: TextButton(
+          onPressed: () => onNavigate('/admin/visitors'),
+          child: const Text('View all'),
+        ),
+        child: DashboardRecordList(
+          records: data.visitorsToday,
+          emptyMessage: 'No visitors are scheduled today.',
+          color: RolePalette.admin.primary,
+          icon: Icons.person_outline,
+        ),
+      );
+      final complaints = SectionCard(
+        title: 'Recent complaints',
+        action: TextButton(
+          onPressed: () => onNavigate('/admin/complaints'),
+          child: const Text('View all'),
+        ),
+        child: DashboardRecordList(
+          records: data.recentComplaints,
+          emptyMessage: 'No complaint records are available.',
+          color: const Color(0xFFE34A5F),
+          icon: Icons.assignment_outlined,
+        ),
+      );
+      final collection = SectionCard(
+        title: 'Total maintenance collection',
+        subtitle: 'Current bill status composition',
+        action: TextButton(
+          onPressed: () => onNavigate('/admin/billing'),
+          child: const Text('Billing'),
+        ),
+        child:
+            data.paidAmount == null ||
+                data.pendingAmount == null ||
+                data.overdueAmount == null
+            ? const EmptyState(
+                icon: Icons.cloud_off_outlined,
+                message: 'Billing summary is unavailable.',
+              )
+            : CollectionSnapshot(
+                collected: data.paidAmount!,
+                pending: data.pendingAmount!,
+                overdue: data.overdueAmount!,
+              ),
+      );
+      final actions = SectionCard(
+        title: 'Quick actions',
+        child: QuickActionGrid(
+          children: [
+            QuickActionCard(
+              label: 'Visitors',
+              icon: Icons.badge_outlined,
+              color: RolePalette.admin.primary,
+              onTap: () => onNavigate('/admin/visitors'),
+            ),
+            QuickActionCard(
+              label: 'Residents',
+              icon: Icons.person_add_alt_1_outlined,
+              color: const Color(0xFF246BFD),
+              onTap: () => onNavigate('/admin/residents'),
+            ),
+            QuickActionCard(
+              label: 'Notices',
+              icon: Icons.campaign_outlined,
+              color: const Color(0xFFE66A2C),
+              onTap: () => onNavigate('/admin/events'),
+            ),
+            QuickActionCard(
+              label: 'Billing',
+              icon: Icons.receipt_long_outlined,
+              color: const Color(0xFF7A42D8),
+              onTap: () => onNavigate('/admin/billing'),
+            ),
+          ],
+        ),
+      );
       return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ResponsiveMetricGrid(
-            children: [
-              DashboardStatCard(
-                label: 'Residents',
-                value: metricValue(data.residents),
-                caption: session.activeTenant!.name,
-                icon: Icons.people_alt_outlined,
-                color: const Color(0xFF246BFD),
-              ),
-              DashboardStatCard(
-                label: 'Buildings',
-                value: metricValue(data.buildings),
-                caption: 'Society inventory',
-                icon: Icons.apartment_outlined,
-                color: RolePalette.admin.primary,
-              ),
-              DashboardStatCard(
-                label: 'Pending visitors',
-                value: metricValue(data.pendingVisitors),
-                caption: 'Awaiting action',
-                icon: Icons.badge_outlined,
-                color: const Color(0xFF7A42D8),
-              ),
-              DashboardStatCard(
-                label: 'Open complaints',
-                value: metricValue(data.openComplaints),
-                caption: 'Open or in progress',
-                icon: Icons.report_problem_outlined,
-                color: const Color(0xFFE34A5F),
-              ),
-              DashboardStatCard(
-                label: 'Due collection',
-                value: moneyValue(data.outstandingAmount),
-                caption: 'Pending and overdue',
-                icon: Icons.account_balance_wallet_outlined,
-                color: const Color(0xFFE66A2C),
-              ),
-            ],
+          SosActiveBanner(
+            client: sosClient,
+            communityId: session.activeTenant!.communityId,
           ),
-          const SizedBox(height: 14),
           DashboardPanelGrid(
-            flexes: const [1, 1, 1],
-            breakpoint: 1020,
+            flexes: const [3, 2],
+            breakpoint: 960,
             children: [
-              SectionCard(
-                title: 'Society overview',
-                subtitle: session.activeTenant!.name,
-                action: TextButton(
-                  onPressed: () => onNavigate('/admin/community'),
-                  child: const Text('View'),
-                ),
-                child: Column(
-                  children: [
-                    _OverviewRow(
-                      icon: Icons.people_outline,
-                      label: 'Residents',
-                      value: metricValue(data.residents),
-                      onTap: () => onNavigate('/admin/residents'),
+              Column(
+                children: [
+                  collection,
+                  const SizedBox(height: 16),
+                  SectionCard(
+                    title: 'Today’s overview',
+                    child: ResponsiveMetricGrid(
+                      children: [
+                        DashboardStatCard(
+                          label: 'Residents',
+                          value: metricValue(data.residents),
+                          caption: session.activeTenant!.name,
+                          icon: Icons.people_alt_outlined,
+                          color: const Color(0xFF246BFD),
+                        ),
+                        DashboardStatCard(
+                          label: 'Buildings',
+                          value: metricValue(data.buildings),
+                          caption: 'Society inventory',
+                          icon: Icons.apartment_outlined,
+                          color: RolePalette.admin.primary,
+                        ),
+                        DashboardStatCard(
+                          label: 'Pending visitors',
+                          value: metricValue(data.pendingVisitors),
+                          caption: 'Awaiting action',
+                          icon: Icons.badge_outlined,
+                          color: const Color(0xFF7A42D8),
+                        ),
+                        DashboardStatCard(
+                          label: 'Open complaints',
+                          value: metricValue(data.openComplaints),
+                          caption: 'Open or in progress',
+                          icon: Icons.report_problem_outlined,
+                          color: const Color(0xFFE34A5F),
+                        ),
+                        DashboardStatCard(
+                          label: 'Due collection',
+                          value: moneyValue(data.outstandingAmount),
+                          caption: 'Pending and overdue',
+                          icon: Icons.account_balance_wallet_outlined,
+                          color: const Color(0xFFE66A2C),
+                        ),
+                      ],
                     ),
-                    const Divider(height: 20, color: WebDesign.border),
-                    _OverviewRow(
-                      icon: Icons.apartment_outlined,
-                      label: 'Buildings',
-                      value: metricValue(data.buildings),
-                      onTap: () => onNavigate('/admin/buildings'),
-                    ),
-                    const Divider(height: 20, color: WebDesign.border),
-                    _OverviewRow(
-                      icon: Icons.badge_outlined,
-                      label: 'Pending visitors',
-                      value: metricValue(data.pendingVisitors),
-                      onTap: () => onNavigate('/admin/visitors'),
-                    ),
-                    const Divider(height: 20, color: WebDesign.border),
-                    _OverviewRow(
-                      icon: Icons.report_problem_outlined,
-                      label: 'Open complaints',
-                      value: metricValue(data.openComplaints),
-                      onTap: () => onNavigate('/admin/complaints'),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 16),
+                  overview,
+                ],
               ),
-              SectionCard(
-                title: 'Visitors today',
-                action: TextButton(
-                  onPressed: () => onNavigate('/admin/visitors'),
-                  child: const Text('View all'),
-                ),
-                child: DashboardRecordList(
-                  records: data.visitorsToday,
-                  emptyMessage: 'No visitors are scheduled today.',
-                  color: RolePalette.admin.primary,
-                  icon: Icons.person_outline,
-                ),
-              ),
-              SectionCard(
-                title: 'Recent complaints',
-                action: TextButton(
-                  onPressed: () => onNavigate('/admin/complaints'),
-                  child: const Text('View all'),
-                ),
-                child: DashboardRecordList(
-                  records: data.recentComplaints,
-                  emptyMessage: 'No complaint records are available.',
-                  color: const Color(0xFFE34A5F),
-                  icon: Icons.assignment_outlined,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          DashboardPanelGrid(
-            flexes: const [2, 1],
-            children: [
-              SectionCard(
-                title: 'Collection summary',
-                subtitle: 'Current bill status composition',
-                action: TextButton(
-                  onPressed: () => onNavigate('/admin/billing'),
-                  child: const Text('Billing'),
-                ),
-                child:
-                    data.paidAmount == null ||
-                        data.pendingAmount == null ||
-                        data.overdueAmount == null
-                    ? const EmptyState(
-                        icon: Icons.cloud_off_outlined,
-                        message: 'Billing summary is unavailable.',
-                      )
-                    : CompositionRing(
-                        centerValue: moneyValue(data.paidAmount),
-                        centerLabel: 'Collected',
-                        slices: [
-                          CompositionSlice(
-                            'Collected',
-                            data.paidAmount!,
-                            RolePalette.admin.primary,
-                          ),
-                          CompositionSlice(
-                            'Pending',
-                            data.pendingAmount!,
-                            const Color(0xFFF0A02F),
-                          ),
-                          CompositionSlice(
-                            'Overdue',
-                            data.overdueAmount!,
-                            const Color(0xFFE34A5F),
-                          ),
-                        ],
-                      ),
-              ),
-              SectionCard(
-                title: 'Quick actions',
-                child: QuickActionGrid(
-                  children: [
-                    QuickActionCard(
-                      label: 'Visitors',
-                      icon: Icons.badge_outlined,
-                      color: RolePalette.admin.primary,
-                      onTap: () => onNavigate('/admin/visitors'),
-                    ),
-                    QuickActionCard(
-                      label: 'Residents',
-                      icon: Icons.person_add_alt_1_outlined,
-                      color: const Color(0xFF246BFD),
-                      onTap: () => onNavigate('/admin/residents'),
-                    ),
-                    QuickActionCard(
-                      label: 'Notices',
-                      icon: Icons.campaign_outlined,
-                      color: const Color(0xFFE66A2C),
-                      onTap: () => onNavigate('/admin/events'),
-                    ),
-                    QuickActionCard(
-                      label: 'Billing',
-                      icon: Icons.receipt_long_outlined,
-                      color: const Color(0xFF7A42D8),
-                      onTap: () => onNavigate('/admin/billing'),
-                    ),
-                  ],
-                ),
+              Column(
+                children: [
+                  visitors,
+                  const SizedBox(height: 16),
+                  complaints,
+                  const SizedBox(height: 16),
+                  actions,
+                  const SizedBox(height: 16),
+                  const CommunityPromo(resident: false),
+                ],
               ),
             ],
           ),

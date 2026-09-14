@@ -1,3 +1,4 @@
+const {unitLabel, unitMatchesLabel, hasResidentLink, hasValue, occupancyStats} = require('./unit_schema');
 const {FieldValue} = require("firebase-admin/firestore");
 const {parsePhoneNumberFromString} = require("libphonenumber-js/max");
 const {RegistrationError, verifiedPhoneAuth} = require("./register_resident");
@@ -78,9 +79,10 @@ function validatePayload(data, {requireJobId = false} = {}) {
   return {communityId, rows: data.rows, sourceFileName: sourceFileName || null, importJobId};
 }
 
-async function requireImportAdmin(db, auth, communityId) {
+async function requireImportAdmin(db, auth, communityId, transaction) {
   const {uid} = verifiedPhoneAuth(auth);
-  const adminSnapshot = await db.collection("admins").doc(uid).get();
+  const read = (ref) => transaction ? transaction.get(ref) : ref.get();
+  const adminSnapshot = await read(db.collection("admins").doc(uid));
   const admin = adminSnapshot.data();
   const ids = admin?.authorizedCommunityIds;
   if (!adminSnapshot.exists || admin?.uid !== uid || admin?.role !== "admin" ||
@@ -91,7 +93,7 @@ async function requireImportAdmin(db, auth, communityId) {
   if (!ids.includes(communityId)) {
     throw new RegistrationError("permission-denied", "This Admin is not authorized for the requested community.");
   }
-  const communitySnapshot = await db.collection("communities").doc(communityId).get();
+  const communitySnapshot = await read(db.collection("communities").doc(communityId));
   const community = communitySnapshot.data();
   if (!communitySnapshot.exists || community?.isActive !== true) {
     throw new RegistrationError("failed-precondition", "The requested community is inactive or unavailable.");
@@ -155,38 +157,15 @@ function normalizeRow(row, index, communityCountryCode) {
   }
 }
 
-function aliases(document, fields) {
-  const result = new Set([referenceKey(document.id)]);
-  const data = document.data();
-  fields.forEach((field) => {
-    const value = data?.[field];
-    if (value != null && clean(value)) result.add(referenceKey(value));
-  });
-  return result;
-}
-
-function exactMatches(documents, value, fields) {
-  const key = referenceKey(value);
-  return documents.filter((document) => aliases(document, fields).has(key));
-}
-
-async function loadTenantData(db, communityId, importJobId) {
+async function loadTenantData(db, communityId, importJobId, transaction) {
+  const read = (query) => transaction ? transaction.get(query) : query.get();
   const [buildings, flats, users, onboarding, importRows] = await Promise.all([
-    db.collection("buildings").where("communityId", "==", communityId).get(),
-    db.collection("flats").where("communityId", "==", communityId).get(),
-    db.collection("users").where("communityId", "==", communityId).get(),
-    db.collection("residentOnboarding").where("communityId", "==", communityId).get(),
-    importJobId
-      ? db.collection("residentImportRows").where("importJobId", "==", importJobId).get()
-      : Promise.resolve({docs: []}),
+    ...['buildings', 'flats', 'users', 'residentOnboarding'].map((collection) =>
+      read(db.collection(collection).where('communityId', '==', communityId))),
+    importJobId ? read(db.collection('residentImportRows').where('importJobId', '==', importJobId)) : {docs: []},
   ]);
-  return {
-    buildings: buildings.docs.filter((doc) => doc.data()?.isActive !== false),
-    flats: flats.docs.filter((doc) => doc.data()?.isActive !== false),
-    users: users.docs,
-    onboarding: onboarding.docs,
-    importRows: importRows.docs,
-  };
+  return {buildings: buildings.docs.filter((doc) => doc.data().isActive !== false),
+    flats: flats.docs, users: users.docs, onboarding: onboarding.docs, importRows: importRows.docs};
 }
 
 function userPhone(data) {
@@ -195,60 +174,91 @@ function userPhone(data) {
 
 function validateNormalizedRows({normalizedRows, tenantData, communityId, importJobId}) {
   const seenPhones = new Set();
-  const seenRows = new Set();
-  const seenResidentUnits = new Set();
-  const seenOwnerFlats = new Set();
-  const existingPhones = new Set(tenantData.users.map((doc) => userPhone(doc.data())).filter(Boolean));
-  const onboardingByPhone = new Map(tenantData.onboarding.map((doc) => [userPhone(doc.data()), doc.data()]));
-  const ownerByFlat = new Map();
-  const importedRowIds = new Set(
-    tenantData.importRows
-      .filter((doc) => doc.data()?.communityId === communityId && doc.data()?.status === "imported")
-      .map((doc) => doc.id),
-  );
-  tenantData.users.forEach((doc) => {
-    const data = doc.data();
-    if (clean(data?.ownershipType).toLowerCase() === "owner" && clean(data?.flatId)) ownerByFlat.set(clean(data.flatId), doc.id);
-  });
-  tenantData.onboarding.forEach((doc) => {
-    const data = doc.data();
-    if (clean(data?.residentType).toLowerCase() === "owner" && clean(data?.flatId)) ownerByFlat.set(clean(data.flatId), doc.id);
-  });
-
+  const seenUnits = new Set();
   return normalizedRows.map((row) => {
-    if (row.status === "error") return row;
+    if (row.status === 'error') return row;
+    const fail = (code, message) => ({...publicError(row.rowNumber, code, message, row), importRowId: rowId});
     const rowId = importJobId ? importRowId(importJobId, row.rowNumber) : null;
-    if (rowId && importedRowIds.has(rowId)) {
-      return {...row, status: "already_imported", importRowId: rowId};
-    }
-    if (seenRows.has(row.canonical)) return publicError(row.rowNumber, "duplicate_in_file", "This row is duplicated in the uploaded file.", row);
-    seenRows.add(row.canonical);
-    if (seenPhones.has(row.phoneNumber)) return publicError(row.rowNumber, "duplicate_in_file", "This phone number appears more than once in the uploaded file.", row);
+    if (seenPhones.has(row.phoneNumber)) return fail('duplicate_in_file', 'This phone number appears more than once in the uploaded file.');
     seenPhones.add(row.phoneNumber);
-
-    const buildings = exactMatches(tenantData.buildings, row.building, ["buildingId", "buildingName", "name"]);
-    if (buildings.length === 0) return publicError(row.rowNumber, "building_not_found", "No exact building match exists in this community.", row);
-    if (buildings.length > 1) return publicError(row.rowNumber, "ambiguous_building", "More than one building has this reference.", row);
-    const building = buildings[0];
-    const flatsInBuilding = tenantData.flats.filter((doc) => clean(doc.data()?.buildingId) === building.id || clean(doc.data()?.buildingId) === clean(building.data()?.buildingId));
-    const flats = exactMatches(flatsInBuilding, row.unit, ["flatId", "flatLabel", "unitId", "unitNumber", "flatNumber"]);
-    if (flats.length === 0) return publicError(row.rowNumber, "unit_not_found", "No exact unit match exists in the selected building.", row);
-    if (flats.length > 1) return publicError(row.rowNumber, "ambiguous_unit", "More than one unit has this reference in the selected building.", row);
-    const flat = flats[0];
-    const residentUnitKey = `${referenceKey(row.residentName)}\n${flat.id}`;
-    if (seenResidentUnits.has(residentUnitKey)) return publicError(row.rowNumber, "duplicate_in_file", "This resident and unit combination is duplicated.", row);
-    seenResidentUnits.add(residentUnitKey);
-    if (existingPhones.has(row.phoneNumber)) return publicError(row.rowNumber, "resident_already_exists", "A resident with this phone already exists in this community.", row);
-    const pending = onboardingByPhone.get(row.phoneNumber);
-    if (pending) {
-      if (importJobId && pending.importJobId === importJobId && pending.importRowId === rowId) {
-        return {...row, status: "already_imported", importRowId: rowId, buildingId: building.id, buildingName: clean(building.data()?.name || building.data()?.buildingName), flatId: flat.id, unitId: clean(flat.data()?.unitId || flat.data()?.flatId || flat.id), flatLabel: clean(flat.data()?.flatLabel || flat.data()?.flatId || flat.data()?.flatNumber || row.unit)};
-      }
-      return publicError(row.rowNumber, "pending_registration_exists", "A pending imported registration already uses this phone in this community.", row);
+    const marker = tenantData.importRows.find((doc) => doc.id === rowId)?.data();
+    if (marker?.communityId === communityId && marker.status === 'imported') {
+      if (marker.canonical && marker.canonical !== row.canonical) return fail('idempotency_conflict', 'This completed row has different contents. Start a new import for an update.');
+      return {...row, status: 'already_imported', importRowId: rowId};
     }
-    if (row.residentType === "owner" && (ownerByFlat.has(flat.id) || seenOwnerFlats.has(flat.id))) return publicError(row.rowNumber, "unit_relationship_conflict", "This unit already has a different owner resident.", row);
-    if (row.residentType === "owner") seenOwnerFlats.add(flat.id);
-    return {...row, status: "ready", importRowId: rowId, buildingId: building.id, buildingName: clean(building.data()?.name || building.data()?.buildingName), flatId: flat.id, unitId: clean(flat.data()?.unitId || flat.data()?.flatId || flat.id), flatLabel: clean(flat.data()?.flatLabel || flat.data()?.flatId || flat.data()?.flatNumber || row.unit)};
+    const buildings = tenantData.buildings.filter((doc) => referenceKey(doc.id) === referenceKey(row.building) ||
+      referenceKey(doc.data().buildingName || doc.data().name) === referenceKey(row.building));
+    if (!buildings.length) return fail('building_not_found', `Building ${row.building} was not found in this community.`);
+    if (buildings.length !== 1) return fail('ambiguous_building', 'Multiple buildings use this reference. Resolve the duplicate before importing.');
+    const building = buildings[0];
+    const matches = tenantData.flats.filter((doc) => doc.data().buildingId === building.id && unitMatchesLabel(doc.data(), row.unit));
+    if (!matches.length) {
+      const elsewhere = tenantData.flats.some((doc) => doc.data().buildingId !== building.id && unitMatchesLabel(doc.data(), row.unit));
+      return fail(elsewhere ? 'wrong_building' : 'unit_not_found', elsewhere
+        ? `Unit ${row.unit} exists in another building, not ${row.building}.`
+        : `Unit ${row.unit} was not found in ${row.building}.`);
+    }
+    if (matches.length !== 1) return fail('ambiguous_unit', 'Multiple units use this label. Resolve the duplicate before importing.');
+    const flat = matches[0];
+    const unit = flat.data();
+    if (seenUnits.has(flat.id)) return fail('duplicate_unit_allocation', 'This unit is allocated more than once in this file.');
+    const users = tenantData.users.filter((doc) => userPhone(doc.data()) === row.phoneNumber);
+    const pending = tenantData.onboarding.filter((doc) => userPhone(doc.data()) === row.phoneNumber);
+    if (users.length > 1 || pending.length > 1) return fail('ambiguous_resident', 'Multiple resident records use this phone. Resolve them before importing.');
+    const user = users[0];
+    const onboarding = pending[0];
+    let action = 'reserve_new';
+    let targetId;
+    if (user) {
+      const profile = user.data();
+      const {trustedResidentType, resolveFlatOccupant} = require('./resident_identity');
+      if (profile.role !== 'resident' || trustedResidentType(profile) !== row.residentType) {
+        return fail('resident_already_exists', 'Existing resident role or resident type does not match; use the resident workflow.');
+      }
+      if (profile.flatId === flat.id && profile.buildingId === building.id) {
+        let occupant;
+        try { occupant = resolveFlatOccupant(unit).uid; } catch (_) { return fail('unit_relationship_conflict', 'Unit occupant references are ambiguous.'); }
+        const ownOccupied = unit.status === 'occupied' && occupant === user.id && profile.isActive === true && profile.approvalStatus === 'approved';
+        const ownReservation = unit.status === 'reserved' && !hasResidentLink(unit) &&
+          unit.reservedOnboardingId === residentOnboardingId(communityId, row.phoneNumber) && profile.approvalStatus === 'pending';
+        if (!ownOccupied && !ownReservation) return fail('unit_relationship_conflict', 'Existing resident allocation does not match the unit state. Use the resident workflow.');
+        action = 'update_resident'; targetId = user.id;
+      } else if (profile.approvalStatus === 'approved' && profile.isActive === false &&
+          profile.status === 'inactive' && profile.occupancyStatus === 'moved_out' && !profile.flatId && !profile.buildingId) {
+        const {identityVerificationRequired, identityIsVerified} = require('./resident_identity');
+        if (identityVerificationRequired(row.residentType, tenantData.community || {}) && !identityIsVerified(profile)) {
+          return fail('identity_required', 'Identity verification is required before reassignment.');
+        }
+        action = 'reassign'; targetId = user.id;
+      } else {
+        return fail('resident_already_exists', 'This resident has another allocation. Complete the trusted move-out/reassignment workflow first.');
+      }
+    } else if (onboarding) {
+      const record = onboarding.data();
+      if (record.claimedByUid != null || record.status !== 'pending_registration' || record.approvalStatus !== 'pending' || record.residentType !== row.residentType) {
+        return fail('pending_registration_exists', 'This onboarding cannot be updated through bulk import.');
+      }
+      if (record.flatId && (record.flatId !== flat.id || record.buildingId !== building.id)) {
+        return fail('pending_registration_exists', 'Cancel the existing reservation before assigning another unit.');
+      }
+      const ownReservation = unit.status === 'reserved' && !hasResidentLink(unit) && unit.reservedOnboardingId === onboarding.id && record.flatId === flat.id;
+      action = ownReservation ? 'update_onboarding' : 'reserve_existing'; targetId = onboarding.id;
+    }
+    if (!['update_resident', 'update_onboarding'].includes(action)) {
+      if (unit.status !== 'vacant' || hasResidentLink(unit) || hasValue(unit.reservedOnboardingId) || unit.isActive === false) {
+        return fail(unit.status === 'reserved' ? 'unit_reserved' : unit.status === 'occupied' ? 'unit_occupied' : 'unit_not_assignable',
+          `Unit ${row.unit} is ${unit.status === 'reserved' ? 'reserved' : unit.status === 'occupied' ? 'already occupied' : 'not safely vacant'}.`);
+      }
+    }
+    if (tenantData.users.some((doc) => doc.id !== user?.id && doc.data().flatId === flat.id) ||
+        tenantData.onboarding.some((doc) => doc.id !== onboarding?.id && doc.data().flatId === flat.id &&
+          !(action === 'update_resident' && doc.data().claimedByUid === user.id))) {
+      return fail('unit_relationship_conflict', 'Another resident or onboarding record already references this unit.');
+    }
+    seenUnits.add(flat.id);
+    return {...row, status: 'ready', action, targetId, importRowId: rowId,
+      buildingId: building.id, buildingName: clean(building.data().buildingName || building.data().name),
+      flatId: flat.id, flatLabel: unitLabel(unit), unitId: unitLabel(unit)};
   });
 }
 
@@ -268,6 +278,7 @@ async function prepareValidation({db, auth, data, requireJobId = false}) {
   const communityCountryCode = validCountryCode(actor.community?.phoneCountryCode || actor.community?.countryCode);
   const normalizedRows = input.rows.map((row, index) => normalizeRow(row, index, communityCountryCode));
   const tenantData = await loadTenantData(db, input.communityId, input.importJobId);
+  tenantData.community = actor.community;
   const rows = validateNormalizedRows({normalizedRows, tenantData, communityId: input.communityId, importJobId: input.importJobId});
   return {input, actor, rows};
 }
@@ -282,69 +293,96 @@ function publicRow(row) {
   return result;
 }
 
-async function commitRow({db, input, actor, row}) {
-  const markerRef = db.collection("residentImportRows").doc(row.importRowId);
-  const onboardingRef = db.collection("residentOnboarding").doc(residentOnboardingId(input.communityId, row.phoneNumber));
-  return db.runTransaction(async (transaction) => {
-    const [markerSnapshot, onboardingSnapshot] = await Promise.all([
+async function commitRow({db, auth, input, row}) {
+  const markerRef = db.collection('residentImportRows').doc(row.importRowId);
+  // Re-resolve the current names and all allocation conflicts inside every row transaction.
+  async function prepare(transaction) {
+    const actor = await requireImportAdmin(db, auth, input.communityId, transaction);
+    const scoped = (collection) => db.collection(collection).where('communityId', '==', input.communityId);
+    const snapshots = await Promise.all([
+      transaction.get(scoped('buildings')),
+      transaction.get(scoped('flats').where('buildingId', '==', row.buildingId)),
+      ...['users', 'residentOnboarding'].flatMap((collection) => ['phoneNumber', 'phone', 'flatId'].map((field) =>
+        transaction.get(scoped(collection).where(field, '==', field === 'flatId' ? row.flatId : row.phoneNumber)))),
       transaction.get(markerRef),
-      transaction.get(onboardingRef),
     ]);
-    if (markerSnapshot.exists) {
-      const marker = markerSnapshot.data();
-      if (marker?.communityId === input.communityId && marker?.importJobId === input.importJobId && marker?.status === "imported") {
-        return {...publicRow(row), status: "already_imported"};
-      }
-      return publicError(row.rowNumber, "idempotency_conflict", "This import row identifier is already in use.", row);
+    const unique = (groups) => [...new Map(groups.flatMap((group) => group.docs).map((doc) => [doc.id, doc])).values()];
+    const tenantData = {buildings: snapshots[0].docs.filter((doc) => doc.data().isActive !== false),
+      flats: snapshots[1].docs, users: unique(snapshots.slice(2, 5)), onboarding: unique(snapshots.slice(5, 8)),
+      importRows: snapshots[8].exists ? [snapshots[8]] : []};
+    tenantData.community = actor.community;
+    const current = validateNormalizedRows({normalizedRows: [row], tenantData, communityId: input.communityId, importJobId: input.importJobId})[0];
+    if (current.status !== 'ready') return {current};
+    if (current.flatId !== row.flatId || current.buildingId !== row.buildingId || current.action !== row.action || current.targetId !== row.targetId) {
+      return {current: {...publicError(row.rowNumber, 'allocation_changed', 'Allocation changed after validation. Validate this row again.', row), importRowId: row.importRowId}};
     }
-    if (onboardingSnapshot.exists) {
-      const pending = onboardingSnapshot.data();
-      if (pending?.communityId === input.communityId && pending?.importJobId === input.importJobId && pending?.importRowId === row.importRowId) {
-        return {...publicRow(row), status: "already_imported"};
+    return {current, actor, tenantData};
+  }
+  function metadata(current) {
+    return {residentName: current.residentName, email: current.email, alternatePhone: current.alternatePhone,
+      moveInDate: current.moveInDate, updatedAt: FieldValue.serverTimestamp()};
+  }
+  function writeMarker(transaction, current, actor) {
+    transaction.create(markerRef, {communityId: input.communityId, importJobId: input.importJobId,
+      canonical: row.canonical, flatId: current.flatId, buildingId: current.buildingId,
+      rowNumber: row.rowNumber, status: 'imported', action: current.action,
+      createdBy: actor.uid, createdAt: FieldValue.serverTimestamp()});
+  }
+  if (row.action === 'reassign') {
+    // The existing lifecycle still enforces moved-out state and identity verification.
+    const {reassignResidentCore} = require('./resident_identity');
+    await reassignResidentCore({db, auth,
+      data: {communityId: input.communityId, userId: row.targetId, buildingId: row.buildingId, flatId: row.flatId},
+      transactionExtras: async (transaction) => {
+        const prepared = await prepare(transaction);
+        if (prepared.current.status !== 'ready') throw new RegistrationError('failed-precondition', prepared.current.message || 'Row already completed; retry to refresh the result.');
+        return () => {
+          const {residentName, ...contact} = metadata(prepared.current);
+          transaction.update(db.collection('users').doc(row.targetId), {...contact, name: residentName, fullName: residentName});
+          writeMarker(transaction, prepared.current, prepared.actor);
+        };
+      },
+    });
+    return {...publicRow(row), status: 'imported'};
+  }
+  return db.runTransaction(async (transaction) => {
+    const {current, actor, tenantData} = await prepare(transaction);
+    if (current.status !== 'ready') return publicRow(current);
+    const timestamp = FieldValue.serverTimestamp();
+    const onboardingId = current.targetId || residentOnboardingId(input.communityId, current.phoneNumber);
+    const onboardingRef = db.collection('residentOnboarding').doc(onboardingId);
+    if (current.action === 'update_resident') {
+      const {residentName, ...contact} = metadata(current);
+      transaction.update(db.collection('users').doc(current.targetId), {...contact, name: residentName, fullName: residentName});
+      const flat = tenantData.flats.find((doc) => doc.id === current.flatId).data();
+      transaction.update(db.collection('flats').doc(current.flatId), {
+        [flat.status === 'occupied' ? 'residentName' : 'reservedForName']: residentName, updatedAt: timestamp,
+      });
+    } else {
+      const references = {buildingId: current.buildingId, buildingName: current.buildingName,
+        buildingReference: current.buildingName, flatId: current.flatId, unitId: current.flatLabel,
+        flatLabel: current.flatLabel, unitReference: current.flatLabel};
+      if (current.action === 'reserve_new') {
+        transaction.create(onboardingRef, {...metadata(current), ...references,
+          communityId: input.communityId, phoneNumber: current.phoneNumber, countryCode: current.countryCode,
+          residentType: current.residentType, ownershipType: current.residentType, role: 'resident',
+          approvalStatus: 'pending', isActive: false, identityVerified: false, identityVerificationStatus: 'verification_required',
+          status: 'pending_registration', claimedByUid: null, importJobId: input.importJobId, importRowId: row.importRowId,
+          creationSource: 'admin_bulk_import', createdBy: actor.uid, createdAt: timestamp});
+      } else transaction.update(onboardingRef, {...metadata(current), ...references});
+      if (['reserve_new', 'reserve_existing'].includes(current.action)) {
+        transaction.update(db.collection('flats').doc(current.flatId), {status: 'reserved',
+          reservedOnboardingId: onboardingId, reservedForName: current.residentName,
+          reservedResidentType: current.residentType, reservedBy: actor.uid, reservedAt: timestamp, updatedAt: timestamp});
+        const units = tenantData.flats.filter((doc) => doc.data().buildingId === current.buildingId);
+        transaction.update(db.collection('buildings').doc(current.buildingId), {
+          ...occupancyStats(units, new Map([[current.flatId, 'reserved']])), updatedAt: timestamp});
+      } else {
+        transaction.update(db.collection('flats').doc(current.flatId), {reservedForName: current.residentName, updatedAt: timestamp});
       }
-      return publicError(row.rowNumber, "pending_registration_exists", "A pending imported registration already uses this phone in this community.", row);
     }
-    transaction.create(onboardingRef, {
-      communityId: input.communityId,
-      residentName: row.residentName,
-      phoneNumber: row.phoneNumber,
-      alternatePhone: row.alternatePhone,
-      email: row.email,
-      countryCode: row.countryCode,
-      moveInDate: row.moveInDate,
-      residentType: row.residentType,
-      ownershipType: row.residentType,
-      buildingId: row.buildingId,
-      buildingName: row.buildingName,
-      buildingReference: row.building,
-      flatId: row.flatId,
-      unitId: row.unitId,
-      flatLabel: row.flatLabel,
-      unitReference: row.unit,
-      role: "resident",
-      approvalStatus: "pending",
-      isActive: false,
-      identityVerified: false,
-      identityVerificationStatus: "verification_required",
-      status: "pending_registration",
-      claimedByUid: null,
-      importJobId: input.importJobId,
-      importRowId: row.importRowId,
-      creationSource: "admin_bulk_import",
-      createdBy: actor.uid,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    transaction.create(markerRef, {
-      communityId: input.communityId,
-      importJobId: input.importJobId,
-      onboardingId: onboardingRef.id,
-      rowNumber: row.rowNumber,
-      status: "imported",
-      createdBy: actor.uid,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-    return {...publicRow(row), status: "imported"};
+    writeMarker(transaction, current, actor);
+    return {...publicRow(current), status: 'imported'};
   });
 }
 
@@ -358,7 +396,8 @@ async function mapLimited(items, limit, action) {
         output[index] = await action(items[index]);
       } catch (error) {
         console.error("Resident bulk import row failed.", {rowNumber: items[index].rowNumber, error});
-        output[index] = publicError(items[index].rowNumber, "row_write_failed", "This row could not be imported. It is safe to retry.", items[index]);
+        output[index] = {...publicError(items[index].rowNumber, error.code || "row_write_failed",
+          error instanceof RegistrationError ? error.message : "This row could not be imported. It is safe to retry.", items[index]), importRowId: items[index].importRowId};
       }
     }
   }
@@ -396,7 +435,7 @@ async function importResidentsBulkCore(args) {
     });
   }
   const readyRows = prepared.rows.filter((row) => row.status === "ready");
-  const committed = await mapLimited(readyRows, 10, (row) => commitRow({db, input, actor, row}));
+  const committed = await mapLimited(readyRows, 10, (row) => commitRow({db, auth: args.auth, input, row}));
   const byImportRowId = new Map(committed.map((row) => [row.importRowId, row]));
   const results = prepared.rows.map((row) => byImportRowId.get(row.importRowId) ?? publicRow(row));
   const importedMarkers = await db.collection("residentImportRows")
@@ -424,6 +463,8 @@ module.exports = {
   normalizeRow,
   validatePayload,
   requireImportAdmin,
+  validateNormalizedRows,
+  commitRow,
   validateResidentBulkImportCore,
   importResidentsBulkCore,
 };

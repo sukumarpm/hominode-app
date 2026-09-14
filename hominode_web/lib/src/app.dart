@@ -170,42 +170,151 @@ import 'pages/login_page.dart';
 import 'pages/role_homes.dart';
 import 'session/web_session.dart';
 import 'session/web_session_resolver.dart';
+import 'tenant/web_host.dart';
+import 'tenant/web_surface_access_policy.dart';
 import 'theme/web_design_system.dart';
 
-class HominodeWebApp extends StatelessWidget {
+class HominodeWebApp extends StatefulWidget {
   const HominodeWebApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Hominode',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1558D6)),
-        scaffoldBackgroundColor: WebDesign.background,
-        useMaterial3: true,
-        fontFamily: 'Arial',
-        cardTheme: CardThemeData(
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            side: const BorderSide(color: WebDesign.border),
-            borderRadius: BorderRadius.circular(WebDesign.radius),
-          ),
-        ),
-      ),
-      initialRoute: _initialPath(),
-      onGenerateRoute: (settings) {
-        final requestedPath = settings.name ?? '/';
+  State<HominodeWebApp> createState() => _HominodeWebAppState();
+}
 
-        return MaterialPageRoute(
-          settings: settings,
-          builder: (_) => WebAuthGuard(requestedPath: requestedPath),
-        );
+class _HominodeWebAppState extends State<HominodeWebApp> {
+  late final Future<WebHostContext> _hostContext = _resolveHostContext();
+
+  Future<WebHostContext> _resolveHostContext() async {
+    final uri = Uri.base;
+    return WebHostResolver().resolve(uri);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<WebHostContext>(
+      future: _hostContext,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _BootstrapLoadingView();
+        }
+        if (snapshot.hasError) {
+          final message = snapshot.error is WebHostResolutionException
+              ? (snapshot.error! as WebHostResolutionException).message
+              : 'This community is currently unavailable.';
+          return _publicApp(_PublicBoundary(message: message));
+        }
+
+        final hostContext = snapshot.data;
+        if (hostContext == null) {
+          return _publicApp(
+            const _PublicBoundary(
+              message: 'This community is currently unavailable.',
+            ),
+          );
+        }
+        final community = hostContext.community;
+        if (hostContext.classification.surface ==
+                WebSurface.residentCommunity &&
+            (community == null || community.slug.isEmpty)) {
+          return _publicApp(
+            const _PublicBoundary(
+              message: 'This community is currently unavailable.',
+            ),
+          );
+        }
+        switch (hostContext.classification.surface) {
+          case WebSurface.marketing:
+            return _publicApp(
+              const _PublicBoundary(
+                title: 'Hominode',
+                message: 'Community living, connected.',
+              ),
+            );
+          case WebSurface.invalid:
+            return _publicApp(
+              const _PublicBoundary(message: 'Community not found.'),
+            );
+          case WebSurface.admin:
+          case WebSurface.residentCommunity:
+          case WebSurface.localDevelopment:
+            return _protectedApp(hostContext);
+        }
       },
     );
   }
+
+  MaterialApp _protectedApp(WebHostContext hostContext) {
+    Route<dynamic> routeFor(RouteSettings settings) {
+      final externalPath = settings.name ?? '/';
+      final internalPath = hostContext.internalPathFor(externalPath);
+
+      if (internalPath == WebHostContext.invalidResidentPath) {
+        return MaterialPageRoute(
+          settings: RouteSettings(
+            name: externalPath,
+            arguments: settings.arguments,
+          ),
+          builder: (_) => const _PublicBoundary(
+            message: 'This community is currently unavailable.',
+          ),
+        );
+      }
+
+      return MaterialPageRoute(
+        settings: RouteSettings(
+          name: externalPath,
+          arguments: settings.arguments,
+        ),
+        builder: (_) => WebHostScope(
+          hostContext: hostContext,
+          child: WebAuthGuard(
+            requestedPath: internalPath,
+            hostContext: hostContext,
+          ),
+        ),
+      );
+    }
+
+    final theme = _theme();
+    final initialPath = _initialPath();
+    final safeInitialRoute = initialPath.isEmpty ? '/' : initialPath;
+
+    return MaterialApp(
+      key: const ValueKey('protected-app'),
+      title: 'Hominode',
+      debugShowCheckedModeBanner: false,
+      theme: theme,
+      initialRoute: safeInitialRoute,
+      onGenerateRoute: routeFor,
+      onGenerateInitialRoutes: (initialRoute) => [
+        routeFor(RouteSettings(name: initialRoute)),
+      ],
+    );
+  }
+
+  MaterialApp _publicApp(Widget home) => MaterialApp(
+    key: const ValueKey('public-app'),
+    title: 'Hominode',
+    debugShowCheckedModeBanner: false,
+    theme: _theme(),
+    home: home,
+  );
+
+  ThemeData _theme() => ThemeData(
+    colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1558D6)),
+    scaffoldBackgroundColor: WebDesign.background,
+    useMaterial3: true,
+    fontFamily: 'Arial',
+    cardTheme: CardThemeData(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: WebDesign.border),
+        borderRadius: BorderRadius.circular(WebDesign.radius),
+      ),
+    ),
+  );
 
   static String _initialPath() {
     final path = Uri.base.path;
@@ -213,10 +322,47 @@ class HominodeWebApp extends StatelessWidget {
   }
 }
 
+class _BootstrapLoadingView extends StatelessWidget {
+  const _BootstrapLoadingView();
+
+  @override
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: CircularProgressIndicator()));
+}
+
+class _PublicBoundary extends StatelessWidget {
+  const _PublicBoundary({this.title = 'Hominode', required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class WebAuthGuard extends StatefulWidget {
-  const WebAuthGuard({super.key, required this.requestedPath});
+  const WebAuthGuard({
+    super.key,
+    required this.requestedPath,
+    required this.hostContext,
+  });
 
   final String requestedPath;
+  final WebHostContext hostContext;
 
   @override
   State<WebAuthGuard> createState() => _WebAuthGuardState();
@@ -232,17 +378,15 @@ class _WebAuthGuardState extends State<WebAuthGuard> {
   @override
   void initState() {
     super.initState();
-
     _resolver = WebSessionResolver(
       FirestoreWebProfileStore(),
       LocalTenantSelectionStore(),
     );
-
     _restore();
   }
 
   Future<void> _restore() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final User? user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
       if (mounted) {
@@ -255,7 +399,14 @@ class _WebAuthGuardState extends State<WebAuthGuard> {
     }
 
     try {
-      final session = await _resolver.resolve(user.uid);
+      final expectedCommunityId = widget.hostContext.isResidentSurface
+          ? widget.hostContext.community?.communityId
+          : null;
+      final session = await _resolver.resolve(
+        user.uid,
+        expectedResidentCommunityId: expectedCommunityId,
+      );
+      _requireSurfaceAccess(session);
 
       if (!mounted) return;
 
@@ -275,6 +426,14 @@ class _WebAuthGuardState extends State<WebAuthGuard> {
         _error = error.message;
       });
     }
+  }
+
+  void _requireSurfaceAccess(WebSession session) {
+    final reason = WebSurfaceAccessPolicy.denialReason(
+      widget.hostContext,
+      session,
+    );
+    if (reason != null) throw SessionResolutionException(reason);
   }
 
   Future<void> _selectTenant(String id) async {
@@ -332,6 +491,7 @@ class _WebAuthGuardState extends State<WebAuthGuard> {
       case WebRole.resident:
         return ResidentWebHome(
           session: _session!,
+          currentPath: safePath,
           onNavigate: _navigate,
           onLogout: _logout,
         );
@@ -339,11 +499,12 @@ class _WebAuthGuardState extends State<WebAuthGuard> {
   }
 
   void _navigate(String path) {
+    final externalPath = widget.hostContext.externalPathFor(path);
     final current = ModalRoute.of(context)?.settings.name;
 
-    if (current == path) return;
+    if (current == externalPath) return;
 
-    Navigator.of(context).pushReplacementNamed(path);
+    Navigator.of(context).pushReplacementNamed(externalPath);
   }
 
   Future<void> _logout() async {
@@ -356,7 +517,8 @@ class _WebAuthGuardState extends State<WebAuthGuard> {
       _error = null;
     });
 
-    Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+    final loginPath = widget.hostContext.externalPathFor('/login');
+    Navigator.of(context).pushNamedAndRemoveUntil(loginPath, (route) => false);
   }
 }
 
@@ -403,15 +565,7 @@ abstract final class WebAuthGuardStatePolicy {
         return '/admin';
 
       case WebRole.resident:
-        const residentPaths = {
-          '/resident',
-          '/resident/unit',
-          '/resident/bills',
-          '/resident/notices',
-          '/resident/events',
-          '/resident/visitors',
-        };
-        if (residentPaths.contains(requested)) return requested;
+        if (residentRoutePaths.contains(requested)) return requested;
 
         final slug = session.activeTenant?.slug;
 

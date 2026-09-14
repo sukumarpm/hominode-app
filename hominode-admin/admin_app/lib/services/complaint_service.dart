@@ -311,6 +311,7 @@ class ComplaintModel {
   final String residentId;
   final String? residentName;
   final String? flatId;
+  final String? flatLabel;
   final String? assignedTo;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -325,6 +326,7 @@ class ComplaintModel {
     required this.residentId,
     this.residentName,
     this.flatId,
+    this.flatLabel,
     this.assignedTo,
     this.createdAt,
     this.updatedAt,
@@ -341,6 +343,7 @@ class ComplaintModel {
       residentId: data['residentId'] ?? '',
       residentName: data['residentName'],
       flatId: data['flatId'],
+      flatLabel: data['flatLabel'] ?? data['unitLabel'],
       assignedTo: data['assignedTo'],
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
@@ -357,6 +360,7 @@ class ComplaintModel {
       'residentId': residentId,
       'residentName': residentName,
       'flatId': flatId,
+      if (flatLabel != null) 'flatLabel': flatLabel,
       'assignedTo': assignedTo,
     };
   }

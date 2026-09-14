@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import '../admin_dashboard_page.dart';
-import '../manage_buildings_page.dart';
 import '../admin_residents_page_firestore.dart';
 import '../billing_screen.dart';
+import '../manage_buildings_page.dart';
 import '../profile_screen.dart';
 import '../theme/hominode_theme.dart';
 
@@ -57,6 +58,11 @@ class _StandardBottomNavState extends State<StandardBottomNav>
 
   @override
   Widget build(BuildContext context) {
+    // Desktop navigation is owned by AdminDesktopShell's fixed sidebar.
+    if (MediaQuery.sizeOf(context).width >= 1024) {
+      return const SizedBox.shrink();
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -65,13 +71,13 @@ class _StandardBottomNavState extends State<StandardBottomNav>
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 25,
             offset: const Offset(0, -8),
             spreadRadius: 0,
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
             offset: const Offset(0, -2),
             spreadRadius: 0,
@@ -182,8 +188,8 @@ class _StandardBottomNavState extends State<StandardBottomNav>
                         width: 45 * _rippleAnimation.value,
                         height: 45 * _rippleAnimation.value,
                         decoration: BoxDecoration(
-                          color: HominodeTheme.teal.withOpacity(
-                            0.1 * (1 - _rippleAnimation.value),
+                          color: HominodeTheme.teal.withValues(
+                            alpha: 0.1 * (1 - _rippleAnimation.value),
                           ),
                           borderRadius: BorderRadius.circular(22.5.r),
                         ),
@@ -202,7 +208,7 @@ class _StandardBottomNavState extends State<StandardBottomNav>
                           height: isSelected ? 32 : 28,
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? HominodeTheme.teal.withOpacity(0.14)
+                                ? HominodeTheme.teal.withValues(alpha: 0.14)
                                 : Colors.transparent,
                             borderRadius: BorderRadius.circular(
                               isSelected ? 10 : 8,
@@ -331,12 +337,8 @@ class _StandardBottomNavState extends State<StandardBottomNav>
     try {
       // Use different navigation strategies based on the target
       if (index == 0) {
-        // Home - always reset stack
-        Navigator.pushAndRemoveUntil(
-          context,
-          _createSmoothRoute(page),
-          (route) => false,
-        );
+        // Home - return to the root AuthWrapper route.
+        Navigator.of(context).popUntil((route) => route.isFirst);
       } else if (widget.selectedIndex == 0) {
         // From home to other screens - push
         Navigator.push(context, _createSmoothRoute(page));
@@ -423,6 +425,8 @@ class _StandardBottomNavState extends State<StandardBottomNav>
     );
   }
 
+  // Retained for the existing mobile interaction design.
+  // ignore: unused_element
   void _showProfileComingSoon(BuildContext context) {
     try {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -613,9 +613,8 @@ function securityCanAccessCommunity(communityId) {
             'totalFlats'
           ]);
 
-      allow delete: if adminCanAccessCommunity(
-        resource.data.communityId
-      );
+      // Building lifecycle deletion is exclusively server-side.
+      allow delete: if false;
     }
 
 
@@ -633,6 +632,9 @@ function securityCanAccessCommunity(communityId) {
       allow create: if adminCanAccessCommunity(
           request.resource.data.communityId
         )
+        && exists(/databases/$(database)/documents/buildings/$(request.resource.data.buildingId))
+        && get(/databases/$(database)/documents/buildings/$(request.resource.data.buildingId)).data.communityId
+          == request.resource.data.communityId
         && flatHasNoOccupant(request.resource.data)
         && flatOccupancyIsConsistent(request.resource.data);
 
@@ -655,10 +657,8 @@ function securityCanAccessCommunity(communityId) {
             'ownershipType'
           ]);
 
-      allow delete: if adminCanAccessCommunity(
-          resource.data.communityId
-        )
-        && flatHasNoOccupant(resource.data);
+      // Canonical units are removed only by trusted reconciliation/deletion.
+      allow delete: if false;
     }
 
 
@@ -1477,6 +1477,20 @@ function securityCanAccessCommunity(communityId) {
       allow read, write: if false;
     }
 
+    // SOS state is written exclusively by App Check protected callables.
+    match /sosAlerts/{alertId} {
+      allow read: if adminCanAccessCommunity(resource.data.communityId)
+        || securityCanAccessCommunity(resource.data.communityId)
+        || (approvedResident()
+          && resource.data.residentUid == request.auth.uid
+          && resource.data.communityId == userProfile().communityId);
+      allow write: if false;
+    }
+    match /sosActive/{residentUid} { allow read, write: if false; }
+    match /sosRequests/{requestId} { allow read, write: if false; }
+    match /sosNotificationEvents/{eventId} { allow read, write: if false; }
+    match /sosDeliveries/{deliveryId} { allow read, write: if false; }
+
     match /notificationDevices/{deviceId} {
       // Registration and stale-token cleanup are Admin SDK only.
       allow read, write: if false;
@@ -1863,6 +1877,88 @@ function securityCanAccessCommunity(communityId) {
 
   match /amenities/{amenityId} {
 
+    function buildingInAmenityCommunity(data) {
+      return ('buildingId' in data)
+        && data.buildingId is string
+        && data.buildingId.size() > 0
+        && exists(/databases/$(database)/documents/buildings/$(data.buildingId))
+        && get(/databases/$(database)/documents/buildings/$(data.buildingId)).data.communityId
+          == data.communityId;
+    }
+function nonNegativeAmenityPrice(data, field) {
+  return (field in data)
+    && data[field] is number
+    && data[field] >= 0;
+}
+
+function optionalNonNegativeAmenityPrice(data, field) {
+  return !(field in data)
+    || (
+      data[field] is number
+      && data[field] >= 0
+    );
+}
+
+function validAmenityPricing(data) {
+  return
+    ('isFree' in data)
+    && data.isFree is bool
+
+    // Legacy facilities:
+    // isFree + pricePerDay, without pricingMode.
+    && (
+      (
+        !('pricingMode' in data)
+        && (
+          (
+            data.isFree == true
+            && nonNegativeAmenityPrice(data, 'pricePerDay')
+            && data.pricePerDay == 0
+          )
+          ||
+          (
+            data.isFree == false
+            && nonNegativeAmenityPrice(data, 'pricePerDay')
+          )
+        )
+      )
+
+      // New FREE pricing.
+      ||
+      (
+        ('pricingMode' in data)
+        && data.pricingMode == 'free'
+        && data.isFree == true
+        && nonNegativeAmenityPrice(data, 'pricePerDay')
+        && data.pricePerDay == 0
+        && optionalNonNegativeAmenityPrice(data, 'ownerPricePerDay')
+        && optionalNonNegativeAmenityPrice(data, 'tenantPricePerDay')
+      )
+
+      // New FLAT pricing.
+      ||
+      (
+        ('pricingMode' in data)
+        && data.pricingMode == 'flat'
+        && data.isFree == false
+        && nonNegativeAmenityPrice(data, 'pricePerDay')
+        && optionalNonNegativeAmenityPrice(data, 'ownerPricePerDay')
+        && optionalNonNegativeAmenityPrice(data, 'tenantPricePerDay')
+      )
+
+      // Different Owner / Tenant pricing.
+      ||
+      (
+        ('pricingMode' in data)
+        && data.pricingMode == 'resident_type'
+        && data.isFree == false
+        && nonNegativeAmenityPrice(data, 'pricePerDay')
+        && data.pricePerDay == 0
+        && nonNegativeAmenityPrice(data, 'ownerPricePerDay')
+        && nonNegativeAmenityPrice(data, 'tenantPricePerDay')
+      )
+    );
+}
     // Resident can read amenities for their own building/community.
     allow read: if
       residentSameBuilding(resource.data)
@@ -1874,13 +1970,38 @@ function securityCanAccessCommunity(communityId) {
 
     // Admin creates amenities for an authorized community.
     allow create: if
-      ('communityId' in request.resource.data)
-      && adminCanAccessCommunity(
-        request.resource.data.communityId
-      );
+  ('communityId' in request.resource.data)
+  && adminCanAccessCommunity(
+    request.resource.data.communityId
+  )
+  && buildingInAmenityCommunity(request.resource.data)
+  && validAmenityPricing(request.resource.data);
 
-    // Admin updates/deletes amenities in an authorized community.
-    allow update, delete: if
+    // Updates preserve tenant scope and keep the building in that community.
+    allow update: if
+  ('communityId' in resource.data)
+  && adminCanAccessCommunity(resource.data.communityId)
+  && request.resource.data.communityId == resource.data.communityId
+  && buildingInAmenityCommunity(request.resource.data)
+
+  // Validate pricing only when pricing fields are changed.
+  // This avoids blocking unrelated edits to older legacy facilities.
+  && (
+    !request.resource.data
+      .diff(resource.data)
+      .affectedKeys()
+      .hasAny([
+        'isFree',
+        'pricingMode',
+        'pricePerDay',
+        'ownerPricePerDay',
+        'tenantPricePerDay'
+      ])
+    || validAmenityPricing(request.resource.data)
+  );
+
+    // Preserve existing Admin delete authorization.
+    allow delete: if
       ('communityId' in resource.data)
       && adminCanAccessCommunity(
         resource.data.communityId

@@ -100,6 +100,7 @@ class _SuperAdminAdminsPageState extends State<SuperAdminAdminsPage> {
             const SizedBox(height: 16),
             SectionCard(
               title: 'Community Administrators',
+              subtitle: 'Access assignments and account availability',
               action: FilledButton.icon(
                 onPressed: _busy ? null : _showCreateAdminDialog,
                 icon: const Icon(Icons.person_add_alt_1, size: 18),
@@ -107,52 +108,59 @@ class _SuperAdminAdminsPageState extends State<SuperAdminAdminsPage> {
               ),
               child: Column(
                 children: [
-                  TextField(
+                  WebSearchToolbar(
                     controller: _searchController,
+                    hintText: 'Search administrators or phone numbers',
                     onChanged: (value) {
                       setState(() {
                         _search = value;
                       });
                     },
-                    decoration: InputDecoration(
-                      hintText: 'Search admins...',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _search.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: () {
-                                _searchController.clear();
-
-                                setState(() {
-                                  _search = '';
-                                });
-                              },
-                              icon: const Icon(Icons.close),
-                            ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                    onClear: () {
+                      _searchController.clear();
+                      setState(() => _search = '');
+                    },
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   if (filtered.isEmpty)
                     const EmptyState(
                       icon: Icons.people_outline,
                       message: 'No community administrators found.',
                     )
-                  else
-                    ...filtered.map(
-                      (doc) => _AdminRow(
-                        id: doc.id,
-                        data: doc.data(),
-                        busy: _busy,
-                        onEdit: () => _showAssignmentDialog(doc.id, doc.data()),
-                        onStatus: () => _toggleAdmin(
-                          doc.id,
-                          doc.data()['isActive'] == true,
-                        ),
+                  else ...[
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: WebDesign.border),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        children: [
+                          const DesktopListHeader(
+                            labels: [
+                              'Administrator',
+                              'Access',
+                              'Status',
+                              'Actions',
+                            ],
+                            flexes: [2, 1, 1, 1],
+                          ),
+                          ...filtered.map(
+                            (doc) => _AdminRow(
+                              id: doc.id,
+                              data: doc.data(),
+                              busy: _busy,
+                              onEdit: () =>
+                                  _showAssignmentDialog(doc.id, doc.data()),
+                              onStatus: () => _toggleAdmin(
+                                doc.id,
+                                doc.data()['isActive'] == true,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                  ],
                 ],
               ),
             ),
@@ -404,69 +412,109 @@ class _AdminRow extends StatelessWidget {
             .toList() ??
         const <String>[];
 
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: WebDesign.border)),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: RolePalette.superAdmin.soft,
-            child: Icon(
-              Icons.person_outline,
-              color: RolePalette.superAdmin.primary,
-            ),
+    final access = communityIds.length == 1
+        ? '1 community'
+        : '${communityIds.length} communities';
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          data['phoneNumber']?.toString() ?? id,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: WebDesign.text,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data['phoneNumber']?.toString() ?? id,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 3),
-                const Text(
-                  'Community Admin',
-                  style: TextStyle(color: WebDesign.muted, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Text(
-              communityIds.length == 1
-                  ? '1 community'
-                  : '${communityIds.length} communities',
-            ),
-          ),
-          StatusBadge(active: active),
-          const SizedBox(width: 12),
-          PopupMenuButton<String>(
-            enabled: !busy,
-            onSelected: (value) {
-              if (value == 'access') {
-                onEdit();
-              } else if (value == 'status') {
-                onStatus();
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(
-                value: 'access',
-                child: Text('Manage Communities'),
+        ),
+        const SizedBox(height: 2),
+        const Text(
+          'Community Admin',
+          style: TextStyle(color: WebDesign.muted, fontSize: 10),
+        ),
+      ],
+    );
+    final menu = PopupMenuButton<String>(
+      enabled: !busy,
+      iconSize: 19,
+      onSelected: (value) {
+        if (value == 'access') {
+          onEdit();
+        } else if (value == 'status') {
+          onStatus();
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'access', child: Text('Manage Communities')),
+        PopupMenuItem(
+          value: 'status',
+          child: Text(active ? 'Deactivate Admin' : 'Activate Admin'),
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: WebDesign.border)),
+        ),
+        child: constraints.maxWidth < 760
+            ? Row(
+                children: [
+                  const _AdminAvatar(),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        identity,
+                        const SizedBox(height: 5),
+                        Text(
+                          access,
+                          style: const TextStyle(
+                            color: WebDesign.muted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  StatusBadge(active: active),
+                  menu,
+                ],
+              )
+            : Row(
+                children: [
+                  const _AdminAvatar(),
+                  const SizedBox(width: 12),
+                  Expanded(flex: 2, child: identity),
+                  Expanded(
+                    child: Text(access, style: const TextStyle(fontSize: 12)),
+                  ),
+                  Expanded(
+                    child: Align(child: StatusBadge(active: active)),
+                  ),
+                  Expanded(child: Align(child: menu)),
+                ],
               ),
-              PopupMenuItem(
-                value: 'status',
-                child: Text(active ? 'Deactivate Admin' : 'Activate Admin'),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
+}
+
+class _AdminAvatar extends StatelessWidget {
+  const _AdminAvatar();
+
+  @override
+  Widget build(BuildContext context) => CircleAvatar(
+    radius: 18,
+    backgroundColor: RolePalette.superAdmin.soft,
+    child: Icon(
+      Icons.person_outline,
+      size: 18,
+      color: RolePalette.superAdmin.primary,
+    ),
+  );
 }

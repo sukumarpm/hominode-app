@@ -13,7 +13,7 @@ function phoneAuth(uid, phone = "+14155550100") {
 }
 
 function fakeDb(seed = {}) {
-  const values = new Map(Object.entries(seed));
+  const values = new Map(Object.entries(structuredClone(seed)));
   const writes = [];
   const makeSnapshot = (path) => ({
     id: path.split("/").pop(),
@@ -91,15 +91,15 @@ const baseSeed = {
   "communities/B": {name: "Beta", isActive: true, countryCode: "US"},
   "buildings/building-a": {communityId: "A", buildingId: "building-a", name: "Tower A"},
   "buildings/building-b": {communityId: "B", buildingId: "building-b", name: "Tower B"},
-  "flats/flat-a-101": {communityId: "A", buildingId: "building-a", flatId: "A101", flatLabel: "A-101", flatNumber: 101},
-  "flats/flat-a-102": {communityId: "A", buildingId: "building-a", flatId: "A102", flatLabel: "A-102", flatNumber: 102},
-  "flats/flat-b-101": {communityId: "B", buildingId: "building-b", flatId: "B101", flatLabel: "B-101", flatNumber: 101},
+  "flats/flat-a-101": {communityId: "A", buildingId: "building-a", flatId: "A101", flatLabel: "A-101", flatNumber: 101, status: "vacant"},
+  "flats/flat-a-102": {communityId: "A", buildingId: "building-a", flatId: "A102", flatLabel: "A-102", flatNumber: 102, status: "vacant"},
+  "flats/flat-b-101": {communityId: "B", buildingId: "building-b", flatId: "B101", flatLabel: "B-101", flatNumber: 101, status: "vacant"},
 };
 
 const row = (overrides = {}) => ({
   rowNumber: 2,
   building: "Tower A",
-  unit: "A101",
+  unit: "A-101",
   residentName: "Alex Resident",
   phoneNumber: "+14155552671",
   residentType: "owner",
@@ -117,7 +117,7 @@ const args = (db, rows, extras = {}) => ({
 test("valid owner and tenant rows validate with canonical building and unit IDs", async () => {
   const result = await validateResidentBulkImportCore(args(fakeDb(baseSeed), [
     row(),
-    row({rowNumber: 3, unit: "A102", residentName: "Taylor Tenant", phoneNumber: "+14155552672", residentType: "tenant"}),
+    row({rowNumber: 3, unit: "A-102", residentName: "Taylor Tenant", phoneNumber: "+14155552672", residentType: "tenant"}),
   ]));
   assert.deepEqual(result.summary, {totalRows: 2, validRows: 2, errorRows: 0, alreadyImportedRows: 0});
   assert.equal(result.rows[0].buildingId, "building-a");
@@ -128,7 +128,7 @@ test("valid owner and tenant rows validate with canonical building and unit IDs"
 test("mixed validation returns actionable phone, building, unit, and duplicate errors", async () => {
   const result = await validateResidentBulkImportCore(args(fakeDb(baseSeed), [
     row(),
-    row({rowNumber: 3, unit: "A102"}),
+    row({rowNumber: 3, unit: "A-102"}),
     row({rowNumber: 4, phoneNumber: "not-a-phone"}),
     row({rowNumber: 5, phoneNumber: "+14155552673", building: "Missing"}),
     row({rowNumber: 6, phoneNumber: "+14155552674", unit: "Missing"}),
@@ -147,8 +147,8 @@ test("existing resident and pending registration duplicates are community scoped
   });
   const result = await validateResidentBulkImportCore(args(db, [
     row(),
-    row({rowNumber: 3, unit: "A102", phoneNumber: "+14155552672"}),
-    row({rowNumber: 4, unit: "A102", residentName: "Community Scoped", phoneNumber: "+14155552673", residentType: "tenant"}),
+    row({rowNumber: 3, unit: "A-102", phoneNumber: "+14155552672"}),
+    row({rowNumber: 4, unit: "A-102", residentName: "Community Scoped", phoneNumber: "+14155552673", residentType: "tenant"}),
   ]));
   assert.equal(result.rows[0].code, "resident_already_exists");
   assert.equal(result.rows[1].code, "pending_registration_exists");
@@ -201,7 +201,7 @@ test("national phones require context and normalize to E.164", () => {
   assert.throws(() => normalizePhone("4155552671", null), {rowCode: "missing_country_context"});
 });
 
-test("import writes only pending unverified onboarding records and audit data", async () => {
+test("import reserves canonical units while keeping onboarding pending and unverified", async () => {
   const db = fakeDb(baseSeed);
   const result = await importResidentsBulkCore(args(db, [row()], {importJobId: "job_20260825_alpha"}));
   assert.equal(result.rows[0].status, "imported");
@@ -226,7 +226,7 @@ test("same job and row retry is idempotent", async () => {
   const forgedReplacement = await importResidentsBulkCore(args(db, [
     row({residentName: "Replacement Person", phoneNumber: "+14155552679"}),
   ], {importJobId: "job_20260825_retry"}));
-  assert.equal(forgedReplacement.rows[0].status, "already_imported");
+  assert.equal(forgedReplacement.rows[0].code, "idempotency_conflict");
   assert.equal([...db.values.keys()].filter((path) => path.startsWith("residentOnboarding/")).length, 1);
 });
 
@@ -235,7 +235,7 @@ test("retry cannot introduce a row number outside the original job", async () =>
   const importJobId = "job_20260825_scope";
   await importResidentsBulkCore(args(db, [row()], {importJobId}));
   await assert.rejects(() => importResidentsBulkCore(args(db, [
-    row({rowNumber: 9, unit: "A102", phoneNumber: "+14155552672"}),
+    row({rowNumber: 9, unit: "A-102", phoneNumber: "+14155552672"}),
   ], {importJobId})), {code: "failed-precondition"});
 });
 
@@ -248,7 +248,7 @@ test("a corrected failed row can be retried in the same job without duplicating 
   ], {importJobId}));
   assert.deepEqual(first.rows.map((item) => item.status), ["imported", "error"]);
   const retry = await importResidentsBulkCore(args(db, [
-    row({rowNumber: 3, unit: "A102", phoneNumber: "+14155552672", residentType: "tenant"}),
+    row({rowNumber: 3, unit: "A-102", phoneNumber: "+14155552672", residentType: "tenant"}),
   ], {importJobId}));
   assert.equal(retry.rows[0].status, "imported");
   assert.equal([...db.values.keys()].filter((path) => path.startsWith("residentOnboarding/")).length, 2);
@@ -353,4 +353,101 @@ test("Register claims imported onboarding directly after verified OTP and retain
   assert.equal(profile.isActive, false);
   assert.equal(profile.identityVerified, false);
   assert.equal(db.values.get(onboardingPath).claimedByUid, "imported-resident-uid");
+});
+
+const schema = require('../src/unit_schema');
+test('current custom labels override stale legacy display aliases; legacy fallback remains supported', async () => {
+  const db = fakeDb(baseSeed);
+  const old = await validateResidentBulkImportCore(args(db, [row({unit: 'A101'})]));
+  assert.equal(old.rows[0].code, 'unit_not_found');
+  delete db.values.get('flats/flat-a-101').flatLabel;
+  const legacy = await validateResidentBulkImportCore(args(db, [row({unit: 'A101'})]));
+  assert.equal(legacy.rows[0].flatId, 'flat-a-101');
+  assert.equal(schema.unitType({}), 'apartment');
+});
+for (const [building, label, type] of [['Tower A', 'A-101', 'apartment'], ['Villa Block', 'Villa-03', 'villa'], ['Row Houses', 'RH-12', 'row_house'], ['Townhouses', 'TH-01', 'townhouse'], ['Duplexes', 'House 12', 'duplex']]) {
+  test(`bulk custom label resolves ${building} + ${label}`, async () => {
+    const db = fakeDb(baseSeed);
+    db.values.get('buildings/building-a').name = building;
+    Object.assign(db.values.get('flats/flat-a-101'), {flatLabel: label, unitType: type});
+    const result = await validateResidentBulkImportCore(args(db, [row({building: building.toLowerCase(), unit: label.toLowerCase()})]));
+    assert.equal(result.rows[0].status, 'ready');
+    assert.equal(result.rows[0].flatId, 'flat-a-101');
+  });
+}
+for (const status of ['occupied', 'reserved', 'maintenance']) {
+  test(`bulk validation rejects ${status} units`, async () => {
+    const db = fakeDb(baseSeed);
+    db.values.get('flats/flat-a-101').status = status;
+    const result = await validateResidentBulkImportCore(args(db, [row()]));
+    assert.equal(result.rows[0].status, 'error');
+    assert.match(result.rows[0].message, /occupied|reserved|not safely vacant/);
+  });
+}
+
+test('wrong-building and duplicate legacy labels produce row errors', async () => {
+  const db = fakeDb(baseSeed);
+  db.values.set('buildings/other', {name: 'Other', communityId: 'A'});
+  db.values.set('flats/other', {buildingId: 'other', communityId: 'A', flatLabel: 'Villa-03', status: 'vacant'});
+  assert.equal((await validateResidentBulkImportCore(args(db, [row({unit: 'Villa-03'})]))).rows[0].code, 'wrong_building');
+  db.values.set('flats/duplicate', {...db.values.get('flats/flat-a-101'), flatLabel: 'a-101'});
+  assert.equal((await validateResidentBulkImportCore(args(db, [row()]))).rows[0].code, 'ambiguous_unit');
+});
+
+test('duplicate unit allocations reject owner/tenant and tenant/tenant pairs', async () => {
+  for (const type of ['owner', 'tenant']) {
+    const result = await validateResidentBulkImportCore(args(fakeDb(baseSeed), [row({residentType: type}),
+      row({rowNumber: 3, phoneNumber: '+14155552672', residentName: 'Second', residentType: 'tenant'})]));
+    assert.equal(result.rows[0].status, 'ready');
+    assert.equal(result.rows[1].code, 'duplicate_unit_allocation');
+  }
+});
+
+test('same pending resident and canonical reservation supports safe contact updates in a new job', async () => {
+  const db = fakeDb(baseSeed);
+  await importResidentsBulkCore(args(db, [row()], {importJobId: 'job_initial_reservation'}));
+  const original = db.values.get('flats/flat-a-101');
+  assert.equal(original.status, 'reserved');
+  const updated = await importResidentsBulkCore(args(db, [row({residentName: 'Updated Name'})], {importJobId: 'job_update_reservation'}));
+  assert.equal(updated.rows[0].status, 'imported');
+  const onboarding = db.values.get(`residentOnboarding/${residentOnboardingId('A', row().phoneNumber)}`);
+  assert.equal(onboarding.residentName, 'Updated Name');
+  assert.equal(onboarding.approvalStatus, 'pending');
+  assert.equal(onboarding.identityVerified, false);
+  assert.equal(db.values.get('flats/flat-a-101').reservedOnboardingId, original.reservedOnboardingId);
+  assert.equal(db.values.get('flats/flat-a-101').reservedForName, 'Updated Name');
+});
+
+test('same resident/canonical occupied unit updates contact only, preserving identity and approval', async () => {
+  const db = fakeDb(baseSeed);
+  db.values.set('users/resident', {uid: 'resident', communityId: 'A', role: 'resident', phoneNumber: row().phoneNumber,
+    residentType: 'owner', buildingId: 'building-a', flatId: 'flat-a-101', isActive: true, approvalStatus: 'approved', identityVerified: true});
+  Object.assign(db.values.get('flats/flat-a-101'), {status: 'occupied', residentUserId: 'resident'});
+  const result = await importResidentsBulkCore(args(db, [row({residentName: 'Current Name'})], {importJobId: 'job_same_resident_update'}));
+  assert.equal(result.rows[0].status, 'imported');
+  const user = db.values.get('users/resident');
+  assert.equal(user.name, 'Current Name');
+  assert.equal(user.approvalStatus, 'approved');
+  assert.equal(user.identityVerified, true);
+  assert.equal(user.flatId, 'flat-a-101');
+  assert.equal(db.values.get('flats/flat-a-101').residentName, 'Current Name');
+});
+
+test('active resident moves require trusted move-out; unsafe links block new bulk allocations', async () => {
+  const db = fakeDb(baseSeed);
+  db.values.set('users/resident', {communityId: 'A', role: 'resident', phoneNumber: row().phoneNumber,
+    residentType: 'owner', flatId: 'other', buildingId: 'building-a', isActive: true, approvalStatus: 'approved'});
+  const result = await validateResidentBulkImportCore(args(db, [row()]));
+  assert.match(result.rows[0].message, /move-out/);
+  db.values.delete('users/resident');
+  db.values.get('flats/flat-a-101').residentId = 'legacy';
+  assert.equal((await validateResidentBulkImportCore(args(db, [row()]))).rows[0].code, 'unit_not_assignable');
+});
+
+test('current building name continues to resolve unchanged custom labels after rename', async () => {
+  const db = fakeDb(baseSeed);
+  Object.assign(db.values.get('buildings/building-a'), {name: 'Current Tower', buildingName: 'Current Tower'});
+  const result = await validateResidentBulkImportCore(args(db, [row({building: 'Current Tower'})]));
+  assert.equal(result.rows[0].flatId, 'flat-a-101');
+  assert.equal((await validateResidentBulkImportCore(args(db, [row()]))).rows[0].code, 'building_not_found');
 });

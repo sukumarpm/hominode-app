@@ -58,7 +58,10 @@ class WebSessionResolver {
   final WebProfileStore profiles;
   final TenantSelectionStore selections;
 
-  Future<WebSession> resolve(String uid) async {
+  Future<WebSession> resolve(
+    String uid, {
+    String? expectedResidentCommunityId,
+  }) async {
     final adminData = await profiles.admin(uid);
     if (adminData != null) return _resolveAdmin(uid, adminData);
     final residentData = await profiles.resident(uid);
@@ -67,7 +70,11 @@ class WebSessionResolver {
         'No Hominode profile exists for this account.',
       );
     }
-    return _resolveResident(uid, residentData);
+    return _resolveResident(
+      uid,
+      residentData,
+      expectedCommunityId: expectedResidentCommunityId,
+    );
   }
 
   Future<WebSession> _resolveAdmin(
@@ -122,13 +129,20 @@ class WebSessionResolver {
 
   Future<WebSession> _resolveResident(
     String uid,
-    Map<String, dynamic> data,
-  ) async {
+    Map<String, dynamic> data, {
+    String? expectedCommunityId,
+  }) async {
     final profile = ResidentProfile.tryParse(uid, data);
 
     if (profile == null || !profile.canEnter) {
       throw const SessionResolutionException(
         'Invalid, inactive, or unapproved resident profile.',
+      );
+    }
+    if (expectedCommunityId != null &&
+        profile.communityId != expectedCommunityId) {
+      throw const SessionResolutionException(
+        'This account does not belong to the community selected by the hostname.',
       );
     }
     final tenantData = await profiles.tenant(profile.communityId);

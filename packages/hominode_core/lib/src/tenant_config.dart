@@ -23,8 +23,7 @@ class TenantConfig {
 
   factory TenantConfig.fromMap(String documentId, Map<String, dynamic> data) {
     final name = _string(data['name']);
-    final persistedSlug = _string(data['slug']);
-    final slug = persistedSlug.isEmpty ? slugify(name) : persistedSlug;
+    final slug = _string(data['slug']);
     final websitePath = _string(data['websitePath']);
     final databaseId = _string(data['databaseId']);
     final brandName = _string(data['brandName']);

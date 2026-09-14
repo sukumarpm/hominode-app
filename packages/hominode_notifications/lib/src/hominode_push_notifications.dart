@@ -10,6 +10,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 
 const hominodeNotificationChannelId = 'hominode_high_importance';
 const _installationPreferenceKey = 'hominode_notification_installation_id';
@@ -267,8 +268,28 @@ class HominodePushNotifications {
   Future<void> deactivateForLogout() async {
     _active = false;
     _pendingTap = null;
+
     try {
-      if (_auth.currentUser != null) {
+      final user = _auth.currentUser;
+
+      if (user != null) {
+        try {
+          final idToken = await user.getIdToken(true);
+          debugPrint(
+            'Logout notification auth token available: '
+            '${idToken?.isNotEmpty == true}',
+          );
+
+          final appCheckToken = await FirebaseAppCheck.instance.getToken(true);
+
+          debugPrint(
+            'Logout notification App Check token available: '
+            '${appCheckToken?.isNotEmpty == true}',
+          );
+        } catch (error) {
+          debugPrint('Logout notification token validation failed: $error');
+        }
+
         await _functions.httpsCallable('unregisterNotificationDevice').call({
           'installationId': await _installationId(),
         });
@@ -278,6 +299,7 @@ class HominodePushNotifications {
       debugPrintStack(stackTrace: stackTrace);
     } finally {
       _selectedCommunityId = null;
+
       try {
         await _messaging.deleteToken();
       } catch (error) {

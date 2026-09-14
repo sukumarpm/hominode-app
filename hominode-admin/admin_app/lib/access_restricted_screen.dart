@@ -145,11 +145,8 @@ class AccessRestrictedScreen extends StatelessWidget {
                     onPressed: () async {
                       try {
                         await AuthService().signOut();
-                        if (onLogout != null) {
-                          onLogout!();
-                        }
                       } catch (e) {
-                        print('Error logging out: $e');
+                        debugPrint('Error logging out: $e');
                       }
                     },
                     style: ElevatedButton.styleFrom(

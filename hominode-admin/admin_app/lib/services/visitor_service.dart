@@ -1,9 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../models/notification_models.dart';
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
-import '../models/notification_models.dart';
 
-class VisitorService {
+abstract interface class VisitorWorkflowService {
+  Stream<List<VisitorModel>> getPendingVisitors();
+  Stream<List<VisitorModel>> getActiveVisitors();
+  Stream<List<VisitorModel>> getHistoryVisitors();
+  Future<void> approveVisitor(String visitorId);
+  Future<void> rejectVisitor(String visitorId);
+  Future<void> checkInVisitor(String visitorId);
+  Future<void> checkOutVisitor(String visitorId);
+}
+
+class VisitorService implements VisitorWorkflowService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AdminService _adminService = AdminService();
   final NotificationFirestoreService _notificationService =
@@ -73,6 +84,7 @@ class VisitorService {
   }
 
   /// Get pending visitors (real-time stream) filtered by adminId
+  @override
   Stream<List<VisitorModel>> getPendingVisitors() {
     final adminId = _adminService.getCurrentAdminId();
     if (adminId == null) return Stream.value([]);
@@ -90,10 +102,13 @@ class VisitorService {
           print(
             'VisitorService: Received ${snapshot.docs.length} pending visitors',
           );
-          final visitors = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return VisitorModel.fromFirestore(doc.id, data);
-          }).toList();
+          final visitors = snapshot.docs
+              .where((doc) => visitorBelongsInPendingQueue(doc.data()))
+              .map((doc) {
+                final data = doc.data();
+                return VisitorModel.fromFirestore(doc.id, data);
+              })
+              .toList();
 
           // Sort in memory instead of using orderBy to avoid index requirement
           visitors.sort((a, b) {
@@ -108,6 +123,7 @@ class VisitorService {
   }
 
   /// Get active visitors (checked-in, real-time stream) filtered by adminId
+  @override
   Stream<List<VisitorModel>> getActiveVisitors() {
     final adminId = _adminService.getCurrentAdminId();
     if (adminId == null) return Stream.value([]);
@@ -152,6 +168,7 @@ class VisitorService {
   }
 
   /// Get history visitors (checked-out, real-time stream) filtered by adminId
+  @override
   Stream<List<VisitorModel>> getHistoryVisitors() {
     final adminId = _adminService.getCurrentAdminId();
     if (adminId == null) return Stream.value([]);
@@ -273,6 +290,7 @@ class VisitorService {
   }
 
   /// Approve visitor (admin action) with flow function
+  @override
   Future<void> approveVisitor(String visitorId) async {
     try {
       print('🔵 VISITOR APPROVAL FLOW: Starting...');
@@ -341,6 +359,7 @@ class VisitorService {
   }
 
   /// Reject visitor (admin action) with flow function
+  @override
   Future<void> rejectVisitor(String visitorId) async {
     try {
       print('🔵 VISITOR REJECTION FLOW: Starting...');
@@ -370,11 +389,10 @@ class VisitorService {
 
       // STEP 3: Reject Visitor
       print('✅ STEP 3: Rejecting visitor...');
-      await _firestore.collection(_collection).doc(visitorId).update({
-        'isApproved': false,
-        'rejectedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      await _firestore
+          .collection(_collection)
+          .doc(visitorId)
+          .update(rejectedVisitorUpdate(adminId: adminId));
       print('✅ STEP 3 PASSED: Visitor rejected');
 
       // STEP 4: Notify Resident
@@ -409,6 +427,7 @@ class VisitorService {
   }
 
   /// Check-in visitor (gate/admin action)
+  @override
   Future<void> checkInVisitor(String visitorId) async {
     try {
       print('VisitorService: Checking in visitor - $visitorId');
@@ -425,6 +444,7 @@ class VisitorService {
   }
 
   /// Check-out visitor (mark exit)
+  @override
   Future<void> checkOutVisitor(String visitorId) async {
     try {
       print('VisitorService: Checking out visitor - $visitorId');
@@ -510,22 +530,10 @@ class VisitorModel {
   });
 
   factory VisitorModel.fromFirestore(String id, Map<String, dynamic> data) {
-    // Map your Firestore fields to the model
     final isApproved = data['isApproved'] ?? false;
     final actualArrival = (data['actualArrival'] as Timestamp?)?.toDate();
     final departure = (data['departure'] as Timestamp?)?.toDate();
-
-    // Determine status based on your fields
-    String status;
-    if (departure != null) {
-      status = 'checked-out';
-    } else if (actualArrival != null && isApproved) {
-      status = 'active';
-    } else if (isApproved) {
-      status = 'approved';
-    } else {
-      status = 'pending';
-    }
+    final status = canonicalVisitorStatus(data);
 
     return VisitorModel(
       id: id,
@@ -580,4 +588,70 @@ class VisitorModel {
     if (createdAt == null) return '';
     return '${createdAt!.year}-${createdAt!.month.toString().padLeft(2, '0')}-${createdAt!.day.toString().padLeft(2, '0')}';
   }
+}
+
+Map<String, dynamic> rejectedVisitorUpdate({required String adminId}) {
+  return {
+    'status': 'rejected',
+    'isApproved': false,
+    'rejectedBy': adminId,
+    'rejectedAt': FieldValue.serverTimestamp(),
+    'updatedAt': FieldValue.serverTimestamp(),
+  };
+}
+
+bool visitorBelongsInPendingQueue(Map<String, dynamic> data) {
+  final status = canonicalVisitorStatus(data);
+  return (status == 'expected' || status == 'pending') &&
+      data['isApproved'] != true &&
+      data['actualArrival'] == null &&
+      data['departure'] == null;
+}
+
+String canonicalVisitorStatus(Map<String, dynamic> data) {
+  final rawStatus = _normalizedVisitorStatusValue(
+    data['status'] ?? data['visitStatus'] ?? data['approvalStatus'],
+  );
+  final isApproved = data['isApproved'] == true;
+  final hasArrival = data['actualArrival'] != null;
+  final hasDeparture = data['departure'] != null;
+
+  if (rawStatus == 'rejected' || rawStatus == 'cancelled') {
+    return rawStatus;
+  }
+  if (hasDeparture) {
+    return 'departed';
+  }
+  if (hasArrival && isApproved) {
+    return 'inside';
+  }
+  if (isApproved || rawStatus == 'approved') {
+    return 'approved';
+  }
+  if (rawStatus == 'expected' || rawStatus == 'pending') {
+    return rawStatus;
+  }
+  return 'pending';
+}
+
+String _normalizedVisitorStatusValue(Object? value) {
+  final normalized = value?.toString().trim().toLowerCase() ?? '';
+  if (normalized.isEmpty) {
+    return '';
+  }
+  if (normalized == 'pendingapproval' || normalized == 'pending_approval') {
+    return 'pending';
+  }
+  if (normalized == 'checked_in' ||
+      normalized == 'arrived' ||
+      normalized == 'entered' ||
+      normalized == 'inside') {
+    return 'inside';
+  }
+  if (normalized == 'checked_out' ||
+      normalized == 'checked-out' ||
+      normalized == 'exited') {
+    return 'departed';
+  }
+  return normalized;
 }

@@ -115,8 +115,9 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
               builder: (context) => AlertDialog(
                 title: const Text('Import residents?'),
                 content: Text(
-                  '${_validation!.validRows} valid row(s) will be added as '
-                  'pending, unverified resident onboarding records.',
+                  '${_validation!.validRows} valid row(s) will be imported or updated. '
+                  'New allocations reserve units without approving residents. '
+                  'Eligible moved-out residents use the existing reassignment checks.',
                 ),
                 actions: [
                   TextButton(
@@ -243,8 +244,9 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
             padding: const EdgeInsets.all(16),
             children: [
               const Text(
-                'Upload up to 500 CSV or XLSX rows. Imports remain pending and '
-                'unverified until the resident completes OTP registration.',
+                'Upload up to 500 CSV or XLSX rows using the current building name and custom unit name. '
+                'New residents reserve a vacant unit and remain pending until OTP and approval. '
+                'Existing allocations support contact updates; moves require the resident reassignment workflow.',
               ),
               const SizedBox(height: 12),
               Wrap(

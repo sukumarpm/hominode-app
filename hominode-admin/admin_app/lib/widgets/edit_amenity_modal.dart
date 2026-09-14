@@ -1,35 +1,57 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import '../services/amenity_service.dart';
-import '../services/building_service.dart';
 
 class EditAmenityModal extends StatefulWidget {
   final AmenityModel amenity;
 
-  const EditAmenityModal({super.key, required this.amenity});
+  final AmenityService? amenityService;
+
+  const EditAmenityModal({
+    super.key,
+    required this.amenity,
+    this.amenityService,
+  });
 
   @override
   State<EditAmenityModal> createState() => _EditAmenityModalState();
 }
 
 class _EditAmenityModalState extends State<EditAmenityModal> {
+  static const List<String> _facilityTypeOptions = [
+    'Gym',
+    'Swimming Pool',
+    'Clubhouse',
+    'Function Hall',
+    'Sports Court',
+    'Playground',
+    'Garden / Park',
+    'Meeting Room',
+    'Multipurpose Hall',
+    'Recreation Area',
+    'Other',
+  ];
+
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameController;
   late TextEditingController _descriptionController;
   late TextEditingController _priceController;
+  late TextEditingController _ownerPriceController;
+  late TextEditingController _tenantPriceController;
 
-  final AmenityService _amenityService = AmenityService();
-  final BuildingService _buildingService = BuildingService();
-
-  late String _selectedType;
+  late final AmenityService _amenityService =
+      widget.amenityService ?? AmenityService();
+  late TextEditingController _typeController;
+  late TextEditingController _customTypeController;
+  late TextEditingController _imageUrlController;
+  final _customTimeSlotController = TextEditingController();
+  late final Map<String, dynamic> _initialValues;
   late String _selectedIcon;
-  late bool _isFree;
+  late String _selectedFacilityType;
+  late String _pricingMode;
   bool _isLoading = false;
-
-  // Building selection
-  late String _selectedBuildingId;
-  late String _selectedBuildingName;
-  List<BuildingModel> _buildings = [];
 
   // Time slots
   final List<String> _availableTimeSlots = [
@@ -53,7 +75,6 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
 
   late List<String> _selectedTimeSlots;
 
-  final List<String> _types = ['Recreation', 'Sports', 'Event', 'Facility'];
   final Map<String, IconData> _icons = {
     'pool': Icons.pool,
     'gym': Icons.fitness_center,
@@ -62,6 +83,10 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
     'parking': Icons.local_parking,
     'playground': Icons.sports_soccer,
   };
+  String _priceText(double? value) {
+    if (value == null) return '';
+    return value.toString().replaceFirst(RegExp(r'\.0$'), '');
+  }
 
   @override
   void initState() {
@@ -70,27 +95,74 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
     _descriptionController = TextEditingController(
       text: widget.amenity.description ?? '',
     );
+    _pricingMode = widget.amenity.pricingMode;
+
     _priceController = TextEditingController(
-      text: widget.amenity.isFree
-          ? ''
-          : widget.amenity.pricePerDay.toStringAsFixed(0),
+      text: _pricingMode == 'flat'
+          ? _priceText(widget.amenity.pricePerDay)
+          : '',
     );
-    _selectedType = widget.amenity.type;
-    _selectedIcon = widget.amenity.iconName ?? 'pool';
-    _isFree = widget.amenity.isFree;
+
+    _ownerPriceController = TextEditingController(
+      text: _pricingMode == 'resident_type'
+          ? _priceText(widget.amenity.ownerPricePerDay)
+          : '',
+    );
+
+    _tenantPriceController = TextEditingController(
+      text: _pricingMode == 'resident_type'
+          ? _priceText(widget.amenity.tenantPricePerDay)
+          : '',
+    );
+    final existingType = widget.amenity.type.trim();
+    final isPredefinedType =
+        _facilityTypeOptions.contains(existingType) && existingType != 'Other';
+    _selectedFacilityType = isPredefinedType ? existingType : 'Other';
+    _typeController = TextEditingController(text: existingType);
+    _customTypeController = TextEditingController(
+      text: isPredefinedType ? '' : existingType,
+    );
+    _imageUrlController = TextEditingController(
+      text: widget.amenity.imageUrl ?? '',
+    );
+    _selectedIcon = widget.amenity.iconName ?? '';
     _selectedTimeSlots = List<String>.from(widget.amenity.timeSlots ?? []);
-    _selectedBuildingId = widget.amenity.buildingId;
-    _selectedBuildingName = widget.amenity.buildingName;
-    _loadBuildings();
+    _initialValues = _formValues();
   }
 
-  void _loadBuildings() {
-    _buildingService.getBuildings().listen((buildings) {
-      if (mounted) {
-        setState(() {
-          _buildings = buildings;
-        });
-      }
+  Map<String, dynamic> _formValues() {
+    final values = <String, dynamic>{
+      'name': _nameController.text.trim(),
+      'type': _typeController.text.trim(),
+      'description': _descriptionController.text.trim(),
+      'imageUrl': _imageUrlController.text.trim(),
+      'iconName': _selectedIcon,
+      'pricingMode': _pricingMode,
+      'isFree': _pricingMode == 'free',
+      'pricePerDay': _pricingMode == 'flat'
+          ? double.tryParse(_priceController.text.trim())
+          : 0,
+      'timeSlots': List<String>.from(_selectedTimeSlots),
+    };
+
+    if (_pricingMode == 'resident_type') {
+      values['ownerPricePerDay'] = double.tryParse(
+        _ownerPriceController.text.trim(),
+      );
+      values['tenantPricePerDay'] = double.tryParse(
+        _tenantPriceController.text.trim(),
+      );
+    }
+
+    return values;
+  }
+
+  void _addCustomSlot() {
+    final slot = _customTimeSlotController.text.trim();
+    if (slot.isEmpty) return;
+    setState(() {
+      if (!_selectedTimeSlots.contains(slot)) _selectedTimeSlots.add(slot);
+      _customTimeSlotController.clear();
     });
   }
 
@@ -99,6 +171,12 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
     _nameController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
+    _ownerPriceController.dispose();
+    _tenantPriceController.dispose();
+    _typeController.dispose();
+    _customTypeController.dispose();
+    _imageUrlController.dispose();
+    _customTimeSlotController.dispose();
     super.dispose();
   }
 
@@ -143,40 +221,20 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                 ),
                 SizedBox(height: 24.h),
 
-                // Building Selection
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedBuildingId,
-                  decoration: InputDecoration(
-                    labelText: 'Building *',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8.r),
-                    ),
+                // Facilities V1 preserves the original building assignment.
+                InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Building'),
+                  child: Text(
+                    widget.amenity.buildingName.isNotEmpty
+                        ? widget.amenity.buildingName
+                        : widget.amenity.buildingId,
                   ),
-                  items: _buildings.map((building) {
-                    return DropdownMenuItem(
-                      value: building.id,
-                      child: Text(building.name),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedBuildingId = value!;
-                      _selectedBuildingName = _buildings
-                          .firstWhere((b) => b.id == value)
-                          .name;
-                    });
-                  },
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please select a building';
-                    }
-                    return null;
-                  },
                 ),
                 SizedBox(height: 16.h),
 
                 // Name
                 TextFormField(
+                  key: const ValueKey('facility-name'),
                   controller: _nameController,
                   decoration: InputDecoration(
                     labelText: 'Amenity Name *',
@@ -185,7 +243,7 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) {
+                    if (value == null || value.trim().isEmpty) {
                       return 'Please enter amenity name';
                     }
                     return null;
@@ -193,23 +251,67 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                 ),
                 SizedBox(height: 16.h),
 
-                // Type
                 DropdownButtonFormField<String>(
-                  initialValue: _selectedType,
+                  key: const ValueKey('facility-type'),
+                  initialValue: _selectedFacilityType,
                   decoration: InputDecoration(
-                    labelText: 'Type *',
+                    labelText: 'Facility type *',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8.r),
                     ),
                   ),
-                  items: _types.map((type) {
-                    return DropdownMenuItem(value: type, child: Text(type));
-                  }).toList(),
+                  items: _facilityTypeOptions
+                      .map(
+                        (type) => DropdownMenuItem<String>(
+                          value: type,
+                          child: Text(type),
+                        ),
+                      )
+                      .toList(),
                   onChanged: (value) {
+                    if (value == null) return;
                     setState(() {
-                      _selectedType = value!;
+                      _selectedFacilityType = value;
+                      _typeController.text = value == 'Other'
+                          ? _customTypeController.text.trim()
+                          : value;
                     });
                   },
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Please select facility type'
+                      : null,
+                ),
+                if (_selectedFacilityType == 'Other') ...[
+                  SizedBox(height: 12.h),
+                  TextFormField(
+                    key: const ValueKey('facility-type-custom'),
+                    controller: _customTypeController,
+                    decoration: InputDecoration(
+                      labelText: 'Specify facility type *',
+                      hintText: 'Enter facility type',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8.r),
+                      ),
+                    ),
+                    onChanged: (value) {
+                      _typeController.text = value.trim();
+                    },
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? 'Please specify facility type'
+                        : null,
+                  ),
+                ],
+                SizedBox(height: 16.h),
+                TextFormField(
+                  key: const ValueKey('facility-image'),
+                  controller: _imageUrlController,
+                  decoration: InputDecoration(
+                    labelText: 'Image URL (optional)',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8.r),
+                    ),
+                  ),
+                  validator: AmenityService.imageUrlValidationError,
                 ),
                 SizedBox(height: 16.h),
 
@@ -261,56 +363,223 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                   }).toList(),
                 ),
                 SizedBox(height: 16.h),
+                // Facility fee
+                Text(
+                  'Facility fee *',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
 
-                // Free/Paid
+                SizedBox(height: 12.h),
+
                 Row(
                   children: [
-                    Checkbox(
-                      value: _isFree,
-                      onChanged: (value) {
-                        setState(() {
-                          _isFree = value!;
-                          if (_isFree) {
-                            _priceController.clear();
-                          }
-                        });
-                      },
-                      activeColor: const Color(0xFF0E4778),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _pricingMode = 'free';
+                          });
+                        },
+                        child: Container(
+                          padding: EdgeInsets.all(16.w),
+                          decoration: BoxDecoration(
+                            color: _pricingMode == 'free'
+                                ? const Color(0xFF10B981).withOpacity(0.1)
+                                : const Color(0xFFF3F4F6),
+                            borderRadius: BorderRadius.circular(8.r),
+                            border: Border.all(
+                              color: _pricingMode == 'free'
+                                  ? const Color(0xFF10B981)
+                                  : Colors.transparent,
+                              width: 2,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                _pricingMode == 'free'
+                                    ? Icons.check_circle
+                                    : Icons.circle_outlined,
+                                color: _pricingMode == 'free'
+                                    ? const Color(0xFF10B981)
+                                    : const Color(0xFF6B7280),
+                                size: 20.w,
+                              ),
+                              SizedBox(width: 8.w),
+                              Text(
+                                'Free',
+                                style: TextStyle(
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.w600,
+                                  color: _pricingMode == 'free'
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFF6B7280),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                    Text(
-                      'Free Amenity',
-                      style: TextStyle(
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF111111),
+                    SizedBox(width: 12.w),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            if (_pricingMode == 'free') {
+                              _pricingMode = 'flat';
+                            }
+                          });
+                        },
+                        child: Container(
+                          padding: EdgeInsets.all(16.w),
+                          decoration: BoxDecoration(
+                            color: _pricingMode != 'free'
+                                ? const Color(0xFF0E4778).withOpacity(0.1)
+                                : const Color(0xFFF3F4F6),
+                            borderRadius: BorderRadius.circular(8.r),
+                            border: Border.all(
+                              color: _pricingMode != 'free'
+                                  ? const Color(0xFF0E4778)
+                                  : Colors.transparent,
+                              width: 2,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                _pricingMode != 'free'
+                                    ? Icons.check_circle
+                                    : Icons.circle_outlined,
+                                color: _pricingMode != 'free'
+                                    ? const Color(0xFF0E4778)
+                                    : const Color(0xFF6B7280),
+                                size: 20.w,
+                              ),
+                              SizedBox(width: 8.w),
+                              Text(
+                                'Chargeable',
+                                style: TextStyle(
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.w600,
+                                  color: _pricingMode != 'free'
+                                      ? const Color(0xFF0E4778)
+                                      : const Color(0xFF6B7280),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ],
                 ),
 
-                // Price (if not free)
-                if (!_isFree) ...[
+                if (_pricingMode != 'free') ...[
+                  SizedBox(height: 16.h),
+
+                  Text(
+                    'Chargeable pricing',
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF111827),
+                    ),
+                  ),
+
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    value: 'flat',
+                    groupValue: _pricingMode,
+                    title: const Text('Same fee for everyone'),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _pricingMode = value;
+                      });
+                    },
+                  ),
+
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    value: 'resident_type',
+                    groupValue: _pricingMode,
+                    title: const Text('Different fee by resident type'),
+                    subtitle: const Text(
+                      'Separate fee for Owner and Tenant / Lease',
+                    ),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _pricingMode = value;
+                      });
+                    },
+                  ),
+                ],
+
+                if (_pricingMode == 'flat') ...[
                   SizedBox(height: 8.h),
                   TextFormField(
+                    key: const ValueKey('facility-price'),
                     controller: _priceController,
                     decoration: InputDecoration(
-                      labelText: 'Price per Day *',
+                      labelText: 'Fee per Day *',
                       prefixText: '₹ ',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8.r),
                       ),
                     ),
-                    keyboardType: TextInputType.number,
-                    validator: (value) {
-                      if (!_isFree && (value == null || value.isEmpty)) {
-                        return 'Please enter price';
-                      }
-                      return null;
-                    },
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    validator: AmenityService.priceValidationError,
                   ),
                 ],
-                SizedBox(height: 16.h),
 
+                if (_pricingMode == 'resident_type') ...[
+                  SizedBox(height: 8.h),
+
+                  TextFormField(
+                    key: const ValueKey('facility-owner-price'),
+                    controller: _ownerPriceController,
+                    decoration: InputDecoration(
+                      labelText: 'Owner fee per Day *',
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8.r),
+                      ),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    validator: AmenityService.priceValidationError,
+                  ),
+
+                  SizedBox(height: 12.h),
+
+                  TextFormField(
+                    key: const ValueKey('facility-tenant-price'),
+                    controller: _tenantPriceController,
+                    decoration: InputDecoration(
+                      labelText: 'Tenant / Lease fee per Day *',
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8.r),
+                      ),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    validator: AmenityService.priceValidationError,
+                  ),
+                ],
+                SizedBox(height: 12.h),
                 // Time Slots Section
                 Text(
                   'Time Slots',
@@ -348,10 +617,11 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                               TextButton(
                                 onPressed: () {
                                   setState(() {
-                                    _selectedTimeSlots.clear();
-                                    _selectedTimeSlots.addAll(
-                                      _availableTimeSlots,
-                                    );
+                                    for (final slot in _availableTimeSlots) {
+                                      if (!_selectedTimeSlots.contains(slot)) {
+                                        _selectedTimeSlots.add(slot);
+                                      }
+                                    }
                                   });
                                 },
                                 style: TextButton.styleFrom(
@@ -385,6 +655,40 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                                 ),
                               ),
                             ],
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8.h),
+
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          for (var i = 0; i < _selectedTimeSlots.length; i++)
+                            InputChip(
+                              key: ValueKey('selected-slot-$i'),
+                              label: Text(_selectedTimeSlots[i]),
+                              onDeleted: () => setState(
+                                () => _selectedTimeSlots.removeAt(i),
+                              ),
+                            ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              key: const ValueKey('custom-time-slot'),
+                              controller: _customTimeSlotController,
+                              decoration: const InputDecoration(
+                                labelText: 'Custom time slot',
+                              ),
+                              onSubmitted: (_) => _addCustomSlot(),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Add time slot',
+                            onPressed: _addCustomSlot,
+                            icon: const Icon(Icons.add),
                           ),
                         ],
                       ),
@@ -496,28 +800,27 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
   }
 
   Future<void> _submitForm() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_isLoading || !_formKey.currentState!.validate()) return;
 
     setState(() {
       _isLoading = true;
     });
 
     try {
-      await _amenityService.updateAmenity(widget.amenity.id, {
-        'name': _nameController.text.trim(),
-        'type': _selectedType,
-        'isFree': _isFree,
-        'pricePerDay': _isFree
-            ? 0
-            : double.tryParse(_priceController.text) ?? 0,
-        'description': _descriptionController.text.trim().isEmpty
-            ? null
-            : _descriptionController.text.trim(),
-        'iconName': _selectedIcon,
-        'timeSlots': _selectedTimeSlots.isEmpty ? null : _selectedTimeSlots,
-        'buildingId': _selectedBuildingId,
-        'buildingName': _selectedBuildingName,
-      });
+      final values = _formValues();
+      final updates = <String, dynamic>{};
+      for (final entry in values.entries) {
+        final unchanged = entry.key == 'timeSlots'
+            ? listEquals(
+                entry.value as List<String>,
+                _initialValues[entry.key] as List<String>,
+              )
+            : entry.value == _initialValues[entry.key];
+        if (!unchanged) updates[entry.key] = entry.value;
+      }
+      if (updates.isNotEmpty) {
+        await _amenityService.updateAmenity(widget.amenity.id, updates);
+      }
 
       if (mounted) {
         Navigator.pop(context);

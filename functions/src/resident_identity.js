@@ -1,9 +1,10 @@
-const {randomUUID} = require("node:crypto");
-const {FieldValue} = require("firebase-admin/firestore");
-const {RegistrationError, verifiedPhoneAuth} = require("./register_resident");
-const {normalizePhone} = require("./resident_bulk_import");
-const {residentOnboardingId} = require("./resident_import_ids");
-const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
+const { normalizeLabel, unitLabel, assertSafelyVacant } = require('./unit_schema');
+const { randomUUID } = require("node:crypto");
+const { FieldValue } = require("firebase-admin/firestore");
+const { RegistrationError, verifiedPhoneAuth } = require("./register_resident");
+const { normalizePhone } = require("./resident_bulk_import");
+const { residentOnboardingId } = require("./resident_import_ids");
+const { AUDIT_ACTIONS, writeAuditLogBestEffort } = require("./audit_log");
 
 const VERIFICATION_STATUSES = new Set([
   "verification_required",
@@ -61,7 +62,7 @@ function trustedResidentType(profile) {
     clean(profile?.ownershipType);
   const hasDeclaredField = clean(profile?.declaredResidentType);
   if ((hasCanonicalFields && !canonical) ||
-      (hasDeclaredField && !declared)) return null;
+    (hasDeclaredField && !declared)) return null;
   if (canonical && declared && canonical !== declared) return null;
   return canonical || declared || null;
 }
@@ -95,7 +96,7 @@ function resolveFlatOccupant(flat) {
     if (!value) {
       throw new RegistrationError("failed-precondition", `Flat ${field} is malformed.`);
     }
-    pointers.push({field, value});
+    pointers.push({ field, value });
   }
   if ("residentIds" in data && data.residentIds != null) {
     if (!Array.isArray(data.residentIds) || data.residentIds.length > 1) {
@@ -106,27 +107,27 @@ function resolveFlatOccupant(flat) {
       if (!value) {
         throw new RegistrationError("failed-precondition", "Flat residentIds is malformed.");
       }
-      pointers.push({field: "residentIds", value});
+      pointers.push({ field: "residentIds", value });
     }
   }
-  const values = new Set(pointers.map(({value}) => value));
+  const values = new Set(pointers.map(({ value }) => value));
   if (values.size > 1) {
     throw new RegistrationError("failed-precondition", "Flat occupant references conflict.");
   }
   const uid = pointers[0]?.value ?? null;
   return {
     uid,
-    usesCanonicalField: pointers.some(({field}) => field === "residentUserId"),
+    usesCanonicalField: pointers.some(({ field }) => field === "residentUserId"),
     needsCanonicalization: uid != null &&
-      (pointers.some(({field}) => field !== "residentUserId") ||
-       !pointers.some(({field}) => field === "residentUserId")),
+      (pointers.some(({ field }) => field !== "residentUserId") ||
+        !pointers.some(({ field }) => field === "residentUserId")),
   };
 }
 
-function residentOccupancyState(profile, {communityId, flatId}) {
+function residentOccupancyState(profile, { communityId, flatId }) {
   if (!profile || profile.role !== "resident" ||
-      clean(profile.communityId) !== communityId ||
-      !canonicalResidentType(profile)) {
+    clean(profile.communityId) !== communityId ||
+    !canonicalResidentType(profile)) {
     return "ambiguous";
   }
   const movedOut = profile.occupancyStatus === "moved_out" || profile.status === "moved_out";
@@ -134,17 +135,17 @@ function residentOccupancyState(profile, {communityId, flatId}) {
   if (assignedFlatId !== flatId) return "ambiguous";
   if (profile.isActive === false || movedOut || profile.status === "inactive") return "inactive";
   if (profile.isActive === true && profile.approvalStatus === "approved" &&
-      (!clean(profile.status) || profile.status === "active") &&
-      (!clean(profile.occupancyStatus) || profile.occupancyStatus === "current")) {
+    (!clean(profile.status) || profile.status === "active") &&
+    (!clean(profile.occupancyStatus) || profile.occupancyStatus === "current")) {
     return "active";
   }
   return "ambiguous";
 }
 
-function validateBuildingAndFlat({buildingSnapshot, flatSnapshot, communityId, buildingId}) {
+function validateBuildingAndFlat({ buildingSnapshot, flatSnapshot, communityId, buildingId }) {
   if (!buildingSnapshot.exists || buildingSnapshot.data()?.communityId !== communityId ||
-      !flatSnapshot.exists || flatSnapshot.data()?.communityId !== communityId ||
-      flatSnapshot.data()?.buildingId !== buildingId) {
+    !flatSnapshot.exists || flatSnapshot.data()?.communityId !== communityId ||
+    flatSnapshot.data()?.buildingId !== buildingId) {
     throw new RegistrationError("permission-denied", "Building or unit is outside the authorized community.");
   }
 }
@@ -173,41 +174,42 @@ function operationalAccessFailure(profile, community) {
   return null;
 }
 
-async function requireOperationalAdmin(db, auth, communityId) {
-  const {uid} = verifiedPhoneAuth(auth);
-  const adminSnapshot = await db.collection("admins").doc(uid).get();
+async function requireOperationalAdmin(db, auth, communityId, transaction) {
+  const { uid } = verifiedPhoneAuth(auth);
+  const read = (ref) => transaction ? transaction.get(ref) : ref.get();
+  const adminSnapshot = await read(db.collection("admins").doc(uid));
   const admin = adminSnapshot.data();
   if (!adminSnapshot.exists || admin?.uid !== uid || admin?.role !== "admin" ||
-      admin?.isActive !== true || !Array.isArray(admin?.authorizedCommunityIds) ||
-      !admin.authorizedCommunityIds.includes(communityId)) {
+    admin?.isActive !== true || !Array.isArray(admin?.authorizedCommunityIds) ||
+    !admin.authorizedCommunityIds.includes(communityId)) {
     throw new RegistrationError("permission-denied", "An authorized active Admin is required.");
   }
-  const communitySnapshot = await db.collection("communities").doc(communityId).get();
+  const communitySnapshot = await read(db.collection("communities").doc(communityId));
   if (!communitySnapshot.exists || communitySnapshot.data()?.isActive !== true) {
     throw new RegistrationError("failed-precondition", "Community is inactive or unavailable.");
   }
-  return {uid, community: {id: communityId, ...communitySnapshot.data()}};
+  return { uid, community: { id: communityId, ...communitySnapshot.data() } };
 }
 
 function validateApprovalInput(data) {
   const allowed = new Set(["communityId", "userId", "buildingId", "flatId", "residentType"]);
   if (!data || typeof data !== "object" || Array.isArray(data) ||
-      Object.keys(data).some((key) => !allowed.has(key))) {
+    Object.keys(data).some((key) => !allowed.has(key))) {
     throw new RegistrationError("invalid-argument", "A valid resident approval request is required.");
   }
   const result = Object.fromEntries([...allowed].map((key) => [key, clean(data[key])]));
   result.residentType = result.residentType.toLowerCase();
   if (!result.communityId || !result.userId || !result.buildingId || !result.flatId ||
-      !RESIDENT_TYPES.has(result.residentType)) {
+    !RESIDENT_TYPES.has(result.residentType)) {
     throw new RegistrationError("invalid-argument", "Community, resident, building, unit, and resident type are required.");
   }
   return result;
 }
 
-function validateLifecycleInput(data, {allowReason = false} = {}) {
+function validateLifecycleInput(data, { allowReason = false } = {}) {
   const allowed = new Set(["communityId", "userId", ...(allowReason ? ["reason"] : [])]);
   if (!data || typeof data !== "object" || Array.isArray(data) ||
-      Object.keys(data).some((key) => !allowed.has(key))) {
+    Object.keys(data).some((key) => !allowed.has(key))) {
     throw new RegistrationError("invalid-argument", "A valid resident lifecycle request is required.");
   }
   const communityId = clean(data.communityId);
@@ -216,13 +218,13 @@ function validateLifecycleInput(data, {allowReason = false} = {}) {
   if (!communityId || !userId) {
     throw new RegistrationError("invalid-argument", "Community and resident are required.");
   }
-  return {communityId, userId, reason};
+  return { communityId, userId, reason };
 }
 
 function validateReassignmentInput(data) {
   const allowed = new Set(["communityId", "userId", "buildingId", "flatId"]);
   if (!data || typeof data !== "object" || Array.isArray(data) ||
-      Object.keys(data).some((key) => !allowed.has(key))) {
+    Object.keys(data).some((key) => !allowed.has(key))) {
     throw new RegistrationError("invalid-argument", "A valid resident reassignment request is required.");
   }
   const result = Object.fromEntries([...allowed].map((key) => [key, clean(data[key])]));
@@ -244,7 +246,7 @@ function validateSingleOnboardingInput(data, community) {
     "unitReference",
   ]);
   if (!data || typeof data !== "object" || Array.isArray(data) ||
-      Object.keys(data).some((key) => !allowed.has(key))) {
+    Object.keys(data).some((key) => !allowed.has(key))) {
     throw new RegistrationError("invalid-argument", "A valid resident onboarding request is required.");
   }
   const communityId = clean(data.communityId);
@@ -255,14 +257,14 @@ function validateSingleOnboardingInput(data, community) {
   const buildingReference = clean(data.buildingReference) || null;
   const unitReference = clean(data.unitReference) || null;
   if (!communityId || residentName.length < 2 || residentName.length > 120 ||
-      !RESIDENT_TYPES.has(residentType)) {
+    !RESIDENT_TYPES.has(residentType)) {
     throw new RegistrationError("invalid-argument", "Community, resident name, and resident type are required.");
   }
   if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
     throw new RegistrationError("invalid-argument", "Enter a valid email address.");
   }
   if (familyMembers != null && (!Number.isInteger(familyMembers) ||
-      familyMembers < 1 || familyMembers > 100)) {
+    familyMembers < 1 || familyMembers > 100)) {
     throw new RegistrationError("invalid-argument", "Family members must be an integer from 1 to 100.");
   }
   if ((buildingReference?.length ?? 0) > 120 || (unitReference?.length ?? 0) > 120) {
@@ -288,7 +290,7 @@ function validateSingleOnboardingInput(data, community) {
   };
 }
 
-async function approveResidentRegistrationCore({db, auth, data}) {
+async function approveResidentRegistrationCore({ db, auth, data }) {
   const input = validateApprovalInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
@@ -337,15 +339,38 @@ async function approveResidentRegistrationCore({db, auth, data}) {
     }
     const flat = flatSnapshot.data();
     const occupant = resolveFlatOccupant(flat);
-    const safelyVacant = flat.status === "vacant" && occupant.uid == null;
-    const sameResidentRetry = flat.status === "occupied" &&
+
+    const residentPhone =
+      clean(resident.phoneNumber) ||
+      clean(resident.phone);
+
+    const expectedOnboardingId = residentPhone
+      ? residentOnboardingId(input.communityId, residentPhone)
+      : "";
+
+    const safelyVacant =
+      flat.status === "vacant" &&
+      occupant.uid == null &&
+      !clean(flat.reservedOnboardingId);
+
+    const matchingReservation =
+      flat.status === "reserved" &&
+      occupant.uid == null &&
+      expectedOnboardingId &&
+      clean(flat.reservedOnboardingId) === expectedOnboardingId &&
+      clean(resident.flatId) === input.flatId &&
+      clean(resident.buildingId) === input.buildingId;
+
+    const sameResidentRetry =
+      flat.status === "occupied" &&
       occupant.uid === input.userId &&
       clean(resident.flatId) === input.flatId &&
       clean(resident.buildingId) === input.buildingId;
-    if (!safelyVacant && !sameResidentRetry) {
+
+    if (!safelyVacant && !matchingReservation && !sameResidentRetry) {
       throw new RegistrationError(
         "failed-precondition",
-        "This unit is not safely vacant for resident approval.",
+        "This unit is not available or reserved for this resident.",
       );
     }
     if (sameFlatSnapshot.docs.some((doc) => doc.id !== input.userId)) {
@@ -386,6 +411,16 @@ async function approveResidentRegistrationCore({db, auth, data}) {
     });
     transaction.update(flatRef, {
       status: "occupied",
+
+      // Clear reservation metadata
+      reservedOnboardingId: FieldValue.delete(),
+      reservedForName: FieldValue.delete(),
+      reservedForPhone: FieldValue.delete(),
+      reservedResidentType: FieldValue.delete(),
+      reservedBy: FieldValue.delete(),
+      reservedAt: FieldValue.delete(),
+
+      // Set real resident occupancy
       residentUserId: input.userId,
       residentUid: FieldValue.delete(),
       residentIds: FieldValue.delete(),
@@ -399,7 +434,7 @@ async function approveResidentRegistrationCore({db, auth, data}) {
       targetStatus: "occupied",
       timestamp,
     }));
-    return {status: "approved", isActive: active, identityVerificationRequired: false};
+    return { status: "approved", isActive: active, identityVerificationRequired: false };
   });
   await auditResidentAction({
     db,
@@ -432,32 +467,48 @@ function vacantFlatUpdate(timestamp) {
   };
 }
 
-function buildingOccupancyUpdate(flatSnapshot, {targetFlatId, targetStatus, timestamp}) {
+function buildingOccupancyUpdate(
+  flatSnapshot,
+  { targetFlatId, targetStatus, timestamp },
+) {
   let occupied = 0;
+  let reserved = 0;
   let vacant = 0;
+
   for (const doc of flatSnapshot.docs) {
-    const status = doc.id === targetFlatId ? targetStatus : clean(doc.data()?.status);
+    const status =
+      doc.id === targetFlatId
+        ? targetStatus
+        : clean(doc.data()?.status);
+
     if (status === "occupied") occupied += 1;
+    if (status === "reserved") reserved += 1;
     if (status === "vacant") vacant += 1;
   }
+
   const total = flatSnapshot.docs.length;
+
   return {
     occupied,
+    reserved,
     vacant,
-    occupancyRate: total > 0 ? Math.round((occupied / total) * 100) : 0,
+    occupancyRate:
+      total > 0
+        ? Math.round((occupied / total) * 100)
+        : 0,
     updatedAt: timestamp,
   };
 }
 
-async function rejectResidentRegistrationCore({db, auth, data}) {
-  const input = validateLifecycleInput(data, {allowReason: true});
+async function rejectResidentRegistrationCore({ db, auth, data }) {
+  const input = validateLifecycleInput(data, { allowReason: true });
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
   const result = await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
-        resident?.communityId !== input.communityId) {
+      resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
     if (resident.approvalStatus !== "pending" || resident.isActive !== false) {
@@ -516,7 +567,7 @@ async function rejectResidentRegistrationCore({db, auth, data}) {
       rejectedReason: input.reason || null,
       updatedAt: timestamp,
     });
-    return {status: "rejected", staleOccupantCleared};
+    return { status: "rejected", staleOccupantCleared };
   });
   await auditResidentAction({
     db,
@@ -535,7 +586,7 @@ async function rejectResidentRegistrationCore({db, auth, data}) {
   return result;
 }
 
-async function deactivateResidentCore({db, auth, data}) {
+async function deactivateResidentCore({ db, auth, data }) {
   const input = validateLifecycleInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
@@ -543,13 +594,13 @@ async function deactivateResidentCore({db, auth, data}) {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
-        resident?.communityId !== input.communityId) {
+      resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
     const flatId = clean(resident.flatId);
     const buildingId = clean(resident.buildingId);
     if (!flatId || !buildingId ||
-        residentOccupancyState(resident, {communityId: input.communityId, flatId}) !== "active") {
+      residentOccupancyState(resident, { communityId: input.communityId, flatId }) !== "active") {
       throw new RegistrationError("failed-precondition", "Only a valid active resident can be deactivated.");
     }
     const [flatSnapshot, buildingSnapshot] = await Promise.all([
@@ -569,6 +620,13 @@ async function deactivateResidentCore({db, auth, data}) {
         "Resident cannot be suspended because the unit occupant does not match.",
       );
     }
+    await assertNoActiveSos(
+      db,
+      transaction,
+      input.userId,
+      input.communityId,
+      "deactivating the resident",
+    );
     const timestamp = FieldValue.serverTimestamp();
     transaction.update(userRef, {
       isActive: false,
@@ -578,7 +636,7 @@ async function deactivateResidentCore({db, auth, data}) {
       deactivatedBy: actor.uid,
       updatedAt: timestamp,
     });
-    return {status: "inactive", occupancyStatus: "suspended", occupantRetained: true};
+    return { status: "inactive", occupancyStatus: "suspended", occupantRetained: true };
   });
   await auditResidentAction({
     db,
@@ -587,12 +645,12 @@ async function deactivateResidentCore({db, auth, data}) {
     action: AUDIT_ACTIONS.residentDeactivate,
     targetId: input.userId,
     summary: "Resident access deactivated.",
-    metadata: {previousStatus: "active", newStatus: "inactive"},
+    metadata: { previousStatus: "active", newStatus: "inactive" },
   });
   return result;
 }
 
-async function reactivateResidentCore({db, auth, data}) {
+async function reactivateResidentCore({ db, auth, data }) {
   const input = validateLifecycleInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
@@ -600,17 +658,17 @@ async function reactivateResidentCore({db, auth, data}) {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
-        resident?.communityId !== input.communityId) {
+      resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
     if (resident.approvalStatus !== "approved" || resident.isActive !== false ||
-        clean(resident.status) !== "inactive" ||
-        clean(resident.occupancyStatus) !== "suspended") {
+      clean(resident.status) !== "inactive" ||
+      clean(resident.occupancyStatus) !== "suspended") {
       throw new RegistrationError("failed-precondition", "Only a suspended approved resident can be reactivated.");
     }
     const residentType = trustedResidentType(resident);
     if (!residentType ||
-        (identityVerificationRequired(residentType, actor.community) && !identityIsVerified(resident))) {
+      (identityVerificationRequired(residentType, actor.community) && !identityIsVerified(resident))) {
       throw new RegistrationError(
         "failed-precondition",
         "Resident identity and owner or tenant eligibility must be valid before reactivation.",
@@ -667,7 +725,7 @@ async function reactivateResidentCore({db, auth, data}) {
       reactivatedBy: actor.uid,
       updatedAt: timestamp,
     });
-    return {status: "active", occupancyStatus: "current"};
+    return { status: "active", occupancyStatus: "current" };
   });
   await auditResidentAction({
     db,
@@ -676,12 +734,12 @@ async function reactivateResidentCore({db, auth, data}) {
     action: AUDIT_ACTIONS.residentReactivate,
     targetId: input.userId,
     summary: "Resident access reactivated.",
-    metadata: {previousStatus: "inactive", newStatus: "active"},
+    metadata: { previousStatus: "inactive", newStatus: "active" },
   });
   return result;
 }
 
-async function reassignResidentCore({db, auth, data}) {
+async function reassignResidentCore({ db, auth, data, transactionExtras }) {
   const input = validateReassignmentInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
@@ -698,14 +756,14 @@ async function reassignResidentCore({db, auth, data}) {
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || clean(resident?.uid) !== input.userId ||
-        resident?.role !== "resident" ||
-        resident?.communityId !== input.communityId) {
+      resident?.role !== "resident" ||
+      resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
     if (resident.approvalStatus !== "approved" || resident.isActive !== false ||
-        clean(resident.status) !== "inactive" ||
-        clean(resident.occupancyStatus) !== "moved_out" ||
-        clean(resident.flatId) || clean(resident.buildingId)) {
+      clean(resident.status) !== "inactive" ||
+      clean(resident.occupancyStatus) !== "moved_out" ||
+      clean(resident.flatId) || clean(resident.buildingId)) {
       throw new RegistrationError(
         "failed-precondition",
         "Only a previously moved-out resident without a current assignment can be reassigned.",
@@ -713,7 +771,7 @@ async function reassignResidentCore({db, auth, data}) {
     }
     const residentType = trustedResidentType(resident);
     if (!residentType ||
-        (identityVerificationRequired(residentType, actor.community) && !identityIsVerified(resident))) {
+      (identityVerificationRequired(residentType, actor.community) && !identityIsVerified(resident))) {
       throw new RegistrationError(
         "failed-precondition",
         "Resident identity and owner or tenant eligibility must be valid before reassignment.",
@@ -768,7 +826,15 @@ async function reassignResidentCore({db, auth, data}) {
         "Another active resident profile uses this phone identity.",
       );
     }
-
+    await assertNoActiveSos(
+      db,
+      transaction,
+      input.userId,
+      input.communityId,
+      "reassigning the resident",
+    );
+    assertSafelyVacant(flat);
+    const extraWrites = transactionExtras ? await transactionExtras(transaction) : null;
     const timestamp = FieldValue.serverTimestamp();
     const building = buildingSnapshot.data();
     transaction.update(userRef, {
@@ -804,7 +870,8 @@ async function reassignResidentCore({db, auth, data}) {
       targetStatus: "occupied",
       timestamp,
     }));
-    return {status: "active", occupancyStatus: "current", userId: input.userId};
+    if (extraWrites) extraWrites();
+    return { status: "active", occupancyStatus: "current", userId: input.userId };
   });
   await auditResidentAction({
     db,
@@ -823,7 +890,523 @@ async function reassignResidentCore({db, auth, data}) {
   return result;
 }
 
-async function createResidentOnboardingCore({db, auth, data}) {
+function validateOnboardingAssignmentInput(data) {
+  const communityId = clean(data?.communityId);
+  const onboardingId = clean(data?.onboardingId);
+  const buildingId = clean(data?.buildingId);
+  const flatId = clean(data?.flatId);
+
+  if (!communityId || !onboardingId || !buildingId || !flatId) {
+    throw new RegistrationError(
+      "invalid-argument",
+      "Community, onboarding resident, building, and unit are required.",
+    );
+  }
+
+  return {
+    communityId,
+    onboardingId,
+    buildingId,
+    flatId,
+  };
+}
+async function listAssignableResidentOnboardingsCore({ db, auth, data }) {
+  const communityId = clean(data?.communityId);
+
+  if (!communityId) {
+    throw new RegistrationError(
+      "invalid-argument",
+      "Community is required.",
+    );
+  }
+
+  await requireOperationalAdmin(db, auth, communityId);
+
+  const snapshot = await db
+    .collection("residentOnboarding")
+    .where("communityId", "==", communityId)
+    .where("approvalStatus", "==", "pending")
+    .get();
+
+  const residents = snapshot.docs
+    .map((doc) => {
+      const value = doc.data();
+
+      return {
+        id: doc.id,
+        residentName: clean(value?.residentName),
+        phoneNumber: clean(value?.phoneNumber),
+        residentType: clean(value?.residentType),
+        status: clean(value?.status),
+        claimedByUid: value?.claimedByUid ?? null,
+        buildingReference: clean(value?.buildingReference),
+        unitReference: clean(value?.unitReference),
+      };
+    })
+    .filter((resident) =>
+      resident.status === "pending_registration" &&
+      resident.claimedByUid == null &&
+      !resident.buildingReference &&
+      !resident.unitReference
+    );
+
+  return {
+    residents,
+  };
+}
+async function assignResidentOnboardingToFlatCore({ db, auth, data }) {
+  const input = validateOnboardingAssignmentInput(data);
+
+  const actor = await requireOperationalAdmin(
+    db,
+    auth,
+    input.communityId,
+  );
+
+  const onboardingRef = db
+    .collection("residentOnboarding")
+    .doc(input.onboardingId);
+
+  const buildingRef = db
+    .collection("buildings")
+    .doc(input.buildingId);
+
+  const flatRef = db
+    .collection("flats")
+    .doc(input.flatId);
+  const buildingFlatsQuery = db
+    .collection("flats")
+    .where("communityId", "==", input.communityId)
+    .where("buildingId", "==", input.buildingId);
+
+  return db.runTransaction(async (transaction) => {
+    const [
+      onboardingSnapshot,
+      buildingSnapshot,
+      flatSnapshot,
+      buildingFlatsSnapshot,
+    ] = await Promise.all([
+      transaction.get(onboardingRef),
+      transaction.get(buildingRef),
+      transaction.get(flatRef),
+      transaction.get(buildingFlatsQuery),
+    ]);
+
+    if (!onboardingSnapshot.exists) {
+      throw new RegistrationError(
+        "not-found",
+        "Resident onboarding record was not found.",
+      );
+    }
+
+    const onboarding = onboardingSnapshot.data();
+
+    if (
+      onboarding?.communityId !== input.communityId ||
+      onboarding?.approvalStatus !== "pending" ||
+      onboarding?.status !== "pending_registration" ||
+      onboarding?.claimedByUid != null
+    ) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "Only an unclaimed pending onboarding resident can be assigned.",
+      );
+    }
+
+    if (
+      clean(onboarding?.buildingReference) ||
+      clean(onboarding?.unitReference)
+    ) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "This onboarding resident is already assigned to a unit.",
+      );
+    }
+
+    validateBuildingAndFlat({
+      buildingSnapshot,
+      flatSnapshot,
+      communityId: input.communityId,
+      buildingId: input.buildingId,
+    });
+
+    const flat = flatSnapshot.data();
+    const occupant = resolveFlatOccupant(flat);
+
+    if (flat?.status !== "vacant" || occupant.uid != null) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "This unit is not safely vacant.",
+      );
+    }
+
+    assertSafelyVacant(flat);
+
+    const buildingReference =
+      clean(buildingSnapshot.data()?.buildingName) ||
+      clean(buildingSnapshot.data()?.name) ||
+      input.buildingId;
+
+    const unitReference =
+      clean(flat?.flatLabel) ||
+      clean(flat?.flatId) ||
+      clean(flat?.unitId) ||
+      input.flatId;
+
+    const timestamp = FieldValue.serverTimestamp();
+
+    transaction.update(onboardingRef, {
+      buildingReference,
+      unitReference,
+      buildingId: input.buildingId,
+      buildingName: buildingReference,
+      flatId: input.flatId,
+      unitId:
+        clean(flat?.unitId) ||
+        clean(flat?.flatId) ||
+        input.flatId,
+      flatLabel:
+        clean(flat?.flatLabel) ||
+        clean(flat?.flatId) ||
+        unitReference,
+      updatedAt: timestamp,
+    });
+
+    transaction.update(flatRef, {
+      status: "reserved",
+      reservedOnboardingId: input.onboardingId,
+      reservedForName: clean(onboarding?.residentName) || null,
+      reservedForPhone: clean(onboarding?.phoneNumber) || null,
+      reservedResidentType: clean(onboarding?.residentType) || null,
+      reservedBy: actor.uid,
+      reservedAt: timestamp,
+      updatedAt: timestamp,
+    });
+    transaction.update(
+      buildingRef,
+      buildingOccupancyUpdate(
+        buildingFlatsSnapshot,
+        {
+          targetFlatId: input.flatId,
+          targetStatus: "reserved",
+          timestamp,
+        },
+      ),
+    );
+
+    return {
+      status: "assigned",
+      onboardingId: input.onboardingId,
+      buildingReference,
+      unitReference,
+    };
+  });
+}
+async function renameUnitCore({ db, auth, data }) {
+  const communityId = clean(data?.communityId);
+  const buildingId = clean(data?.buildingId);
+  const flatId = clean(data?.flatId);
+  const newLabel = clean(data?.newLabel);
+
+  if (!communityId || !buildingId || !flatId || !newLabel || newLabel.length > 120) {
+    throw new RegistrationError(
+      "invalid-argument",
+      "Community, building, unit, and new unit name are required."
+    );
+  }
+
+  await requireOperationalAdmin(
+    db,
+    auth,
+    communityId
+  );
+
+  const flatRef = db.collection("flats").doc(flatId);
+
+  return db.runTransaction(async (transaction) => {
+    // ---------------------------------------------------------
+    // STEP 1: ALL READS FIRST
+    // ---------------------------------------------------------
+
+    const flatSnapshot = await transaction.get(flatRef);
+
+    if (!flatSnapshot.exists) {
+      throw new RegistrationError(
+        "not-found",
+        "Unit not found."
+      );
+    }
+
+    const flat = flatSnapshot.data();
+
+    if (
+      flat?.communityId !== communityId ||
+      flat?.buildingId !== buildingId
+    ) {
+      throw new RegistrationError(
+        "permission-denied",
+        "Unit does not belong to the selected building/community."
+      );
+    }
+
+    const oldLabel = clean(
+      flat?.flatLabel ||
+      flat?.flatId ||
+      flat?.unitId
+    );
+
+    const duplicateQuery = db
+      .collection("flats")
+      .where("communityId", "==", communityId)
+      .where("buildingId", "==", buildingId);
+
+    const onboardingQuery = db
+      .collection("residentOnboarding")
+      .where("communityId", "==", communityId)
+      .where("buildingId", "==", buildingId)
+      .where("flatId", "==", flatId);
+
+    const usersQuery = db
+      .collection("users")
+      .where("communityId", "==", communityId)
+      .where("flatId", "==", flatId);
+
+    const [
+      duplicateSnapshot,
+      onboardingSnapshot,
+      usersSnapshot,
+    ] = await Promise.all([
+      transaction.get(duplicateQuery),
+      transaction.get(onboardingQuery),
+      transaction.get(usersQuery),
+    ]);
+
+    const duplicateExists = duplicateSnapshot.docs.some(
+      (doc) => doc.id !== flatId && normalizeLabel(unitLabel(doc.data())) === normalizeLabel(newLabel)
+    );
+
+    if (duplicateExists) {
+      throw new RegistrationError(
+        "already-exists",
+        `Another unit in this building already uses "${newLabel}".`
+      );
+    }
+
+    // ---------------------------------------------------------
+    // STEP 2: WRITES ONLY AFTER ALL READS
+    // ---------------------------------------------------------
+
+    if (1 + onboardingSnapshot.docs.length + usersSnapshot.docs.length > 500) {
+      throw new RegistrationError('resource-exhausted', 'Unit rename exceeds the 500-write atomic limit.');
+    }
+    transaction.update(flatRef, {
+      unitLabelNormalized: normalizeLabel(newLabel),
+      flatLabel: newLabel,
+      flatId: newLabel,
+      unitId: newLabel,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    for (const doc of onboardingSnapshot.docs) {
+      transaction.update(doc.ref, {
+        flatLabel: newLabel,
+        unitId: newLabel,
+        unitReference: newLabel,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    for (const doc of usersSnapshot.docs) {
+      transaction.update(doc.ref, {
+        flatLabel: newLabel,
+        unitId: newLabel,
+        unitReference: newLabel,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    return {
+      success: true,
+      flatId,
+      oldLabel,
+      newLabel,
+      onboardingUpdated: onboardingSnapshot.size,
+      usersUpdated: usersSnapshot.size,
+    };
+  });
+}
+
+async function assertNoActiveSos(
+  db,
+  transaction,
+  userId,
+  communityId,
+  action,
+) {
+  const activeRef = db.collection("sosActive").doc(userId);
+  const activeSnapshot = await transaction.get(activeRef);
+
+  if (!activeSnapshot.exists) return;
+
+  const active = activeSnapshot.data();
+
+  if (
+    clean(active?.residentUid) !== userId ||
+    clean(active?.communityId) !== communityId ||
+    !clean(active?.alertId)
+  ) {
+    throw new RegistrationError(
+      "failed-precondition",
+      "The resident has an inconsistent active emergency record. Resolve the SOS before continuing.",
+    );
+  }
+
+  throw new RegistrationError(
+    "failed-precondition",
+    `The resident has an active SOS. Resolve or cancel the emergency before ${action}.`,
+  );
+}
+
+async function cancelResidentOnboardingReservationCore({ db, auth, data }) {
+  const input = validateOnboardingAssignmentInput(data);
+
+  await requireOperationalAdmin(
+    db,
+    auth,
+    input.communityId,
+  );
+
+  const onboardingRef = db
+    .collection("residentOnboarding")
+    .doc(input.onboardingId);
+
+  const buildingRef = db
+    .collection("buildings")
+    .doc(input.buildingId);
+
+  const flatRef = db
+    .collection("flats")
+    .doc(input.flatId);
+
+  const buildingFlatsQuery = db
+    .collection("flats")
+    .where("communityId", "==", input.communityId)
+    .where("buildingId", "==", input.buildingId);
+
+  return db.runTransaction(async (transaction) => {
+    const [
+      onboardingSnapshot,
+      buildingSnapshot,
+      flatSnapshot,
+      buildingFlatsSnapshot,
+    ] = await Promise.all([
+      transaction.get(onboardingRef),
+      transaction.get(buildingRef),
+      transaction.get(flatRef),
+      transaction.get(buildingFlatsQuery),
+    ]);
+
+    if (!onboardingSnapshot.exists) {
+      throw new RegistrationError(
+        "not-found",
+        "Resident onboarding record was not found.",
+      );
+    }
+
+    const onboarding = onboardingSnapshot.data();
+
+    if (
+      onboarding?.communityId !== input.communityId ||
+      onboarding?.approvalStatus !== "pending" ||
+      onboarding?.status !== "pending_registration" ||
+      onboarding?.claimedByUid != null
+    ) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "Only an unclaimed pending onboarding reservation can be cancelled.",
+      );
+    }
+
+    validateBuildingAndFlat({
+      buildingSnapshot,
+      flatSnapshot,
+      communityId: input.communityId,
+      buildingId: input.buildingId,
+    });
+
+    const flat = flatSnapshot.data();
+    const occupant = resolveFlatOccupant(flat);
+
+    const reservationMatches =
+      flat?.status === "reserved" &&
+      occupant.uid == null &&
+      clean(flat?.reservedOnboardingId) === input.onboardingId &&
+      clean(onboarding?.buildingId) === input.buildingId &&
+      clean(onboarding?.flatId) === input.flatId;
+
+    if (!reservationMatches) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "The unit reservation does not match this pending onboarding resident.",
+      );
+    }
+
+    const timestamp = FieldValue.serverTimestamp();
+
+    transaction.update(onboardingRef, {
+      buildingReference: FieldValue.delete(),
+      unitReference: FieldValue.delete(),
+
+      buildingId: FieldValue.delete(),
+      buildingName: FieldValue.delete(),
+
+      flatId: FieldValue.delete(),
+      unitId: FieldValue.delete(),
+      flatLabel: FieldValue.delete(),
+
+      updatedAt: timestamp,
+    });
+
+    // Release the reserved unit.
+    transaction.update(flatRef, {
+      status: "vacant",
+
+      residentId: null,
+      residentName: null,
+      residentUserId: null,
+
+      reservedOnboardingId: FieldValue.delete(),
+      reservedForName: FieldValue.delete(),
+      reservedResidentType: FieldValue.delete(),
+      reservedBy: FieldValue.delete(),
+      reservedAt: FieldValue.delete(),
+      reservedForPhone: FieldValue.delete(),
+
+      updatedAt: timestamp,
+    });
+
+    // Recalculate building occupancy/reservation counters.
+    transaction.update(
+      buildingRef,
+      buildingOccupancyUpdate(
+        buildingFlatsSnapshot,
+        {
+          targetFlatId: input.flatId,
+          targetStatus: "vacant",
+          timestamp,
+        },
+      ),
+    );
+
+    return {
+      status: "released",
+      onboardingId: input.onboardingId,
+      buildingId: input.buildingId,
+      flatId: input.flatId,
+    };
+  });
+}
+async function createResidentOnboardingCore({ db, auth, data }) {
   const requestedCommunityId = clean(data?.communityId);
   if (!requestedCommunityId) {
     throw new RegistrationError("invalid-argument", "Community is required.");
@@ -850,13 +1433,13 @@ async function createResidentOnboardingCore({db, auth, data}) {
     if (onboardingSnapshot.exists) {
       const existing = onboardingSnapshot.data();
       if (existing?.communityId === input.communityId &&
-          existing?.creationSource === "admin_single_onboarding" &&
-          existing?.status === "pending_registration" &&
-          existing?.claimedByUid == null &&
-          existing?.residentName === input.residentName &&
-          existing?.residentType === input.residentType &&
-          (existing?.email ?? null) === input.email) {
-        return {onboardingId, status: "pending_registration", idempotent: true};
+        existing?.creationSource === "admin_single_onboarding" &&
+        existing?.status === "pending_registration" &&
+        existing?.claimedByUid == null &&
+        existing?.residentName === input.residentName &&
+        existing?.residentType === input.residentType &&
+        (existing?.email ?? null) === input.email) {
+        return { onboardingId, status: "pending_registration", idempotent: true };
       }
       throw new RegistrationError("already-exists", "A resident onboarding already uses this phone in the community.");
     }
@@ -883,14 +1466,14 @@ async function createResidentOnboardingCore({db, auth, data}) {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    return {onboardingId, status: "pending_registration", idempotent: false};
+    return { onboardingId, status: "pending_registration", idempotent: false };
   });
 }
 
 function decodeProof(data) {
   const allowed = new Set(["contentType", "base64"]);
   if (!data || typeof data !== "object" || Array.isArray(data) ||
-      Object.keys(data).some((key) => !allowed.has(key))) {
+    Object.keys(data).some((key) => !allowed.has(key))) {
     throw new RegistrationError("invalid-argument", "A valid identity proof is required.");
   }
   const contentType = clean(data.contentType).toLowerCase();
@@ -907,10 +1490,10 @@ function decodeProof(data) {
   if ((contentType === "image/jpeg" && !isJpeg) || (contentType === "image/png" && !isPng)) {
     throw new RegistrationError("invalid-argument", "Identity proof content does not match its image type.");
   }
-  return {contentType, bytes};
+  return { contentType, bytes };
 }
 
-async function submitResidentIdentityProofCore({db, bucket, auth, data}) {
+async function submitResidentIdentityProofCore({ db, bucket, auth, data }) {
   const identity = verifiedPhoneAuth(auth);
   if (!bucket) throw new RegistrationError("failed-precondition", "Identity proof storage is unavailable.");
   const proof = decodeProof(data);
@@ -944,15 +1527,15 @@ async function submitResidentIdentityProofCore({db, bucket, auth, data}) {
   const path = `residentIdentityProofs/${resident.communityId}/${identity.uid}/${randomUUID()}.${extension}`;
   await bucket.file(path).save(proof.bytes, {
     resumable: false,
-    metadata: {contentType: proof.contentType, cacheControl: "private, no-store"},
+    metadata: { contentType: proof.contentType, cacheControl: "private, no-store" },
   });
   let previousPath = "";
   await db.runTransaction(async (transaction) => {
     const currentSnapshot = await transaction.get(userRef);
     const current = currentSnapshot.data();
     if (!currentSnapshot.exists || current?.role !== "resident" ||
-        current?.phoneNumber !== identity.phoneNumber ||
-        current?.communityId !== resident.communityId) {
+      current?.phoneNumber !== identity.phoneNumber ||
+      current?.communityId !== resident.communityId) {
       throw new RegistrationError("permission-denied", "A matching resident profile is required.");
     }
     if (verificationStatus(current) === "verified") {
@@ -972,9 +1555,9 @@ async function submitResidentIdentityProofCore({db, bucket, auth, data}) {
     });
   });
   if (previousPath !== path &&
-      isResidentProofPath(previousPath, resident.communityId, identity.uid)) {
+    isResidentProofPath(previousPath, resident.communityId, identity.uid)) {
     try {
-      await bucket.file(previousPath).delete({ignoreNotFound: true});
+      await bucket.file(previousPath).delete({ ignoreNotFound: true });
     } catch (error) {
       console.warn("Previous resident identity proof cleanup failed.", {
         communityId: resident.communityId,
@@ -983,10 +1566,10 @@ async function submitResidentIdentityProofCore({db, bucket, auth, data}) {
       });
     }
   }
-  return {status: "pending"};
+  return { status: "pending" };
 }
 
-function validateAdminProofInput(data, {review = false} = {}) {
+function validateAdminProofInput(data, { review = false } = {}) {
   const allowed = new Set(review ? ["communityId", "userId", "decision", "reason"] : ["communityId", "userId"]);
   if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).some((key) => !allowed.has(key))) {
     throw new RegistrationError("invalid-argument", "A valid identity review request is required.");
@@ -998,10 +1581,10 @@ function validateAdminProofInput(data, {review = false} = {}) {
   if (!communityId || !userId || (review && !["verified", "rejected"].includes(decision))) {
     throw new RegistrationError("invalid-argument", "Community, resident, and a valid decision are required.");
   }
-  return {communityId, userId, decision, reason};
+  return { communityId, userId, decision, reason };
 }
 
-async function getResidentIdentityProofUrlCore({db, bucket, auth, data}) {
+async function getResidentIdentityProofUrlCore({ db, bucket, auth, data }) {
   const input = validateAdminProofInput(data);
   await requireOperationalAdmin(db, auth, input.communityId);
   const snapshot = await db.collection("users").doc(input.userId).get();
@@ -1013,12 +1596,12 @@ async function getResidentIdentityProofUrlCore({db, bucket, auth, data}) {
   if (!path.startsWith(`residentIdentityProofs/${input.communityId}/${input.userId}/`)) {
     throw new RegistrationError("not-found", "Identity proof was not found.");
   }
-  const [url] = await bucket.file(path).getSignedUrl({action: "read", expires: Date.now() + 10 * 60 * 1000});
-  return {url, contentType: clean(resident.identityProofContentType)};
+  const [url] = await bucket.file(path).getSignedUrl({ action: "read", expires: Date.now() + 10 * 60 * 1000 });
+  return { url, contentType: clean(resident.identityProofContentType) };
 }
 
-async function reviewResidentIdentityProofCore({db, auth, data}) {
-  const input = validateAdminProofInput(data, {review: true});
+async function reviewResidentIdentityProofCore({ db, auth, data }) {
+  const input = validateAdminProofInput(data, { review: true });
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
   const result = await db.runTransaction(async (transaction) => {
@@ -1037,8 +1620,8 @@ async function reviewResidentIdentityProofCore({db, auth, data}) {
     const required = identityVerificationRequired(type, actor.community);
     let canRemainActive = false;
     if (resident.approvalStatus === "approved" && canonicalType != null &&
-        resident.occupancyStatus !== "suspended" &&
-        (verified || !required)) {
+      resident.occupancyStatus !== "suspended" &&
+      (verified || !required)) {
       const flatId = clean(resident.flatId);
       const buildingId = clean(resident.buildingId);
       if (flatId && buildingId) {
@@ -1053,6 +1636,15 @@ async function reviewResidentIdentityProofCore({db, auth, data}) {
         canRemainActive = resolveFlatOccupant(flatSnapshot.data()).uid === input.userId;
       }
     }
+    if (resident.approvalStatus === "approved" && resident.isActive === true) {
+      await assertNoActiveSos(
+        db,
+        transaction,
+        input.userId,
+        input.communityId,
+        "reviewing the resident identity proof",
+      );
+    }
     const timestamp = FieldValue.serverTimestamp();
     transaction.update(userRef, {
       identityVerificationStatus: input.decision,
@@ -1064,7 +1656,7 @@ async function reviewResidentIdentityProofCore({db, auth, data}) {
       identityVerificationRejectionReason: verified ? null : input.reason || null,
       updatedAt: timestamp,
     });
-    return {status: input.decision};
+    return { status: input.decision };
   });
   await auditResidentAction({
     db,
@@ -1085,7 +1677,7 @@ async function reviewResidentIdentityProofCore({db, auth, data}) {
   return result;
 }
 
-async function moveOutResidentCore({db, auth, data}) {
+async function moveOutResidentCore({ db, auth, data }) {
   const input = validateAdminProofInput(data);
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
@@ -1097,8 +1689,8 @@ async function moveOutResidentCore({db, auth, data}) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
     if (resident.approvalStatus !== "approved" || resident.isActive !== true ||
-        clean(resident.status) !== "active" ||
-        clean(resident.occupancyStatus) !== "current") {
+      clean(resident.status) !== "active" ||
+      clean(resident.occupancyStatus) !== "current") {
       throw new RegistrationError(
         "failed-precondition",
         "Only an active current resident can be moved out.",
@@ -1136,6 +1728,13 @@ async function moveOutResidentCore({db, auth, data}) {
         "Resident cannot be moved out because the unit occupant does not match.",
       );
     }
+    await assertNoActiveSos(
+      db,
+      transaction,
+      input.userId,
+      input.communityId,
+      "moving the resident out",
+    );
     const timestamp = FieldValue.serverTimestamp();
     transaction.update(userRef, {
       isActive: false,
@@ -1161,7 +1760,7 @@ async function moveOutResidentCore({db, auth, data}) {
       targetStatus: "vacant",
       timestamp,
     }));
-    return {status: "moved_out", occupantCleared: true};
+    return { status: "moved_out", occupantCleared: true };
   });
   await auditResidentAction({
     db,
@@ -1180,6 +1779,7 @@ async function moveOutResidentCore({db, auth, data}) {
 }
 
 module.exports = {
+  requireOperationalAdmin,
   VERIFICATION_STATUSES,
   canonicalResidentType,
   trustedResidentType,
@@ -1205,4 +1805,9 @@ module.exports = {
   getResidentIdentityProofUrlCore,
   reviewResidentIdentityProofCore,
   moveOutResidentCore,
+  auditResidentAction,
+  assignResidentOnboardingToFlatCore,
+  listAssignableResidentOnboardingsCore,
+  renameUnitCore,
+  cancelResidentOnboardingReservationCore,
 };

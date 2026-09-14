@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
-import 'widgets/standard_header.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import 'desktop/admin_desktop_page_frame.dart';
 import 'qr_gate_scanner_screen.dart';
 import 'services/visitor_service.dart';
+import 'widgets/standard_header.dart';
 
 /// Visitor Management Screen - Exact Flow UI Compliance with Firestore Integration
 ///
@@ -16,8 +18,13 @@ import 'services/visitor_service.dart';
 
 class VisitorManagementScreen extends StatefulWidget {
   final int initialTab;
+  final VisitorWorkflowService? visitorService;
 
-  const VisitorManagementScreen({super.key, this.initialTab = 0});
+  const VisitorManagementScreen({
+    super.key,
+    this.initialTab = 0,
+    this.visitorService,
+  });
 
   @override
   State<VisitorManagementScreen> createState() =>
@@ -39,7 +46,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   String _searchQuery = '';
 
   // Firestore service
-  final VisitorService _visitorService = VisitorService();
+  late final VisitorWorkflowService _visitorService;
 
   // Real-time counts from Firestore
   int _pendingCount = 0;
@@ -50,6 +57,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   void initState() {
     super.initState();
     _currentTab = widget.initialTab;
+    _visitorService = widget.visitorService ?? VisitorService();
     _pageController = PageController(initialPage: _currentTab);
 
     // Initialize animation controller
@@ -194,6 +202,42 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Visitors',
+        subtitle: 'Review visitor requests, active visits, and history.',
+        actions: [
+          AdminDesktopPrimaryAction(
+            label: 'Scan QR',
+            icon: Icons.qr_code_scanner,
+            onPressed: _onQRScannerTap,
+          ),
+        ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSummaryMetrics(),
+            SizedBox(height: 16.h),
+            _buildSearchBar(),
+            SizedBox(height: 16.h),
+            _buildTabSwitcher(),
+            SizedBox(height: 14.h),
+            Expanded(
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: (index) => setState(() => _currentTab = index),
+                children: [
+                  _buildPendingTab(),
+                  _buildActiveTab(),
+                  _buildHistoryTab(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: CustomScrollView(

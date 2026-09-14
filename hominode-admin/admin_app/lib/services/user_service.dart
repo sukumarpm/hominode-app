@@ -1,5 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'admin_service.dart';
 import 'resident_service.dart';
 
@@ -8,6 +10,34 @@ class UserService {
   final AdminService _adminService = AdminService();
   final ResidentService _residentService = ResidentService();
   final String _collection = 'users';
+
+  Future<List<PendingResidentOnboarding>> getUnassignedPendingOnboardings() {
+    return _residentService.getUnassignedPendingOnboardings();
+  }
+
+  Future<void> cancelResidentOnboardingReservation({
+    required String onboardingId,
+    required String buildingId,
+    required String flatId,
+  }) {
+    return _residentService.cancelResidentOnboardingReservation(
+      onboardingId: onboardingId,
+      buildingId: buildingId,
+      flatId: flatId,
+    );
+  }
+
+  Future<void> assignOnboardingToFlat({
+    required String onboardingId,
+    required String buildingId,
+    required String flatId,
+  }) {
+    return _residentService.assignOnboardingToFlat(
+      onboardingId: onboardingId,
+      buildingId: buildingId,
+      flatId: flatId,
+    );
+  }
 
   static bool isReturningResidentData(Map<String, dynamic> data) {
     final flatId = data['flatId']?.toString().trim() ?? '';

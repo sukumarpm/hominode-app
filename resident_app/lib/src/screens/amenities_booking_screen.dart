@@ -5,16 +5,20 @@ import '../models/booking.dart';
 import '../modals/booking_modal.dart';
 import '../components/standard_screen.dart';
 import '../services/booking_firestore_service.dart';
+import '../widgets/facility_information.dart';
 
 class AmenitiesBookingScreen extends StatefulWidget {
-  const AmenitiesBookingScreen({super.key});
+  const AmenitiesBookingScreen({super.key, this.bookingService});
+  final BookingFirestoreService? bookingService;
 
   @override
   State<AmenitiesBookingScreen> createState() => _AmenitiesBookingScreenState();
 }
 
 class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
-  final _bookingService = BookingFirestoreService();
+  late final _bookingService =
+      widget.bookingService ?? BookingFirestoreService();
+  late final _amenitiesStream = _bookingService.streamAmenitiesRealtime();
 
   Future<void> _handleCancelBooking(BookingModel booking) async {
     final confirmed = await showDialog<bool>(
@@ -123,7 +127,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
 
   Widget _buildAmenitiesStream() {
     return StreamBuilder<List<AmenityModel>>(
-      stream: _bookingService.streamAmenitiesRealtime(),
+      stream: _amenitiesStream,
       builder: (context, snapshot) {
         // Loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -200,11 +204,11 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
         // Data state
         final amenities = snapshot.data!;
         return GridView.builder(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 0.75,
+            mainAxisExtent: 340.h,
           ),
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -319,14 +323,13 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
   ) async {
     final amenityLegacy = Amenity(
       id: amenity.id,
+      communityId: amenity.communityId,
       name: amenity.name,
       price: amenity.priceDisplay,
       isAvailable: amenity.isAvailable,
       iconName: amenity.iconName ?? 'apartment',
       backgroundColor: '#D6EBFF',
       iconColor: '#0A64FF',
-      openTime: '6:00 AM',
-      closeTime: '8:00 PM',
     );
 
     await BookingModal.show(context, amenityLegacy);
@@ -342,37 +345,6 @@ class AmenityCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   const AmenityCard({super.key, required this.amenity, this.onTap});
-
-  IconData _getIconFromName(String? iconName) {
-    if (iconName == null) return Icons.apartment;
-
-    switch (iconName.toLowerCase()) {
-      case 'pool':
-      case 'swimming_pool':
-        return Icons.pool;
-      case 'gym':
-      case 'fitness':
-        return Icons.fitness_center;
-      case 'hall':
-      case 'community_hall':
-        return Icons.home_outlined;
-      case 'lawn':
-      case 'party_lawn':
-        return Icons.people_outline;
-      case 'tennis':
-        return Icons.sports_tennis;
-      case 'basketball':
-        return Icons.sports_basketball;
-      case 'playground':
-        return Icons.park;
-      case 'parking':
-        return Icons.local_parking;
-      case 'clubhouse':
-        return Icons.house;
-      default:
-        return Icons.apartment;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -394,23 +366,9 @@ class AmenityCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Icon container
-            Container(
-              height: 90.h,
-              decoration: BoxDecoration(
-                color: Color(0xFFD6EBFF),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(16.r),
-                  topRight: Radius.circular(16.r),
-                ),
-              ),
-              child: Center(
-                child: Icon(
-                  _getIconFromName(amenity.iconName),
-                  size: 44.w,
-                  color: const Color(0xFF0A64FF),
-                ),
-              ),
+            ClipRRect(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16.r)),
+              child: FacilityImage(amenity: amenity),
             ),
 
             // Content
@@ -447,6 +405,29 @@ class AmenityCard extends StatelessWidget {
                         ),
                       ],
                     ),
+
+                    if (amenity.buildingName != null)
+                      Text(
+                        amenity.buildingName!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11.sp,
+                          color: const Color(0xFF6B7280),
+                        ),
+                      ),
+                    if (amenity.description != null)
+                      Text(
+                        amenity.description!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11.sp,
+                          color: const Color(0xFF6B7280),
+                        ),
+                      ),
 
                     // Price, Packages, and Capacity
                     Column(
@@ -487,7 +468,8 @@ class AmenityCard extends StatelessWidget {
                         ],
 
                         // Capacity indicator
-                        if (amenity.allowMultipleBookings) ...[
+                        if (amenity.allowMultipleBookings &&
+                            amenity.hasConfiguredCapacity) ...[
                           SizedBox(height: 3.h),
                           Text(
                             'Max ${amenity.maxCapacity} users',

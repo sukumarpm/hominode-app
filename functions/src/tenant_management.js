@@ -3,6 +3,35 @@ const { RegistrationError, verifiedPhoneAuth } = require("./register_resident");
 const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
 
 const normalizeSlug = (value) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const RESERVED_SLUGS = new Set([
+  "about",
+  "admin",
+  "api",
+  "app",
+  "assets",
+  "auth",
+  "c",
+  "cdn",
+  "contact",
+  "docs",
+  "features",
+  "firebase",
+  "help",
+  "home",
+  "legal",
+  "login",
+  "mail",
+  "pricing",
+  "privacy",
+  "resident",
+  "static",
+  "status",
+  "support",
+  "super-admin",
+  "terms",
+  "www",
+]);
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const normalizeCommunityId = (value) => String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^[-_]+|[-_]+$/g, "");
 const optionalString = (value, max = 500) => {
   const result = String(value ?? "").trim();
@@ -192,7 +221,17 @@ function validateTenantMetadata(data) {
   const databaseId = String(data?.databaseId ?? "(default)").trim() || "(default)";
   if (!communityId || communityId.length > 80) throw new RegistrationError("invalid-argument", "Enter a valid community ID.");
   if (!name || name.length > 120) throw new RegistrationError("invalid-argument", "Enter a valid community name.");
-  if (!slug || suppliedSlug !== slug || slug.length > 120) throw new RegistrationError("invalid-argument", "Slug must be lowercase kebab-case.");
+  if (
+    suppliedSlug !== slug ||
+    slug.length < 3 ||
+    slug.length > 63 ||
+    !SLUG_PATTERN.test(slug)
+  ) {
+    throw new RegistrationError("invalid-argument", "Slug must be 3-63 characters of lowercase letters, numbers, and single hyphens.");
+  }
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new RegistrationError("invalid-argument", "This community slug is reserved.");
+  }
   if (!websitePath || suppliedPath !== websitePath || websitePath.length > 120) throw new RegistrationError("invalid-argument", "Website path must be lowercase kebab-case.");
   if (databaseId.length > 120) {
     throw new RegistrationError(
@@ -246,6 +285,12 @@ async function updateCommunityCore({ db, auth, data }) {
     const currentSnapshot = await transaction.get(communityRef);
     if (!currentSnapshot.exists) throw new RegistrationError("not-found", "Community was not found.");
     const current = currentSnapshot.data();
+    if (current.slug && current.slug !== input.slug) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "A community slug cannot be changed after assignment.",
+      );
+    }
     const slugRef = reservationRef(db, "slugs", input.slug);
     const pathRef = reservationRef(db, "websitePaths", input.websitePath);
     const slugReservation = await transaction.get(slugRef);
@@ -327,6 +372,8 @@ async function setCommunityActiveCore({ db, auth, data }) {
 
 module.exports = {
   normalizeSlug,
+  RESERVED_SLUGS,
+  SLUG_PATTERN,
   normalizeCommunityId,
   validateTenantMetadata,
   validateCommunityLocationMetadata,

@@ -13,6 +13,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'desktop/admin_desktop_page_frame.dart';
 
 import 'edit_resident_screen.dart';
 import 'pending_residents_screen.dart';
@@ -85,6 +86,51 @@ class _AdminResidentsPageFirestoreState
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Residents',
+        subtitle: 'Search, filter, and manage community residents.',
+        actions: [
+          IconButton.outlined(
+            tooltip: 'Bulk resident import',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ResidentBulkImportScreen(),
+              ),
+            ),
+            icon: const Icon(Icons.upload_file_outlined),
+          ),
+          IconButton.outlined(
+            tooltip: 'Pending registrations',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
+            ),
+            icon: const Icon(Icons.how_to_reg_outlined),
+          ),
+          AdminDesktopPrimaryAction(
+            label: 'Add Resident',
+            icon: Icons.person_add_outlined,
+            onPressed: _showAddResidentDialog,
+          ),
+        ],
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSearchBar(),
+              SizedBox(height: 12.h),
+              _buildFilters(),
+              SizedBox(height: 16.h),
+              _buildResidentList(),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: CustomScrollView(

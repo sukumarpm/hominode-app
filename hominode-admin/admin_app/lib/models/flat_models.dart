@@ -2,7 +2,7 @@
 /// This file defines the single source of truth for buildings, floors, and flats
 library;
 
-enum FlatStatus { vacant, occupied, maintenance }
+enum FlatStatus { vacant, reserved, occupied, maintenance }
 
 /// Resident model with complete information
 class Resident {
@@ -131,12 +131,13 @@ class FlatUnit {
   factory FlatUnit.fromJson(Map<String, dynamic> json) {
     return FlatUnit(
       id: json['id'] as String,
+      docId: json['docId'] as String? ?? json['id'] as String,
       floor: json['floor'] as int,
       config: json['config'] as String,
       areaSqft: json['areaSqft'] as int,
       status: FlatStatus.values.firstWhere(
-        (e) => e.name == json['status'],
-        orElse: () => FlatStatus.vacant,
+        (status) => status.name == json['status'],
+        orElse: () => FlatStatus.maintenance,
       ),
       resident: json['resident'] != null
           ? Resident.fromJson(json['resident'] as Map<String, dynamic>)

@@ -95,6 +95,9 @@ android/key.properties
 **/firebase-export-*/
 **/firestore-debug.log
 
+# Assembled Firebase Hosting release (marketing + Resident Flutter bundle)
+/hosting/hominode-prod/
+
 # ============================================================
 # Misc
 # ============================================================
@@ -102,3 +105,6 @@ android/key.properties
 **/.DS_Store
 **/coverage/
 **/.cache/
+
+# Local web migration workspace
+/web-migration/

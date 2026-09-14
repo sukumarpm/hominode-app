@@ -7,7 +7,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "test:emulator": "firebase emulators:exec --only firestore \"node --test test/registerResident.emulator.test.js test/createCommunity.emulator.test.js test/crossTenantRules.emulator.test.js\""
+    "test:emulator": "firebase emulators:exec --only firestore \"node --test --test-concurrency=1 test/registerResident.emulator.test.js test/createCommunity.emulator.test.js test/crossTenantRules.emulator.test.js test/buildingReconciliation.emulator.test.js test/unitArchitecture.emulator.test.js test/buildingDeletion.emulator.test.js test/sos.emulator.test.js\""
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'desktop/admin_desktop_page_frame.dart';
 import 'services/amenity_service.dart';
 import 'widgets/standard_header.dart';
 import 'widgets/custom_segmented_control.dart';
@@ -22,6 +23,38 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (AdminDesktopPresentationScope.isActive(context)) {
+      return AdminDesktopPageFrame(
+        title: 'Amenities',
+        subtitle: 'Manage facilities, availability, and resident bookings.',
+        actions: [
+          AdminDesktopPrimaryAction(
+            label: selectedTab == 0 ? 'Add Amenity' : 'View All Bookings',
+            icon: selectedTab == 0
+                ? Icons.add_business_outlined
+                : Icons.calendar_month_outlined,
+            onPressed: selectedTab == 0
+                ? _showAddAmenityModal
+                : _showAllBookingsModal,
+          ),
+        ],
+        child: Column(
+          children: [
+            SegmentedControlExamples.amenitiesSegmentedControl(
+              selectedIndex: selectedTab,
+              onChanged: (index) => setState(() => selectedTab = index),
+            ),
+            SizedBox(height: 16.h),
+            Expanded(
+              child: selectedTab == 0
+                  ? _buildAmenitiesTab()
+                  : _buildBookingsTab(),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: const StandardAppBar(

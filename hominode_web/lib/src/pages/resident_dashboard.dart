@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../services/dashboard_repository.dart';
 import '../session/web_session.dart';
+import '../tenant/web_host.dart';
 import '../theme/web_design_system.dart';
 import '../widgets/dashboard_components.dart';
+import '../widgets/community_visuals.dart';
 
 class ResidentDashboard extends StatefulWidget {
-  const ResidentDashboard({super.key, required this.session});
+  const ResidentDashboard({super.key, required this.session, this.dataFuture});
 
   final WebSession session;
+  final Future<ResidentDashboardData>? dataFuture;
 
   @override
   State<ResidentDashboard> createState() => _ResidentDashboardState();
@@ -35,15 +38,22 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
   }
 
   Future<ResidentDashboardData> _load() =>
+      widget.dataFuture ??
       DashboardRepository().residentDashboard(
         communityId: widget.session.activeTenant!.communityId,
         uid: widget.session.uid,
         flatId: widget.session.flatId,
       );
 
-  void _navigateTo(String path) {
-    if (ModalRoute.of(context)?.settings.name == path) return;
-    Navigator.of(context).pushNamed(path);
+  void _navigateTo(String internalPath) {
+    final externalPath = WebHostScope.maybeOf(
+      context,
+    )?.externalPathFor(internalPath);
+    if (externalPath == null ||
+        ModalRoute.of(context)?.settings.name == externalPath) {
+      return;
+    }
+    Navigator.of(context).pushNamed(externalPath);
   }
 
   @override
@@ -64,120 +74,170 @@ class _ResidentDashboardState extends State<ResidentDashboard> {
       }
 
       final data = snapshot.data!;
+      final apartment = SectionCard(
+        title: 'My apartment',
+        subtitle: widget.session.activeTenant!.name,
+        action: TextButton(
+          onPressed: () => _navigateTo('/resident/unit'),
+          child: const Text('View all'),
+        ),
+        child: _ApartmentCard(session: widget.session),
+      );
+      final actions = SectionCard(
+        title: 'Quick actions',
+
+        child: QuickActionGrid(
+          children: [
+            QuickActionCard(
+              label: 'My unit',
+              icon: Icons.apartment_outlined,
+              color: RolePalette.resident.primary,
+              onTap: () => _navigateTo('/resident/unit'),
+            ),
+            QuickActionCard(
+              label: 'Bills',
+              icon: Icons.receipt_long_outlined,
+              color: const Color(0xFFE66A2C),
+              onTap: () => _navigateTo('/resident/bills'),
+            ),
+            QuickActionCard(
+              label: 'Notices',
+              icon: Icons.campaign_outlined,
+              color: const Color(0xFF246BFD),
+              onTap: () => _navigateTo('/resident/notices'),
+            ),
+            QuickActionCard(
+              label: 'Events',
+              icon: Icons.event_outlined,
+              color: const Color(0xFF08A579),
+              onTap: () => _navigateTo('/resident/events'),
+            ),
+            QuickActionCard(
+              label: 'Visitors',
+              icon: Icons.people_outline,
+              color: const Color(0xFF246BFD),
+              onTap: () => _navigateTo('/resident/visitors'),
+            ),
+            QuickActionCard(
+              label: 'Complaints',
+              icon: Icons.report_problem_outlined,
+              color: const Color(0xFFE34A5F),
+              onTap: () => _navigateTo('/resident/complaints'),
+            ),
+          ],
+        ),
+      );
+      final notices = SectionCard(
+        title: 'Community announcements',
+        subtitle: 'Published and unexpired notices for your unit',
+        action: TextButton(
+          onPressed: () => _navigateTo('/resident/notices'),
+          child: const Text('View all'),
+        ),
+        child: DashboardRecordList(
+          records: data.recentNotices,
+          emptyMessage: 'No active notices are available.',
+          color: RolePalette.resident.primary,
+          icon: Icons.campaign_outlined,
+        ),
+      );
+      final events = SectionCard(
+        title: 'Upcoming events',
+        subtitle: 'Dated community events',
+        action: TextButton(
+          onPressed: () => _navigateTo('/resident/events'),
+          child: const Text('View all'),
+        ),
+        child: DashboardRecordList(
+          records: data.upcomingEvents,
+          emptyMessage: 'No upcoming events are scheduled.',
+          color: const Color(0xFF08A579),
+          icon: Icons.event_outlined,
+        ),
+      );
       return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ResponsiveMetricGrid(
-            children: [
-              DashboardStatCard(
-                label: 'Complaints',
-                value: metricValue(data.openComplaints),
-                caption: 'Open or in progress',
-                icon: Icons.campaign_outlined,
-                color: const Color(0xFFE34A5F),
-              ),
-              DashboardStatCard(
-                label: 'Visitors',
-                value: metricValue(data.visitorsToday),
-                caption: 'Today',
-                icon: Icons.people_outline,
-                color: const Color(0xFF246BFD),
-              ),
-              DashboardStatCard(
-                label: 'Pending bills',
-                value: metricValue(data.pendingBills),
-                caption: data.pendingAmount == null
-                    ? 'Amount unavailable'
-                    : '${moneyValue(data.pendingAmount)} due',
-                icon: Icons.receipt_long_outlined,
-                color: const Color(0xFFE66A2C),
-              ),
-              DashboardStatCard(
-                label: 'Notices',
-                value: metricValue(data.activeNotices),
-                caption: 'Active for your unit',
-                icon: Icons.chat_bubble_outline,
-                color: RolePalette.resident.primary,
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
           DashboardPanelGrid(
-            flexes: const [1, 2],
+            flexes: const [6, 5, 5],
+            breakpoint: 1120,
             children: [
-              SectionCard(
-                title: 'My apartment',
-                subtitle: widget.session.activeTenant!.name,
-                child: _ApartmentCard(session: widget.session),
+              Column(
+                children: [
+                  apartment,
+                  const SizedBox(height: 16),
+                  SectionCard(
+                    title: 'At a glance',
+                    child: ResponsiveMetricGrid(
+                      children: [
+                        DashboardStatCard(
+                          label: 'Complaints',
+                          value: metricValue(data.openComplaints),
+                          caption: 'Open or in progress',
+                          icon: Icons.campaign_outlined,
+                          color: const Color(0xFFE34A5F),
+                        ),
+                        DashboardStatCard(
+                          label: 'Visitors',
+                          value: metricValue(data.visitorsToday),
+                          caption: 'Today',
+                          icon: Icons.people_outline,
+                          color: const Color(0xFF246BFD),
+                        ),
+                        DashboardStatCard(
+                          label: 'Pending bills',
+                          value: metricValue(data.pendingBills),
+                          caption: data.pendingAmount == null
+                              ? 'Amount unavailable'
+                              : '${moneyValue(data.pendingAmount)} due',
+                          icon: Icons.receipt_long_outlined,
+                          color: const Color(0xFFE66A2C),
+                        ),
+                        DashboardStatCard(
+                          label: 'Notices',
+                          value: metricValue(data.activeNotices),
+                          caption: 'Active for your unit',
+                          icon: Icons.chat_bubble_outline,
+                          color: RolePalette.resident.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  events,
+                ],
               ),
-              SectionCard(
-                title: 'Quick access',
-                subtitle: 'Jump to your dashboard information',
-                child: QuickActionGrid(
-                  children: [
-                    QuickActionCard(
-                      label: 'My unit',
-                      icon: Icons.apartment_outlined,
+              Column(
+                children: [
+                  notices,
+                  const SizedBox(height: 16),
+                  SectionCard(
+                    title: 'My bills',
+                    action: TextButton(
+                      onPressed: () => _navigateTo('/resident/bills'),
+                      child: const Text('View all'),
+                    ),
+                    child: DashboardRecordList(
+                      records: data.bills?.take(3).toList(),
+                      emptyMessage: 'No bills to show.',
                       color: RolePalette.resident.primary,
-                      onTap: () => _navigateTo('/resident/unit'),
-                    ),
-                    QuickActionCard(
-                      label: 'Bills',
                       icon: Icons.receipt_long_outlined,
-                      color: const Color(0xFFE66A2C),
-                      onTap: () => _navigateTo('/resident/bills'),
                     ),
-                    QuickActionCard(
-                      label: 'Notices',
-                      icon: Icons.campaign_outlined,
-                      color: const Color(0xFF246BFD),
-                      onTap: () => _navigateTo('/resident/notices'),
-                    ),
-                    QuickActionCard(
-                      label: 'Events',
-                      icon: Icons.event_outlined,
-                      color: const Color(0xFF08A579),
-                      onTap: () => _navigateTo('/resident/events'),
-                    ),
-                    QuickActionCard(
-                      label: 'Visitors',
-                      icon: Icons.people_outline,
-                      color: const Color(0xFF246BFD),
-                      onTap: () => _navigateTo('/resident/visitors'),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
+              Column(
+                children: [
+                  const CommunityPromo(),
+                  const SizedBox(height: 16),
+                  actions,
+                  const SizedBox(height: 16),
+                  _CommunityBanner(
+                    communityName: widget.session.activeTenant!.brandName,
+                  ),
+                ],
               ),
             ],
-          ),
-          const SizedBox(height: 14),
-          DashboardPanelGrid(
-            children: [
-              SectionCard(
-                title: 'Recent notices',
-                subtitle: 'Published and unexpired notices for your unit',
-                child: DashboardRecordList(
-                  records: data.recentNotices,
-                  emptyMessage: 'No active notices are available.',
-                  color: RolePalette.resident.primary,
-                  icon: Icons.campaign_outlined,
-                ),
-              ),
-              SectionCard(
-                title: 'Upcoming events',
-                subtitle: 'Dated community events',
-                child: DashboardRecordList(
-                  records: data.upcomingEvents,
-                  emptyMessage: 'No upcoming events are scheduled.',
-                  color: const Color(0xFF08A579),
-                  icon: Icons.event_outlined,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _CommunityBanner(
-            communityName: widget.session.activeTenant!.brandName,
           ),
         ],
       );
@@ -216,9 +276,9 @@ class _ApartmentCard extends StatelessWidget {
               color: Colors.white,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.apartment_rounded,
-              color: Color(0xFF6B35D4),
+              color: RolePalette.resident.primary,
               size: 28,
             ),
           ),
@@ -261,9 +321,7 @@ class _CommunityBanner extends StatelessWidget {
     width: double.infinity,
     padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(
-      gradient: LinearGradient(
-        colors: [RolePalette.resident.dark, RolePalette.resident.primary],
-      ),
+      color: const Color(0xFF254F40),
       borderRadius: BorderRadius.circular(WebDesign.radius),
       boxShadow: const [WebDesign.shadow],
     ),

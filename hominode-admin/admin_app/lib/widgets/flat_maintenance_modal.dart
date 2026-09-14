@@ -118,7 +118,7 @@ class _FlatMaintenanceModalState extends State<FlatMaintenanceModal> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'View and manage flat details, resident information, and status.',
+                  'View and manage unit details, resident information, and status.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15.sp,
@@ -163,16 +163,26 @@ class _FlatMaintenanceModalState extends State<FlatMaintenanceModal> {
         // Row 1: Labels
         Row(
           children: [
-            Expanded(child: _buildLabel('Floors')),
+            Expanded(
+              child: _buildLabel(
+                widget.unit.usesFloors ? 'Floor' : 'Unit Type',
+              ),
+            ),
             SizedBox(width: 16.w),
-            Expanded(child: _buildLabel('Flats per Floor')),
+            Expanded(child: _buildLabel('Configuration')),
           ],
         ),
         SizedBox(height: 16.h),
         // Row 2: Values
         Row(
           children: [
-            Expanded(child: _buildValue('Floor ${widget.unit.floor}')),
+            Expanded(
+              child: _buildValue(
+                widget.unit.usesFloors
+                    ? 'Floor ${widget.unit.floor}'
+                    : widget.unit.unitType.label,
+              ),
+            ),
             SizedBox(width: 16.w),
             Expanded(child: _buildValue(widget.unit.type)),
           ],
@@ -255,7 +265,7 @@ class _FlatMaintenanceModalState extends State<FlatMaintenanceModal> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'This flat is under maintenance. Change status when ready.',
+            'This unit is under maintenance. Change status when ready.',
             style: TextStyle(
               fontSize: 16.sp,
               fontWeight: FontWeight.w500,
