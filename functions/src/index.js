@@ -90,6 +90,11 @@ const { getResidentNoticeIdsCore } = require("./resident_notices");
 const {
   resolveResidentCommunityCore,
 } = require("./resident_community_resolution");
+const {
+  getAmenityAvailabilityCore,
+  createAmenityBookingCore,
+  cancelAmenityBookingCore,
+} = require("./amenity_booking");
 
 
 const REGION = "asia-southeast1";
@@ -213,6 +218,21 @@ exports.getResidentNoticeIds = appCheckedCallable(
 exports.resolveResidentCommunity = appCheckedCallable(
   resolveResidentCommunityCore,
   "Community hostname could not be resolved."
+);
+
+exports.getAmenityAvailability = appCheckedCallable(
+  getAmenityAvailabilityCore,
+  "Facility availability could not be loaded."
+);
+
+exports.createAmenityBooking = appCheckedCallable(
+  createAmenityBookingCore,
+  "The facility booking could not be created."
+);
+
+exports.cancelAmenityBooking = appCheckedCallable(
+  cancelAmenityBookingCore,
+  "The facility booking could not be cancelled."
 );
 
 exports.createMaintenanceBills = appCheckedCallable(

@@ -231,6 +231,20 @@ class ModalService implements BookingFirestoreService {
     int numberOfPeople = 1,
   }) async => {'available': true};
   @override
+  Future<Set<DateTime>> getFullyBookedDates({
+    required String amenityId,
+    required DateTime startDate,
+    required DateTime endDate,
+    int numberOfPeople = 1,
+  }) async => <DateTime>{};
+
+  @override
+  Future<Map<String, Map<String, dynamic>>> getSlotAvailabilityForDate({
+    required String amenityId,
+    required DateTime date,
+    int numberOfPeople = 1,
+  }) async => <String, Map<String, dynamic>>{};
+  @override
   dynamic noSuchMethod(Invocation invocation) {
     writes++;
     throw StateError('Unexpected booking operation');
@@ -400,12 +414,94 @@ void main() {
       expect(amenity.buildingName, 'Tower Two');
       expect(amenity.description, canonical['description']);
       expect(amenity.imageUrl, canonical['imageUrl']);
+      expect(amenity.images, hasLength(1));
+      expect(amenity.images.single.url, canonical['imageUrl']);
+      expect(amenity.primaryImageUrl, canonical['imageUrl']);
       expect(amenity.timeSlots, canonical['timeSlots']);
       expect(amenity.bookingDurations, canonical['bookingDurations']);
       expect(amenity.maxCapacity, 12);
       expect(amenity.allowMultipleBookings, isTrue);
     },
   );
+  test('managed facility images preserve order and override legacy primary', () {
+    final amenity = AmenityModel.fromMap('a', {
+      ...canonical,
+      'imageUrl': 'https://example.com/legacy.jpg',
+      'images': [
+        {
+          'url': 'https://example.com/first.jpg',
+          'storagePath': 'facility_images/community-a/a/first.jpg',
+          'name': 'first.jpg',
+        },
+        {'url': 'bad'},
+        {
+          'url': 'https://example.com/second.webp',
+          'storagePath': 'facility_images/community-a/a/second.webp',
+          'name': 'second.webp',
+        },
+      ],
+    });
+
+    expect(
+      amenity.images.map((image) => image.url).toList(),
+      [
+        'https://example.com/first.jpg',
+        'https://example.com/second.webp',
+      ],
+    );
+    expect(amenity.primaryImageUrl, 'https://example.com/first.jpg');
+    expect(amenity.imageUrl, 'https://example.com/legacy.jpg');
+    expect(amenity.hasMultipleImages, isTrue);
+    expect(
+      amenity.images.first.storagePath,
+      'facility_images/community-a/a/first.jpg',
+    );
+  });
+
+  test('invalid or absent managed images fall back to legacy imageUrl', () {
+    final invalidManaged = AmenityModel.fromMap('a', {
+      ...canonical,
+      'images': [
+        {'url': 'javascript:alert(1)'},
+        {'url': ''},
+        5,
+      ],
+    });
+
+    expect(invalidManaged.images, hasLength(1));
+    expect(invalidManaged.images.single.url, canonical['imageUrl']);
+    expect(invalidManaged.images.single.storagePath, isNull);
+    expect(invalidManaged.primaryImageUrl, canonical['imageUrl']);
+
+    final noUsableImage = AmenityModel.fromMap('a', {
+      ...canonical,
+      'imageUrl': 'bad',
+      'images': [
+        {'url': 'file:///tmp/a.jpg'},
+      ],
+    });
+
+    expect(noUsableImage.images, isEmpty);
+    expect(noUsableImage.primaryImageUrl, isNull);
+  });
+
+  test('managed facility gallery is capped at six valid photos', () {
+    final amenity = AmenityModel.fromMap('a', {
+      ...canonical,
+      'images': List.generate(
+        8,
+        (index) => {
+          'url': 'https://example.com/$index.jpg',
+          'storagePath': 'facility_images/community-a/a/$index.jpg',
+        },
+      ),
+    });
+
+    expect(amenity.images, hasLength(6));
+    expect(amenity.images.first.url, 'https://example.com/0.jpg');
+    expect(amenity.images.last.url, 'https://example.com/5.jpg');
+  });
+
   test(
     'malformed optional fields fail per field and retain valid list items',
     () {
@@ -639,11 +735,11 @@ void main() {
       });
       await pumpView(
         tester,
-        GridView.count(
-          crossAxisCount: 2,
-          mainAxisSpacing: 12,
-          childAspectRatio: 195 / 340,
-          children: [AmenityCard(amenity: amenity)],
+        SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: AmenityCard(amenity: amenity),
+          ),
         ),
       );
       expect(find.text('Tower Two'), findsOneWidget);
@@ -679,6 +775,39 @@ void main() {
       expect(find.byType(Image), findsNothing);
     },
   );
+  testWidgets('multi-image facility renders count and carousel navigation', (
+    tester,
+  ) async {
+    final amenity = AmenityModel.fromMap('a', {
+      ...canonical,
+      'images': [
+        {
+          'url': 'https://example.com/first.jpg',
+          'storagePath': 'facility_images/community-a/a/first.jpg',
+        },
+        {
+          'url': 'https://example.com/second.jpg',
+          'storagePath': 'facility_images/community-a/a/second.jpg',
+        },
+      ],
+    });
+
+    await pumpView(
+      tester,
+      FacilityImage(amenity: amenity),
+      settle: false,
+    );
+
+    expect(find.text('1 / 2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('facility-photo-next')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('facility-photo-next')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 / 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('valid image is loaded and network failure falls back to icon', (
     tester,
   ) async {

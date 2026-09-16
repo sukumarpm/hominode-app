@@ -125,26 +125,17 @@ class _BookingModalState extends State<BookingModal> {
       final endOfMonth = DateTime(now.year, now.month + 1, 0);
 
       print(
-        '📅 Checking blocked dates from ${startOfMonth.toString().split(' ')[0]} to ${endOfMonth.toString().split(' ')[0]}',
+        '📅 Checking blocked dates from '
+        '${startOfMonth.toString().split(' ')[0]} to '
+        '${endOfMonth.toString().split(' ')[0]}',
       );
 
-      final blockedDates = <DateTime>{};
-
-      // Check each date in the month
-      for (
-        var date = startOfMonth;
-        date.isBefore(endOfMonth.add(const Duration(days: 1)));
-        date = date.add(const Duration(days: 1))
-      ) {
-        final isBlocked = await _bookingService.isDateFullyBooked(
-          amenityId: widget.amenity.id,
-          date: date,
-        );
-
-        if (isBlocked) {
-          blockedDates.add(date);
-        }
-      }
+      final blockedDates = await _bookingService.getFullyBookedDates(
+        amenityId: widget.amenity.id,
+        startDate: startOfMonth,
+        endDate: endOfMonth,
+        numberOfPeople: _numberOfPeople,
+      );
 
       if (mounted) {
         setState(() => _blockedDates = blockedDates);
@@ -180,50 +171,48 @@ class _BookingModalState extends State<BookingModal> {
       final List<String> availableSlots = [];
       final Map<String, Map<String, dynamic>> availability = {};
 
+      final slotResults = await _bookingService.getSlotAvailabilityForDate(
+        amenityId: widget.amenity.id,
+        date: _selectedDate!,
+        numberOfPeople: _numberOfPeople,
+      );
+
       for (final timeSlot in _timeSlots) {
-        try {
-          final slotResult = await _bookingService.checkSlotAvailability(
-            amenityId: widget.amenity.id,
-            date: _selectedDate!,
-            timeSlot: timeSlot,
-            numberOfPeople: _numberOfPeople,
-          );
+        final slotResult =
+            slotResults[timeSlot] ??
+            {
+              'available': false,
+              'reason': 'Unable to check availability',
+              'remainingSpots': 0,
+              'totalCapacity': _amenityDetails!.maxCapacity,
+              'totalPersonsBooked': 0,
+            };
 
-          final bool isAvailable = slotResult['available'] == true;
+        final bool isAvailable = slotResult['available'] == true;
+        final int totalPersonsBooked =
+            (slotResult['totalPersonsBooked'] as num?)?.toInt() ?? 0;
+        final int capacity =
+            (slotResult['totalCapacity'] as num?)?.toInt() ??
+            _amenityDetails!.maxCapacity;
 
-          final int totalPersonsBooked =
-              (slotResult['totalPersonsBooked'] as num?)?.toInt() ?? 0;
-
-          final int capacity = _amenityDetails!.maxCapacity;
-
-          if (isAvailable) {
-            availableSlots.add(timeSlot);
-          }
-
-          print('   📊 Slot "$timeSlot":');
-          print('      - Available: $isAvailable');
-          print('      - Total persons booked: $totalPersonsBooked');
-          print('      - Capacity: $capacity');
-          print('      - Result: $slotResult');
-
-          availability[timeSlot] = {
-            'available': isAvailable,
-            'bookedSpots': totalPersonsBooked,
-            'totalCapacity': capacity,
-            'reason':
-                slotResult['reason'] ??
-                (isAvailable ? 'Available' : 'Not available'),
-          };
-        } catch (e) {
-          print('❌ Error checking slot "$timeSlot": $e');
-
-          availability[timeSlot] = {
-            'available': false,
-            'bookedSpots': 0,
-            'totalCapacity': _amenityDetails!.maxCapacity,
-            'reason': 'Unable to check availability',
-          };
+        if (isAvailable) {
+          availableSlots.add(timeSlot);
         }
+
+        print('   📊 Slot "$timeSlot":');
+        print('      - Available: $isAvailable');
+        print('      - Total persons booked: $totalPersonsBooked');
+        print('      - Capacity: $capacity');
+        print('      - Result: $slotResult');
+
+        availability[timeSlot] = {
+          'available': isAvailable,
+          'bookedSpots': totalPersonsBooked,
+          'totalCapacity': capacity,
+          'reason':
+              slotResult['reason'] ??
+              (isAvailable ? 'Available' : 'Not available'),
+        };
       }
 
       if (!mounted) return;

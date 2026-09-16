@@ -4,11 +4,24 @@ import 'dart:async';
 // Booking Firestore Service - Real-time amenities and bookings management
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/booking.dart';
 import 'user_data_service.dart';
+
+class AmenityImage {
+  final String url;
+  final String? storagePath;
+  final String? name;
+
+  const AmenityImage({
+    required this.url,
+    this.storagePath,
+    this.name,
+  });
+}
 
 /// Amenity model for real-time streaming
 class AmenityModel {
@@ -30,6 +43,7 @@ class AmenityModel {
   final String? organizationId;
   final String? iconName;
   final String? imageUrl;
+  final List<AmenityImage> images;
   final String? description;
 
   // Subscription packages
@@ -63,6 +77,7 @@ class AmenityModel {
     this.organizationId,
     this.iconName,
     this.imageUrl,
+    this.images = const <AmenityImage>[],
     this.description,
     this.hasSubscriptionPackages = false,
     this.subscriptionPackages,
@@ -121,6 +136,38 @@ class AmenityModel {
         : null;
   }
 
+  static List<AmenityImage> _facilityImages(
+    Object? value, {
+    Object? legacyImageUrl,
+  }) {
+    final images = <AmenityImage>[];
+
+    if (value is List) {
+      for (final item in value) {
+        if (item is! Map) continue;
+
+        final map = Map<Object?, Object?>.from(item);
+        final url = safeImageUrl(map['url']);
+        if (url == null) continue;
+
+        images.add(
+          AmenityImage(
+            url: url,
+            storagePath: _text(map['storagePath']),
+            name: _text(map['name']),
+          ),
+        );
+
+        if (images.length == 6) break;
+      }
+    }
+
+    if (images.isNotEmpty) return images;
+
+    final legacy = safeImageUrl(legacyImageUrl);
+    return legacy == null ? const <AmenityImage>[] : [AmenityImage(url: legacy)];
+  }
+
   factory AmenityModel.fromMap(
     String id,
     Map<String, dynamic> data, {
@@ -137,6 +184,11 @@ class AmenityModel {
     }
     final isFree = data['isFree'] == true;
     final rawPricingMode = _text(data['pricingMode']);
+    final imageUrl = safeImageUrl(data['imageUrl']);
+    final images = _facilityImages(
+      data['images'],
+      legacyImageUrl: imageUrl,
+    );
 
     return AmenityModel(
       id: id,
@@ -146,7 +198,8 @@ class AmenityModel {
       name: _text(data['name']) ?? 'Unknown Amenity',
       type: _text(data['type']) ?? 'General',
       description: _text(data['description']),
-      imageUrl: safeImageUrl(data['imageUrl']),
+      imageUrl: imageUrl,
+      images: images,
       iconName: _text(data['iconName']),
       organizationId: _text(data['organizationId']),
       isAvailable: data['isAvailable'] == true,
@@ -178,6 +231,28 @@ class AmenityModel {
     return '₹${value!.toStringAsFixed(2).replaceFirst(RegExp(r'\.00$'), '')}$suffix';
   }
 
+  double? get effectivePricePerDay {
+    if (!hasExplicitPricingMode) {
+      return isFree ? 0.0 : pricePerDay;
+    }
+
+    switch (pricingMode) {
+      case 'free':
+        return isFree && pricePerDay == 0 ? 0.0 : null;
+      case 'flat':
+        return !isFree ? pricePerDay : null;
+      case 'resident_type':
+        if (isFree || pricePerDay != 0) return null;
+        return residentType == 'owner'
+            ? ownerPricePerDay
+            : residentType == 'tenant'
+            ? tenantPricePerDay
+            : null;
+      default:
+        return null;
+    }
+  }
+
   String get priceDisplay {
     if (!hasExplicitPricingMode) {
       return formatPrice(pricePerDay, isFree: isFree, suffix: '/day');
@@ -202,6 +277,11 @@ class AmenityModel {
         return 'Price unavailable';
     }
   }
+
+  String? get primaryImageUrl =>
+      images.isNotEmpty ? images.first.url : safeImageUrl(imageUrl);
+
+  bool get hasMultipleImages => images.length > 1;
 
   String get timeSlotsDisplay {
     if (timeSlots.isEmpty) return 'No time slots available';
@@ -259,16 +339,20 @@ class BookingFirestoreService {
   factory BookingFirestoreService() => instance;
   BookingFirestoreService._internal()
     : _firestore = FirebaseFirestore.instance,
-      _auth = FirebaseAuth.instance;
+      _auth = FirebaseAuth.instance,
+      _functions = FirebaseFunctions.instanceFor(region: 'asia-southeast1');
 
   BookingFirestoreService.withDependencies({
     required FirebaseFirestore firestore,
     required FirebaseAuth auth,
+    FirebaseFunctions? functions,
   }) : _firestore = firestore,
-       _auth = auth;
+       _auth = auth,
+       _functions = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final FirebaseFunctions? _functions;
   late final UserDataService _userDataService = UserDataService();
 
   // Collection names
@@ -615,8 +699,212 @@ class BookingFirestoreService {
     }
   }
 
-  /// Check slot availability and get remaining capacity
+  String _dateKey(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+
+  DateTime _dateOnly(DateTime date) => DateTime(date.year, date.month, date.day);
+
+  Map<String, dynamic> _stringMap(Object? value) {
+    if (value is! Map) return const <String, dynamic>{};
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+
+  Future<Map<String, dynamic>> _availabilityRangeFromFunction({
+    required String amenityId,
+    required DateTime startDate,
+    required DateTime endDate,
+    required int numberOfPeople,
+  }) async {
+    final functions = _functions;
+    if (functions == null) {
+      throw StateError('Callable Functions are not configured.');
+    }
+
+    final result = await functions.httpsCallable('getAmenityAvailability').call({
+      'amenityId': amenityId,
+      'startDateMs': _dateOnly(startDate).millisecondsSinceEpoch,
+      'endDateMs': _dateOnly(endDate).millisecondsSinceEpoch,
+      'numberOfPeople': numberOfPeople,
+      'timezoneOffsetMinutes': startDate.timeZoneOffset.inMinutes,
+    });
+
+    final data = _stringMap(result.data);
+    if (data['dates'] is! Map) {
+      throw StateError('Facility availability response is invalid.');
+    }
+    return data;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> getSlotAvailabilityForDate({
+    required String amenityId,
+    required DateTime date,
+    int numberOfPeople = 1,
+  }) async {
+    if (_functions == null) {
+      final amenity = await getAmenityDetails(amenityId);
+      if (amenity == null) return const {};
+      final result = <String, Map<String, dynamic>>{};
+      for (final slot in amenity.timeSlots) {
+        result[slot] = await _checkSlotAvailabilityDirect(
+          amenityId: amenityId,
+          date: date,
+          timeSlot: slot,
+          numberOfPeople: numberOfPeople,
+        );
+      }
+      return result;
+    }
+
+    try {
+      final response = await _availabilityRangeFromFunction(
+        amenityId: amenityId,
+        startDate: date,
+        endDate: date,
+        numberOfPeople: numberOfPeople,
+      );
+      final dates = _stringMap(response['dates']);
+      final day = _stringMap(dates[_dateKey(date)]);
+      final slots = _stringMap(day['slots']);
+
+      return slots.map(
+        (slot, value) => MapEntry(slot, _stringMap(value)),
+      );
+    } on FirebaseFunctionsException catch (e) {
+      print('❌ Callable availability error: ${e.code} ${e.message}');
+      final amenity = await getAmenityDetails(amenityId);
+      if (amenity == null) return const {};
+      return {
+        for (final slot in amenity.timeSlots)
+          slot: {
+            'available': false,
+            'reason': e.message ?? 'Unable to check availability',
+            'remainingSpots': 0,
+            'totalCapacity': amenity.allowMultipleBookings
+                ? amenity.maxCapacity
+                : 1,
+            'bookingCount': 0,
+            'totalPersonsBooked': 0,
+          },
+      };
+    } catch (e) {
+      print('❌ Callable availability error: $e');
+      final amenity = await getAmenityDetails(amenityId);
+      if (amenity == null) return const {};
+      return {
+        for (final slot in amenity.timeSlots)
+          slot: {
+            'available': false,
+            'reason': 'Unable to check availability',
+            'remainingSpots': 0,
+            'totalCapacity': amenity.allowMultipleBookings
+                ? amenity.maxCapacity
+                : 1,
+            'bookingCount': 0,
+            'totalPersonsBooked': 0,
+          },
+      };
+    }
+  }
+
+  Future<Set<DateTime>> getFullyBookedDates({
+    required String amenityId,
+    required DateTime startDate,
+    required DateTime endDate,
+    int numberOfPeople = 1,
+  }) async {
+    final start = _dateOnly(startDate);
+    final end = _dateOnly(endDate);
+
+    if (_functions == null) {
+      final blocked = <DateTime>{};
+      for (
+        var date = start;
+        !date.isAfter(end);
+        date = date.add(const Duration(days: 1))
+      ) {
+        if (await _isDateFullyBookedDirect(
+          amenityId: amenityId,
+          date: date,
+          numberOfPeople: numberOfPeople,
+        )) {
+          blocked.add(date);
+        }
+      }
+      return blocked;
+    }
+
+    try {
+      final response = await _availabilityRangeFromFunction(
+        amenityId: amenityId,
+        startDate: start,
+        endDate: end,
+        numberOfPeople: numberOfPeople,
+      );
+      final dates = _stringMap(response['dates']);
+      final blocked = <DateTime>{};
+
+      for (
+        var date = start;
+        !date.isAfter(end);
+        date = date.add(const Duration(days: 1))
+      ) {
+        final day = _stringMap(dates[_dateKey(date)]);
+        if (day['fullyBooked'] == true) blocked.add(date);
+      }
+      return blocked;
+    } catch (e) {
+      print('❌ Unable to load blocked facility dates: $e');
+      // Fail closed: if server-side capacity cannot be verified, do not make
+      // dates appear bookable.
+      final blocked = <DateTime>{};
+      for (
+        var date = start;
+        !date.isAfter(end);
+        date = date.add(const Duration(days: 1))
+      ) {
+        blocked.add(date);
+      }
+      return blocked;
+    }
+  }
+
+  /// Check one slot. Production uses the trusted callable; injected tests keep
+  /// the legacy direct path so existing fake Firestore tests remain isolated.
   Future<Map<String, dynamic>> checkSlotAvailability({
+    required String amenityId,
+    required DateTime date,
+    required String timeSlot,
+    int numberOfPeople = 1,
+  }) async {
+    if (_functions == null) {
+      return _checkSlotAvailabilityDirect(
+        amenityId: amenityId,
+        date: date,
+        timeSlot: timeSlot,
+        numberOfPeople: numberOfPeople,
+      );
+    }
+
+    final slots = await getSlotAvailabilityForDate(
+      amenityId: amenityId,
+      date: date,
+      numberOfPeople: numberOfPeople,
+    );
+    return slots[timeSlot] ??
+        {
+          'available': false,
+          'reason': 'This time slot is unavailable',
+          'remainingSpots': 0,
+          'totalCapacity': 0,
+          'bookingCount': 0,
+          'totalPersonsBooked': 0,
+        };
+  }
+
+  /// Direct Firestore implementation retained only for injected unit tests.
+  Future<Map<String, dynamic>> _checkSlotAvailabilityDirect({
     required String amenityId,
     required DateTime date,
     required String timeSlot,
@@ -721,12 +1009,13 @@ class BookingFirestoreService {
     } catch (e, stackTrace) {
       print('❌ Error checking availability: $e');
       print('Stack trace: $stackTrace');
-      // Return available by default on error to not block users
+      // Fail closed. An availability error must never create a false
+      // impression that a slot is free.
       return {
-        'available': true,
+        'available': false,
         'reason': 'Unable to check availability',
-        'remainingSpots': 1,
-        'totalCapacity': 1,
+        'remainingSpots': 0,
+        'totalCapacity': 0,
         'error': e.toString(),
       };
     }
@@ -780,33 +1069,46 @@ class BookingFirestoreService {
     }
   }
 
-  /// Check if a date is fully booked (all time slots full)
-  Future<bool> isDateFullyBooked({
+  Future<bool> _isDateFullyBookedDirect({
     required String amenityId,
     required DateTime date,
+    int numberOfPeople = 1,
   }) async {
     try {
       final amenity = await getAmenityDetails(amenityId);
       if (amenity == null || amenity.timeSlots.isEmpty) return true;
 
-      // Check each time slot
-      for (var timeSlot in amenity.timeSlots) {
-        final availability = await checkSlotAvailability(
+      for (final timeSlot in amenity.timeSlots) {
+        final availability = await _checkSlotAvailabilityDirect(
           amenityId: amenityId,
           date: date,
           timeSlot: timeSlot,
+          numberOfPeople: numberOfPeople,
         );
-
-        if (availability['available'] == true) {
-          return false; // At least one slot is available
-        }
+        if (availability['available'] == true) return false;
       }
-
-      return true; // All slots are full
+      return true;
     } catch (e) {
       print('❌ Error checking if date is fully booked: $e');
-      return true; // Assume fully booked on error
+      return true;
     }
+  }
+
+  /// Check if a date is fully booked. Production uses one server-side
+  /// availability request instead of reading other residents' bookings.
+  Future<bool> isDateFullyBooked({
+    required String amenityId,
+    required DateTime date,
+  }) async {
+    if (_functions == null) {
+      return _isDateFullyBookedDirect(amenityId: amenityId, date: date);
+    }
+    final blocked = await getFullyBookedDates(
+      amenityId: amenityId,
+      startDate: date,
+      endDate: date,
+    );
+    return blocked.contains(_dateOnly(date));
   }
 
   // ============================================================================
@@ -823,6 +1125,45 @@ class BookingFirestoreService {
     int numberOfPeople = 1, // NEW: Number of people
     List<String>? familyMembers, // NEW: Optional family member names
   }) async {
+    final functions = _functions;
+    if (functions != null) {
+      try {
+        final result = await functions.httpsCallable('createAmenityBooking').call({
+          'amenityId': amenityId,
+          'dateMs': _dateOnly(date).millisecondsSinceEpoch,
+          'timeSlot': timeSlot,
+          'bookingType': bookingType,
+          'numberOfPeople': numberOfPeople,
+          if (familyMembers != null && familyMembers.isNotEmpty)
+            'familyMembers': familyMembers,
+          'timezoneOffsetMinutes': date.timeZoneOffset.inMinutes,
+        });
+        final data = _stringMap(result.data);
+        final bookingId = data['bookingId']?.toString();
+        if (bookingId == null || bookingId.isEmpty) {
+          return BookingResult.failure(
+            message: 'The booking response was invalid.',
+            errorCode: 'invalid-response',
+          );
+        }
+        return BookingResult.success(
+          message: 'Booking confirmed successfully',
+          bookingId: bookingId,
+        );
+      } on FirebaseFunctionsException catch (e) {
+        print('❌ Booking callable error: ${e.code} ${e.message}');
+        return BookingResult.failure(
+          message: e.message ?? _getErrorMessage(e.code),
+          errorCode: e.code,
+        );
+      } catch (e) {
+        print('❌ Booking callable error: $e');
+        return BookingResult.failure(
+          message: 'Failed to create booking. Please try again.',
+        );
+      }
+    }
+
     try {
       print('🔵 Creating booking...');
       print('🏢 Amenity: $amenityName');
@@ -884,7 +1225,7 @@ class BookingFirestoreService {
 
         // Calculate price based on booking type
         if (bookingType == 'daily') {
-          price = amenity.pricePerDay ?? 0;
+          price = amenity.effectivePricePerDay ?? 0;
         } else if (amenity.subscriptionPackages != null) {
           final packageKey = bookingType == 'weekly'
               ? 'Weekly'
@@ -964,7 +1305,7 @@ class BookingFirestoreService {
 
         // Pricing
         'price': price,
-        'pricePerDay': amenity?.pricePerDay ?? 0,
+        'pricePerDay': amenity?.effectivePricePerDay ?? 0,
 
         // Status
         'status': 'confirmed', // confirmed, cancelled, completed, expired
@@ -1026,6 +1367,27 @@ class BookingFirestoreService {
     String bookingId, {
     String? reason,
   }) async {
+    final functions = _functions;
+    if (functions != null) {
+      try {
+        await functions.httpsCallable('cancelAmenityBooking').call({
+          'bookingId': bookingId,
+          if (reason != null && reason.trim().isNotEmpty)
+            'reason': reason.trim(),
+        });
+        return BookingResult.success(message: 'Booking cancelled successfully');
+      } on FirebaseFunctionsException catch (e) {
+        print('❌ Cancellation callable error: ${e.code} ${e.message}');
+        return BookingResult.failure(
+          message: e.message ?? _getErrorMessage(e.code),
+          errorCode: e.code,
+        );
+      } catch (e) {
+        print('❌ Cancellation callable error: $e');
+        return BookingResult.failure(message: 'Failed to cancel booking');
+      }
+    }
+
     try {
       print('🔵 Cancelling booking: $bookingId');
       if (reason != null) {
