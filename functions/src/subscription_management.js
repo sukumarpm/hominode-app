@@ -600,8 +600,23 @@ async function extendCommunitySubscriptionCore({db, auth, data}) {
       throw new RegistrationError("not-found", "Community subscription was not found.");
     }
     const previous = snapshot.data();
+    const existingStartsAtMs = previous.startsAt?.toMillis?.() ?? null;
     const existingEndsAtMs = previous.endsAt?.toMillis?.() ?? null;
-    if (existingEndsAtMs != null && input.endsAtMs <= existingEndsAtMs) {
+
+    if (
+      existingStartsAtMs != null &&
+      input.endsAtMs <= existingStartsAtMs
+    ) {
+      throw new RegistrationError(
+        "failed-precondition",
+        "The new subscription end date must be later than the subscription start date.",
+      );
+    }
+
+    if (
+      existingEndsAtMs != null &&
+      input.endsAtMs <= existingEndsAtMs
+    ) {
       throw new RegistrationError(
         "failed-precondition",
         "The new subscription end date must be later than the current end date.",
