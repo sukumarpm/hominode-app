@@ -1,26 +1,31 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 class ImagePickerService {
   static final ImagePicker _picker = ImagePicker();
 
-  /// Shows a bottom sheet with camera and gallery options
+  static const int maxFacilityImages = 6;
+  static const double maxFacilityImageSizeMB = 5.0;
+
+  /// Shows a source chooser without the previous double-pop behavior.
+  ///
+  /// This legacy method still returns File? so existing callers remain intact.
   static Future<File?> showImageSourceDialog(BuildContext context) async {
-    return await showModalBottomSheet<File?>(
+    final source = await showModalBottomSheet<ImageSource?>(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (BuildContext context) {
+      builder: (sheetContext) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Handle bar
                 Container(
                   width: 40,
                   height: 4,
@@ -30,8 +35,6 @@ class ImagePickerService {
                   ),
                 ),
                 const SizedBox(height: 20),
-                
-                // Title
                 const Text(
                   'Select Image Source',
                   style: TextStyle(
@@ -43,48 +46,29 @@ class ImagePickerService {
                 const SizedBox(height: 8),
                 const Text(
                   'Choose how you want to select an image',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280),
-                  ),
+                  style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
                 ),
                 const SizedBox(height: 24),
-                
-                // Camera Option
                 _buildSourceOption(
-                  context: context,
+                  context: sheetContext,
                   icon: Icons.camera_alt,
                   title: 'Camera',
                   subtitle: 'Take a new photo',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    final file = await _pickImageFromCamera();
-                    Navigator.pop(context, file);
-                  },
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
                 ),
-                
                 const SizedBox(height: 12),
-                
-                // Gallery Option
                 _buildSourceOption(
-                  context: context,
+                  context: sheetContext,
                   icon: Icons.photo_library,
                   title: 'Gallery',
                   subtitle: 'Choose from existing photos',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    final file = await _pickImageFromGallery();
-                    Navigator.pop(context, file);
-                  },
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
                 ),
-                
                 const SizedBox(height: 20),
-                
-                // Cancel Button
                 SizedBox(
                   width: double.infinity,
                   child: TextButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => Navigator.pop(sheetContext),
                     style: TextButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
@@ -107,6 +91,14 @@ class ImagePickerService {
         );
       },
     );
+
+    if (source == null) return null;
+
+    final image = source == ImageSource.camera
+        ? await pickXFileFromCamera()
+        : await pickXFileFromGallery();
+
+    return image == null ? null : File(image.path);
   }
 
   static Widget _buildSourceOption({
@@ -134,11 +126,7 @@ class ImagePickerService {
                 color: const Color(0xFF2563EB).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(
-                icon,
-                color: const Color(0xFF2563EB),
-                size: 24,
-              ),
+              child: Icon(icon, color: const Color(0xFF2563EB), size: 24),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -175,71 +163,106 @@ class ImagePickerService {
     );
   }
 
-  /// Pick image from camera
-  static Future<File?> _pickImageFromCamera() async {
+  /// New facility-image API. Uses XFile so the caller can upload bytes through
+  /// Firebase Storage and is not tied to putFile().
+  static Future<XFile?> pickXFileFromCamera() async {
     try {
-      final XFile? image = await _picker.pickImage(
+      return await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1024,
-        maxHeight: 1024,
+        maxWidth: 1600,
+        maxHeight: 1600,
         imageQuality: 85,
       );
-      
-      if (image != null) {
-        return File(image.path);
-      }
-      return null;
-    } catch (e) {
-      debugPrint('Error picking image from camera: $e');
+    } catch (error) {
+      debugPrint('Error picking image from camera: $error');
       return null;
     }
   }
 
-  /// Pick image from gallery
-  static Future<File?> _pickImageFromGallery() async {
+  static Future<XFile?> pickXFileFromGallery() async {
     try {
-      final XFile? image = await _picker.pickImage(
+      return await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 1024,
-        maxHeight: 1024,
+        maxWidth: 1600,
+        maxHeight: 1600,
         imageQuality: 85,
       );
-      
-      if (image != null) {
-        return File(image.path);
-      }
-      return null;
-    } catch (e) {
-      debugPrint('Error picking image from gallery: $e');
+    } catch (error) {
+      debugPrint('Error picking image from gallery: $error');
       return null;
     }
   }
 
-  /// Direct camera access (without dialog)
+  /// Selects multiple gallery photos. image_picker 1.0.x does not expose a
+  /// portable hard selection limit, so we cap the returned list to maxImages.
+  static Future<List<XFile>> pickMultipleFromGallery({
+    int maxImages = maxFacilityImages,
+  }) async {
+    try {
+      final images = await _picker.pickMultiImage(
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+      );
+
+      if (maxImages <= 0) return const [];
+      return images.take(maxImages).toList(growable: false);
+    } catch (error) {
+      debugPrint('Error picking multiple images from gallery: $error');
+      return const [];
+    }
+  }
+
+  /// Legacy direct camera access.
   static Future<File?> pickFromCamera() async {
-    return await _pickImageFromCamera();
+    final image = await pickXFileFromCamera();
+    return image == null ? null : File(image.path);
   }
 
-  /// Direct gallery access (without dialog)
+  /// Legacy direct gallery access.
   static Future<File?> pickFromGallery() async {
-    return await _pickImageFromGallery();
+    final image = await pickXFileFromGallery();
+    return image == null ? null : File(image.path);
   }
 
-  /// Validate image file
+  /// Legacy File validation retained for existing callers.
   static bool isValidImageFile(File file) {
-    final validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
-    final fileName = file.path.toLowerCase();
-    return validExtensions.any((ext) => fileName.endsWith(ext));
+    return isSupportedFacilityImageName(file.path);
   }
 
-  /// Get image file size in MB
+  static bool isSupportedFacilityImageName(String name) {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.webp');
+  }
+
+  static Future<String?> facilityImageValidationError(XFile file) async {
+    if (!isSupportedFacilityImageName(
+      file.name.isNotEmpty ? file.name : file.path,
+    )) {
+      return 'Facility photos must be JPG, PNG, or WebP.';
+    }
+
+    final size = await file.length();
+    if (size > maxFacilityImageSizeMB * 1024 * 1024) {
+      return 'Each facility photo must be 5 MB or smaller.';
+    }
+
+    return null;
+  }
+
+  /// Get image file size in MB.
   static double getImageSizeInMB(File file) {
     final bytes = file.lengthSync();
     return bytes / (1024 * 1024);
   }
 
-  /// Check if image size is within limit (default 5MB)
-  static bool isImageSizeValid(File file, {double maxSizeMB = 5.0}) {
+  static bool isImageSizeValid(
+    File file, {
+    double maxSizeMB = maxFacilityImageSizeMB,
+  }) {
     return getImageSizeInMB(file) <= maxSizeMB;
   }
 }

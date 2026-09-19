@@ -96,6 +96,10 @@ const {
   cancelAmenityBookingCore,
 } = require("./amenity_booking");
 
+const {
+  refreshPublicPlatformStatsCore,
+} = require("./public_platform_stats");
+
 
 const REGION = "asia-southeast1";
 const GOOGLE_GEOCODING_API_KEY = defineSecret("GOOGLE_GEOCODING_API_KEY");
@@ -233,6 +237,11 @@ exports.createAmenityBooking = appCheckedCallable(
 exports.cancelAmenityBooking = appCheckedCallable(
   cancelAmenityBookingCore,
   "The facility booking could not be cancelled."
+);
+
+exports.refreshPublicPlatformStats = callable(
+  refreshPublicPlatformStatsCore,
+  "Public platform statistics could not be refreshed."
 );
 
 exports.createMaintenanceBills = appCheckedCallable(

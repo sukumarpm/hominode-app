@@ -1,16 +1,26 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+import '../models/notification_models.dart';
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
-import '../models/notification_models.dart';
 
 class AmenityService {
-  AmenityService({FirebaseFirestore? firestore, AdminService? adminService})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _adminService = adminService ?? AdminService();
+  AmenityService({
+    FirebaseFirestore? firestore,
+    AdminService? adminService,
+    FirebaseStorage? storage,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _adminService = adminService ?? AdminService(),
+       _storage = storage;
 
   final FirebaseFirestore _firestore;
   final AdminService _adminService;
+  final FirebaseStorage? _storage;
+
+  FirebaseStorage get _resolvedStorage => _storage ?? FirebaseStorage.instance;
   late final NotificationFirestoreService _notificationService =
       NotificationFirestoreService();
   final String _amenitiesCollection = 'amenities';
@@ -44,6 +54,7 @@ class AmenityService {
     'description',
     'iconName',
     'imageUrl',
+    'images',
     'isAvailable',
     'isFree',
     'pricingMode',
@@ -100,6 +111,42 @@ class AmenityService {
     return value.cast<String>().map((item) => item.trim()).toList();
   }
 
+  static List<Map<String, dynamic>> _facilityImages(dynamic value) {
+    if (value is! List) {
+      throw ArgumentError('images must be a list.');
+    }
+    if (value.length > 6) {
+      throw ArgumentError('A facility can have at most 6 images.');
+    }
+
+    return value.map<Map<String, dynamic>>((item) {
+      if (item is! Map) {
+        throw ArgumentError('Each facility image must be a map.');
+      }
+
+      final raw = Map<String, dynamic>.from(item);
+      final url = raw['url'];
+      final storagePath = raw['storagePath'];
+      final name = raw['name'];
+
+      if (url is! String || imageUrlValidationError(url) != null) {
+        throw ArgumentError('Each facility image must contain a valid URL.');
+      }
+      if (storagePath is! String || storagePath.trim().isEmpty) {
+        throw ArgumentError('Each managed facility image needs a storagePath.');
+      }
+      if (name != null && name is! String) {
+        throw ArgumentError('Facility image name must be a string.');
+      }
+
+      return {
+        'url': url.trim(),
+        'storagePath': storagePath.trim(),
+        if (name is String && name.trim().isNotEmpty) 'name': name.trim(),
+      };
+    }).toList();
+  }
+
   static Map<String, dynamic> _facilityFields(Map<String, dynamic> input) {
     final fields = <String, dynamic>{};
     for (final entry in input.entries) {
@@ -126,6 +173,8 @@ class AmenityService {
             throw ArgumentError(imageUrlValidationError(text));
           }
           fields[key] = text;
+        case 'images':
+          fields[key] = _facilityImages(value);
         case 'isFree':
         case 'isAvailable':
         case 'allowMultipleBookings':
@@ -187,6 +236,7 @@ class AmenityService {
     String? description,
     String? iconName,
     String? imageUrl,
+    List<XFile>? imageFiles,
     List<String>? timeSlots,
     int? maxCapacity,
     bool? allowMultipleBookings,
@@ -260,6 +310,25 @@ class AmenityService {
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    final selectedImages = imageFiles ?? const <XFile>[];
+    if (selectedImages.isNotEmpty) {
+      try {
+        await replaceAmenityImages(
+          amenityId: record.id,
+          images: selectedImages
+              .map(AmenityImageDraft.file)
+              .toList(growable: false),
+        );
+      } catch (_) {
+        // The Storage rule requires the facility document to exist while
+        // facility images are managed. replaceAmenityImages cleans up any
+        // uploads it completed; remove the newly-created empty facility too.
+        await record.delete();
+        rethrow;
+      }
+    }
+
     return record.id;
   }
 
@@ -365,10 +434,227 @@ class AmenityService {
     await record.update({...fields, 'updatedAt': FieldValue.serverTimestamp()});
   }
 
+  Future<List<AmenityImageModel>> replaceAmenityImages({
+    required String amenityId,
+    required List<AmenityImageDraft> images,
+  }) async {
+    if (images.length > 6) {
+      throw ArgumentError('A facility can have at most 6 images.');
+    }
+
+    final communityId = _adminService.requireCurrentCommunityId();
+    _checkCurrentCommunity(communityId);
+
+    final record = _firestore.collection(_amenitiesCollection).doc(amenityId);
+    final existing = (await record.get()).data();
+    if (existing == null) {
+      throw StateError('Facility no longer exists.');
+    }
+    if (existing['communityId'] != communityId) {
+      throw StateError('Facility is outside your selected community.');
+    }
+
+    final previousImages = AmenityImageModel.fromFirestoreList(
+      existing['images'],
+      legacyImageUrl: existing['imageUrl'],
+    );
+
+    final uploadedThisAttempt = <AmenityImageModel>[];
+    final finalImages = <AmenityImageModel>[];
+
+    try {
+      for (var index = 0; index < images.length; index++) {
+        final draft = images[index];
+
+        if (draft.existingImage != null) {
+          final image = draft.existingImage!;
+          if (imageUrlValidationError(image.url) != null) {
+            throw ArgumentError('Facility image URL is invalid.');
+          }
+          finalImages.add(image);
+          continue;
+        }
+
+        final file = draft.newFile;
+        if (file == null) {
+          throw ArgumentError('Facility image selection is invalid.');
+        }
+
+        final uploaded = await _uploadAmenityImage(
+          communityId: communityId,
+          amenityId: amenityId,
+          file: file,
+          index: index,
+        );
+        uploadedThisAttempt.add(uploaded);
+        finalImages.add(uploaded);
+      }
+
+      final imageMaps = finalImages
+          .where((image) => image.storagePath?.isNotEmpty == true)
+          .map((image) => image.toMap())
+          .toList(growable: false);
+
+      _checkCurrentCommunity(communityId);
+      await record.update({
+        'images': imageMaps,
+        'imageUrl': finalImages.isEmpty ? '' : finalImages.first.url,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Only remove old managed Storage objects after Firestore has accepted
+      // the new ordered gallery. Legacy imageUrl-only records have no path and
+      // are therefore never deleted from Storage by this cleanup.
+      final keptPaths = finalImages
+          .map((image) => image.storagePath)
+          .whereType<String>()
+          .where((path) => path.isNotEmpty)
+          .toSet();
+
+      for (final oldImage in previousImages) {
+        final path = oldImage.storagePath;
+        if (path != null && path.isNotEmpty && !keptPaths.contains(path)) {
+          await _deleteStoragePathQuietly(path);
+        }
+      }
+
+      return finalImages;
+    } catch (_) {
+      for (final image in uploadedThisAttempt) {
+        final path = image.storagePath;
+        if (path != null && path.isNotEmpty) {
+          await _deleteStoragePathQuietly(path);
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<AmenityImageModel> _uploadAmenityImage({
+    required String communityId,
+    required String amenityId,
+    required XFile file,
+    required int index,
+  }) async {
+    final originalName = file.name.trim().isNotEmpty
+        ? file.name.trim()
+        : file.path.split(RegExp(r'[/\\]')).last;
+
+    final extension = _supportedImageExtension(originalName);
+    if (extension == null) {
+      throw ArgumentError('Facility photos must be JPG, PNG, or WebP.');
+    }
+
+    final length = await file.length();
+    if (length > 5 * 1024 * 1024) {
+      throw ArgumentError('Each facility photo must be 5 MB or smaller.');
+    }
+
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      throw ArgumentError('Each facility photo must be 5 MB or smaller.');
+    }
+
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final storageName = '${stamp}_$index.$extension';
+    final storagePath = 'facility_images/$communityId/$amenityId/$storageName';
+    final reference = _resolvedStorage.ref().child(storagePath);
+
+    await reference.putData(
+      bytes,
+      SettableMetadata(contentType: _contentTypeForExtension(extension)),
+    );
+
+    final url = await reference.getDownloadURL();
+
+    return AmenityImageModel(
+      url: url,
+      storagePath: storagePath,
+      name: originalName,
+    );
+  }
+
+  static String? _supportedImageExtension(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return null;
+
+    final extension = name.substring(dot + 1).toLowerCase();
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+        return 'jpg';
+      case 'png':
+        return 'png';
+      case 'webp':
+        return 'webp';
+      default:
+        return null;
+    }
+  }
+
+  static String _contentTypeForExtension(String extension) {
+    switch (extension) {
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'jpg':
+      default:
+        return 'image/jpeg';
+    }
+  }
+
+  Future<void> _deleteStoragePathQuietly(String storagePath) async {
+    try {
+      await _resolvedStorage.ref().child(storagePath).delete();
+    } on FirebaseException catch (error) {
+      if (error.code != 'object-not-found') {
+        debugPrint(
+          'AmenityService: unable to delete facility image $storagePath: $error',
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        'AmenityService: unable to delete facility image $storagePath: $error',
+      );
+    }
+  }
+
   // Delete amenity
   Future<void> deleteAmenity(String amenityId) async {
     try {
-      await _firestore.collection(_amenitiesCollection).doc(amenityId).delete();
+      final communityId = _adminService.requireCurrentCommunityId();
+      _checkCurrentCommunity(communityId);
+
+      final record = _firestore.collection(_amenitiesCollection).doc(amenityId);
+      final existing = (await record.get()).data();
+      if (existing == null) {
+        throw StateError('Facility no longer exists.');
+      }
+      if (existing['communityId'] != communityId) {
+        throw StateError('Facility is outside your selected community.');
+      }
+
+      final images = AmenityImageModel.fromFirestoreList(
+        existing['images'],
+        legacyImageUrl: existing['imageUrl'],
+      );
+
+      // Delete managed files first: the Storage rule requires the facility
+      // Firestore document to still exist while deleting its images.
+      for (final image in images) {
+        final path = image.storagePath;
+        if (path == null || path.isEmpty) continue;
+
+        try {
+          await _resolvedStorage.ref().child(path).delete();
+        } on FirebaseException catch (error) {
+          if (error.code != 'object-not-found') rethrow;
+        }
+      }
+
+      _checkCurrentCommunity(communityId);
+      await record.delete();
       print('AmenityService: Amenity deleted successfully');
     } catch (e) {
       print('AmenityService ERROR: Failed to delete amenity: $e');
@@ -837,6 +1123,83 @@ class AmenityService {
   }
 }
 
+class AmenityImageModel {
+  final String url;
+  final String? storagePath;
+  final String? name;
+
+  const AmenityImageModel({required this.url, this.storagePath, this.name});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'url': url,
+      if (storagePath != null && storagePath!.isNotEmpty)
+        'storagePath': storagePath,
+      if (name != null && name!.isNotEmpty) 'name': name,
+    };
+  }
+
+  static List<AmenityImageModel> fromFirestoreList(
+    dynamic raw, {
+    dynamic legacyImageUrl,
+  }) {
+    final images = <AmenityImageModel>[];
+
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is! Map) continue;
+
+        final map = Map<String, dynamic>.from(item);
+        final url = map['url'];
+        if (url is! String ||
+            AmenityService.imageUrlValidationError(url) != null) {
+          continue;
+        }
+
+        final storagePath = map['storagePath'];
+        final name = map['name'];
+
+        images.add(
+          AmenityImageModel(
+            url: url.trim(),
+            storagePath: storagePath is String && storagePath.trim().isNotEmpty
+                ? storagePath.trim()
+                : null,
+            name: name is String && name.trim().isNotEmpty ? name.trim() : null,
+          ),
+        );
+
+        if (images.length == 6) break;
+      }
+    }
+
+    if (images.isNotEmpty) return images;
+
+    if (legacyImageUrl is String &&
+        AmenityService.imageUrlValidationError(legacyImageUrl) == null &&
+        legacyImageUrl.trim().isNotEmpty) {
+      return [AmenityImageModel(url: legacyImageUrl.trim())];
+    }
+
+    return const [];
+  }
+}
+
+class AmenityImageDraft {
+  final AmenityImageModel? existingImage;
+  final XFile? newFile;
+
+  const AmenityImageDraft.existing(AmenityImageModel image)
+    : existingImage = image,
+      newFile = null;
+
+  const AmenityImageDraft.file(XFile file)
+    : existingImage = null,
+      newFile = file;
+
+  bool get isNew => newFile != null;
+}
+
 // Amenity Model
 class AmenityModel {
   final String id;
@@ -850,6 +1213,7 @@ class AmenityModel {
   final String? description;
   final String? iconName;
   final String? imageUrl;
+  final List<AmenityImageModel> images;
   final bool isAvailable;
   final List<String>? timeSlots; // Time slots like "6:00 AM - 7:00 AM"
   final String buildingId;
@@ -881,6 +1245,7 @@ class AmenityModel {
     this.description,
     this.iconName,
     this.imageUrl,
+    List<AmenityImageModel>? images,
     required this.isAvailable,
     this.timeSlots,
     required this.buildingId,
@@ -893,7 +1258,8 @@ class AmenityModel {
     required this.subscriptionPackages,
     this.createdAt,
     this.updatedAt,
-  }) : pricingMode = pricingMode ?? (isFree ? 'free' : 'flat');
+  }) : images = images ?? const <AmenityImageModel>[],
+       pricingMode = pricingMode ?? (isFree ? 'free' : 'flat');
 
   factory AmenityModel.fromFirestore(String id, Map<String, dynamic> data) {
     final rawPricingMode = data['pricingMode'];
@@ -917,6 +1283,12 @@ class AmenityModel {
         rawTenantPrice is num && rawTenantPrice.isFinite && rawTenantPrice >= 0
         ? rawTenantPrice.toDouble()
         : null;
+
+    final images = AmenityImageModel.fromFirestoreList(
+      data['images'],
+      legacyImageUrl: data['imageUrl'],
+    );
+
     return AmenityModel(
       id: id,
       name: data['name'] ?? '',
@@ -928,7 +1300,8 @@ class AmenityModel {
       tenantPricePerDay: tenantPricePerDay,
       description: data['description'],
       iconName: data['iconName'],
-      imageUrl: data['imageUrl'],
+      imageUrl: data['imageUrl'] is String ? data['imageUrl'] as String : null,
+      images: images,
       isAvailable: data['isAvailable'] ?? true,
       timeSlots: data['timeSlots'] != null
           ? List<String>.from(data['timeSlots'])
@@ -953,6 +1326,12 @@ class AmenityModel {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
     );
+  }
+
+  String? get primaryImageUrl {
+    if (images.isNotEmpty) return images.first.url;
+    final legacy = imageUrl?.trim() ?? '';
+    return legacy.isEmpty ? null : legacy;
   }
 
   String get priceDisplay {

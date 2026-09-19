@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import 'theme/hominode_theme.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -135,92 +136,118 @@ class _SplashScreenState extends State<SplashScreen>
 
   Widget _buildLogo() {
     return Container(
-      width: 100.w,
-      height: 100.h,
+      width: 120.w,
+      height: 120.w,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20.r),
+        borderRadius: BorderRadius.circular(24.r),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: HominodeTheme.navy.withValues(alpha: 0.2),
-            blurRadius: 15,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20.r),
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Colors.white, Color(0xFFF8FAFC)],
-            ),
-          ),
-          child: Stack(
-            children: [
-              // Main logo shape - abstract "L" design
-              Positioned(
-                left: 20,
-                top: 15,
-                child: Container(
-                  width: 12.w,
-                  height: 55.h,
-                  decoration: BoxDecoration(
-                    color: HominodeTheme.navy,
-                    borderRadius: BorderRadius.circular(6.r),
-                    boxShadow: [
-                      BoxShadow(
-                        color: HominodeTheme.navy.withValues(alpha: 0.3),
-                        blurRadius: 4,
-                        offset: const Offset(2, 2),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // Secondary shape
-              Positioned(
-                left: 40,
-                top: 25,
-                child: Container(
-                  width: 8.w,
-                  height: 35.h,
-                  decoration: BoxDecoration(
-                    color: HominodeTheme.blue,
-                    borderRadius: BorderRadius.circular(4.r),
-                    boxShadow: [
-                      BoxShadow(
-                        color: HominodeTheme.blue.withValues(alpha: 0.3),
-                        blurRadius: 3,
-                        offset: const Offset(1, 1),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // Accent dot
-              Positioned(
-                right: 25,
-                bottom: 25,
-                child: Container(
-                  width: 6.w,
-                  height: 6.h,
-                  decoration: BoxDecoration(
-                    color: HominodeTheme.teal,
-                    borderRadius: BorderRadius.circular(3.r),
-                  ),
-                ),
-              ),
-            ],
-          ),
+        borderRadius: BorderRadius.circular(24.r),
+        child: Image.asset(
+          'assets/Admin_New.png',
+          width: 120.w,
+          height: 120.w,
+          fit: BoxFit.cover,
         ),
       ),
     );
   }
+
+  // Widget _buildLogo() {
+  //   return Container(
+  //     width: 100.w,
+  //     height: 100.h,
+  //     decoration: BoxDecoration(
+  //       borderRadius: BorderRadius.circular(20.r),
+  //       boxShadow: [
+  //         BoxShadow(
+  //           color: Colors.black.withValues(alpha: 0.3),
+  //           blurRadius: 20,
+  //           offset: const Offset(0, 8),
+  //         ),
+  //         BoxShadow(
+  //           color: HominodeTheme.navy.withValues(alpha: 0.2),
+  //           blurRadius: 15,
+  //           offset: const Offset(0, 4),
+  //         ),
+  //       ],
+  //     ),
+  //     child: ClipRRect(
+  //       borderRadius: BorderRadius.circular(20.r),
+  //       child: Container(
+  //         decoration: const BoxDecoration(
+  //           gradient: LinearGradient(
+  //             begin: Alignment.topLeft,
+  //             end: Alignment.bottomRight,
+  //             colors: [Colors.white, Color(0xFFF8FAFC)],
+  //           ),
+  //         ),
+  //         child: Stack(
+  //           children: [
+  //             // Main logo shape - abstract "L" design
+  //             Positioned(
+  //               left: 20,
+  //               top: 15,
+  //               child: Container(
+  //                 width: 12.w,
+  //                 height: 55.h,
+  //                 decoration: BoxDecoration(
+  //                   color: HominodeTheme.navy,
+  //                   borderRadius: BorderRadius.circular(6.r),
+  //                   boxShadow: [
+  //                     BoxShadow(
+  //                       color: HominodeTheme.navy.withValues(alpha: 0.3),
+  //                       blurRadius: 4,
+  //                       offset: const Offset(2, 2),
+  //                     ),
+  //                   ],
+  //                 ),
+  //               ),
+  //             ),
+  //             // Secondary shape
+  //             Positioned(
+  //               left: 40,
+  //               top: 25,
+  //               child: Container(
+  //                 width: 8.w,
+  //                 height: 35.h,
+  //                 decoration: BoxDecoration(
+  //                   color: HominodeTheme.blue,
+  //                   borderRadius: BorderRadius.circular(4.r),
+  //                   boxShadow: [
+  //                     BoxShadow(
+  //                       color: HominodeTheme.blue.withValues(alpha: 0.3),
+  //                       blurRadius: 3,
+  //                       offset: const Offset(1, 1),
+  //                     ),
+  //                   ],
+  //                 ),
+  //               ),
+  //             ),
+  //             // Accent dot
+  //             Positioned(
+  //               right: 25,
+  //               bottom: 25,
+  //               child: Container(
+  //                 width: 6.w,
+  //                 height: 6.h,
+  //                 decoration: BoxDecoration(
+  //                   color: HominodeTheme.teal,
+  //                   borderRadius: BorderRadius.circular(3.r),
+  //                 ),
+  //               ),
+  //             ),
+  //           ],
+  //         ),
+  //       ),
+  //     ),
+  //   );
+  // }
 }

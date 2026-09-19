@@ -2135,6 +2135,20 @@ match /marketplaces/{listingId} {
 
 
     // ============================================================
+    // PUBLIC PLATFORM STATISTICS
+    // ============================================================
+
+    match /publicPlatformStats/{statsId} {
+      // Public website/app may read only the canonical aggregate.
+      allow get: if statsId == "current";
+
+      // Prevent collection enumeration and all client writes.
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+
+    // ============================================================
     // DENY EVERYTHING ELSE
     // ============================================================
 

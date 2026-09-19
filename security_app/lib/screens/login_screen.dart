@@ -274,14 +274,14 @@ class _LoginScreenState extends State<LoginScreen>
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF081B3C),
+        backgroundColor: const Color(0xFF073B35),
         title: const Text(
           'Contact Admin',
           style: TextStyle(color: Colors.white),
         ),
         content: const Text(
           'Your Security account is created and managed by your Community Admin. Contact your Community Admin if you cannot access your account.',
-          style: TextStyle(color: Color(0xFFB8D7F6), height: 1.4),
+          style: TextStyle(color: Color(0xFFB8D8D1), height: 1.4),
         ),
         actions: [
           TextButton(
@@ -302,12 +302,12 @@ class _LoginScreenState extends State<LoginScreen>
         child: Ink(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFF0A2247),
+            color: const Color(0xFF073B35),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: _loading
-                  ? const Color(0xFF18406B)
-                  : const Color(0xFF1A4E83),
+                  ? const Color(0xFF176B59)
+                  : const Color(0xFF1F7F6A),
             ),
           ),
           child: Row(
@@ -318,7 +318,7 @@ class _LoginScreenState extends State<LoginScreen>
               Text(
                 _selectedCountry.dialCode,
                 style: TextStyle(
-                  color: _loading ? const Color(0xFF8BA9C8) : Colors.white,
+                  color: _loading ? const Color(0xFF9ABAB2) : Colors.white,
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
@@ -327,8 +327,8 @@ class _LoginScreenState extends State<LoginScreen>
               Icon(
                 Icons.keyboard_arrow_down_rounded,
                 color: _loading
-                    ? const Color(0xFF6B89AC)
-                    : const Color(0xFF7ADFFF),
+                    ? const Color(0xFF789C93)
+                    : const Color(0xFF72E8CB),
                 size: 20,
               ),
             ],
@@ -372,12 +372,12 @@ class _LoginScreenState extends State<LoginScreen>
                 child: Container(
                   height: MediaQuery.of(context).size.height * 0.82,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF061A36),
+                    color: const Color(0xFF052F2A),
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(24),
                       topRight: Radius.circular(24),
                     ),
-                    border: Border.all(color: const Color(0xFF1A4E83)),
+                    border: Border.all(color: const Color(0xFF1F7F6A)),
                   ),
                   child: Column(
                     children: [
@@ -386,7 +386,7 @@ class _LoginScreenState extends State<LoginScreen>
                         width: 44,
                         height: 4,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF2D5B88),
+                          color: const Color(0xFF2D6F63),
                           borderRadius: BorderRadius.circular(999),
                         ),
                       ),
@@ -409,7 +409,7 @@ class _LoginScreenState extends State<LoginScreen>
                               onPressed: () => Navigator.of(sheetContext).pop(),
                               icon: const Icon(
                                 Icons.close,
-                                color: Color(0xFF89CAFF),
+                                color: Color(0xFFA7DACE),
                               ),
                             ),
                           ],
@@ -424,11 +424,11 @@ class _LoginScreenState extends State<LoginScreen>
                           decoration: InputDecoration(
                             hintText: 'Search country or code',
                             hintStyle: const TextStyle(
-                              color: Color(0xFF7AA4CF),
+                              color: Color(0xFF8FB9AF),
                             ),
                             prefixIcon: const Icon(
                               Icons.search,
-                              color: Color(0xFF34D9FF),
+                              color: Color(0xFF58E3BE),
                             ),
                             suffixIcon: searchController.text.isEmpty
                                 ? null
@@ -439,27 +439,27 @@ class _LoginScreenState extends State<LoginScreen>
                                     },
                                     icon: const Icon(
                                       Icons.clear,
-                                      color: Color(0xFF9EC8FF),
+                                      color: Color(0xFFB8D8D1),
                                     ),
                                   ),
                             filled: true,
-                            fillColor: const Color(0xFF082347),
+                            fillColor: const Color(0xFF06322C),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
                               borderSide: const BorderSide(
-                                color: Color(0xFF1A5E96),
+                                color: Color(0xFF238B73),
                               ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
                               borderSide: const BorderSide(
-                                color: Color(0xFF1A5E96),
+                                color: Color(0xFF238B73),
                               ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
                               borderSide: const BorderSide(
-                                color: Color(0xFF33D6FF),
+                                color: Color(0xFF58E3BE),
                                 width: 1.4,
                               ),
                             ),
@@ -472,7 +472,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 child: Text(
                                   'No countries found',
                                   style: TextStyle(
-                                    color: Color(0xFF9EC8FF),
+                                    color: Color(0xFFB8D8D1),
                                     fontSize: 14,
                                   ),
                                 ),
@@ -524,7 +524,7 @@ class _LoginScreenState extends State<LoginScreen>
                                         Text(
                                           country.dialCode,
                                           style: const TextStyle(
-                                            color: Color(0xFF7ADFFF),
+                                            color: Color(0xFF72E8CB),
                                             fontSize: 14,
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -535,7 +535,7 @@ class _LoginScreenState extends State<LoginScreen>
                                     trailing: isSelected
                                         ? const Icon(
                                             Icons.check_circle,
-                                            color: Color(0xFF31D5FF),
+                                            color: Color(0xFF58E3BE),
                                           )
                                         : null,
                                     onTap: () =>
@@ -600,17 +600,17 @@ class _LoginScreenState extends State<LoginScreen>
             borderRadius: BorderRadius.circular(18),
             gradient: enabled
                 ? const LinearGradient(
-                    colors: [Color(0xFF35D8FF), Color(0xFF0F65FF)],
+                    colors: [Color(0xFF58E3BE), Color(0xFF15967F)],
                     begin: Alignment.centerLeft,
                     end: Alignment.centerRight,
                   )
                 : const LinearGradient(
-                    colors: [Color(0xFF335B6B), Color(0xFF2B4570)],
+                    colors: [Color(0xFF315F57), Color(0xFF274D47)],
                   ),
             boxShadow: enabled
                 ? [
                     BoxShadow(
-                      color: const Color(0xFF22D2FF).withValues(alpha: 0.35),
+                      color: const Color(0xFF38D8B3).withValues(alpha: 0.35),
                       blurRadius: 20,
                       offset: const Offset(0, 8),
                     ),
@@ -667,7 +667,7 @@ class _LoginScreenState extends State<LoginScreen>
       children: [
         Expanded(
           child: Divider(
-            color: const Color(0xFF2D5B88).withValues(alpha: 0.8),
+            color: const Color(0xFF2D6F63).withValues(alpha: 0.8),
             thickness: 1,
           ),
         ),
@@ -675,12 +675,12 @@ class _LoginScreenState extends State<LoginScreen>
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Row(
             children: const [
-              Icon(Icons.shield_outlined, size: 18, color: Color(0xFF3ED9FF)),
+              Icon(Icons.shield_outlined, size: 18, color: Color(0xFF58E3BE)),
               SizedBox(width: 8),
               Text(
                 'SECURE SECURITY ACCESS',
                 style: TextStyle(
-                  color: Color(0xFF66E5FF),
+                  color: Color(0xFF7AECCF),
                   fontSize: 12,
                   letterSpacing: 1.1,
                   fontWeight: FontWeight.w600,
@@ -691,7 +691,7 @@ class _LoginScreenState extends State<LoginScreen>
         ),
         Expanded(
           child: Divider(
-            color: const Color(0xFF2D5B88).withValues(alpha: 0.8),
+            color: const Color(0xFF2D6F63).withValues(alpha: 0.8),
             thickness: 1,
           ),
         ),
@@ -721,9 +721,9 @@ class _LoginScreenState extends State<LoginScreen>
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Color(0xAA02102B),
-                    Color(0xCC031632),
-                    Color(0xE603132D),
+                    Color(0xAA021F1C),
+                    Color(0xCC042B26),
+                    Color(0xE605241F),
                   ],
                 ),
               ),
@@ -787,7 +787,7 @@ class _LoginScreenState extends State<LoginScreen>
                                       TextSpan(
                                         text: 'place. Better lives.',
                                         style: TextStyle(
-                                          color: Color(0xFF30D3FF),
+                                          color: Color(0xFF58E3BE),
                                           fontSize: 14,
                                           fontWeight: FontWeight.w500,
                                         ),
@@ -803,15 +803,15 @@ class _LoginScreenState extends State<LoginScreen>
                                   ),
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(999),
-                                    color: const Color(0x1A3DD2FF),
+                                    color: const Color(0x1A58E3BE),
                                     border: Border.all(
-                                      color: const Color(0x6633D9FF),
+                                      color: const Color(0x6658E3BE),
                                     ),
                                   ),
                                   child: const Text(
                                     'Security Access',
                                     style: TextStyle(
-                                      color: Color(0xFF88E8FF),
+                                      color: Color(0xFF8FEBD4),
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -830,15 +830,15 @@ class _LoginScreenState extends State<LoginScreen>
                               child: Container(
                                 padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xCC061B3B),
+                                  color: const Color(0xCC073B35),
                                   borderRadius: BorderRadius.circular(24),
                                   border: Border.all(
-                                    color: const Color(0xFF1E5E99),
+                                    color: const Color(0xFF238B73),
                                   ),
                                   boxShadow: [
                                     BoxShadow(
                                       color: const Color(
-                                        0xFF28CFFF,
+                                        0xFF38D8B3,
                                       ).withValues(alpha: 0.25),
                                       blurRadius: 26,
                                       offset: const Offset(0, 14),
@@ -865,7 +865,7 @@ class _LoginScreenState extends State<LoginScreen>
                                           ? 'Code sent to ${_sentPhone ?? _composeCanonicalPhone()}'
                                           : 'Use your Admin-registered Security phone number.',
                                       style: const TextStyle(
-                                        color: Color(0xFF9EC8FF),
+                                        color: Color(0xFFB8D8D1),
                                         fontSize: 12,
                                       ),
                                     ),
@@ -901,12 +901,12 @@ class _LoginScreenState extends State<LoginScreen>
                                               decoration: InputDecoration(
                                                 hintText: '912 345 6789',
                                                 hintStyle: const TextStyle(
-                                                  color: Color(0xFF7AA4CF),
+                                                  color: Color(0xFF8FB9AF),
                                                   fontSize: 14,
                                                 ),
                                                 filled: true,
                                                 fillColor: const Color(
-                                                  0xFF081E40,
+                                                  0xFF052F2A,
                                                 ),
                                                 prefixIcon: const Icon(
                                                   Icons.phone,
@@ -916,7 +916,7 @@ class _LoginScreenState extends State<LoginScreen>
                                                   borderRadius:
                                                       BorderRadius.circular(14),
                                                   borderSide: const BorderSide(
-                                                    color: Color(0xFF1A5E96),
+                                                    color: Color(0xFF238B73),
                                                   ),
                                                 ),
                                                 enabledBorder:
@@ -928,7 +928,7 @@ class _LoginScreenState extends State<LoginScreen>
                                                       borderSide:
                                                           const BorderSide(
                                                             color: Color(
-                                                              0xFF1A5E96,
+                                                              0xFF238B73,
                                                             ),
                                                           ),
                                                     ),
@@ -941,7 +941,7 @@ class _LoginScreenState extends State<LoginScreen>
                                                       borderSide:
                                                           const BorderSide(
                                                             color: Color(
-                                                              0xFF33D6FF,
+                                                              0xFF58E3BE,
                                                             ),
                                                             width: 1.4,
                                                           ),
@@ -969,7 +969,7 @@ class _LoginScreenState extends State<LoginScreen>
                                             tapTargetSize: MaterialTapTargetSize
                                                 .shrinkWrap,
                                             foregroundColor: const Color(
-                                              0xFF54DFFF,
+                                              0xFF64E7C8,
                                             ),
                                           ),
                                           child: const Text(
@@ -1001,17 +1001,17 @@ class _LoginScreenState extends State<LoginScreen>
                                         decoration: InputDecoration(
                                           hintText: '------',
                                           hintStyle: const TextStyle(
-                                            color: Color(0xFF7AA4CF),
+                                            color: Color(0xFF8FB9AF),
                                             letterSpacing: 6,
                                           ),
                                           filled: true,
-                                          fillColor: const Color(0xFF081E40),
+                                          fillColor: const Color(0xFF052F2A),
                                           border: OutlineInputBorder(
                                             borderRadius: BorderRadius.circular(
                                               14,
                                             ),
                                             borderSide: const BorderSide(
-                                              color: Color(0xFF1A5E96),
+                                              color: Color(0xFF238B73),
                                             ),
                                           ),
                                           enabledBorder: OutlineInputBorder(
@@ -1019,7 +1019,7 @@ class _LoginScreenState extends State<LoginScreen>
                                               14,
                                             ),
                                             borderSide: const BorderSide(
-                                              color: Color(0xFF1A5E96),
+                                              color: Color(0xFF238B73),
                                             ),
                                           ),
                                           focusedBorder: OutlineInputBorder(
@@ -1027,7 +1027,7 @@ class _LoginScreenState extends State<LoginScreen>
                                               14,
                                             ),
                                             borderSide: const BorderSide(
-                                              color: Color(0xFF33D6FF),
+                                              color: Color(0xFF58E3BE),
                                               width: 1.4,
                                             ),
                                           ),
@@ -1050,7 +1050,7 @@ class _LoginScreenState extends State<LoginScreen>
                                             tapTargetSize: MaterialTapTargetSize
                                                 .shrinkWrap,
                                             foregroundColor: const Color(
-                                              0xFF68E5FF,
+                                              0xFF7AECCF,
                                             ),
                                           ),
                                           child: const Text(
@@ -1081,10 +1081,10 @@ class _LoginScreenState extends State<LoginScreen>
                                 vertical: 10,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xA8071A38),
+                                color: const Color(0xA807332D),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: const Color(0xFF1B4679),
+                                  color: const Color(0xFF1F7865),
                                 ),
                               ),
                               child: const Row(
@@ -1092,14 +1092,14 @@ class _LoginScreenState extends State<LoginScreen>
                                 children: [
                                   Icon(
                                     Icons.shield_outlined,
-                                    color: Color(0xFF32D8FF),
+                                    color: Color(0xFF58E3BE),
                                   ),
                                   SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
                                       'Your Security account must already be created by your Community Admin.',
                                       style: TextStyle(
-                                        color: Color(0xFFE5F4FF),
+                                        color: Color(0xFFE7F6F1),
                                         height: 1.4,
                                         fontSize: 12,
                                       ),
@@ -1115,7 +1115,7 @@ class _LoginScreenState extends State<LoginScreen>
                             child: const Text(
                               'Need help? Contact Admin',
                               style: TextStyle(
-                                color: Color(0xFF6CE2FF),
+                                color: Color(0xFF72E8CB),
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),

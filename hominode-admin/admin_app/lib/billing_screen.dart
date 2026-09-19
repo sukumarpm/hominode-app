@@ -2387,7 +2387,7 @@ class _BillingScreenState extends State<BillingScreen> {
       final generatedAt = DateTime.now();
       final currencyFormat = NumberFormat('#,##0.00');
       final reportPeriod = _getExportPeriodLabel(bills);
-      final logoBytes = await rootBundle.load('assets/Admin.png');
+      final logoBytes = await rootBundle.load('assets/Admin_New.png');
 
       final hominodeLogo = pw.MemoryImage(logoBytes.buffer.asUint8List());
 

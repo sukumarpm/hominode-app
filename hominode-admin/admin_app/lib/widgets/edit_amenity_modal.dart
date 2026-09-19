@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../services/amenity_service.dart';
+import '../services/image_picker_service.dart';
 
 class EditAmenityModal extends StatefulWidget {
   final AmenityModel amenity;
@@ -52,6 +54,9 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
   late String _selectedFacilityType;
   late String _pricingMode;
   bool _isLoading = false;
+
+  late final List<AmenityImageDraft> _facilityImages;
+  late final List<String> _initialManagedImagePaths;
 
   // Time slots
   final List<String> _availableTimeSlots = [
@@ -127,6 +132,17 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
     );
     _selectedIcon = widget.amenity.iconName ?? '';
     _selectedTimeSlots = List<String>.from(widget.amenity.timeSlots ?? []);
+
+    final managedImages = widget.amenity.images
+        .where((image) => image.storagePath?.isNotEmpty == true)
+        .toList(growable: false);
+    _facilityImages = managedImages
+        .map(AmenityImageDraft.existing)
+        .toList(growable: true);
+    _initialManagedImagePaths = managedImages
+        .map((image) => image.storagePath!)
+        .toList(growable: false);
+
     _initialValues = _formValues();
   }
 
@@ -135,7 +151,6 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
       'name': _nameController.text.trim(),
       'type': _typeController.text.trim(),
       'description': _descriptionController.text.trim(),
-      'imageUrl': _imageUrlController.text.trim(),
       'iconName': _selectedIcon,
       'pricingMode': _pricingMode,
       'isFree': _pricingMode == 'free',
@@ -144,6 +159,10 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
           : 0,
       'timeSlots': List<String>.from(_selectedTimeSlots),
     };
+
+    if (_facilityImages.isEmpty && _initialManagedImagePaths.isEmpty) {
+      values['imageUrl'] = _imageUrlController.text.trim();
+    }
 
     if (_pricingMode == 'resident_type') {
       values['ownerPricePerDay'] = double.tryParse(
@@ -164,6 +183,202 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
       if (!_selectedTimeSlots.contains(slot)) _selectedTimeSlots.add(slot);
       _customTimeSlotController.clear();
     });
+  }
+
+  bool get _hasLegacyOnlyImage {
+    final legacy = widget.amenity.imageUrl?.trim() ?? '';
+    return legacy.isNotEmpty && _initialManagedImagePaths.isEmpty;
+  }
+
+  bool get _galleryChanged {
+    if (_facilityImages.any((draft) => draft.isNew)) return true;
+
+    final currentPaths = _facilityImages
+        .map((draft) => draft.existingImage?.storagePath)
+        .whereType<String>()
+        .toList(growable: false);
+
+    return !listEquals(currentPaths, _initialManagedImagePaths);
+  }
+
+  Future<void> _pickFacilityImagesFromGallery() async {
+    final remaining =
+        ImagePickerService.maxFacilityImages - _facilityImages.length;
+    if (remaining <= 0) {
+      _showImageMessage('You can add up to 6 facility photos.');
+      return;
+    }
+
+    final picked = await ImagePickerService.pickMultipleFromGallery(
+      maxImages: remaining,
+    );
+    await _addValidatedFacilityImages(picked);
+  }
+
+  Future<void> _pickFacilityImageFromCamera() async {
+    if (_facilityImages.length >= ImagePickerService.maxFacilityImages) {
+      _showImageMessage('You can add up to 6 facility photos.');
+      return;
+    }
+
+    final image = await ImagePickerService.pickXFileFromCamera();
+    if (image == null) return;
+    await _addValidatedFacilityImages([image]);
+  }
+
+  Future<void> _addValidatedFacilityImages(List<XFile> images) async {
+    if (images.isEmpty) return;
+
+    final valid = <XFile>[];
+    for (final image in images) {
+      final error = await ImagePickerService.facilityImageValidationError(
+        image,
+      );
+      if (error != null) {
+        _showImageMessage(error);
+        continue;
+      }
+      valid.add(image);
+    }
+
+    if (!mounted || valid.isEmpty) return;
+
+    final available =
+        ImagePickerService.maxFacilityImages - _facilityImages.length;
+    setState(() {
+      _facilityImages.addAll(valid.take(available).map(AmenityImageDraft.file));
+    });
+
+    if (valid.length > available) {
+      _showImageMessage('Only the first $available photos were added.');
+    }
+  }
+
+  void _setFacilityImagePrimary(int index) {
+    if (index <= 0 || index >= _facilityImages.length) return;
+    setState(() {
+      final image = _facilityImages.removeAt(index);
+      _facilityImages.insert(0, image);
+    });
+  }
+
+  void _removeFacilityImage(int index) {
+    if (index < 0 || index >= _facilityImages.length) return;
+    setState(() {
+      _facilityImages.removeAt(index);
+    });
+  }
+
+  void _showImageMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Widget _buildFacilityPhotosSection() {
+    final canAdd =
+        _facilityImages.length < ImagePickerService.maxFacilityImages;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Facility photos',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Up to 6 photos. The first managed photo is primary.',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                '${_facilityImages.length}/6',
+                style: TextStyle(
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF0E4778),
+                ),
+              ),
+            ],
+          ),
+          if (_hasLegacyOnlyImage) ...[
+            SizedBox(height: 12.h),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(10.w),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFBEB),
+                borderRadius: BorderRadius.circular(8.r),
+                border: Border.all(color: const Color(0xFFFDE68A)),
+              ),
+              child: const Text(
+                'This facility currently uses a legacy image URL. It will keep working until managed photos are added.',
+                style: TextStyle(fontSize: 11, color: Color(0xFF92400E)),
+              ),
+            ),
+          ],
+          SizedBox(height: 14.h),
+          Wrap(
+            spacing: 10.w,
+            runSpacing: 10.h,
+            children: [
+              OutlinedButton.icon(
+                key: const ValueKey('facility-add-gallery-photos'),
+                onPressed: canAdd ? _pickFacilityImagesFromGallery : null,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: const Text('Gallery'),
+              ),
+              OutlinedButton.icon(
+                key: const ValueKey('facility-add-camera-photo'),
+                onPressed: canAdd ? _pickFacilityImageFromCamera : null,
+                icon: const Icon(Icons.photo_camera_outlined),
+                label: const Text('Camera'),
+              ),
+            ],
+          ),
+          if (_facilityImages.isNotEmpty) ...[
+            SizedBox(height: 14.h),
+            Wrap(
+              spacing: 10.w,
+              runSpacing: 10.h,
+              children: List.generate(_facilityImages.length, (index) {
+                return _FacilityImageDraftTile(
+                  key: ValueKey('facility-edit-photo-$index'),
+                  draft: _facilityImages[index],
+                  isPrimary: index == 0,
+                  onSetPrimary: index == 0
+                      ? null
+                      : () => _setFacilityImagePrimary(index),
+                  onRemove: () => _removeFacilityImage(index),
+                );
+              }),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -302,11 +517,21 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                   ),
                 ],
                 SizedBox(height: 16.h),
+                _buildFacilityPhotosSection(),
+                SizedBox(height: 12.h),
                 TextFormField(
                   key: const ValueKey('facility-image'),
                   controller: _imageUrlController,
+                  enabled:
+                      _facilityImages.isEmpty &&
+                      _initialManagedImagePaths.isEmpty,
                   decoration: InputDecoration(
-                    labelText: 'Image URL (optional)',
+                    labelText: 'Legacy image URL (optional)',
+                    helperText:
+                        _facilityImages.isEmpty &&
+                            _initialManagedImagePaths.isEmpty
+                        ? 'Used only by older facilities without managed photos.'
+                        : 'Managed facility photos control the primary image.',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8.r),
                     ),
@@ -822,6 +1047,13 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
         await _amenityService.updateAmenity(widget.amenity.id, updates);
       }
 
+      if (_galleryChanged) {
+        await _amenityService.replaceAmenityImages(
+          amenityId: widget.amenity.id,
+          images: List<AmenityImageDraft>.from(_facilityImages),
+        );
+      }
+
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -847,5 +1079,147 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
         });
       }
     }
+  }
+}
+
+class _FacilityImageDraftTile extends StatelessWidget {
+  final AmenityImageDraft draft;
+  final bool isPrimary;
+  final VoidCallback? onSetPrimary;
+  final VoidCallback onRemove;
+
+  const _FacilityImageDraftTile({
+    super.key,
+    required this.draft,
+    required this.isPrimary,
+    required this.onSetPrimary,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final existing = draft.existingImage;
+    final file = draft.newFile;
+
+    return SizedBox(
+      width: 132,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 132,
+                  height: 96,
+                  child: existing != null
+                      ? Image.network(
+                          existing.url,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _previewFallback(),
+                        )
+                      : file != null
+                      ? FutureBuilder<Uint8List>(
+                          future: file.readAsBytes(),
+                          builder: (context, snapshot) {
+                            if (snapshot.hasData) {
+                              return Image.memory(
+                                snapshot.data!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    _previewFallback(),
+                              );
+                            }
+                            return _previewFallback(showProgress: true);
+                          },
+                        )
+                      : _previewFallback(),
+                ),
+              ),
+              if (isPrimary)
+                Positioned(
+                  left: 6,
+                  top: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0E4778),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'PRIMARY',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                right: 4,
+                top: 4,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    key: const ValueKey('facility-remove-photo'),
+                    tooltip: 'Remove photo',
+                    onPressed: onRemove,
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            existing?.name ??
+                file?.name ??
+                (existing != null ? 'Existing photo' : 'New photo'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
+          ),
+          if (!isPrimary)
+            TextButton(
+              onPressed: onSetPrimary,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 28),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Set primary', style: TextStyle(fontSize: 11)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _previewFallback({bool showProgress = false}) {
+    return Container(
+      color: const Color(0xFFEFF3F7),
+      alignment: Alignment.center,
+      child: showProgress
+          ? const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.image_not_supported_outlined),
+    );
   }
 }

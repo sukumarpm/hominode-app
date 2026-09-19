@@ -170,55 +170,48 @@ class _LoadingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF02102B),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'lib/assets/images/security_login_background.png',
-            fit: BoxFit.cover,
-            alignment: Alignment.topCenter,
+      backgroundColor: const Color(0xFF063D35),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF063D35), Color(0xFF052F2A), Color(0xFF021F1C)],
           ),
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xAA02102B),
-                  Color(0xCC031632),
-                  Color(0xE603132D),
-                ],
-              ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'lib/assets/Security_New.png',
+                  width: 125,
+                  height: 125,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(height: 24),
+                const SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Color(0xFF58E3BE),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Verifying Security access...',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SafeArea(
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 34,
-                    height: 34,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Color(0xFF30D3FF),
-                    ),
-                  ),
-                  SizedBox(height: 16),
-                  Text(
-                    'Verifying Security access...',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

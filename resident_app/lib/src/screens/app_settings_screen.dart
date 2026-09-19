@@ -4,6 +4,7 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hominode_legal/hominode_legal.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/language_provider.dart';
@@ -247,7 +248,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             title: 'privacy_policy'.tr(),
             subtitle: 'privacy_policy'.tr(),
             onTap: () {
-              _showPrivacyPolicyDialog(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => HominodeLegalDocumentViewer(
+                    title: 'privacy_policy'.tr(),
+                    assetPath: HominodeLegalDocuments.privacyPolicyAsset,
+                  ),
+                ),
+              );
             },
           ),
           _buildSettingsTile(
@@ -255,7 +263,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             title: 'terms_conditions'.tr(),
             subtitle: 'terms_conditions'.tr(),
             onTap: () {
-              _showTermsDialog(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => HominodeLegalDocumentViewer(
+                    title: 'terms_conditions'.tr(),
+                    assetPath: HominodeLegalDocuments.termsAndConditionsAsset,
+                  ),
+                ),
+              );
             },
           ),
           _buildSettingsTile(
@@ -374,38 +389,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('close'.tr()),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPrivacyPolicyDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('privacy_policy'.tr()),
-        content: SingleChildScrollView(child: Text('privacy_policy'.tr())),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('close'.tr()),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showTermsDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('terms_conditions'.tr()),
-        content: SingleChildScrollView(child: Text('terms_conditions'.tr())),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),

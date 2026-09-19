@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="LaunchTheme" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowSplashScreenBackground">#063D35</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/security_splash_icon</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#063D35</item>
+        <item name="android:windowSplashScreenAnimationDuration">300</item>
+
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#063D35</item>
+        <item name="android:navigationBarColor">#063D35</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowBackground">#063D35</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#063D35</item>
+        <item name="android:navigationBarColor">#063D35</item>
+    </style>
+
+</resources>

@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:table_calendar/table_calendar.dart';
+
 import 'desktop/admin_desktop_page_frame.dart';
 import 'services/amenity_service.dart';
-import 'widgets/standard_header.dart';
-import 'widgets/custom_segmented_control.dart';
 import 'widgets/add_amenity_modal.dart';
+import 'widgets/custom_segmented_control.dart';
 import 'widgets/edit_amenity_modal.dart';
+import 'widgets/standard_header.dart';
 import 'widgets/view_all_bookings_modal.dart';
 
 class AmenitiesManagementScreen extends StatefulWidget {
@@ -205,6 +206,11 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (amenity.primaryImageUrl != null) ...[
+            _AmenityPhotoCarousel(amenity: amenity),
+            SizedBox(height: 16.h),
+          ],
+
           // Top Row - Icon, Title and Status
           Row(
             children: [
@@ -1679,6 +1685,302 @@ class _BookingsCalendarViewState extends State<_BookingsCalendarView> {
           ),
         );
       },
+    );
+  }
+}
+
+class _AmenityPhotoCarousel extends StatefulWidget {
+  final AmenityModel amenity;
+
+  const _AmenityPhotoCarousel({required this.amenity});
+
+  @override
+  State<_AmenityPhotoCarousel> createState() => _AmenityPhotoCarouselState();
+}
+
+class _AmenityPhotoCarouselState extends State<_AmenityPhotoCarousel> {
+  late final PageController _controller;
+  int _page = 0;
+
+  List<AmenityImageModel> get _photos {
+    if (widget.amenity.images.isNotEmpty) {
+      return widget.amenity.images;
+    }
+
+    final legacy = widget.amenity.primaryImageUrl;
+    if (legacy == null || legacy.trim().isEmpty) {
+      return const <AmenityImageModel>[];
+    }
+
+    return [AmenityImageModel(url: legacy)];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AmenityPhotoCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final oldUrls = oldWidget.amenity.images.map((image) => image.url).toList();
+    final newUrls = widget.amenity.images.map((image) => image.url).toList();
+
+    final galleryChanged =
+        oldWidget.amenity.id != widget.amenity.id ||
+        oldUrls.length != newUrls.length ||
+        !_sameStrings(oldUrls, newUrls) ||
+        oldWidget.amenity.primaryImageUrl != widget.amenity.primaryImageUrl;
+
+    if (galleryChanged) {
+      _page = 0;
+      if (_controller.hasClients) {
+        _controller.jumpToPage(0);
+      }
+    }
+  }
+
+  bool _sameStrings(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _previous() {
+    final photos = _photos;
+    if (photos.length < 2) return;
+
+    final target = (_page - 1 + photos.length) % photos.length;
+    _controller.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _next() {
+    final photos = _photos;
+    if (photos.length < 2) return;
+
+    final target = (_page + 1) % photos.length;
+    _controller.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photos = _photos;
+    if (photos.isEmpty) return const SizedBox.shrink();
+
+    final safePage = _page.clamp(0, photos.length - 1);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12.r),
+      child: AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            PageView.builder(
+              controller: _controller,
+              itemCount: photos.length,
+              onPageChanged: (index) {
+                if (!mounted) return;
+                setState(() => _page = index);
+              },
+              itemBuilder: (context, index) {
+                return Image.network(
+                  photos[index].url,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      color: const Color(0xFFF1F5F9),
+                      alignment: Alignment.center,
+                      child: const SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: const Color(0xFFF1F5F9),
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            widget.amenity.icon,
+                            size: 36.w,
+                            color: const Color(0xFF94A3B8),
+                          ),
+                          SizedBox(height: 6.h),
+                          Text(
+                            'Photo unavailable',
+                            style: TextStyle(
+                              fontSize: 11.sp,
+                              color: const Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+
+            Positioned(
+              left: 10.w,
+              top: 10.h,
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 5.h),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0E4778).withValues(alpha: 0.88),
+                  borderRadius: BorderRadius.circular(999.r),
+                ),
+                child: Text(
+                  safePage == 0 ? 'PRIMARY' : 'PHOTO ${safePage + 1}',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10.sp,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+
+            if (photos.length > 1)
+              Positioned(
+                right: 10.w,
+                top: 10.h,
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 5.h),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.58),
+                    borderRadius: BorderRadius.circular(999.r),
+                  ),
+                  child: Text(
+                    '${safePage + 1} / ${photos.length}',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.sp,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+
+            if (photos.length > 1) ...[
+              Positioned(
+                left: 8.w,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: _AmenityCarouselArrow(
+                    tooltip: 'Previous facility photo',
+                    icon: Icons.chevron_left,
+                    onPressed: _previous,
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 8.w,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: _AmenityCarouselArrow(
+                    tooltip: 'Next facility photo',
+                    icon: Icons.chevron_right,
+                    onPressed: _next,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 9.h,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(photos.length, (index) {
+                    final active = index == safePage;
+                    return GestureDetector(
+                      key: ValueKey(
+                        'admin-facility-photo-dot-${widget.amenity.id}-$index',
+                      ),
+                      onTap: () {
+                        _controller.animateToPage(
+                          index,
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOut,
+                        );
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: active ? 18.w : 7.w,
+                        height: 7.h,
+                        margin: EdgeInsets.symmetric(horizontal: 2.5.w),
+                        decoration: BoxDecoration(
+                          color: active
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.65),
+                          borderRadius: BorderRadius.circular(999.r),
+                          boxShadow: const [
+                            BoxShadow(color: Color(0x33000000), blurRadius: 2),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AmenityCarouselArrow extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _AmenityCarouselArrow({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.48),
+      shape: const CircleBorder(),
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: Icon(icon, color: Colors.white),
+        iconSize: 24.w,
+        constraints: BoxConstraints.tightFor(width: 36.w, height: 36.h),
+        padding: EdgeInsets.zero,
+      ),
     );
   }
 }

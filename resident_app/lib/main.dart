@@ -84,7 +84,7 @@
 //           case '/splash':
 //             return MaterialPageRoute(
 //               builder: (context) => CleanSplashScreen(
-//                 logoAssetPath: 'assets/logo1.png',
+//                 logoAssetPath: 'lib/assets/Resident_New.png',
 //                 appName: 'Lyvo',
 //                 tagline: 'Your Community, Connected',
 //                 duration: const Duration(milliseconds: 3000),
@@ -320,7 +320,7 @@ class MyApp extends StatelessWidget {
               case '/splash':
                 return MaterialPageRoute(
                   builder: (context) => CleanSplashScreen(
-                    logoAssetPath: 'assets/logo1.png',
+                    logoAssetPath: 'lib/assets/Resident_New.png',
                     appName: 'Hominode',
                     tagline: 'Your Community, Connected',
                     duration: const Duration(milliseconds: 3000),
@@ -348,11 +348,15 @@ class MyApp extends StatelessWidget {
                 );
 
               case '/home':
-                return MaterialPageRoute(
-                  builder: (context) => const HominodeLegalAcceptanceGate(
-                    profileCollection: 'users',
-                    child: MainNavigation(),
-                  ),
+                return PageRouteBuilder(
+                  transitionDuration: Duration.zero,
+                  reverseTransitionDuration: Duration.zero,
+                  pageBuilder: (context, animation, secondaryAnimation) =>
+                      const HominodeLegalAcceptanceGate(
+                        profileCollection: 'users',
+                        loadingWidget: _ResidentLegalLoadingScreen(),
+                        child: MainNavigation(),
+                      ),
                 );
 
               case '/resident-registration':
@@ -449,18 +453,85 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset('assets/logo1.png', width: 100, height: 100),
-            const SizedBox(height: 24),
-            const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4F46E5)),
+      backgroundColor: const Color(0xFF06182B),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'lib/assets/images/resident_login_background.png',
+            fit: BoxFit.cover,
+          ),
+
+          Container(color: const Color(0xFF06182B).withValues(alpha: 0.18)),
+
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'lib/assets/Resident_New.png',
+                  width: 130,
+                  height: 130,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(height: 24),
+                const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Color(0xFF31D6E5),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResidentLegalLoadingScreen extends StatelessWidget {
+  const _ResidentLegalLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF06182B),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'lib/assets/images/resident_login_background.png',
+            fit: BoxFit.cover,
+          ),
+
+          Container(color: const Color(0xFF06182B).withValues(alpha: 0.18)),
+
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'lib/assets/Resident_New.png',
+                  width: 130,
+                  height: 130,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(height: 24),
+                const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Color(0xFF31D6E5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

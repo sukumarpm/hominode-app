@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../screens/access_blocked_screen.dart';
 import '../screens/simple_login_screen.dart';
 import '../services/flat_access_control_service.dart';
@@ -15,11 +16,41 @@ class FlatAccessWrapper extends StatelessWidget {
       stream: FlatAccessControlService.instance.streamFlatAccess(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0E4778)),
-              ),
+          return Scaffold(
+            backgroundColor: const Color(0xFF06182B),
+            body: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  'lib/assets/images/resident_login_background.png',
+                  fit: BoxFit.cover,
+                ),
+                Container(
+                  color: const Color(0xFF06182B).withValues(alpha: 0.18),
+                ),
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'lib/assets/Resident_New.png',
+                        width: 130,
+                        height: 130,
+                        fit: BoxFit.contain,
+                      ),
+                      const SizedBox(height: 24),
+                      const SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: Color(0xFF31D6E5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           );
         }

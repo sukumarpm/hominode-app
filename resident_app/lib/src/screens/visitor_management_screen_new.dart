@@ -48,6 +48,7 @@ class _VisitorManagementScreenNewState
                     segments: [
                       'pending'.tr(),
                       'approved'.tr(),
+                      'rejected'.tr(),
                       'deliveries'.tr(),
                     ],
                     selectedIndex: _selectedTabIndex,
@@ -145,6 +146,11 @@ class _VisitorManagementScreenNewState
                     v['status'] != 'cancelled',
               )
               .toList();
+        } else if (_selectedTabIndex == 2) {
+          // Rejected - keep declined requests visible to the resident
+          filteredVisitors = allVisitors
+              .where((v) => v['status'] == 'rejected')
+              .toList();
         } else {
           // Deliveries - for now, empty (can be implemented later)
           filteredVisitors = [];
@@ -162,6 +168,8 @@ class _VisitorManagementScreenNewState
                         ? Icons.pending_outlined
                         : _selectedTabIndex == 1
                         ? Icons.check_circle_outline
+                        : _selectedTabIndex == 2
+                        ? Icons.cancel_outlined
                         : Icons.local_shipping_outlined,
                     size: 64.w,
                     color: const Color(0xFFE5E5E5),
@@ -172,6 +180,8 @@ class _VisitorManagementScreenNewState
                         ? 'No pending visitors'
                         : _selectedTabIndex == 1
                         ? 'No approved visitors'
+                        : _selectedTabIndex == 2
+                        ? 'No rejected visitors'
                         : 'No deliveries',
                     style: TextStyle(
                       fontSize: 16.sp,
@@ -183,7 +193,11 @@ class _VisitorManagementScreenNewState
                   Text(
                     _selectedTabIndex == 0
                         ? 'Add expected visitors using the + button.\nAdmin will approve your requests.'
-                        : 'Admin-approved visitors will appear here',
+                        : _selectedTabIndex == 1
+                        ? 'Admin-approved visitors will appear here'
+                        : _selectedTabIndex == 2
+                        ? 'Visitor requests rejected by management will appear here.'
+                        : 'Deliveries will appear here.',
                     style: TextStyle(fontSize: 14.sp, color: Color(0xFFA3A3A3)),
                     textAlign: TextAlign.center,
                   ),
@@ -204,6 +218,7 @@ class _VisitorManagementScreenNewState
                     languageProvider,
                     isPending: _selectedTabIndex == 0,
                     isApproved: _selectedTabIndex == 1,
+                    isRejected: _selectedTabIndex == 2,
                   ),
                 ),
               )
@@ -213,11 +228,40 @@ class _VisitorManagementScreenNewState
     );
   }
 
+  String _formatRejectedAt(DateTime dateTime) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    final hour = dateTime.hour == 0
+        ? 12
+        : dateTime.hour > 12
+        ? dateTime.hour - 12
+        : dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+
+    return '${dateTime.day} ${months[dateTime.month - 1]} ${dateTime.year}, '
+        '$hour:$minute $period';
+  }
+
   Widget _buildVisitorCard(
     Map<String, dynamic> visitor,
     LanguageProvider languageProvider, {
     bool isPending = false,
     bool isApproved = false,
+    bool isRejected = false,
   }) {
     // Extract data from Firestore document
     final visitorId = visitor['id'] as String;
@@ -226,7 +270,7 @@ class _VisitorManagementScreenNewState
     final expectedArrival = (visitor['expectedArrival'] as Timestamp?)
         ?.toDate();
     final phoneNumber = visitor['phoneNumber'] as String?;
-    final vehicleNumber = visitor['vehicleNumber'] as String?;
+    final rejectedAt = (visitor['rejectedAt'] as Timestamp?)?.toDate();
 
     // Format time
     String timeText = 'No time set';
@@ -360,6 +404,29 @@ class _VisitorManagementScreenNewState
                         ],
                       ),
                     ],
+                    if (isRejected && rejectedAt != null) ...[
+                      SizedBox(height: 4.h),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.cancel_outlined,
+                            size: 14.w,
+                            color: const Color(0xFFDC2626),
+                          ),
+                          SizedBox(width: 4.w),
+                          Flexible(
+                            child: Text(
+                              'Rejected ${_formatRejectedAt(rejectedAt)}',
+                              style: TextStyle(
+                                color: const Color(0xFFDC2626),
+                                fontSize: 13.sp,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -404,6 +471,26 @@ class _VisitorManagementScreenNewState
                     ),
                   ),
                 ),
+
+              if (isRejected)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 12.w,
+                    vertical: 6.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEE2E2),
+                    borderRadius: BorderRadius.circular(8.r),
+                  ),
+                  child: Text(
+                    'Rejected',
+                    style: TextStyle(
+                      color: Color(0xFFDC2626),
+                      fontSize: 12.sp,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
             ],
           ),
 
@@ -419,27 +506,6 @@ class _VisitorManagementScreenNewState
             _buildViewQRButton(visitor),
           ],
         ],
-      ),
-    );
-  }
-
-  Widget _buildApproveButton(String visitorId, String visitorName) {
-    return SizedBox(
-      height: 48.h,
-      child: ElevatedButton(
-        onPressed: () => _approveVisitor(visitorId, visitorName),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF10B981),
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12.r),
-          ),
-        ),
-        child: Text(
-          'Approve',
-          style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
-        ),
       ),
     );
   }
@@ -477,7 +543,7 @@ class _VisitorManagementScreenNewState
       height: 48.h,
       child: OutlinedButton.icon(
         onPressed: () {
-          print('🔵 Opening QR screen for visitor ID: $visitorId');
+          debugPrint('🔵 Opening QR screen for visitor ID: $visitorId');
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -534,70 +600,6 @@ class _VisitorManagementScreenNewState
     );
   }
 
-  Future<void> _approveVisitor(String visitorId, String visitorName) async {
-    try {
-      // Show loading
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
-      );
-
-      // Approve visitor in Firestore
-      final result = await _visitorService.approveVisitor(visitorId);
-
-      // Close loading
-      if (mounted) Navigator.pop(context);
-
-      if (result.success) {
-        // Show success message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('$visitorName approved'),
-              backgroundColor: const Color(0xFF10B981),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-            ),
-          );
-        }
-      } else {
-        // Show error message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result.message ?? 'Failed to approve visitor'),
-              backgroundColor: const Color(0xFFDC2626),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      // Close loading if still open
-      if (mounted) Navigator.pop(context);
-
-      // Show error
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: const Color(0xFFDC2626),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8.r),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _rejectVisitor(String visitorId, String visitorName) async {
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
@@ -623,7 +625,7 @@ class _VisitorManagementScreenNewState
       ),
     );
 
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     try {
       // Show loading
@@ -692,7 +694,7 @@ class _VisitorManagementScreenNewState
 // ============================================================================
 // DELIVERY CLASS - FOR FUTURE IMPLEMENTATION
 // ============================================================================
-// This class is reserved for the Deliveries tab feature (Tab 3)
+// This class is reserved for the Deliveries tab feature (Tab 4)
 // Currently, the Deliveries tab shows an empty state
 // Implement delivery tracking functionality here when needed
 

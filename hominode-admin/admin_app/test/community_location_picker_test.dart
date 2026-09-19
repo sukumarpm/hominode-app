@@ -12,6 +12,7 @@ class FakeLocationGateway implements CommunityLocationGateway {
   String? lastSearchSessionToken;
   String? lastResolveSessionToken;
 
+  @override
   Future<List<CommunityLocationSuggestion>> search(
     String query, {
     required String sessionToken,

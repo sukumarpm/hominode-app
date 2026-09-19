@@ -127,9 +127,9 @@ flutter:
   assets:
     - assets/logo.png
     - assets/logo1.png
+    - lib/assets/Resident_New.png
     - assets/Android.png
     - assets/translations/
-    - lib/assets/Resident_New.png
     - lib/assets/images/resident_login_background.png
     - lib/assets/reference/resident_login_reference.png
   #   - images/a_dot_burr.jpeg

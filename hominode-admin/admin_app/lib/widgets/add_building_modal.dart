@@ -538,11 +538,12 @@ class _AddBuildingModalState extends State<AddBuildingModal> {
             onChanged: _isLoading
                 ? null
                 : (type) {
-                    if (type != null)
+                    if (type != null) {
                       setState(() {
                         _unitType = type;
                         _unitTypeChanged = true;
                       });
+                    }
                   },
           ),
         ],
