@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
+
+import '../services/subscription_entitlement_service.dart';
+import '../services/tenant_resolution_service.dart';
 
 import '../components/standard_screen.dart';
 import '../modals/booking_modal.dart';
@@ -261,7 +265,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
                   width: itemWidth,
                   child: AmenityCard(
                     amenity: amenity,
-                    onTap: () => _handleAmenityTap(context, amenity),
+                    onTap: () => _handleAmenityTap(amenity),
                   ),
                 );
               }).toList(),
@@ -391,10 +395,62 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
     );
   }
 
-  Future<void> _handleAmenityTap(
-    BuildContext context,
-    AmenityModel amenity,
-  ) async {
+  Future<void> _handleAmenityTap(AmenityModel amenity) async {
+    final tenantResolution = context.read<TenantResolutionService>();
+    final communityId = tenantResolution.communityId;
+
+    if (communityId == null || communityId.trim().isEmpty) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Your community could not be resolved. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final entitlement = await ResidentSubscriptionEntitlementService()
+          .getEntitlement(communityId);
+
+      if (!mounted) return;
+
+      final canBook = entitlement?.canUseFeature('facilityBooking') == true;
+
+      if (!canBook) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Facility booking unavailable'),
+            content: const Text(
+              'Facility booking is available with Hominode Plus and Pro.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Facility booking availability could not be verified. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final amenityLegacy = Amenity(
       id: amenity.id,
       communityId: amenity.communityId,
@@ -735,7 +791,7 @@ class BookingCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16.r),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),

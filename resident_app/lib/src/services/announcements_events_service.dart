@@ -13,9 +13,9 @@ class AnnouncementsEventsService {
 
   Query<Map<String, dynamic>> _visibleEventsQuery(String communityId) {
     return _firestore
-        .collection('events')
+        .collection('events_announcements')
         .where('communityId', isEqualTo: communityId)
-        .where('status', isEqualTo: 'published');
+        .where('type', isEqualTo: 'event');
   }
 
   /// Get current resident's community ID
@@ -60,12 +60,13 @@ class AnnouncementsEventsService {
       print('📢 Streaming announcements for community: $communityId');
 
       yield* _firestore
-          .collection('announcements')
+          .collection('events_announcements')
           .where('communityId', isEqualTo: communityId)
-          .where('status', isEqualTo: 'active')
+          .where('type', isEqualTo: 'announcement')
           .snapshots()
           .map((snapshot) {
             final announcements = snapshot.docs
+                .where((doc) => doc.data()['status'] == 'active')
                 .map((doc) => AnnouncementModel.fromFirestore(doc))
                 .toList();
 

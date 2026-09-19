@@ -18,6 +18,7 @@ import 'src/services/apartment_images_service.dart';
 import 'src/services/bill_firestore_service.dart';
 import 'src/services/complaint_firestore_service.dart';
 import 'src/services/recent_activity_flow_function.dart';
+import 'src/services/subscription_entitlement_service.dart';
 import 'src/services/tenant_resolution_service.dart';
 import 'src/services/visitor_firestore_service.dart';
 
@@ -733,6 +734,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openCommunityWallIfAllowed() async {
+    final tenantResolution = context.read<TenantResolutionService>();
+    final communityId = tenantResolution.communityId;
+
+    if (communityId == null || communityId.trim().isEmpty) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Your community could not be resolved. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final entitlement = await ResidentSubscriptionEntitlementService()
+          .getEntitlement(communityId);
+
+      if (!mounted) return;
+
+      if (entitlement?.canUseFeature('communityWall') != true) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Community Wall unavailable'),
+            content: const Text(
+              'Community Wall is available with Hominode Plus and Pro.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(builder: (_) => const CommunityWallScreen()),
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Community Wall availability could not be verified. Please try again.',
+          ),
+        ),
+      );
+    }
+  }
+
   Widget _buildQuickAccessSection() {
     final items = <_QuickAccessItemData>[
       _QuickAccessItemData(
@@ -785,12 +845,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         label: 'community_wall'.tr(),
         iconColor: const Color(0xFF7848F5),
         backgroundColor: const Color(0xFFEDE5FF),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const CommunityWallScreen()),
-          );
-        },
+        onTap: _openCommunityWallIfAllowed,
       ),
       _QuickAccessItemData(
         icon: Icons.fitness_center_outlined,

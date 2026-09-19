@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
+import 'package:provider/provider.dart';
 
 import 'dashboard_screen.dart';
 import 'src/screens/visitor_management_screen_new.dart';
@@ -12,6 +13,8 @@ import 'events_announcements_screen.dart';
 import 'profile_screen.dart';
 import 'src/widgets/flat_access_wrapper.dart';
 import 'src/constants/app_colors.dart';
+import 'src/services/subscription_entitlement_service.dart';
+import 'src/services/tenant_resolution_service.dart';
 
 /// Main Navigation Screen with Smooth Animated Bottom Navigation Bar
 /// Uses IndexedStack to preserve state of all screens while switching tabs
@@ -59,13 +62,78 @@ class _MainNavigationState extends State<MainNavigation>
   }
 
   void _onTabTapped(int index) {
-    if (_currentIndex != index) {
-      setState(() {
-        _currentIndex = index;
-      });
-      // Trigger animation on tab change
-      _animationController.reset();
-      _animationController.forward();
+    if (index == 3) {
+      unawaited(_openEventsTabIfAllowed());
+      return;
+    }
+
+    _switchTab(index);
+  }
+
+  void _switchTab(int index) {
+    if (_currentIndex == index) return;
+
+    setState(() {
+      _currentIndex = index;
+    });
+
+    _animationController.reset();
+    _animationController.forward();
+  }
+
+  Future<void> _openEventsTabIfAllowed() async {
+    final tenantResolution = context.read<TenantResolutionService>();
+    final communityId = tenantResolution.communityId;
+
+    if (communityId == null || communityId.trim().isEmpty) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Your community could not be resolved. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final entitlement = await ResidentSubscriptionEntitlementService()
+          .getEntitlement(communityId);
+
+      if (!mounted) return;
+
+      if (entitlement?.canUseFeature('events') != true) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Events unavailable'),
+            content: const Text(
+              'Events are available with Hominode Plus and Pro.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      _switchTab(3);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Events availability could not be verified. Please try again.',
+          ),
+        ),
+      );
     }
   }
 
