@@ -100,6 +100,15 @@ const {
   refreshPublicPlatformStatsCore,
 } = require("./public_platform_stats");
 
+const {
+  seedSubscriptionPlansCore,
+  getCommunitySubscriptionCore,
+  createCommunitySubscriptionCore,
+  changeCommunitySubscriptionPlanCore,
+  extendCommunitySubscriptionCore,
+  setCommunitySubscriptionStatusCore,
+} = require("./subscription_management");
+
 
 const REGION = "asia-southeast1";
 const GOOGLE_GEOCODING_API_KEY = defineSecret("GOOGLE_GEOCODING_API_KEY");
@@ -242,6 +251,36 @@ exports.cancelAmenityBooking = appCheckedCallable(
 exports.refreshPublicPlatformStats = callable(
   refreshPublicPlatformStatsCore,
   "Public platform statistics could not be refreshed."
+);
+
+exports.seedSubscriptionPlans = callable(
+  seedSubscriptionPlansCore,
+  "Subscription plans could not be seeded."
+);
+
+exports.getCommunitySubscription = callable(
+  getCommunitySubscriptionCore,
+  "Community subscription could not be loaded."
+);
+
+exports.createCommunitySubscription = callable(
+  createCommunitySubscriptionCore,
+  "Community subscription could not be created."
+);
+
+exports.changeCommunitySubscriptionPlan = callable(
+  changeCommunitySubscriptionPlanCore,
+  "Community subscription plan could not be changed."
+);
+
+exports.extendCommunitySubscription = callable(
+  extendCommunitySubscriptionCore,
+  "Community subscription could not be extended."
+);
+
+exports.setCommunitySubscriptionStatus = callable(
+  setCommunitySubscriptionStatusCore,
+  "Community subscription status could not be changed."
 );
 
 exports.createMaintenanceBills = appCheckedCallable(

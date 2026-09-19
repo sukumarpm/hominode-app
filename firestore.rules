@@ -418,6 +418,36 @@ function securityCanAccessCommunity(communityId) {
     }
 
 
+
+    // ============================================================
+    // SUBSCRIPTIONS
+    // ============================================================
+
+    match /subscriptionPlans/{planId} {
+      // Plan definitions are not sensitive, but only authenticated Hominode
+      // users may read them. All writes remain server-owned.
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /subscriptions/{communityId} {
+      // Community members may read only the subscription document scoped to
+      // their own active community. Super Admin may inspect every community.
+      allow get: if validSuperAdmin()
+        || adminCanAccessCommunity(communityId)
+        || residentCanAccessCommunity(communityId)
+        || securityCanAccessCommunity(communityId);
+
+      allow list: if validSuperAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /subscriptionEvents/{eventId} {
+      // Subscription history is platform-governance data in V1.
+      allow read: if validSuperAdmin();
+      allow create, update, delete: if false;
+    }
+
     // ============================================================
     // COMMUNITY INVITES
     // ============================================================
