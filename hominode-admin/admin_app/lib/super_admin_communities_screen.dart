@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'models/tenant_config.dart';
 import 'services/tenant_registry_service.dart';
+import 'services/subscription_service.dart';
 import 'widgets/super_admin_subscription_card.dart';
 
 class SuperAdminCommunitiesScreen extends StatefulWidget {
@@ -296,6 +297,10 @@ class _TenantFormDialogState extends State<_TenantFormDialog> {
   late final Map<String, TextEditingController> _fields;
   bool _saving = false;
   String? _error;
+
+  String _subscriptionPlanId = 'essential';
+  String _subscriptionStatus = 'active';
+  DateTime? _subscriptionEndDate;
   @override
   void initState() {
     super.initState();
@@ -329,11 +334,46 @@ class _TenantFormDialogState extends State<_TenantFormDialog> {
     });
     try {
       final values = _fields.map((key, value) => MapEntry(key, value.text));
+
       if (widget.tenant == null) {
-        await widget.service.createTenant(values);
+        if (_subscriptionStatus == 'trial' && _subscriptionEndDate == null) {
+          throw StateError('Trial subscriptions require an end date.');
+        }
+
+        final communityId = await widget.service.createTenant(values);
+
+        final endsAtMs = _subscriptionEndDate == null
+            ? null
+            : DateTime(
+                _subscriptionEndDate!.year,
+                _subscriptionEndDate!.month,
+                _subscriptionEndDate!.day,
+                23,
+                59,
+                59,
+              ).millisecondsSinceEpoch;
+
+        try {
+          await SubscriptionService().createSubscription(
+            communityId: communityId,
+            planId: _subscriptionPlanId,
+            status: _subscriptionStatus,
+            endsAtMs: endsAtMs,
+          );
+        } on FirebaseFunctionsException catch (error) {
+          throw StateError(
+            'Community was created, but subscription setup failed: '
+            '${error.message ?? 'Unknown subscription error.'}',
+          );
+        } catch (error) {
+          throw StateError(
+            'Community was created, but subscription setup failed: $error',
+          );
+        }
       } else {
         await widget.service.updateTenant(widget.tenant!.communityId, values);
       }
+
       if (mounted) Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (error) {
       setState(() => _error = error.message ?? 'Unable to save community.');
@@ -367,6 +407,117 @@ class _TenantFormDialogState extends State<_TenantFormDialog> {
                         : null,
                   ),
                 ),
+
+              if (widget.tenant == null) ...[
+                const SizedBox(height: 8),
+
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Subscription',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                DropdownButtonFormField<String>(
+                  initialValue: _subscriptionPlanId,
+                  decoration: const InputDecoration(
+                    labelText: 'Subscription plan',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'essential',
+                      child: Text('Hominode Essential'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'plus',
+                      child: Text('Hominode Plus'),
+                    ),
+                    DropdownMenuItem(value: 'pro', child: Text('Hominode Pro')),
+                  ],
+                  onChanged: _saving
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() => _subscriptionPlanId = value);
+                          }
+                        },
+                ),
+
+                const SizedBox(height: 12),
+
+                DropdownButtonFormField<String>(
+                  initialValue: _subscriptionStatus,
+                  decoration: const InputDecoration(
+                    labelText: 'Initial status',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'active', child: Text('Active')),
+                    DropdownMenuItem(value: 'trial', child: Text('Trial')),
+                  ],
+                  onChanged: _saving
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() {
+                              _subscriptionStatus = value;
+                              if (value == 'active') {
+                                _subscriptionEndDate = null;
+                              }
+                            });
+                          }
+                        },
+                ),
+
+                const SizedBox(height: 12),
+
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_today_outlined),
+                  title: Text(
+                    _subscriptionEndDate == null
+                        ? (_subscriptionStatus == 'trial'
+                              ? 'Trial end date required'
+                              : 'No fixed end date')
+                        : '${_subscriptionEndDate!.year}-'
+                              '${_subscriptionEndDate!.month.toString().padLeft(2, '0')}-'
+                              '${_subscriptionEndDate!.day.toString().padLeft(2, '0')}',
+                  ),
+                  subtitle: Text(
+                    _subscriptionStatus == 'trial'
+                        ? 'Required for Trial'
+                        : 'Active subscriptions may have no fixed end date',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _saving
+                      ? null
+                      : () async {
+                          final now = DateTime.now();
+
+                          final selected = await showDatePicker(
+                            context: context,
+                            firstDate: now.add(const Duration(days: 1)),
+                            lastDate: now.add(const Duration(days: 3650)),
+                            initialDate:
+                                _subscriptionEndDate ??
+                                now.add(const Duration(days: 30)),
+                          );
+
+                          if (selected != null && mounted) {
+                            setState(() {
+                              _subscriptionEndDate = selected;
+                            });
+                          }
+                        },
+                ),
+
+                const SizedBox(height: 12),
+              ],
+
               if (_error != null)
                 Text(
                   _error!,
