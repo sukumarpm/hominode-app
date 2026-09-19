@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'models/tenant_config.dart';
 import 'services/tenant_registry_service.dart';
+import 'widgets/super_admin_subscription_card.dart';
 
 class SuperAdminCommunitiesScreen extends StatefulWidget {
   const SuperAdminCommunitiesScreen({this.tenantsLoader, super.key});
@@ -264,6 +265,8 @@ class _SuperAdminCommunityDetailsScreenState
                       title: Text(entry.key),
                       subtitle: Text(entry.value.isEmpty ? '—' : entry.value),
                     ),
+                  const SizedBox(height: 12),
+                  SuperAdminSubscriptionCard(communityId: tenant.communityId),
                   const SizedBox(height: 12),
                   FilledButton.tonal(
                     onPressed: () => _changeStatus(tenant),

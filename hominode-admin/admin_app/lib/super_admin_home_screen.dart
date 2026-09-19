@@ -16,8 +16,7 @@ class SuperAdminHomeScreen extends StatefulWidget {
 }
 
 class _SuperAdminHomeScreenState extends State<SuperAdminHomeScreen> {
-  final PublicPlatformStatsService _statsService =
-      PublicPlatformStatsService();
+  final PublicPlatformStatsService _statsService = PublicPlatformStatsService();
 
   bool _refreshingStats = false;
 
@@ -79,11 +78,7 @@ class _SuperAdminHomeScreenState extends State<SuperAdminHomeScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not refresh public statistics: $error',
-          ),
-        ),
+        SnackBar(content: Text('Could not refresh public statistics: $error')),
       );
     } finally {
       if (mounted) {
@@ -141,9 +136,7 @@ class _SuperAdminHomeScreenState extends State<SuperAdminHomeScreen> {
                   ? const SizedBox(
                       width: 24,
                       height: 24,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
                     )
                   : const Icon(Icons.refresh),
               title: const Text('Refresh Public Statistics'),
@@ -162,20 +155,15 @@ class _SuperAdminHomeScreenState extends State<SuperAdminHomeScreen> {
 }
 
 class SuperAdminPlaceholderScreen extends StatelessWidget {
-  const SuperAdminPlaceholderScreen({
-    required this.title,
-    super.key,
-  });
+  const SuperAdminPlaceholderScreen({required this.title, super.key});
 
   final String title;
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(title)),
-        body: Center(
-          child: Text('$title is coming soon.'),
-        ),
-      );
+    appBar: AppBar(title: Text(title)),
+    body: Center(child: Text('$title is coming soon.')),
+  );
 }
 
 class _DestinationCard extends StatelessWidget {
@@ -191,39 +179,32 @@ class _DestinationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: ListTile(
-          leading: Icon(icon),
-          title: Text(title),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: onTap,
-        ),
-      );
+    child: ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    ),
+  );
 }
 
 class _StatRow extends StatelessWidget {
-  const _StatRow({
-    required this.label,
-    required this.value,
-  });
+  const _StatRow({required this.label, required this.value});
 
   final String label;
   final Object? value;
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(label),
-            ),
-            Text(
-              '${value ?? 0}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        Expanded(child: Text(label)),
+        Text(
+          '${value ?? 0}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-      );
+      ],
+    ),
+  );
 }
