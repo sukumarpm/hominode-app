@@ -76,6 +76,8 @@ dependencies:
     path: ../packages/hominode_notifications
   hominode_legal:
     path: ../packages/hominode_legal
+  hominode_entitlements:
+    path: ../packages/hominode_entitlements
   
   # QR Code Generation
   qr_flutter: ^4.1.0

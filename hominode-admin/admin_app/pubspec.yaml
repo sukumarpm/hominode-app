@@ -77,6 +77,8 @@ dependencies:
     path: ../../packages/hominode_notifications
   hominode_legal:
     path: ../../packages/hominode_legal
+  hominode_entitlements:
+    path: ../../packages/hominode_entitlements
   excel: ^4.0.6
 dependency_overrides:
   firebase_core_web: 3.10.0

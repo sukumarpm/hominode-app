@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:hominode_entitlements/hominode_entitlements.dart';
 
 class CommunitySubscription {
   const CommunitySubscription({
@@ -49,6 +50,26 @@ class SubscriptionService {
           functions ?? FirebaseFunctions.instanceFor(region: 'asia-southeast1');
 
   final FirebaseFunctions _functions;
+
+  Future<HominodeEntitlement?> getEntitlement(String communityId) async {
+    final subscription = await getSubscription(communityId);
+
+    if (subscription == null) return null;
+
+    return HominodeEntitlement(
+      communityId: subscription.communityId,
+      planId: subscription.planId,
+      status:
+          HominodeSubscriptionStatus.fromValue(subscription.status) ??
+          (throw StateError(
+            'Unsupported subscription status: ${subscription.status}',
+          )),
+      startsAtMs: subscription.startsAtMs,
+      endsAtMs: subscription.endsAtMs,
+      features: subscription.features,
+      limits: subscription.limits,
+    );
+  }
 
   Future<CommunitySubscription?> getSubscription(String communityId) async {
     final response = await _functions

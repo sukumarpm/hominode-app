@@ -137,3 +137,19 @@ test("subscription end date cannot already be before the effective start", () =>
     /endsAtMs must be later than the subscription start time/,
   );
 });
+
+test("current entitlement resolver rejects arbitrary input fields", async () => {
+  const {
+    getCurrentCommunityEntitlementCore,
+  } = require("../src/subscription_management");
+
+  await assert.rejects(
+    () =>
+      getCurrentCommunityEntitlementCore({
+        db: {},
+        auth: {uid: "test"},
+        data: {communityId: "OTHER-COMMUNITY"},
+      }),
+    /does not accept any input fields/,
+  );
+});

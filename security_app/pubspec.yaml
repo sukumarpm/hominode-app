@@ -59,6 +59,8 @@ dependencies:
     path: ../packages/hominode_notifications
   hominode_legal:
     path: ../packages/hominode_legal
+  hominode_entitlements:
+    path: ../packages/hominode_entitlements
   
   # Networking & API Security
   http: ^1.2.2

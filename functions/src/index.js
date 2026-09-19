@@ -103,6 +103,7 @@ const {
 const {
   seedSubscriptionPlansCore,
   getCommunitySubscriptionCore,
+  getCurrentCommunityEntitlementCore,
   createCommunitySubscriptionCore,
   changeCommunitySubscriptionPlanCore,
   extendCommunitySubscriptionCore,
@@ -261,6 +262,11 @@ exports.seedSubscriptionPlans = callable(
 exports.getCommunitySubscription = callable(
   getCommunitySubscriptionCore,
   "Community subscription could not be loaded."
+);
+
+exports.getCurrentCommunityEntitlement = appCheckedCallable(
+  getCurrentCommunityEntitlementCore,
+  "Community entitlement could not be loaded."
 );
 
 exports.createCommunitySubscription = callable(

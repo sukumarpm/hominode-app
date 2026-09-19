@@ -1,5 +1,6 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:hominode_entitlements/hominode_entitlements.dart';
 
 import '../services/subscription_service.dart';
 
@@ -18,6 +19,8 @@ class _SuperAdminSubscriptionCardState
   final SubscriptionService _service = SubscriptionService();
 
   late Future<CommunitySubscription?> _subscription = _load();
+  late Future<HominodeEntitlement?> _entitlement = _loadEntitlement();
+
   bool _busy = false;
 
   static const Map<String, String> _plans = {
@@ -38,9 +41,13 @@ class _SuperAdminSubscriptionCardState
   Future<CommunitySubscription?> _load() =>
       _service.getSubscription(widget.communityId);
 
+  Future<HominodeEntitlement?> _loadEntitlement() =>
+      _service.getEntitlement(widget.communityId);
+
   void _refresh() {
     setState(() {
       _subscription = _load();
+      _entitlement = _loadEntitlement();
     });
   }
 
@@ -594,6 +601,61 @@ class _SuperAdminSubscriptionCardState
               ? 'Plan-defined / unrestricted in V1'
               : 'Maximum $maxBankAccounts',
         ),
+
+        const SizedBox(height: 8),
+
+        FutureBuilder<HominodeEntitlement?>(
+          future: _entitlement,
+          builder: (context, entitlementSnapshot) {
+            if (entitlementSnapshot.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LinearProgressIndicator(),
+              );
+            }
+
+            if (entitlementSnapshot.hasError) {
+              return _Row(
+                label: 'Entitlement',
+                value: 'Unable to resolve: ${entitlementSnapshot.error}',
+              );
+            }
+
+            final entitlement = entitlementSnapshot.data;
+
+            if (entitlement == null) {
+              return const _Row(label: 'Entitlement', value: 'No entitlement');
+            }
+
+            return Column(
+              children: [
+                _Row(
+                  label: 'Access',
+                  value: entitlement.isUsable() ? 'Allowed' : 'Blocked',
+                ),
+                _Row(
+                  label: 'Facilities',
+                  value: entitlement.canUseFeature('facilityBooking')
+                      ? 'Enabled'
+                      : 'Disabled',
+                ),
+                _Row(
+                  label: 'Events',
+                  value: entitlement.canUseFeature('events')
+                      ? 'Enabled'
+                      : 'Disabled',
+                ),
+                _Row(
+                  label: 'Community wall',
+                  value: entitlement.canUseFeature('communityWall')
+                      ? 'Enabled'
+                      : 'Disabled',
+                ),
+              ],
+            );
+          },
+        ),
+
         const SizedBox(height: 16),
         Wrap(
           spacing: 8,

@@ -429,6 +429,71 @@ async function requireExistingCommunity(transaction, db, communityId) {
   return snapshot.data();
 }
 
+
+async function resolveCurrentCommunityId(db, auth) {
+  const {uid} = verifiedPhoneAuth(auth);
+
+  const residentSnapshot = await db.collection("users").doc(uid).get();
+  const resident = residentSnapshot.data();
+
+  if (
+    residentSnapshot.exists &&
+    resident?.uid === uid &&
+    resident?.role === "resident" &&
+    resident?.isActive === true &&
+    resident?.approvalStatus === "approved" &&
+    typeof resident?.communityId === "string" &&
+    resident.communityId.trim().length > 0
+  ) {
+    return {
+      uid,
+      role: "resident",
+      communityId: resident.communityId.trim(),
+    };
+  }
+
+  const securitySnapshot = await db.collection("securityStaff").doc(uid).get();
+  const security = securitySnapshot.data();
+
+  if (
+    securitySnapshot.exists &&
+    (security?.uid == null || security?.uid === uid) &&
+    security?.role === "security" &&
+    security?.isActive === true &&
+    typeof security?.communityId === "string" &&
+    security.communityId.trim().length > 0
+  ) {
+    return {
+      uid,
+      role: "security",
+      communityId: security.communityId.trim(),
+    };
+  }
+
+  const adminSnapshot = await db.collection("admins").doc(uid).get();
+  const admin = adminSnapshot.data();
+
+  if (
+    adminSnapshot.exists &&
+    admin?.uid === uid &&
+    admin?.isActive === true &&
+    admin?.role === "admin" &&
+    Array.isArray(admin?.authorizedCommunityIds) &&
+    admin.authorizedCommunityIds.length === 1
+  ) {
+    return {
+      uid,
+      role: "admin",
+      communityId: String(admin.authorizedCommunityIds[0]).trim(),
+    };
+  }
+
+  throw new RegistrationError(
+    "permission-denied",
+    "Your community entitlement could not be resolved.",
+  );
+}
+
 async function requireSubscriptionViewer(db, auth, communityId) {
   const {uid} = verifiedPhoneAuth(auth);
   const snapshot = await db.collection("admins").doc(uid).get();
@@ -750,6 +815,34 @@ async function resolveCommunitySubscriptionCore({db, communityId}) {
   };
 }
 
+
+async function getCurrentCommunityEntitlementCore({db, auth, data}) {
+  assertObjectWithOnlyKeys(
+    data ?? {},
+    new Set(),
+    "This request does not accept any input fields.",
+  );
+
+  const scope = await resolveCurrentCommunityId(db, auth);
+
+  const entitlement = await resolveCommunitySubscriptionCore({
+    db,
+    communityId: scope.communityId,
+  });
+
+  if (entitlement == null) {
+    throw new RegistrationError(
+      "failed-precondition",
+      "This community does not have a subscription.",
+    );
+  }
+
+  return {
+    ...entitlement,
+    resolvedRole: scope.role,
+  };
+}
+
 async function getCommunitySubscriptionCore({db, auth, data}) {
   assertObjectWithOnlyKeys(
     data,
@@ -780,5 +873,7 @@ module.exports = {
   extendCommunitySubscriptionCore,
   setCommunitySubscriptionStatusCore,
   getCommunitySubscriptionCore,
+  getCurrentCommunityEntitlementCore,
+  resolveCurrentCommunityId,
   resolveCommunitySubscriptionCore,
 };
