@@ -10,6 +10,7 @@ import 'widgets/standard_header.dart';
 import 'widgets/custom_segmented_control.dart';
 import 'services/event_announcement_service.dart';
 import 'services/admin_service.dart';
+import 'services/subscription_service.dart';
 
 class EventsAnnouncementsScreen extends StatefulWidget {
   const EventsAnnouncementsScreen({super.key});
@@ -23,7 +24,10 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   int selectedTab = 0; // 0 = Events, 1 = Announcements
   final EventAnnouncementService _service = EventAnnouncementService();
   final AdminService _adminService = AdminService();
+  final SubscriptionService _subscriptionService = SubscriptionService();
+
   bool _isInitialized = false;
+  bool _eventsAllowed = false;
   String? _adminId;
 
   @override
@@ -53,6 +57,19 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       }
       print('✅ STEP 2 PASSED: Admin access validated');
 
+      // Subscription entitlement: fail closed for Events while keeping
+      // Announcements available.
+      var eventsAllowed = false;
+      try {
+        final communityId = _adminService.requireCurrentCommunityId();
+        final entitlement = await _subscriptionService.getEntitlement(
+          communityId,
+        );
+        eventsAllowed = entitlement?.canUseFeature('events') == true;
+      } catch (error) {
+        debugPrint('Events entitlement resolution failed: $error');
+      }
+
       // STEP 3: Initialize Data Streams
       print('🔄 STEP 3: Initializing data streams...');
       // Streams are initialized in build method via StreamBuilder
@@ -62,6 +79,14 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       print('🔔 STEP 4: Updating UI state...');
       if (mounted) {
         setState(() {
+          _eventsAllowed = eventsAllowed;
+
+          // Essential communities land on Announcements instead of exposing
+          // the premium Events list.
+          if (!_eventsAllowed) {
+            selectedTab = 1;
+          }
+
           _isInitialized = true;
         });
       }
@@ -78,6 +103,33 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
         );
       }
     }
+  }
+
+  Future<void> _selectTab(int index) async {
+    if (index == 0 && !_eventsAllowed) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Events unavailable'),
+          content: const Text(
+            'Events are available with Hominode Plus and Pro.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      selectedTab = index;
+    });
   }
 
   @override
@@ -109,7 +161,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
           children: [
             SegmentedControlExamples.eventsSegmentedControl(
               selectedIndex: selectedTab,
-              onChanged: (index) => setState(() => selectedTab = index),
+              onChanged: (index) {
+                _selectTab(index);
+              },
             ),
             SizedBox(height: 16.h),
             Expanded(
@@ -157,9 +211,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                   child: SegmentedControlExamples.eventsSegmentedControl(
                     selectedIndex: selectedTab,
                     onChanged: (index) {
-                      setState(() {
-                        selectedTab = index;
-                      });
+                      _selectTab(index);
                     },
                   ),
                 ),
@@ -173,79 +225,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                     text: selectedTab == 0
                         ? 'Create Event'
                         : 'Create Announcements',
-                    onPressed: () async {
-                      if (selectedTab == 0) {
-                        final result = await showCreateEventModal(context);
-                        if (result != null && mounted) {
-                          try {
-                            await _service.createEvent(
-                              title: result['title'],
-                              category: result['category'] ?? 'General',
-                              description: result['description'] ?? '',
-                              date: result['date'] ?? DateTime.now(),
-                              time: result['time'] ?? '6:00 PM',
-                              location: result['location'] ?? 'Community Hall',
-                              imageUrl: result['imageUrl'],
-                              localImagePath: result['localImagePath'],
-                            );
-
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Event created successfully'),
-                                  backgroundColor: Color(0xFF10B981),
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Failed to create event: $e'),
-                                  backgroundColor: Color(0xFFEF4444),
-                                ),
-                              );
-                            }
-                          }
-                        }
-                      } else {
-                        final result = await showCreateAnnouncementModal(
-                          context,
-                        );
-                        if (result != null && mounted) {
-                          try {
-                            await _service.createAnnouncement(
-                              title: result['title'],
-                              category: result['category'] ?? 'General',
-                              priority: result['priority'] ?? 'medium',
-                              description: result['message'] ?? '',
-                            );
-
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Announcement created successfully',
-                                  ),
-                                  backgroundColor: Color(0xFF10B981),
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Failed to create announcement: $e',
-                                  ),
-                                  backgroundColor: Color(0xFFEF4444),
-                                ),
-                              );
-                            }
-                          }
-                        }
-                      }
-                    },
+                    onPressed: _createSelectedItem,
                   ),
                 ),
 
@@ -267,6 +247,11 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
 
   Future<void> _createSelectedItem() async {
     try {
+      if (selectedTab == 0 && !_eventsAllowed) {
+        await _selectTab(0);
+        return;
+      }
+
       if (selectedTab == 0) {
         final result = await showCreateEventModal(context);
         if (result == null || !context.mounted) return;
