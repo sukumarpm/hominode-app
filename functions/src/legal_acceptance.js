@@ -26,7 +26,7 @@ function requireAuthenticated(auth) {
 
 function requireAppContext(app) {
   const firebaseAppId = normalizedString(app?.appId);
-  const context = APP_CONTEXTS[firebaseAppId];
+  const context = Object.hasOwn(APP_CONTEXTS, firebaseAppId) ? APP_CONTEXTS[firebaseAppId] : null;
   if (!context) {
     throw new RegistrationError(
       "failed-precondition",

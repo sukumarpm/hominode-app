@@ -93,7 +93,7 @@ const activeAdmin = {
 };
 
 test("all configured Firebase app IDs have a single trusted role and platform", () => {
-  assert.equal(Object.keys(APP_CONTEXTS).length, 6);
+  assert.equal(Object.keys(APP_CONTEXTS).length, 7);
   assert.deepEqual(APP_CONTEXTS[RESIDENT_ANDROID], {
     appId: "resident",
     platform: "android",
@@ -347,4 +347,41 @@ test("reusable sender resolves Security recipients and uses only Security app to
 
   assert.equal(result.successCount, 1);
   assert.deepEqual(sent.tokens, ["security_token_123456789012345"]);
+});
+
+const ADMIN_WEB = "1:551984029668:web:5845083359a375d90db1f1";
+
+test("Admin web notification registration keeps canonical Admin audience and ownership", async () => {
+  const db = fakeDb({"admins/admin-a": activeAdmin, "communities/COMMUNITY_A": activeCommunity});
+  const args = {db, auth: phoneAuth("admin-a"), app: {appId: ADMIN_WEB}, data: {
+    installationId: "installation_web_123456", token: "token_web_12345678901234567890", selectedCommunityId: "COMMUNITY_A",
+  }};
+  const result = await registerNotificationDeviceCore(args);
+  const stored = db.values.get(`notificationDevices/${result.deviceId}`);
+  assert.equal(result.platform, "web");
+  assert.equal(stored.firebaseAppId, ADMIN_WEB);
+  assert.equal(stored.appId, "admin");
+  assert.equal(stored.role, "admin");
+  assert.equal(stored.audienceKey, "admin|admin|COMMUNITY_A|admin-a");
+  assert.equal((await unregisterNotificationDeviceCore(args)).removed, true);
+});
+
+test("Admin web notification registration preserves tenant and Super Admin role restrictions", async () => {
+  const db = fakeDb({"admins/admin-a": activeAdmin, "communities/COMMUNITY_A": activeCommunity});
+  const args = {db, auth: phoneAuth("admin-a"), app: {appId: ADMIN_WEB}, data: {
+    installationId: "installation_web_123456", token: "token_web_12345678901234567890", selectedCommunityId: "COMMUNITY_X",
+  }};
+  await assert.rejects(registerNotificationDeviceCore(args), {code: "failed-precondition"});
+  db.values.set("admins/admin-a", {...activeAdmin, role: "superAdmin"});
+  await assert.rejects(registerNotificationDeviceCore({...args, data: {...args.data, selectedCommunityId: "COMMUNITY_A"}}), {code: "permission-denied"});
+  assert.equal([...db.values.keys()].some(key => key.startsWith("notificationDevices/")), false);
+});
+
+test("notification context rejects unknown web, missing, malformed and inherited-key app IDs", async () => {
+  for (const app of [undefined, {}, {appId: 123}, {appId: ""}, {appId: "1:551984029668:web:unknown"},
+    {appId: "__proto__"}, {appId: "constructor"}, {appId: "toString"}]) {
+    await assert.rejects(registerNotificationDeviceCore({db: {}, auth: phoneAuth("admin-a"), app, data: {}}), {
+      code: "failed-precondition", message: "This Firebase application is not authorized for notifications.",
+    });
+  }
 });

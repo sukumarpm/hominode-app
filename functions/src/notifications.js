@@ -27,6 +27,11 @@ const APP_CONTEXTS = Object.freeze({
     platform: "ios",
     role: "admin",
   },
+  "1:551984029668:web:5845083359a375d90db1f1": {
+    appId: "admin",
+    platform: "web",
+    role: "admin",
+  },
   "1:551984029668:android:93f99854319c9f9a0db1f1": {
     appId: "security",
     platform: "android",
@@ -68,7 +73,7 @@ function requireAuthenticated(auth) {
 
 function requireAppContext(app) {
   const firebaseAppId = normalizedString(app?.appId);
-  const context = APP_CONTEXTS[firebaseAppId];
+  const context = Object.hasOwn(APP_CONTEXTS, firebaseAppId) ? APP_CONTEXTS[firebaseAppId] : null;
   if (!context) {
     throw new RegistrationError(
       "failed-precondition",

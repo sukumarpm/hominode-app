@@ -138,3 +138,68 @@ test("an app/profile role mismatch is rejected", async () => {
     {code: "permission-denied"},
   );
 });
+
+const ADMIN_WEB = "1:551984029668:web:5845083359a375d90db1f1";
+
+test("trusted Admin web ID matches the configured Flutter web app", () => {
+  const source = fs.readFileSync(path.join(__dirname,
+    "../../hominode-admin/admin_app/lib/firebase_options.dart"), "utf8");
+  const webOptions = source.match(/static const FirebaseOptions web = FirebaseOptions\(([\s\S]*?)\);/);
+  assert.ok(webOptions);
+  assert.equal(webOptions[1].match(/appId: '([^']+)'/)[1], ADMIN_WEB);
+});
+
+for (const role of ["admin", "superAdmin"]) {
+  test(`${role} can accept and renew legal acceptance using the Admin web app`, async () => {
+    const profilePath = "admins/admin-a";
+    const db = fakeDb({[profilePath]: {uid: "admin-a", role, isActive: true, protectedValue: "unchanged"}});
+    const args = {db, auth: {uid: "admin-a"}, app: {appId: ADMIN_WEB}, data: displayedVersions};
+    assert.equal((await acceptCurrentLegalTermsCore(args)).accepted, true);
+    assert.equal(legalAcceptanceIsCurrent(db.values.get(profilePath).legalAcceptance), true);
+    db.values.get(profilePath).legalAcceptance = {termsVersion: "older", privacyVersion: "older", acceptedAt: new Date(0)};
+    assert.equal(legalAcceptanceIsCurrent(db.values.get(profilePath).legalAcceptance), false);
+    assert.equal((await acceptCurrentLegalTermsCore(args)).accepted, true);
+    assert.equal(legalAcceptanceIsCurrent(db.values.get(profilePath).legalAcceptance), true);
+    assert.equal(db.values.get(profilePath).protectedValue, "unchanged");
+    assert.equal(db.values.size, 1);
+  });
+}
+
+test("existing iOS Admin, Resident and Security apps retain legal acceptance access", async () => {
+  for (const [appId, role, collection] of [
+    ["1:551984029668:ios:c385b8730137f2710db1f1", "admin", "admins"],
+    ["1:551984029668:ios:cb57ef578d5066b50db1f1", "resident", "users"],
+    ["1:551984029668:ios:7063832b4b5d53fc0db1f1", "security", "securityStaff"],
+  ]) {
+    const db = fakeDb({[`${collection}/a`]: {uid: "a", role, isActive: true, approvalStatus: "approved"}});
+    assert.equal((await acceptCurrentLegalTermsCore({db, auth: {uid: "a"}, app: {appId}, data: displayedVersions})).accepted, true);
+  }
+});
+
+test("unknown, malformed, missing and inherited-key app IDs fail before profile access", async () => {
+  for (const app of [undefined, {}, {appId: null}, {appId: 123}, {appId: {}}, {appId: ""},
+    {appId: "1:551984029668:web:unknown"}, {appId: `${ADMIN_WEB}-forged`},
+    {appId: "__proto__"}, {appId: "constructor"}, {appId: "toString"}]) {
+    await assert.rejects(acceptCurrentLegalTermsCore({db: {}, auth: {uid: "a"}, app, data: displayedVersions}), {
+      code: "failed-precondition", message: "This Firebase application is not authorized for legal acceptance.",
+    });
+  }
+});
+
+test("Admin web still requires authentication and current terms AND privacy versions", async () => {
+  await assert.rejects(acceptCurrentLegalTermsCore({db: {}, app: {appId: ADMIN_WEB}, data: displayedVersions}), {code: "unauthenticated"});
+  for (const data of [undefined, {}, {...displayedVersions, termsVersion: "older"}, {...displayedVersions, privacyVersion: "older"}]) {
+    await assert.rejects(acceptCurrentLegalTermsCore({db: {}, auth: {uid: "a"}, app: {appId: ADMIN_WEB}, data}), {
+      code: "failed-precondition", message: "The Terms or Privacy Policy changed. Refresh the app and review the current versions.",
+    });
+  }
+});
+
+test("Admin web rejects missing, inactive, mismatched UID and wrong-role canonical profiles", async () => {
+  for (const profile of [null, {uid: "a", role: "admin", isActive: false}, {uid: "other", role: "admin", isActive: true},
+    {uid: "a", role: "resident", isActive: true}, {uid: "a", role: "security", isActive: true}]) {
+    const db = fakeDb(profile ? {"admins/a": profile} : {});
+    await assert.rejects(acceptCurrentLegalTermsCore({db, auth: {uid: "a"}, app: {appId: ADMIN_WEB}, data: displayedVersions}), {code: "permission-denied"});
+    assert.equal(db.values.get("admins/a")?.legalAcceptance, undefined);
+  }
+});
