@@ -1,5 +1,8 @@
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { RegistrationError } = require("./register_resident");
+const { createHash } = require("node:crypto");
+const { operationalAccessFailure, identityVerificationRequired } = require("./resident_identity");
+const { resolveCommunitySubscriptionCore, subscriptionCanUseFeature } = require("./subscription_management");
 
 const ACTIVE_BOOKING_STATUSES = new Set(["pending", "confirmed", "approved"]);
 const BOOKING_TYPES = new Set(["daily", "weekly", "monthly", "yearly"]);
@@ -55,7 +58,7 @@ function requireTimezoneOffset(value) {
 
 function requireMillis(value, label) {
   const number = Number(value);
-  if (!Number.isSafeInteger(number) || number <= 0) {
+  if (!Number.isSafeInteger(number) || number <= 0 || number > 253402214400000) {
     throw new RegistrationError("invalid-argument", `${label} is invalid.`);
   }
   return number;
@@ -86,44 +89,44 @@ function canonicalResidentType(profile) {
   return residentType || ownershipType;
 }
 
-function requireActiveResidentProfile(snapshot, auth) {
-  if (!auth?.uid) {
-    throw new RegistrationError("unauthenticated", "Sign in to continue.");
-  }
-  if (!snapshot.exists) {
+function requireResidentProfile(snapshot, auth) {
+  if (!auth?.uid) throw new RegistrationError("unauthenticated", "Sign in to continue.");
+  const profile = snapshot.data() || {};
+  if (!snapshot.exists || profile.uid !== auth.uid || profile.role !== "resident" ||
+      !clean(profile.communityId) || profile.communityId.includes("/")) {
     throw new RegistrationError("permission-denied", "Resident access is unavailable.");
   }
-
-  const profile = snapshot.data() || {};
-  const communityId = clean(profile.communityId);
-  if (
-    profile.role !== "resident" ||
-    profile.approvalStatus !== "approved" ||
-    profile.isActive !== true ||
-    (Object.prototype.hasOwnProperty.call(profile, "status") &&
-      profile.status !== "active") ||
-    !communityId
-  ) {
-    throw new RegistrationError(
-      "permission-denied",
-      "Your resident account is not active for this community.",
-    );
-  }
-
-  return {
-    ...profile,
-    uid: auth.uid,
-    communityId,
-    residentType: canonicalResidentType(profile),
-  };
+  return {...profile, residentType: canonicalResidentType(profile)};
 }
 
-async function requireResident(db, auth) {
-  if (!auth?.uid) {
-    throw new RegistrationError("unauthenticated", "Sign in to continue.");
+async function requireOperationalResident(db, auth, transaction = null) {
+  if (!auth?.uid) throw new RegistrationError("unauthenticated", "Sign in to continue.");
+  const read = ref => transaction ? transaction.get(ref) : ref.get();
+  const resident = requireResidentProfile(await read(db.collection("users").doc(auth.uid)), auth);
+  const communitySnapshot = await read(db.collection("communities").doc(resident.communityId));
+  const community = {...(communitySnapshot.data() || {}), id: resident.communityId};
+  // Use the central resident policy, with the explicit verification state also
+  // required by operational Firestore rules (no legacy inference from a boolean).
+  if (!communitySnapshot.exists || !resident.residentType ||
+      operationalAccessFailure(resident, community) ||
+      (Object.hasOwn(resident, "status") && resident.status !== "active") ||
+      (identityVerificationRequired(resident.residentType, community) &&
+        resident.identityVerificationStatus !== "verified")) {
+    throw new RegistrationError("permission-denied", "Your resident account or community is not eligible for facility booking.");
   }
-  const snapshot = await db.collection("users").doc(auth.uid).get();
-  return requireActiveResidentProfile(snapshot, auth);
+  return {resident, community};
+}
+
+// No timezone is inferred from the caller, server locale, or geographic guesses.
+// Communities must have a trusted IANA timeZone configured before booking.
+function requireCommunityTimeZone(community) {
+  const timeZone = clean(community.timeZone);
+  try {
+    if (!timeZone) throw new Error("missing");
+    return new Intl.DateTimeFormat("en", {timeZone}).resolvedOptions().timeZone;
+  } catch (_) {
+    throw new RegistrationError("failed-precondition", "The community booking time zone is not configured correctly.");
+  }
 }
 
 function requireAmenityData(snapshot, resident) {
@@ -181,63 +184,60 @@ async function requireAmenity(db, amenityId, resident) {
   return requireAmenityData(snapshot, resident);
 }
 
-function dayPartsFromMillis(value, timezoneOffsetMinutes) {
-  const shifted = new Date(value + timezoneOffsetMinutes * 60 * 1000);
-  return {
-    year: shifted.getUTCFullYear(),
-    month: shifted.getUTCMonth(),
-    day: shifted.getUTCDate(),
-  };
+function localDateKeyFromMillis(value, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(value));
+  const part = type => parts.find(item => item.type === type).value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-function localDateKeyFromMillis(value, timezoneOffsetMinutes) {
-  const { year, month, day } = dayPartsFromMillis(value, timezoneOffsetMinutes);
-  return [
-    String(year).padStart(4, "0"),
-    String(month + 1).padStart(2, "0"),
-    String(day).padStart(2, "0"),
-  ].join("-");
+function nextDateKey(key) {
+  return new Date(Date.parse(`${key}T00:00:00Z`) + MILLIS_PER_DAY).toISOString().slice(0, 10);
 }
 
-function dayBounds(value, timezoneOffsetMinutes) {
-  const parts = dayPartsFromMillis(value, timezoneOffsetMinutes);
-  const localMidnightAsUtc = Date.UTC(parts.year, parts.month, parts.day);
-  const startMs = localMidnightAsUtc - timezoneOffsetMinutes * 60 * 1000;
-  return {
-    key: localDateKeyFromMillis(startMs, timezoneOffsetMinutes),
-    startMs,
-    endMs: startMs + MILLIS_PER_DAY - 1,
-  };
-}
-
-function enumerateDays(startDateMs, endDateMs, timezoneOffsetMinutes) {
-  const start = dayBounds(startDateMs, timezoneOffsetMinutes);
-  const end = dayBounds(endDateMs, timezoneOffsetMinutes);
-  if (end.startMs < start.startMs) {
-    throw new RegistrationError(
-      "invalid-argument",
-      "The availability date range is invalid.",
-    );
+function startOfLocalDay(key, timeZone) {
+  // Locate the first instant of the local date. This handles 23/25-hour days
+  // and zones whose DST transition occurs at midnight, without a fixed offset.
+  const nominal = Date.parse(`${key}T00:00:00Z`);
+  let low = nominal - 2 * MILLIS_PER_DAY;
+  let high = nominal + 2 * MILLIS_PER_DAY;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (localDateKeyFromMillis(middle, timeZone) < key) low = middle + 1;
+    else high = middle;
   }
+  return low;
+}
 
-  const count = Math.floor((end.startMs - start.startMs) / MILLIS_PER_DAY) + 1;
-  if (count > MAX_AVAILABILITY_DAYS) {
-    throw new RegistrationError(
-      "invalid-argument",
-      `Availability can be checked for at most ${MAX_AVAILABILITY_DAYS} days at a time.`,
-    );
-  }
+function dayBounds(value, timeZone) {
+  const key = localDateKeyFromMillis(value, timeZone);
+  return {key, startMs: startOfLocalDay(key, timeZone),
+    endMs: startOfLocalDay(nextDateKey(key), timeZone) - 1};
+}
 
+function enumerateDays(startDateMs, endDateMs, timeZone) {
+  const first = localDateKeyFromMillis(startDateMs, timeZone);
+  const last = localDateKeyFromMillis(endDateMs, timeZone);
+  if (last < first) throw new RegistrationError("invalid-argument", "The availability date range is invalid.");
   const days = [];
-  for (let index = 0; index < count; index += 1) {
-    const startMs = start.startMs + index * MILLIS_PER_DAY;
-    days.push({
-      key: localDateKeyFromMillis(startMs, timezoneOffsetMinutes),
-      startMs,
-      endMs: startMs + MILLIS_PER_DAY - 1,
-    });
+  for (let key = first; key <= last; key = nextDateKey(key)) {
+    if (days.length >= MAX_AVAILABILITY_DAYS) {
+      throw new RegistrationError("invalid-argument", `Availability can be checked for at most ${MAX_AVAILABILITY_DAYS} days at a time.`);
+    }
+    const startMs = startOfLocalDay(key, timeZone);
+    const endMs = startOfLocalDay(nextDateKey(key), timeZone) - 1;
+    if (startMs <= endMs) days.push({key, startMs, endMs});
   }
   return days;
+}
+
+function bookingDayKey(communityId, amenityId, dateKey) {
+  return createHash("sha256").update(JSON.stringify([communityId, amenityId, dateKey])).digest("hex");
+}
+
+function bookingSlotKey(dayKey, timeSlot) {
+  return createHash("sha256").update(JSON.stringify([dayKey, timeSlot])).digest("hex");
 }
 
 function activeBookingsFromSnapshot(snapshot, resident, amenityId) {
@@ -292,7 +292,7 @@ function buildAvailability({
   amenity,
   bookings,
   days,
-  timezoneOffsetMinutes,
+  timeZone,
   numberOfPeople,
 }) {
   const grouped = new Map();
@@ -301,7 +301,7 @@ function buildAvailability({
     const timestamp = booking.date;
     if (!timestamp || typeof timestamp.toMillis !== "function") continue;
     const millis = timestamp.toMillis();
-    const key = localDateKeyFromMillis(millis, timezoneOffsetMinutes);
+    const key = booking.bookingDateKey || localDateKeyFromMillis(millis, timeZone);
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(booking);
   }
@@ -459,8 +459,8 @@ function validateFamilyMembers(value) {
   });
 }
 
-function todayKey(timezoneOffsetMinutes) {
-  return localDateKeyFromMillis(Date.now(), timezoneOffsetMinutes);
+function todayKey(timeZone) {
+  return localDateKeyFromMillis(Date.now(), timeZone);
 }
 
 function validateCreateInput(data) {
@@ -478,6 +478,7 @@ function validateCreateInput(data) {
     ]),
   );
 
+  if (input.timezoneOffsetMinutes != null) requireTimezoneOffset(input.timezoneOffsetMinutes);
   const amenityId = requireDocumentId(input.amenityId, "Amenity");
   const dateMs = requireMillis(input.dateMs, "dateMs");
   const timeSlot = requireTimeSlot(input.timeSlot);
@@ -496,7 +497,6 @@ function validateCreateInput(data) {
       max: 1000,
     }),
     familyMembers: validateFamilyMembers(input.familyMembers),
-    timezoneOffsetMinutes: requireTimezoneOffset(input.timezoneOffsetMinutes),
   };
 }
 
@@ -513,6 +513,7 @@ function validateAvailabilityInput(data) {
     ]),
   );
 
+  if (input.timezoneOffsetMinutes != null) requireTimezoneOffset(input.timezoneOffsetMinutes);
   return {
     amenityId: requireDocumentId(input.amenityId, "Amenity"),
     startDateMs: requireMillis(input.startDateMs, "startDateMs"),
@@ -521,7 +522,6 @@ function validateAvailabilityInput(data) {
       min: 1,
       max: 1000,
     }),
-    timezoneOffsetMinutes: requireTimezoneOffset(input.timezoneOffsetMinutes),
   };
 }
 
@@ -535,14 +535,32 @@ async function bookingQuery(db, amenityId, startMs, endMs, transaction = null) {
   return transaction ? transaction.get(query) : query.get();
 }
 
+async function scopedBookingQuery(db, resident, amenityId, days, timeZone, transaction = null) {
+  const read = query => transaction ? transaction.get(query) : query.get();
+  const snapshots = [await bookingQuery(db, amenityId, days[0].startMs, days[days.length - 1].endMs, transaction)];
+  // Single-field index, no additional composite index or migration required.
+  for (let offset = 0; offset < days.length; offset += 30) {
+    const keys = days.slice(offset, offset + 30).map(day => bookingDayKey(resident.communityId, amenityId, day.key));
+    snapshots.push(await read(db.collection("bookings").where("bookingDayKey", "in", keys)));
+  }
+  const byId = new Map();
+  const keys = new Set(days.map(day => day.key));
+  for (const snapshot of snapshots) for (const booking of activeBookingsFromSnapshot(snapshot, resident, amenityId)) {
+    const key = booking.bookingDateKey || (booking.date?.toMillis && localDateKeyFromMillis(booking.date.toMillis(), timeZone));
+    if (keys.has(key)) byId.set(booking.id, booking);
+  }
+  return [...byId.values()];
+}
+
 async function getAmenityAvailabilityCore({ db, auth, data }) {
   const input = validateAvailabilityInput(data);
-  const resident = await requireResident(db, auth);
+  const {resident, community} = await requireOperationalResident(db, auth);
+  const timeZone = requireCommunityTimeZone(community);
   const amenity = await requireAmenity(db, input.amenityId, resident);
   const days = enumerateDays(
     input.startDateMs,
     input.endDateMs,
-    input.timezoneOffsetMinutes,
+    timeZone,
   );
 
   if (input.numberOfPeople > amenity.maxCapacity && amenity.allowMultipleBookings) {
@@ -574,13 +592,7 @@ async function getAmenityAvailabilityCore({ db, auth, data }) {
     };
   }
 
-  const snapshot = await bookingQuery(
-    db,
-    input.amenityId,
-    days[0].startMs,
-    days[days.length - 1].endMs,
-  );
-  const bookings = activeBookingsFromSnapshot(snapshot, resident, input.amenityId);
+  const bookings = await scopedBookingQuery(db, resident, input.amenityId, days, timeZone);
 
   return {
     amenityId: input.amenityId,
@@ -590,7 +602,7 @@ async function getAmenityAvailabilityCore({ db, auth, data }) {
       amenity,
       bookings,
       days,
-      timezoneOffsetMinutes: input.timezoneOffsetMinutes,
+      timeZone,
       numberOfPeople: input.numberOfPeople,
     }),
   };
@@ -605,9 +617,13 @@ async function createAmenityBookingCore({ db, auth, data }) {
   const bookingRef = db.collection("bookings").doc();
 
   return db.runTransaction(async (transaction) => {
-    const residentRef = db.collection("users").doc(auth.uid);
-    const residentSnapshot = await transaction.get(residentRef);
-    const resident = requireActiveResidentProfile(residentSnapshot, auth);
+    const {resident, community} = await requireOperationalResident(db, auth, transaction);
+    const entitlement = await resolveCommunitySubscriptionCore({db, communityId: resident.communityId, transaction});
+    if (entitlement?.communityId !== resident.communityId ||
+        !subscriptionCanUseFeature(entitlement, "facilityBooking")) {
+      throw new RegistrationError("permission-denied", "Your community subscription does not allow new facility bookings.");
+    }
+    const timeZone = requireCommunityTimeZone(community);
 
     const amenityRef = db.collection("amenities").doc(input.amenityId);
     const amenitySnapshot = await transaction.get(amenityRef);
@@ -627,26 +643,21 @@ async function createAmenityBookingCore({ db, auth, data }) {
       );
     }
 
-    const selectedDay = dayBounds(input.dateMs, input.timezoneOffsetMinutes);
-    if (selectedDay.key < todayKey(input.timezoneOffsetMinutes)) {
+    const selectedDay = dayBounds(input.dateMs, timeZone);
+    if (selectedDay.key < todayKey(timeZone)) {
       throw new RegistrationError(
         "failed-precondition",
         "Past dates cannot be booked.",
       );
     }
 
-    const bookingsSnapshot = await bookingQuery(
-      db,
-      input.amenityId,
-      selectedDay.startMs,
-      selectedDay.endMs,
-      transaction,
-    );
-    const bookings = activeBookingsFromSnapshot(
-      bookingsSnapshot,
-      resident,
-      input.amenityId,
-    );
+    const dayKey = bookingDayKey(resident.communityId, input.amenityId, selectedDay.key);
+    const slotKey = bookingSlotKey(dayKey, input.timeSlot);
+    // An explicit shared write serializes contenders, including empty buckets.
+    // Counts remain derived from bookings, so existing Admin cancellations work.
+    const slotRef = db.collection("amenityBookingSlots").doc(slotKey);
+    await transaction.get(slotRef);
+    const bookings = await scopedBookingQuery(db, resident, input.amenityId, [selectedDay], timeZone, transaction);
     const availability = availabilityForSlot(
       amenity,
       bookings,
@@ -665,7 +676,7 @@ async function createAmenityBookingCore({ db, auth, data }) {
 
     const dailyPrice = effectiveDailyPrice(amenity, resident);
     const price = packagePrice(amenity, input.bookingType, dailyPrice);
-    const packageData = packageDates(input.dateMs, input.bookingType);
+    const packageData = packageDates(selectedDay.startMs, input.bookingType);
 
     const flatId = clean(resident.flatId);
     const buildingId = clean(resident.buildingId);
@@ -692,7 +703,11 @@ async function createAmenityBookingCore({ db, auth, data }) {
       bookingType: input.bookingType,
       packageType: packageData.packageType,
 
-      date: Timestamp.fromMillis(input.dateMs),
+      date: Timestamp.fromMillis(selectedDay.startMs),
+      bookingDateKey: selectedDay.key,
+      bookingDayKey: dayKey,
+      bookingSlotKey: slotKey,
+      bookingTimeZone: timeZone,
       timeSlot: input.timeSlot,
 
       subscriptionStartDate: Timestamp.fromMillis(
@@ -729,6 +744,8 @@ async function createAmenityBookingCore({ db, auth, data }) {
       if (adminEmail) bookingData.adminEmail = adminEmail;
     }
 
+    transaction.set(slotRef, {communityId: resident.communityId, amenityId: input.amenityId,
+      bookingDateKey: selectedDay.key, timeSlot: input.timeSlot, updatedAt: FieldValue.serverTimestamp()});
     transaction.create(bookingRef, bookingData);
 
     return {
@@ -772,7 +789,11 @@ async function cancelAmenityBookingCore({ db, auth, data }) {
   return db.runTransaction(async (transaction) => {
     const residentRef = db.collection("users").doc(auth.uid);
     const residentSnapshot = await transaction.get(residentRef);
-    const resident = requireActiveResidentProfile(residentSnapshot, auth);
+    // Cancellation is an exit operation: an authenticated canonical resident
+    // may cancel their own current-community booking despite downgrade, expiry,
+    // lost identity eligibility, or resident/community inactivity. No new access
+    // is granted to another owner's or another community's booking.
+    const resident = requireResidentProfile(residentSnapshot, auth);
 
     const bookingSnapshot = await transaction.get(bookingRef);
     if (!bookingSnapshot.exists) {

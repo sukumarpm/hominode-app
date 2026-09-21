@@ -153,3 +153,37 @@ test("current entitlement resolver rejects arbitrary input fields", async () => 
     /does not accept any input fields/,
   );
 });
+
+const {subscriptionCanUseFeature, resolveCommunitySubscriptionCore} = require('../src/subscription_management');
+test('facility booking uses canonical plan features and explicit subscription lifecycle boundaries', () => {
+  const now = 1000;
+  const usable = (planId, status, startsAtMs = null, endsAtMs = null) => subscriptionCanUseFeature({
+    features: PLAN_DEFINITIONS[planId].features, status, startsAtMs, endsAtMs,
+  }, 'facilityBooking', now);
+  assert.equal(subscriptionCanUseFeature(null, 'facilityBooking', now), false);
+  for (const plan of ['plus', 'pro']) {
+    assert.equal(usable(plan, 'active'), true);
+    assert.equal(usable(plan, 'active', now, now + 1), true);
+    assert.equal(usable(plan, 'active', now + 1), false);
+    assert.equal(usable(plan, 'active', null, now), false);
+    for (const status of ['trial', 'grace']) {
+      assert.equal(usable(plan, status, null, now + 1), true);
+      assert.equal(usable(plan, status, null, now), false);
+      assert.equal(usable(plan, status), false);
+    }
+    for (const status of ['expired', 'suspended', 'cancelled', 'unknown']) {
+      assert.equal(usable(plan, status, null, now + 1), false);
+    }
+  }
+  for (const status of ['active', 'trial', 'grace']) assert.equal(usable('essential', status, null, now + 1), false);
+});
+test('subscription resolution uses transaction reads and ignores stored feature overrides', async () => {
+  const ref = {get: () => assert.fail('must read inside transaction')};
+  const db = {collection: name => {assert.equal(name, 'subscriptions'); return {doc: id => {assert.equal(id, 'C'); return ref;}};}};
+  const transaction = {get: async actual => {
+    assert.equal(actual, ref);
+    return {exists: true, data: () => ({planId: 'essential', status: 'active', features: {facilityBooking: true}})};
+  }};
+  const resolved = await resolveCommunitySubscriptionCore({db, communityId: 'C', transaction});
+  assert.equal(subscriptionCanUseFeature(resolved, 'facilityBooking'), false);
+});

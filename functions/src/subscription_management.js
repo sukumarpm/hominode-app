@@ -784,13 +784,14 @@ function toMillis(value) {
   return value?.toMillis?.() ?? null;
 }
 
-async function resolveCommunitySubscriptionCore({db, communityId}) {
+async function resolveCommunitySubscriptionCore({db, communityId, transaction = null}) {
   const canonicalCommunityId = normalizeCommunityId(communityId);
   if (!canonicalCommunityId) {
     throw new RegistrationError("invalid-argument", "A valid community ID is required.");
   }
 
-  const snapshot = await db.collection("subscriptions").doc(canonicalCommunityId).get();
+  const ref = db.collection("subscriptions").doc(canonicalCommunityId);
+  const snapshot = transaction ? await transaction.get(ref) : await ref.get();
   if (!snapshot.exists) return null;
 
   const subscription = snapshot.data();
@@ -815,6 +816,19 @@ async function resolveCommunitySubscriptionCore({db, communityId}) {
   };
 }
 
+
+// Matches HominodeEntitlement.isUsable/canUseFeature in the shared client policy.
+// Feature definitions continue to come exclusively from PLAN_DEFINITIONS above.
+function subscriptionCanUseFeature(entitlement, feature, nowMs = Date.now()) {
+  if (!entitlement || entitlement.features?.[feature] !== true) return false;
+  const {startsAtMs, endsAtMs, status} = entitlement;
+  if (startsAtMs != null && (!Number.isFinite(startsAtMs) || nowMs < startsAtMs)) return false;
+  if (endsAtMs != null && (!Number.isFinite(endsAtMs) || nowMs >= endsAtMs)) return false;
+  if (status === "active") return true;
+  if (status === "trial" || status === "grace") return endsAtMs != null;
+  // Expired, suspended, cancelled and unknown states cannot create new work.
+  return false;
+}
 
 async function getCurrentCommunityEntitlementCore({db, auth, data}) {
   assertObjectWithOnlyKeys(
@@ -876,4 +890,5 @@ module.exports = {
   getCurrentCommunityEntitlementCore,
   resolveCurrentCommunityId,
   resolveCommunitySubscriptionCore,
+  subscriptionCanUseFeature,
 };
