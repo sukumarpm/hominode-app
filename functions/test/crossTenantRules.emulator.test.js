@@ -804,3 +804,200 @@ test("building and canonical unit deletion require the trusted lifecycle callabl
   await assertFails(dbFor("admin-a").collection("flats").doc("orphan-unit").set({ communityId: "community-a", buildingId: "deleted-building", status: "vacant" }));
   await assertFails(dbFor("admin-a").collection("flats").doc("foreign-parent-unit").set({ communityId: "community-a", buildingId: "building-b", status: "vacant" }));
 });
+
+
+test.describe("content authorization and immutable tenant scope", {skip: !enabled}, () => {
+  const test = require('node:test');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const {assertFails, assertSucceeds, initializeTestEnvironment} = require('@firebase/rules-unit-testing');
+  const {deleteField, setLogLevel} = require('firebase/firestore');
+  const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+  let env;
+  const db = uid => env.authenticatedContext(uid).firestore();
+  const ref = (uid, collection, id = 'record') => db(uid).collection(collection).doc(id);
+  const scoped = {communityId: 'a', buildingId: 'ba', flatId: 'fa'};
+  const owned = {...scoped, authorId: 'ra', content: 'Original'};
+  const contentCollections = ['posts', 'community_wall', 'listings', 'marketplace'];
+  const officialCollections = ['parcels', 'staff', 'parkingSlots', 'parking_violations', 'vendors', 'broadcasts', 'events_announcements', 'events', 'announcements', 'posters', 'pinnedPosts'];
+  const check = (name, fn) => test(name, {skip: !enabled}, fn);
+
+  test.before(async () => {
+    if (!enabled) return;
+    setLogLevel('silent');
+    env = await initializeTestEnvironment({projectId: 'demo-hominode-content-authorization', firestore: {
+      host: '127.0.0.1', port: Number(process.env.FIRESTORE_EMULATOR_HOST.split(':').pop()),
+      rules: fs.readFileSync(path.join(__dirname, '../../firestore.rules'), 'utf8'),
+    }});
+  });
+  // Fresh fixtures keep earlier mutations from masking later authorization failures.
+  test.beforeEach(async () => {
+    if (!enabled) return;
+    await env.clearFirestore();
+    await env.withSecurityRulesDisabled(async context => {
+      const batch = context.firestore().batch();
+      const put = (p, value) => batch.set(context.firestore().doc(p), value);
+      for (const c of ['a', 'b']) {
+        put(`communities/${c}`, {isActive: true});
+        put(`buildings/b${c}`, {communityId: c});
+        put(`flats/f${c}`, {communityId: c, buildingId: `b${c}`});
+      }
+      put('buildings/ba2', {communityId: 'a'});
+      put('flats/fa2', {communityId: 'a', buildingId: 'ba2'});
+      for (const [uid, communityId] of [['ra', 'a'], ['ra2', 'a'], ['rb', 'b']]) {
+        put(`users/${uid}`, {uid, communityId, role: 'resident', residentType: 'owner', ownershipType: 'owner', isActive: true, approvalStatus: 'approved', buildingId: `b${communityId}`, flatId: `f${communityId}`});
+      }
+      for (const [uid, ids] of [['aa', ['a']], ['aa2', ['a']], ['ab', ['b']], ['multi', ['a', 'b']]]) {
+        put(`admins/${uid}`, {uid, role: 'admin', isActive: true, authorizedCommunityIds: ids});
+      }
+      put('securityStaff/sa', {uid: 'sa', role: 'security', isActive: true, communityId: 'a', gateId: 'gate'});
+      put('gates/gate', {communityId: 'a'});
+      put('visitors/visitor', {...scoped, status: 'expected', isApproved: false, hostUserId: 'ra'});
+      put('chats/private', {...scoped, participantIds: ['ra', 'aa'], participants: ['ra', 'aa'], lastMessage: 'Private'});
+      put('chats/private/messages/message', {senderId: 'ra', message: 'Private message'});
+      put('chats/admin-schema', {communityId: 'a', participants: ['ra', 'aa'], adminId: 'aa', residentId: 'ra'});
+      put('chats/legacy', {participantIds: ['ra', 'ra2'], participants: ['ra', 'ra2'], flatId: 'fa'});
+      put('messages/message', {communityId: 'a', chatId: 'private', senderId: 'ra', message: 'Private'});
+      for (const c of contentCollections) put(`${c}/record`, owned);
+      for (const c of ['documents', 'apartmentImages']) put(`${c}/record`, {...scoped, createdBy: 'aa', title: 'Original'});
+      for (const c of officialCollections) put(`${c}/record`, {...scoped, title: 'Official', residentId: 'ra'});
+      put('events_announcements/announcement', {...scoped, type: 'announcement', title: 'Official announcement'});
+      put('marketplaces/record', {...scoped, sellerId: 'ra', status: 'active'});
+      put('marketplaces/record/requests/request', {requesterId: 'ra2', status: 'pending'});
+      put('marketplaceRequests/record', {...scoped, productId: 'record', requestUserId: 'ra2', productOwnerId: 'ra', status: 'pending'});
+      await batch.commit();
+    });
+  });
+  test.after(async () => { if (env) await env.cleanup(); });
+
+  check('nonparticipants cannot read chats or nested/top-level messages, including tenant admins', async () => {
+    for (const uid of ['ra2', 'rb', 'aa2', 'ab', 'sa']) {
+      await assertFails(ref(uid, 'chats', 'private').get());
+      await assertFails(ref(uid, 'chats', 'private').collection('messages').doc('message').get());
+      await assertFails(ref(uid, 'messages', 'message').get());
+    }
+  });
+  check('nonparticipants cannot update a chat or inject either participant alias', async () => {
+    for (const uid of ['ra2', 'aa2', 'rb']) {
+      await assertFails(ref(uid, 'chats', 'private').update({lastMessage: 'Hijacked'}));
+      for (const field of ['participants', 'participantIds']) await assertFails(ref(uid, 'chats', 'private').update({[field]: ['ra', uid]}));
+    }
+  });
+  check('participants retain reads, queries, messages and metadata updates in both current chat schemas', async () => {
+    for (const uid of ['ra', 'aa']) for (const id of ['private', 'admin-schema']) {
+      await assertSucceeds(ref(uid, 'chats', id).get());
+      await assertSucceeds(ref(uid, 'chats', id).update({lastMessage: 'Hello'}));
+      await assertSucceeds(ref(uid, 'chats', id).collection('messages').doc(uid).set({senderId: uid, message: 'Hello'}));
+      await assertSucceeds(ref(uid, 'chats', id).collection('messages').get());
+    }
+    await assertSucceeds(db('aa').collection('chats').where('communityId', '==', 'a').where('participants', 'array-contains', 'aa').get());
+    await assertSucceeds(db('ra').collection('chats').where('participantIds', 'array-contains', 'ra').get());
+    await assertSucceeds(ref('ra2', 'chats', 'legacy').update({lastMessage: 'Legacy preserved'}));
+  });
+  check('participant arrays, tenant, and message sender cannot be reassigned or removed', async () => {
+    for (const field of ['participants', 'participantIds', 'communityId']) await assertFails(ref('ra', 'chats', 'private').update({[field]: deleteField()}));
+    await assertFails(ref('ra', 'chats', 'private').update({participants: ['ra', 'rb']}));
+    await assertFails(ref('aa', 'chats', 'private').collection('messages').doc('message').update({senderId: 'aa'}));
+  });
+  check('legacy resident and current admin chat creation succeeds; foreign references fail', async () => {
+    await assertSucceeds(ref('ra', 'chats', 'new-resident').set({participantIds: ['ra', 'ra2'], participants: ['ra', 'ra2'], flatId: 'fa'}));
+    await assertSucceeds(ref('aa', 'chats', 'new-admin').set({communityId: 'a', participants: ['aa', 'ra'], buildingId: '', residentId: 'ra', adminId: 'aa'}));
+    await assertFails(ref('ra', 'chats', 'bad-reference').set({participantIds: ['ra'], communityId: 'a', flatId: 'fb'}));
+  });
+  for (const c of officialCollections) check(`official ${c}: resident writes denied; admin CRUD and resident reads preserved`, async () => {
+    await assertSucceeds(ref('ra', c).get());
+    await assertSucceeds(db('ra').collection(c).where('communityId', '==', 'a').get());
+    await assertFails(ref('ra', c, 'forged').set({...scoped, userId: 'ra'}));
+    await assertFails(ref('ra', c).update({title: 'Forged'}));
+    await assertFails(ref('ra', c).delete());
+    for (const uid of ['sa', 'ab']) await assertFails(ref(uid, c).update({title: 'Forged'}));
+    await assertSucceeds(ref('aa', c, 'new').set({...scoped, title: 'New'}));
+    await assertSucceeds(ref('aa', c).update({title: 'Updated', residentId: 'ra2'}));
+    await assertFails(ref('multi', c).update({communityId: 'b'}));
+    await assertFails(ref('aa', c).update({communityId: deleteField()}));
+    await assertSucceeds(ref('aa', c, 'new').delete());
+  });
+  check('canonical mixed collection announcement is not resident-editable', async () => {
+    await assertFails(ref('ra', 'events_announcements', 'announcement').update({title: 'Forged'}));
+    await assertSucceeds(ref('aa', 'events_announcements', 'announcement').update({title: 'Updated'}));
+  });
+  for (const c of [...contentCollections, 'documents', 'apartmentImages', 'marketplaces']) {
+    const actor = ['documents', 'apartmentImages'].includes(c) ? 'aa' : 'ra';
+    check(`${c}: tenant reassignment/removal and ownership alias injection denied; legitimate edits succeed`, async () => {
+      for (const uid of [actor, 'multi']) {
+        await assertFails(ref(uid, c).update({communityId: 'b'}));
+        await assertFails(ref(uid, c).update({communityId: deleteField()}));
+        for (const field of ['ownerId', 'userId', 'uid', 'authorId', 'residentId', 'sellerId', 'createdBy', 'firebaseAuthUid']) await assertFails(ref(uid, c).update({[field]: 'rb'}));
+      }
+      const ownerField = c === 'marketplaces' ? 'sellerId' : actor === 'aa' ? 'createdBy' : 'authorId';
+      await assertFails(ref(actor, c).update({[ownerField]: deleteField()}));
+      await assertSucceeds(ref(actor, c).update({title: 'Legitimate edit'}));
+      if (c !== 'marketplaces') await assertSucceeds(ref('aa', c).update({title: 'Moderated'}));
+    });
+    check(`${c}: foreign/missing building and unit references denied on create/update`, async () => {
+      const payload = c === 'marketplaces' ? {...scoped, sellerId: 'ra'} : actor === 'aa' ? {...scoped, createdBy: 'aa'} : owned;
+      for (const patch of [{buildingId: 'bb'}, {flatId: 'fb'}, {buildingId: 'missing'}, {flatId: 'missing'}, {flatId: 'fa2'}]) {
+        await assertFails(ref(actor, c).update(patch));
+        await assertFails(ref(actor, c, 'bad').set({...payload, ...patch}));
+      }
+      await assertSucceeds(ref(actor, c, 'new').set(payload));
+    });
+  }
+  check('legacy building-scoped posts/listings preserve creation/edit/delete without communityId', async () => {
+    for (const c of ['posts', 'community_wall', 'listings', 'marketplaces']) {
+      const owner = c === 'marketplaces' ? {sellerId: 'ra'} : {authorId: 'ra'};
+      await assertSucceeds(ref('ra', c, 'legacy').set({...owner, buildingId: 'ba', flatId: 'fa', title: 'Legacy'}));
+      await assertSucceeds(ref('ra', c, 'legacy').update({title: 'Updated'}));
+      await assertFails(ref('ra', c, 'legacy').update({communityId: 'b'}));
+      await assertFails(ref('ra', c, 'legacy').update({buildingId: 'bb', flatId: 'fb'}));
+      await assertFails(ref('ra', c, 'legacy').update({buildingId: deleteField(), flatId: deleteField()}));
+      await assertSucceeds(ref('ra', c, 'legacy').delete());
+    }
+  });
+  check('resident content creation cannot impersonate another owner', async () => {
+    await assertFails(ref('ra', 'marketplaces', 'forged-alias').set({sellerId: 'ra', userId: 'rb', buildingId: 'ba'}));
+    for (const c of contentCollections) {
+      await assertFails(ref('ra', c, 'forged').set({...owned, authorId: 'ra2'}));
+      await assertFails(ref('ra', c, 'conflict').set({...owned, userId: 'ra2'}));
+    }
+  });
+  check('admin can retarget documents/images within the same community', async () => {
+    for (const c of ['documents', 'apartmentImages']) await assertSucceeds(ref('aa', c).update({buildingId: 'ba2', flatId: 'fa2'}));
+  });
+  check('marketplace seller responses preserve requester identity', async () => {
+    const request = ref('ra', 'marketplaces').collection('requests').doc('request');
+    await assertSucceeds(request.update({status: 'accepted'}));
+    await assertFails(request.update({requesterId: 'rb'}));
+    await assertFails(request.update({requesterId: deleteField()}));
+    await assertSucceeds(ref('ra', 'marketplaceRequests').update({status: 'accepted'}));
+    await assertFails(ref('ra', 'marketplaceRequests').update({requestUserId: 'rb'}));
+    await assertFails(ref('rb', 'marketplaceRequests').get());
+  });
+  check('resident-owned fallback records reject other residents edits', async () => {
+    for (const [c, owner] of [['marketplace', 'sellerId'], ['reports', 'reportedBy'], ['requests', 'requesterId']]) {
+      await assertSucceeds(ref('ra', c, 'native-owner').set({...scoped, [owner]: 'ra'}));
+      await assertSucceeds(ref('ra', c, 'native-owner').update({content: 'Edited'}));
+      await assertFails(ref('ra2', c, 'native-owner').update({content: 'Hijacked'}));
+      await assertFails(ref('ra', c, 'native-owner').update({[owner]: 'rb'}));
+    }
+    for (const c of ['comments', 'reports', 'requests', 'readBy']) {
+      await assertSucceeds(ref('ra', c).set({...owned, userId: 'ra'}));
+      await assertSucceeds(ref('ra', c).update({content: 'Edited'}));
+      await assertFails(ref('ra2', c).update({content: 'Hijacked'}));
+      await assertFails(ref('ra', c).update({communityId: 'b'}));
+      await assertSucceeds(ref('aa', c).update({content: 'Reviewed'}));
+    }
+  });
+  check('Security visitor and assigned-gate access remains unchanged', async () => {
+    await assertSucceeds(ref('sa', 'visitors', 'visitor').get());
+    await assertSucceeds(ref('sa', 'visitors', 'visitor').update({status: 'inside', isApproved: true}));
+    await assertSucceeds(ref('sa', 'gates', 'gate').get());
+  });
+
+  check('a resident moved to another community cannot edit old building-scoped content', async () => {
+    await assertSucceeds(ref('ra', 'posts', 'legacy').set({authorId: 'ra', buildingId: 'ba', content: 'Old tenant'}));
+    await env.withSecurityRulesDisabled(context => context.firestore().doc('users/ra').update({communityId: 'b', buildingId: 'bb', flatId: 'fb'}));
+    await assertFails(ref('ra', 'posts', 'legacy').update({content: 'Cross-tenant edit'}));
+    await assertFails(ref('ra', 'marketplaces').update({status: 'sold'}));
+  });
+});
