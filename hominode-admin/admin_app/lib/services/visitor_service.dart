@@ -321,6 +321,8 @@ class VisitorService implements VisitorWorkflowService {
       // STEP 3: Approve Visitor
       print('✅ STEP 3: Approving visitor...');
       await _firestore.collection(_collection).doc(visitorId).update({
+        'status': 'approved',
+        'approvedBy': adminId,
         'isApproved': true,
         'approvedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -426,44 +428,45 @@ class VisitorService implements VisitorWorkflowService {
     }
   }
 
-  /// Check-in visitor (gate/admin action)
+  /// Gate admission may approve a pending invitation atomically.
   @override
   Future<void> checkInVisitor(String visitorId) async {
-    try {
-      print('VisitorService: Checking in visitor - $visitorId');
-      await _firestore.collection(_collection).doc(visitorId).update({
+    final actorId = _adminService.getCurrentAdminId();
+    if (actorId == null) {
+      throw Exception('Admin not authenticated');
+    }
+    final ref = _firestore.collection(_collection).doc(visitorId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      if (!snapshot.exists) {
+        throw Exception('Visitor not found.');
+      }
+      transaction.update(ref, {
+        'status': 'inside',
         'isApproved': true,
         'actualArrival': FieldValue.serverTimestamp(),
+        'checkedInBy': actorId,
+        if (snapshot.data()?['isApproved'] != true) ...{
+          'approvedBy': actorId,
+          'approvedAt': FieldValue.serverTimestamp(),
+        },
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      print('VisitorService: Visitor checked in successfully');
-    } catch (e) {
-      print('VisitorService ERROR: Failed to check in visitor: $e');
-      throw Exception('Failed to check in visitor: $e');
-    }
+    });
   }
 
-  /// Check-out visitor (mark exit)
   @override
   Future<void> checkOutVisitor(String visitorId) async {
-    try {
-      print('VisitorService: Checking out visitor - $visitorId');
-
-      await _firestore.collection(_collection).doc(visitorId).update({
-        'departure': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      print('VisitorService: Visitor checked out successfully - $visitorId');
-
-      // Verify the update
-      final doc = await _firestore.collection(_collection).doc(visitorId).get();
-      final data = doc.data();
-      print('VisitorService: Verified departure field - ${data?['departure']}');
-    } catch (e) {
-      print('VisitorService ERROR: Failed to check out visitor: $e');
-      throw Exception('Failed to check out visitor: $e');
+    final actorId = _adminService.getCurrentAdminId();
+    if (actorId == null) {
+      throw Exception('Admin not authenticated');
     }
+    await _firestore.collection(_collection).doc(visitorId).update({
+      'status': 'completed',
+      'departure': FieldValue.serverTimestamp(),
+      'checkedOutBy': actorId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   /// Delete visitor record

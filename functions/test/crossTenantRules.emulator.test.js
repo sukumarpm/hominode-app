@@ -8,6 +8,7 @@ const {
   initializeTestEnvironment,
 } = require("@firebase/rules-unit-testing");
 
+const {serverTimestamp} = require("firebase/firestore");
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 let environment;
 
@@ -247,13 +248,13 @@ test("visitor approval and gate state remain Admin/Security-only", { skip: !enab
   }));
 
   await assertSucceeds(dbFor("admin-a").collection("visitors").doc("visitor-a").update({
-    isApproved: true,
-    approvedAt: new Date(),
+    status: "approved", isApproved: true, approvedBy: "admin-a",
+    approvedAt: serverTimestamp(), updatedAt: serverTimestamp(),
   }));
   await assertFails(dbFor("admin-a").collection("visitors").doc("visitor-a").update({ hostUserId: "tenant-verified" }));
   await assertSucceeds(dbFor("security-a").collection("visitors").doc("visitor-a").update({
     status: "inside",
-    actualArrival: new Date(),
+    actualArrival: serverTimestamp(), checkedInBy: "security-a", updatedAt: serverTimestamp(),
   }));
   await assertFails(dbFor("security-a").collection("visitors").doc("visitor-a").update({ flatId: "flat-tv" }));
   await assertFails(dbFor("admin-a").collection("visitors").doc("visitor-b").update({ isApproved: true }));
@@ -990,7 +991,7 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
   });
   check('Security visitor and assigned-gate access remains unchanged', async () => {
     await assertSucceeds(ref('sa', 'visitors', 'visitor').get());
-    await assertSucceeds(ref('sa', 'visitors', 'visitor').update({status: 'inside', isApproved: true}));
+    await assertSucceeds(ref('sa', 'visitors', 'visitor').update({status: 'inside', isApproved: true, approvedBy: 'sa', approvedAt: serverTimestamp(), actualArrival: serverTimestamp(), checkedInBy: 'sa', updatedAt: serverTimestamp()}));
     await assertSucceeds(ref('sa', 'gates', 'gate').get());
   });
 

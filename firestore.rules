@@ -1002,28 +1002,75 @@ function securityCanAccessCommunity(communityId) {
 
     match /visitors/{visitorId} {
 
-    function visitorStateUpdateOnly() {
-      return request.resource.data
-        .diff(resource.data)
-        .affectedKeys()
-        .hasOnly([
-          'status',
-          'isApproved',
-          'approvedBy',
-          'approvedAt',
-          'rejectedBy',
-          'rejectedAt',
-          'rejectionReason',
-          'actualArrival',
-          'departure',
-          'checkedInAt',
-          'checkedOutAt',
-          'updatedAt'
-        ]);
+    function visitorHostMatches(data) {
+      let hostId = data.get('hostUserId', data.get('residentId', ''));
+      let host = get(/databases/$(database)/documents/users/$(hostId)).data;
+      return hostId is string && hostId != ''
+        && data.get('hostUserId', hostId) == hostId
+        && data.get('residentId', hostId) == hostId
+        && host.uid == hostId && host.role == 'resident'
+        && host.communityId == data.communityId
+        && contentReferencesMatch(data, data.communityId);
+    }
+
+    function visitorState(data) {
+      let raw = data.get('status', 'pending');
+      return raw in ['rejected', 'cancelled', 'canceled'] ? 'terminal'
+        : (data.get('departure', null) != null
+          || raw in ['completed', 'departed', 'checked_out', 'checked-out', 'exited']) ? 'terminal'
+        : (data.get('actualArrival', null) != null
+          || raw in ['inside', 'arrived', 'checked_in', 'entered']) ? 'inside'
+        : raw in ['expected', 'pending', 'pendingapproval', 'pending_approval', 'approved']
+          ? (data.get('isApproved', false) == true ? 'approved'
+            : (raw == 'approved' ? 'invalid' : 'pending')) : 'invalid';
+    }
+
+    function visitorInitialState(data) {
+      return data.get('status', '') in ['expected', 'pending']
+        && data.get('isApproved', false) == false
+        && data.get('approvedBy', null) == null && data.get('approvedAt', null) == null
+        && data.get('rejectedBy', null) == null && data.get('rejectedAt', null) == null
+        && data.get('actualArrival', null) == null && data.get('departure', null) == null
+        && data.get('checkedInBy', null) == null && data.get('checkedOutBy', null) == null
+        && data.get('checkedInAt', null) == null && data.get('checkedOutAt', null) == null
+        && !data.keys().hasAny(['visitStatus', 'approvalStatus', 'checkInTime', 'checkOutTime']);
+    }
+
+    function visitorTransitionIsSafe() {
+      let before = visitorState(resource.data);
+      let after = request.resource.data;
+      let changed = after.diff(resource.data).affectedKeys();
+      return before in ['pending', 'approved', 'inside']
+        && visitorHostMatches(resource.data)
+        && after.updatedAt == request.time
+        && (
+          (before == 'pending' && after.status == 'approved'
+            && after.isApproved == true
+            && after.approvedBy == request.auth.uid && after.approvedAt == request.time
+            && changed.hasOnly(['status', 'isApproved', 'approvedBy', 'approvedAt', 'updatedAt']))
+          || (before == 'pending' && after.status == 'rejected'
+            && after.isApproved == false
+            && after.rejectedBy == request.auth.uid && after.rejectedAt == request.time
+            && changed.hasOnly(['status', 'isApproved', 'rejectedBy', 'rejectedAt', 'rejectionReason', 'updatedAt']))
+          // Gate admission may atomically approve a pending invitation, as in
+          // the existing QR flow. Both actions belong to the authenticated actor.
+          || (before in ['pending', 'approved'] && after.status == 'inside'
+            && after.isApproved == true && after.actualArrival == request.time
+            && after.checkedInBy == request.auth.uid
+            && (before == 'pending'
+              ? (after.approvedBy == request.auth.uid && after.approvedAt == request.time
+                && changed.hasOnly(['status', 'isApproved', 'approvedBy', 'approvedAt', 'actualArrival', 'checkedInBy', 'updatedAt']))
+              : changed.hasOnly(['status', 'isApproved', 'actualArrival', 'checkedInBy', 'updatedAt'])))
+          || (before == 'inside' && resource.data.get('actualArrival', null) is timestamp
+            && after.status == 'completed' && after.departure == request.time
+            && after.checkedOutBy == request.auth.uid
+            && changed.hasOnly(['status', 'departure', 'checkedOutBy', 'updatedAt']))
+        );
     }
 
     function residentVisitorUpdateIsSafe() {
-      return resource.data.status == 'expected'
+      return visitorHostMatches(resource.data)
+        && resource.data.status == 'expected'
         && resource.data.isApproved == false
         && resource.data.actualArrival == null
         && resource.data.departure == null
@@ -1084,7 +1131,9 @@ function securityCanAccessCommunity(communityId) {
     // CREATE
     // ------------------------------------------------------------
 
-    allow create: if
+    allow create: if visitorHostMatches(request.resource.data)
+      && visitorInitialState(request.resource.data)
+      && (
 
       // Admin.
       (
@@ -1134,7 +1183,7 @@ function securityCanAccessCommunity(communityId) {
           'checkedInAt',
           'checkedOutAt'
         ])
-      );
+      ));
 
 
     // ------------------------------------------------------------
@@ -1143,29 +1192,13 @@ function securityCanAccessCommunity(communityId) {
 
     allow update: if
 
-      // Admin cannot move a visitor to another community.
+      // Each state write is checked against the current committed document.
+      // Matching an earlier client snapshot never authorizes a replay.
       (
-        ('communityId' in resource.data)
-        && adminCanAccessCommunity(
-          resource.data.communityId
-        )
-        && request.resource.data.communityId
-          == resource.data.communityId
-        && visitorStateUpdateOnly()
-      )
-
-      ||
-
-      // Security can update same-community visitor state,
-      // but cannot change tenant ownership.
-      (
-        ('communityId' in resource.data)
-        && securityCanAccessCommunity(
-          resource.data.communityId
-        )
-        && request.resource.data.communityId
-          == resource.data.communityId
-        && visitorStateUpdateOnly()
+        (adminCanAccessCommunity(resource.data.communityId)
+          || securityCanAccessCommunity(resource.data.communityId))
+        && request.resource.data.communityId == resource.data.communityId
+        && visitorTransitionIsSafe()
       )
 
       ||

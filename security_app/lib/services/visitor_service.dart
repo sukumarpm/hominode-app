@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
 
 import '../models/visitor_model.dart';
 
@@ -208,7 +207,13 @@ class VisitorService {
   Future<void> approveVisitor(String visitorId) async {
     try {
       print('VisitorService: Approving visitor - $visitorId');
+      final actorId = _auth.currentUser?.uid;
+      if (actorId == null) {
+        throw Exception('Security user is not authenticated.');
+      }
       await _firestore.collection(_collection).doc(visitorId).update({
+        'status': 'approved',
+        'approvedBy': actorId,
         'isApproved': true,
         'approvedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -243,92 +248,43 @@ class VisitorService {
     }
   }
 
-  /// Check-in visitor (gate/admin action)
-  /// Check-in visitor.
-  /// Security may only operate on a visitor from their own community.
+  /// Gate admission may approve a pending invitation atomically.
   Future<void> checkInVisitor(String visitorId) async {
-    try {
-      final communityId = await _requireSecurityCommunityId();
-
-      final ref = _firestore.collection(_collection).doc(visitorId);
-      final doc = await ref.get();
-
-      if (!doc.exists || doc.data() == null) {
+    final actorId = _auth.currentUser?.uid;
+    if (actorId == null) {
+      throw Exception('Security user is not authenticated.');
+    }
+    final ref = _firestore.collection(_collection).doc(visitorId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      if (!snapshot.exists) {
         throw Exception('Visitor not found.');
       }
-
-      final data = doc.data()!;
-
-      if (data['communityId']?.toString().trim() != communityId) {
-        throw Exception('Visitor does not belong to your assigned community.');
-      }
-
-      if (data['isApproved'] != true) {
-        throw Exception('Visitor has not been approved.');
-      }
-
-      if (data['departure'] != null) {
-        throw Exception('Visitor has already checked out.');
-      }
-
-      await ref.update({
+      transaction.update(ref, {
         'status': 'inside',
         'isApproved': true,
         'actualArrival': FieldValue.serverTimestamp(),
-        'departure': null,
+        'checkedInBy': actorId,
+        if (snapshot.data()?['isApproved'] != true) ...{
+          'approvedBy': actorId,
+          'approvedAt': FieldValue.serverTimestamp(),
+        },
         'updatedAt': FieldValue.serverTimestamp(),
       });
-
-      debugPrint(
-        'VisitorService: Visitor checked in successfully - $visitorId',
-      );
-    } catch (e) {
-      debugPrint('VisitorService ERROR: Failed to check in visitor: $e');
-      rethrow;
-    }
+    });
   }
 
-  /// Check-out visitor (mark exit)
-  /// Check-out visitor.
-  /// Security may only operate on a visitor from their own community.
   Future<void> checkOutVisitor(String visitorId) async {
-    try {
-      final communityId = await _requireSecurityCommunityId();
-
-      final ref = _firestore.collection(_collection).doc(visitorId);
-      final doc = await ref.get();
-
-      if (!doc.exists || doc.data() == null) {
-        throw Exception('Visitor not found.');
-      }
-
-      final data = doc.data()!;
-
-      if (data['communityId']?.toString().trim() != communityId) {
-        throw Exception('Visitor does not belong to your assigned community.');
-      }
-
-      if (data['actualArrival'] == null) {
-        throw Exception('Visitor has not checked in.');
-      }
-
-      if (data['departure'] != null) {
-        throw Exception('Visitor has already checked out.');
-      }
-
-      await ref.update({
-        'status': 'completed',
-        'departure': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      debugPrint(
-        'VisitorService: Visitor checked out successfully - $visitorId',
-      );
-    } catch (e) {
-      debugPrint('VisitorService ERROR: Failed to check out visitor: $e');
-      rethrow;
+    final actorId = _auth.currentUser?.uid;
+    if (actorId == null) {
+      throw Exception('Security user is not authenticated.');
     }
+    await _firestore.collection(_collection).doc(visitorId).update({
+      'status': 'completed',
+      'departure': FieldValue.serverTimestamp(),
+      'checkedOutBy': actorId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   /// Delete visitor record

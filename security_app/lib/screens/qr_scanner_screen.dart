@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../utils/app_colors.dart';
+import '../services/visitor_service.dart';
 
 class _VisitorQrPayload {
   final String? qrToken;
@@ -245,12 +246,8 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
 
     final status = data['status']?.toString().trim() ?? '';
 
-    if (status == 'expected') {
-      await visitorRef.update({
-        'status': 'inside',
-        'actualArrival': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+    if (status == 'expected' || status == 'pending' || status == 'approved') {
+      await VisitorService().checkInVisitor(visitorRef.id);
 
       if (!mounted) return;
 
@@ -260,11 +257,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
     }
 
     if (status == 'inside') {
-      await visitorRef.update({
-        'status': 'completed',
-        'departure': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      await VisitorService().checkOutVisitor(visitorRef.id);
 
       if (!mounted) return;
 
@@ -402,24 +395,16 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
       // ----------------------------------------------------------
       // 4. Process only known visitor states.
       // ----------------------------------------------------------
-      if (status == 'expected') {
+      if (status == 'expected' || status == 'pending' || status == 'approved') {
         // Expected visitor entering the property.
-        await visitorRef.update({
-          'status': 'inside',
-          'actualArrival': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        await VisitorService().checkInVisitor(visitorRef.id);
 
         if (!mounted) return;
 
         _showSuccessDialog(data, isCheckIn: true);
       } else if (status == 'inside') {
         // Visitor leaving the property.
-        await visitorRef.update({
-          'status': 'completed',
-          'departure': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        await VisitorService().checkOutVisitor(visitorRef.id);
 
         if (!mounted) return;
 
