@@ -469,7 +469,7 @@ class BillingService {
   // Mark bill as paid (with optional payment method for manual payments)
   Future<void> markBillAsPaid(
     String billId, {
-    String paymentMethod = 'online',
+    String paymentMethod = 'manual',
     String? paymentReference,
   }) async {
     try {
@@ -497,12 +497,10 @@ class BillingService {
 
       // STEP 3: Update Bill Status
       print('📝 STEP 3: Marking bill as paid...');
-      await _firestore.collection(_collection).doc(billId).update({
-        'status': 'paid',
+      await _functions.httpsCallable('recordManualPayment').call({
+        'billId': billId,
         'paymentMethod': paymentMethod,
         'paymentReference': paymentReference,
-        'paidAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
       });
       print('✅ STEP 3 PASSED');
 

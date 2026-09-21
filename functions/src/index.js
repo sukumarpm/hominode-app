@@ -29,6 +29,7 @@ const {
 const {
   verifyPaymentProofCore,
   rejectPaymentProofCore,
+  recordManualPaymentCore,
 } = require("./payment_verification");
 
 const {
@@ -170,6 +171,11 @@ function callableHandler(
     }
   };
 }
+exports.recordManualPayment = appCheckedCallable(
+  recordManualPaymentCore,
+  'Manual payment could not be recorded.'
+);
+
 exports.verifyPaymentProof = appCheckedCallable(
   verifyPaymentProofCore,
   "Payment proof could not be verified."

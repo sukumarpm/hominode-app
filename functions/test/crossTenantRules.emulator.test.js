@@ -181,7 +181,7 @@ test("resident payments and amenity bookings are read-only for V1", { skip: !ena
     await assertFails(collection.doc(existingIds[index]).delete());
   }
 
-  await assertSucceeds(dbFor("admin-a").collection("bills").doc("bill-a").update({
+  await assertFails(dbFor("admin-a").collection("bills").doc("bill-a").update({
     status: "paid",
     paidAt: new Date(),
     paymentMethod: "Cash",

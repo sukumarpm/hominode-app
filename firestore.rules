@@ -869,23 +869,37 @@ function securityCanAccessCommunity(communityId) {
           && adminCanAccessCommunity(resource.data.communityId)
         );
 
+      // Creation remains the existing Admin workflow. It can only issue an
+      // unpaid bill; verification/settlement and financial history are trusted.
       allow create: if
-        ('communityId' in request.resource.data)
-        && adminCanAccessCommunity(
-          request.resource.data.communityId
-        );
+        adminCanAccessCommunity(request.resource.data.communityId)
+        && request.resource.data.keys().hasOnly([
+          'adminId', 'communityId', 'adminName', 'adminEmail', 'adminPhone',
+          'organization', 'flatId', 'flatLabel', 'buildingId', 'residentId',
+          'residentName', 'amount', 'chargeBreakdown', 'month', 'year', 'type',
+          'status', 'dueDate', 'paidAt', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.adminId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.get('paidAt', null) == null
+        && request.resource.data.amount is number && request.resource.data.amount > 0
+        && contentReferencesMatch(request.resource.data, request.resource.data.communityId)
+        && get(/databases/$(database)/documents/users/$(request.resource.data.residentId)).data.communityId == request.resource.data.communityId
+        && get(/databases/$(database)/documents/users/$(request.resource.data.residentId)).data.flatId == request.resource.data.flatId;
 
-      allow delete: if
-        ('communityId' in resource.data)
-        && adminCanAccessCommunity(
-          resource.data.communityId
-        );
+      // No client correction/deletion mechanism exists. Keep financial records
+      // intact, including bills with pending/rejected evidence linked to them.
+      allow delete: if false;
 
       allow update: if
-        ('communityId' in resource.data)
-        && adminCanAccessCommunity(resource.data.communityId)
-        && request.resource.data.communityId
-          == resource.data.communityId;
+        adminCanAccessCommunity(resource.data.communityId)
+        && resource.data.status == 'pending'
+        && resource.data.get('paidAt', null) == null
+        && resource.data.get('paymentId', null) == null
+        && request.resource.data.status == 'overdue'
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
+
     }
 
     // ============================================================
@@ -895,6 +909,11 @@ function securityCanAccessCommunity(communityId) {
     // ============================================================
 
     match /payments/{paymentId} {
+
+      function paymentReceiptPathMatches(data) {
+        let prefix = 'payment_receipts/' + data.communityId + '/' + data.billId + '/' + request.auth.uid + '/' + paymentId;
+        return data.receiptPath in [prefix + '.jpg', prefix + '.jpeg', prefix + '.png', prefix + '.heic', prefix + '.heif'];
+      }
 
       function residentPaymentCreateIsValid() {
         return approvedResident()
@@ -943,7 +962,7 @@ function securityCanAccessCommunity(communityId) {
           // Do NOT store a public/download URL for the receipt.
           // Store only its protected Firebase Storage path.
           && request.resource.data.receiptPath is string
-          && request.resource.data.receiptPath.size() > 0
+          && paymentReceiptPathMatches(request.resource.data)
 
           && (
             !('transactionId' in request.resource.data)
@@ -968,7 +987,9 @@ function securityCanAccessCommunity(communityId) {
           // Resident can submit proof only against an unpaid bill.
           && get(
             /databases/$(database)/documents/bills/$(request.resource.data.billId)
-          ).data.status == 'pending'
+          ).data.status in ['pending', 'overdue']
+          && get(/databases/$(database)/documents/bills/$(request.resource.data.billId)).data.get('residentId', request.auth.uid) == request.auth.uid
+          && get(/databases/$(database)/documents/bills/$(request.resource.data.billId)).data.get('userId', request.auth.uid) == request.auth.uid
 
           // Resident cannot submit an arbitrary amount.
           && get(
