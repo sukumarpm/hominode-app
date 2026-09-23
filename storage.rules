@@ -90,6 +90,17 @@ function adminMayManageFacilityImage(communityId, facilityId) {
     && firestore.get(facilityPath).data.communityId == communityId;
 }
 
+
+function adminMayManageEventImage(communityId, eventId) {
+  let eventPath =
+    /databases/(default)/documents/events_announcements/$(eventId);
+
+  return adminMayAccessCommunity(communityId)
+    && firestore.exists(eventPath)
+    && firestore.get(eventPath).data.communityId == communityId
+    && firestore.get(eventPath).data.type == 'event';
+}
+
     // ============================================================
     // PRIVATE PAYMENT RECEIPTS
     // ============================================================
@@ -144,6 +155,31 @@ function adminMayManageFacilityImage(communityId, facilityId) {
       )
     );
 }
+
+    // ============================================================
+    // EVENT IMAGES
+    // ============================================================
+
+    match /event_images/{communityId}/{eventId}/{fileName} {
+
+      allow read: if
+        adminMayAccessCommunity(communityId)
+        || residentMayAccessCommunity(communityId);
+
+      allow write: if
+        adminMayAccessCommunity(communityId)
+        && (
+          request.resource == null
+          ||
+          (
+            request.resource != null
+            && request.resource.size <= 5 * 1024 * 1024
+            && request.resource.contentType.matches(
+              'image/(jpeg|png|webp)'
+            )
+          )
+        );
+    }
 
     // Everything else remains private.
     match /{allPaths=**} {
