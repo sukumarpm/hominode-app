@@ -10,6 +10,7 @@ import 'src/components/standard_screen.dart';
 import 'src/providers/language_provider.dart';
 import 'src/screens/submit_payment_proof_screen.dart';
 import 'src/services/bill_firestore_service.dart';
+import 'src/widgets/direct_upi_payment_card.dart';
 
 // Design Constants
 const kPrimaryBlue = Color(0xFF0E4778);
@@ -41,56 +42,16 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   final _billService = BillFirestoreService();
 
   Widget _buildSubmitPaymentCard(Map<String, dynamic> bill) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(20.w),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(kRadius),
-        border: Border.all(color: kDivider),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Payment',
-            style: TextStyle(
-              fontSize: 18.sp,
-              fontWeight: FontWeight.w600,
-              color: kDarkTitle,
-            ),
+    return DirectUpiPaymentCard(
+      billId: bill['id']?.toString() ?? '',
+      onSubmitProof: () async {
+        await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SubmitPaymentProofScreen(bill: bill),
           ),
-          SizedBox(height: 8.h),
-          Text(
-            'Pay using your community\'s available payment method, then upload the receipt for verification.',
-            style: TextStyle(fontSize: 14.sp, height: 1.4, color: kSubtext),
-          ),
-          SizedBox(height: 18.h),
-          SizedBox(
-            width: double.infinity,
-            height: 50.h,
-            child: ElevatedButton.icon(
-              onPressed: () async {
-                await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SubmitPaymentProofScreen(bill: bill),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Submit Payment Proof'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kPrimaryBlue,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12.r),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -291,9 +252,13 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
 
               final bills = snapshot.data ?? [];
 
-              // Separate pending and paid bills
+              // Pending and overdue bills are both unpaid current bills.
               final pendingBills = bills
-                  .where((bill) => bill['status'] == 'pending')
+                  .where(
+                    (bill) =>
+                        bill['status'] == 'pending' ||
+                        bill['status'] == 'overdue',
+                  )
                   .toList();
               final paidBills = bills
                   .where((bill) => bill['status'] == 'paid')

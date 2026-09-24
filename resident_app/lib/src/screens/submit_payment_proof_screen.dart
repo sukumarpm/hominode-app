@@ -266,7 +266,7 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
                   ),
                   SizedBox(height: 6.h),
                   Text(
-                    '₹${amount.toStringAsFixed(0)}',
+                    '₹${amount.toStringAsFixed(2)}',
                     style: TextStyle(
                       fontSize: 30.sp,
                       fontWeight: FontWeight.w700,
