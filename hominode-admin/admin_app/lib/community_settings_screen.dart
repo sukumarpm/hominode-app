@@ -10,6 +10,7 @@ import 'models/tenant_config.dart';
 import 'services/admin_tenant_context.dart';
 import 'services/community_invite_service.dart';
 import 'widgets/standard_header.dart';
+import 'widgets/community_payment_settings_card.dart';
 
 class CommunitySettingsScreen extends StatefulWidget {
   const CommunitySettingsScreen({super.key});
@@ -148,6 +149,8 @@ class _CommunitySettingsScreenState extends State<CommunitySettingsScreen> {
                   );
                 },
               ),
+              SizedBox(height: 12.h),
+              const CommunityPaymentSettingsCard(),
               SizedBox(height: 20.h),
               Row(
                 children: [
