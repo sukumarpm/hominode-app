@@ -18,12 +18,13 @@ const storage = uid => env.authenticatedContext(uid, {firebase: {sign_in_provide
 const receiptPath = id => `payment_receipts/C/b/r/${id}.png`;
 const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6V8AAAAASUVORK5CYII=', 'base64');
 const metadata = id => ({contentType: 'image/png', customMetadata: {paymentId: id, billId: 'b', communityId: 'C', residentUid: 'r'}});
-const payment = id => ({id, communityId: 'C', flatId: 'f', userId: 'r', billId: 'b', amount: 100, status: 'pending', method: 'external', receiptPath: receiptPath(id), createdAt: new Date(), updatedAt: new Date(), paymentDate: new Date()});
+const directUpi = {provider: 'direct_upi', method: 'upi', verificationMode: 'manual', evidenceType: 'receipt'};
+const payment = (id, fields = {}) => ({id, communityId: 'C', flatId: 'f', userId: 'r', billId: 'b', amount: 100, status: 'pending', method: 'external', receiptPath: receiptPath(id), createdAt: new Date(), updatedAt: new Date(), paymentDate: new Date(), ...fields});
 const args = id => ({db, bucket, auth: {uid: 'a'}, data: {paymentId: id}});
 const bill = {communityId: 'C', adminId: 'a', residentId: 'r', flatId: 'f', amount: 100, status: 'pending', paidAt: null};
-async function submit(id = 'p', upload = true) {
+async function submit(id = 'p', upload = true, fields = {}) {
   if (upload) await assertSucceeds(uploadBytes(storageRef(storage('r'), receiptPath(id)), bytes, metadata(id)));
-  await assertSucceeds(client('r').doc(`payments/${id}`).set(payment(id)));
+  await assertSucceeds(client('r').doc(`payments/${id}`).set(payment(id, fields)));
 }
 test.before(async () => {
   if (!enabled) return;
@@ -65,6 +66,45 @@ run('resident upload/submission -> Admin verification -> immutable linked financ
       await assertFails(client(uid).doc(path).delete()); await assertFails(client(uid).doc(path).update({amount: 1}));
     }
     await assertFails(deleteObject(storageRef(storage(uid), receiptPath('p'))));
+  }
+});
+run('legacy resident payment submission remains allowed', async () => {
+  await submit('legacy');
+  const record = (await db.doc('payments/legacy').get()).data();
+  assert.equal(record.method, 'external'); assert.equal(record.status, 'pending');
+  assert.equal(record.provider, undefined); assert.equal(record.verificationMode, undefined); assert.equal(record.evidenceType, undefined);
+});
+run('Direct UPI resident submission can be verified and settle its bill', async () => {
+  await submit('upi', true, directUpi);
+  const submitted = (await db.doc('payments/upi').get()).data();
+  assert.deepEqual(
+    {provider: submitted.provider, method: submitted.method, verificationMode: submitted.verificationMode,
+      evidenceType: submitted.evidenceType, status: submitted.status},
+    {...directUpi, status: 'pending'},
+  );
+  await verify(args('upi'));
+  const reviewed = (await db.doc('payments/upi').get()).data();
+  assert.equal(reviewed.status, 'completed');
+  assert.equal((await db.doc('bills/b').get()).data().paymentId, 'upi');
+  assert.equal((await db.doc('bills/b').get()).data().status, 'paid');
+});
+run('resident cannot submit a forged amount or mixed/malformed payment contract', async () => {
+  await assertFails(client('r').doc('payments/wrong-amount').set({...payment('wrong-amount'), amount: 99}));
+
+  const missingVerificationMode = {...directUpi}; delete missingVerificationMode.verificationMode;
+  const missingEvidenceType = {...directUpi}; delete missingEvidenceType.evidenceType;
+  const malformedContracts = [
+    {method: 'external', provider: 'direct_upi'},
+    {provider: 'direct_upi', method: 'external'},
+    missingVerificationMode,
+    {...directUpi, verificationMode: 'automatic'},
+    missingEvidenceType,
+    {...directUpi, evidenceType: 'bank_statement'},
+    {...directUpi, provider: 'unsupported'},
+  ];
+  for (const [index, fields] of malformedContracts.entries()) {
+    const id = `malformed-${index}`;
+    await assertFails(client('r').doc(`payments/${id}`).set(payment(id, fields)));
   }
 });
 run('nonexistent receipt cannot settle', async () => {

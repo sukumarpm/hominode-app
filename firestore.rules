@@ -487,6 +487,17 @@ function securityCanAccessCommunity(communityId) {
       allow create, update, delete: if false;
     }
 
+    // Community payment destinations are private community data. The Admin
+    // SDK callable is the only write path; clients may fetch one authorized
+    // community's config by document ID.
+    match /communityPaymentConfigs/{communityId} {
+      allow get: if validSuperAdmin()
+        || adminCanAccessCommunity(communityId)
+        || residentCanAccessCommunity(communityId);
+
+      allow create, update, delete: if false;
+    }
+
 
 
     // ============================================================
@@ -935,6 +946,9 @@ function securityCanAccessCommunity(communityId) {
             'userId',
             'amount',
             'method',
+            'provider',
+            'verificationMode',
+            'evidenceType',
             'status',
             'transactionId',
             'receiptPath',
@@ -951,8 +965,21 @@ function securityCanAccessCommunity(communityId) {
           && request.resource.data.flatId
               == userProfile().flatId
 
-          // Valid V1 state.
-          && request.resource.data.method == 'external'
+          // Accept installed-client proofs and the new Direct UPI V1 contract.
+          && (
+            (
+              request.resource.data.method == 'external'
+              && !('provider' in request.resource.data)
+              && !('verificationMode' in request.resource.data)
+              && !('evidenceType' in request.resource.data)
+            )
+            || (
+              request.resource.data.provider == 'direct_upi'
+              && request.resource.data.method == 'upi'
+              && request.resource.data.verificationMode == 'manual'
+              && request.resource.data.evidenceType == 'receipt'
+            )
+          )
           && request.resource.data.status == 'pending'
 
           // Required field types.

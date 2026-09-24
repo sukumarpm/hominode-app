@@ -60,6 +60,7 @@ const {
   reverseGeocodeCommunityLocationCore,
 } = require("./community_geocoding");
 const { updateCommunityLocationCore } = require("./community_location_management");
+const { updateCommunityPaymentConfigCore } = require("./community_payment_config");
 const {
   validateResidentBulkImportCore,
   importResidentsBulkCore,
@@ -476,6 +477,10 @@ exports.reverseGeocodeCommunityLocation = onCall(
 exports.updateCommunityLocation = callable(
   updateCommunityLocationCore,
   "Community location could not be updated."
+);
+exports.updateCommunityPaymentConfig = appCheckedCallable(
+  updateCommunityPaymentConfigCore,
+  "Community payment configuration could not be updated."
 );
 
 /*

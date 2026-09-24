@@ -158,7 +158,10 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
         'flatId': flatId,
         'userId': user.uid,
         'amount': amount,
-        'method': 'external',
+        'provider': 'direct_upi',
+        'method': 'upi',
+        'verificationMode': 'manual',
+        'evidenceType': 'receipt',
         'status': 'pending',
         'transactionId': _referenceController.text.trim().isEmpty
             ? null

@@ -98,8 +98,12 @@ async function reviewPayment({db, bucket, auth, data}, rejecting) {
     if (!paymentSnapshot.exists) fail('Payment submission was not found.', 'not-found');
     const payment = paymentSnapshot.data();
     await requireAuthorizedAdmin(db, transaction, uid, payment.communityId);
-    if (payment.status !== 'pending' || payment.method !== 'external' || payment.id !== paymentId) {
-      fail('Only pending external payment submissions can be reviewed.');
+    const legacyProof = payment.method === 'external' &&
+      !('provider' in payment) && !('verificationMode' in payment) && !('evidenceType' in payment);
+    const directUpiProof = payment.provider === 'direct_upi' && payment.method === 'upi' &&
+      payment.verificationMode === 'manual' && payment.evidenceType === 'receipt';
+    if (payment.status !== 'pending' || (!legacyProof && !directUpiProof) || payment.id !== paymentId) {
+      fail('Only pending payment-proof submissions can be reviewed.');
     }
     const billId = documentId(payment.billId);
     const billRef = db.collection('bills').doc(billId);
