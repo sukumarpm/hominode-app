@@ -8,13 +8,14 @@ import '../services/image_picker_service.dart';
 
 class EditAmenityModal extends StatefulWidget {
   final AmenityModel amenity;
-
   final AmenityService? amenityService;
+  final bool bookingConfigurationEnabled;
 
   const EditAmenityModal({
     super.key,
     required this.amenity,
     this.amenityService,
+    this.bookingConfigurationEnabled = true,
   });
 
   @override
@@ -157,8 +158,11 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
       'pricePerDay': _pricingMode == 'flat'
           ? double.tryParse(_priceController.text.trim())
           : 0,
-      'timeSlots': List<String>.from(_selectedTimeSlots),
     };
+
+    if (widget.bookingConfigurationEnabled) {
+      values['timeSlots'] = List<String>.from(_selectedTimeSlots);
+    }
 
     if (_facilityImages.isEmpty && _initialManagedImagePaths.isEmpty) {
       values['imageUrl'] = _imageUrlController.text.trim();
@@ -426,11 +430,16 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                         color: Color(0xFF111111),
                       ),
                     ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        Navigator.of(context).pop();
+                      },
+                      child: SizedBox(
+                        width: 56.w,
+                        height: 56.h,
+                        child: const Center(child: Icon(Icons.close, size: 30)),
+                      ),
                     ),
                   ],
                 ),
@@ -805,170 +814,176 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                   ),
                 ],
                 SizedBox(height: 12.h),
-                // Time Slots Section
-                Text(
-                  'Time Slots',
-                  style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
+                if (widget.bookingConfigurationEnabled) ...[
+                  // Time Slots Section
+                  Text(
+                    'Time Slots',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF111827),
+                    ),
                   ),
-                ),
-                SizedBox(height: 8.h),
+                  SizedBox(height: 8.h),
 
-                // Time Slot Grid
-                Container(
-                  padding: EdgeInsets.all(12.w),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF9FAFB),
-                    borderRadius: BorderRadius.circular(8.r),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    children: [
-                      // Quick Actions
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            '${_selectedTimeSlots.length} selected',
-                            style: TextStyle(
-                              fontSize: 12.sp,
-                              color: Color(0xFF6B7280),
+                  // Time Slot Grid
+                  Container(
+                    padding: EdgeInsets.all(12.w),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(8.r),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Column(
+                      children: [
+                        // Quick Actions
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${_selectedTimeSlots.length} selected',
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                color: Color(0xFF6B7280),
+                              ),
                             ),
-                          ),
-                          Row(
-                            children: [
-                              TextButton(
-                                onPressed: () {
-                                  setState(() {
-                                    for (final slot in _availableTimeSlots) {
-                                      if (!_selectedTimeSlots.contains(slot)) {
-                                        _selectedTimeSlots.add(slot);
+                            Row(
+                              children: [
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      for (final slot in _availableTimeSlots) {
+                                        if (!_selectedTimeSlots.contains(
+                                          slot,
+                                        )) {
+                                          _selectedTimeSlots.add(slot);
+                                        }
                                       }
-                                    }
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: const Color(0xFF0E4778),
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 8.w,
+                                    });
+                                  },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFF0E4778),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8.w,
+                                    ),
+                                    minimumSize: const Size(0, 28),
                                   ),
-                                  minimumSize: const Size(0, 28),
-                                ),
-                                child: Text(
-                                  'All',
-                                  style: TextStyle(fontSize: 11.sp),
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedTimeSlots.clear();
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: const Color(0xFFEF4444),
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 8.w,
+                                  child: Text(
+                                    'All',
+                                    style: TextStyle(fontSize: 11.sp),
                                   ),
-                                  minimumSize: const Size(0, 28),
                                 ),
-                                child: Text(
-                                  'Clear',
-                                  style: TextStyle(fontSize: 11.sp),
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _selectedTimeSlots.clear();
+                                    });
+                                  },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFFEF4444),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8.w,
+                                    ),
+                                    minimumSize: const Size(0, 28),
+                                  ),
+                                  child: Text(
+                                    'Clear',
+                                    style: TextStyle(fontSize: 11.sp),
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 8.h),
+                              ],
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 8.h),
 
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          for (var i = 0; i < _selectedTimeSlots.length; i++)
-                            InputChip(
-                              key: ValueKey('selected-slot-$i'),
-                              label: Text(_selectedTimeSlots[i]),
-                              onDeleted: () => setState(
-                                () => _selectedTimeSlots.removeAt(i),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            for (var i = 0; i < _selectedTimeSlots.length; i++)
+                              InputChip(
+                                key: ValueKey('selected-slot-$i'),
+                                label: Text(_selectedTimeSlots[i]),
+                                onDeleted: () => setState(
+                                  () => _selectedTimeSlots.removeAt(i),
+                                ),
+                              ),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                key: const ValueKey('custom-time-slot'),
+                                controller: _customTimeSlotController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Custom time slot',
+                                ),
+                                onSubmitted: (_) => _addCustomSlot(),
                               ),
                             ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              key: const ValueKey('custom-time-slot'),
-                              controller: _customTimeSlotController,
-                              decoration: const InputDecoration(
-                                labelText: 'Custom time slot',
-                              ),
-                              onSubmitted: (_) => _addCustomSlot(),
+                            IconButton(
+                              tooltip: 'Add time slot',
+                              onPressed: _addCustomSlot,
+                              icon: const Icon(Icons.add),
                             ),
-                          ),
-                          IconButton(
-                            tooltip: 'Add time slot',
-                            onPressed: _addCustomSlot,
-                            icon: const Icon(Icons.add),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 8.h),
+                          ],
+                        ),
+                        SizedBox(height: 8.h),
 
-                      // Time Slot Chips
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _availableTimeSlots.map((slot) {
-                          final isSelected = _selectedTimeSlots.contains(slot);
-                          return GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                if (isSelected) {
-                                  _selectedTimeSlots.remove(slot);
-                                } else {
-                                  _selectedTimeSlots.add(slot);
-                                }
-                              });
-                            },
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 14.w,
-                                vertical: 10.h,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? const Color(0xFF0E4778)
-                                    : Colors.white,
-                                borderRadius: BorderRadius.circular(6.r),
-                                border: Border.all(
+                        // Time Slot Chips
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _availableTimeSlots.map((slot) {
+                            final isSelected = _selectedTimeSlots.contains(
+                              slot,
+                            );
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  if (isSelected) {
+                                    _selectedTimeSlots.remove(slot);
+                                  } else {
+                                    _selectedTimeSlots.add(slot);
+                                  }
+                                });
+                              },
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 14.w,
+                                  vertical: 10.h,
+                                ),
+                                decoration: BoxDecoration(
                                   color: isSelected
                                       ? const Color(0xFF0E4778)
-                                      : const Color(0xFFE5E7EB),
+                                      : Colors.white,
+                                  borderRadius: BorderRadius.circular(6.r),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? const Color(0xFF0E4778)
+                                        : const Color(0xFFE5E7EB),
+                                  ),
+                                ),
+                                child: Text(
+                                  slot,
+                                  style: TextStyle(
+                                    fontSize: 13.sp,
+                                    fontWeight: FontWeight.w500,
+                                    color: isSelected
+                                        ? Colors.white
+                                        : const Color(0xFF374151),
+                                  ),
                                 ),
                               ),
-                              child: Text(
-                                slot,
-                                style: TextStyle(
-                                  fontSize: 13.sp,
-                                  fontWeight: FontWeight.w500,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : const Color(0xFF374151),
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ],
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(height: 16.h),
+                  SizedBox(height: 16.h),
+                ],
 
                 // Description
                 TextFormField(

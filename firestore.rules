@@ -877,8 +877,10 @@ function securityCanAccessCommunity(communityId) {
           'adminId', 'communityId', 'adminName', 'adminEmail', 'adminPhone',
           'organization', 'flatId', 'flatLabel', 'buildingId', 'residentId',
           'residentName', 'amount', 'chargeBreakdown', 'month', 'year', 'type',
-          'status', 'dueDate', 'paidAt', 'createdAt', 'updatedAt'
+          'status', 'dueDate', 'paidAt', 'createdAt', 'updatedAt', 'billingKind'
         ])
+        && request.resource.data.billingKind == 'ad_hoc'
+        && !billId.matches('recurring_.*')
         && request.resource.data.adminId == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.get('paidAt', null) == null

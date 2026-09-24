@@ -120,7 +120,7 @@ run('client settlement, amounts, audit attribution and paid creation are denied'
     await assertFails(client(uid).doc('bills/new').set({...bill, status: 'paid'}));
     await assertFails(client(uid).doc('bills/new').set({...bill, paidAmount: 100}));
   }
-  await assertSucceeds(client('a').doc('bills/new').set(bill));
+  await assertSucceeds(client('a').doc('bills/new').set({...bill, billingKind: 'ad_hoc'}));
   await assertSucceeds(client('a').doc('bills/new').update({status: 'overdue', updatedAt: serverTimestamp()}));
 });
 run('duplicate/concurrent proofs cannot settle one bill twice', async () => {
