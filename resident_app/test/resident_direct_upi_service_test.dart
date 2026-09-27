@@ -56,6 +56,8 @@ ResidentDirectUpiService _service({
   List<String>? billDocumentIds,
   List<String>? configDocumentIds,
   List<String>? readOrder,
+  List<Map<String, dynamic>>? paymentProofs,
+  List<Map<String, dynamic>>? paymentProofQueryScopes,
 }) => ResidentDirectUpiService(
   scopeLoader: () async {
     readOrder?.add('scope');
@@ -74,6 +76,22 @@ ResidentDirectUpiService _service({
       data: paymentConfig ?? _paymentConfig(),
     );
   },
+  paymentProofLoader:
+      ({
+        required communityId,
+        required flatId,
+        required billId,
+        required userId,
+      }) async {
+        readOrder?.add('payment proofs');
+        paymentProofQueryScopes?.add({
+          'communityId': communityId,
+          'flatId': flatId,
+          'billId': billId,
+          'userId': userId,
+        });
+        return paymentProofs ?? [];
+      },
 );
 
 Future<void> _expectFailure(
@@ -187,9 +205,112 @@ void main() {
         expect(result.billId, _billId);
         expect(billIds, [_billId]);
         expect(configIds, [_communityId]);
-        expect(order, ['scope', 'bill', 'config']);
+        expect(order, ['scope', 'bill', 'payment proofs', 'config']);
       },
     );
+
+    test(
+      'pending proof blocks preparation and final proof submission check',
+      () async {
+        final proofScope = <Map<String, dynamic>>[];
+        final service = _service(
+          paymentProofQueryScopes: proofScope,
+          paymentProofs: [
+            {
+              'communityId': _communityId,
+              'flatId': _flatId,
+              'billId': _billId,
+              'userId': _uid,
+              'status': 'pending',
+            },
+          ],
+        );
+
+        await _expectFailure(
+          service.preparePayment(_billId),
+          ResidentDirectUpiFailure.paymentProofAlreadyPending,
+        );
+        await expectLater(
+          service.ensureNoPendingProofForBill(_billId),
+          throwsA(
+            isA<ResidentDirectUpiException>().having(
+              (error) => error.failure,
+              'failure',
+              ResidentDirectUpiFailure.paymentProofAlreadyPending,
+            ),
+          ),
+        );
+        expect(proofScope, [
+          {
+            'communityId': _communityId,
+            'flatId': _flatId,
+            'billId': _billId,
+            'userId': _uid,
+          },
+          {
+            'communityId': _communityId,
+            'flatId': _flatId,
+            'billId': _billId,
+            'userId': _uid,
+          },
+        ]);
+      },
+    );
+
+    test('failed proof does not block resubmission', () async {
+      final service = _service(
+        paymentProofs: [
+          {
+            'communityId': _communityId,
+            'flatId': _flatId,
+            'billId': _billId,
+            'userId': _uid,
+            'status': 'failed',
+          },
+        ],
+      );
+
+      await service.ensureNoPendingProofForBill(_billId);
+      final preparation = await service.preparePayment(_billId);
+      expect(preparation.billId, _billId);
+    });
+
+    test('proofs outside exact resident and bill scope do not block', () async {
+      final unrelatedProofs = <Map<String, dynamic>>[
+        {
+          'communityId': 'community-other',
+          'flatId': _flatId,
+          'billId': _billId,
+          'userId': _uid,
+          'status': 'pending',
+        },
+        {
+          'communityId': _communityId,
+          'flatId': 'flat-other',
+          'billId': _billId,
+          'userId': _uid,
+          'status': 'pending',
+        },
+        {
+          'communityId': _communityId,
+          'flatId': _flatId,
+          'billId': 'bill-other',
+          'userId': _uid,
+          'status': 'pending',
+        },
+        {
+          'communityId': _communityId,
+          'flatId': _flatId,
+          'billId': _billId,
+          'userId': 'resident-other',
+          'status': 'pending',
+        },
+      ];
+      final service = _service(paymentProofs: unrelatedProofs);
+
+      await service.ensureNoPendingProofForBill(_billId);
+      expect((await service.preparePayment(_billId)).billId, _billId);
+    });
 
     test(
       'uses only the authoritative server bill amount with two decimals',

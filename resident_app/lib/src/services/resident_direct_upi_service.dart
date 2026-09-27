@@ -13,6 +13,8 @@ enum ResidentDirectUpiFailure {
   directUpiDisabled,
   paymentConfigInvalid,
   paymentConfigUnavailable,
+  paymentProofAlreadyPending,
+  paymentProofStatusUnavailable,
 }
 
 class ResidentDirectUpiException implements Exception {
@@ -36,6 +38,10 @@ class ResidentDirectUpiException implements Exception {
       'Community payment configuration is invalid.',
     ResidentDirectUpiFailure.paymentConfigUnavailable =>
       'Community payment settings could not be loaded.',
+    ResidentDirectUpiFailure.paymentProofAlreadyPending =>
+      'A payment proof for this bill is already awaiting administrator review.',
+    ResidentDirectUpiFailure.paymentProofStatusUnavailable =>
+      'Payment proof status could not be checked. Please try again.',
   };
 
   @override
@@ -65,6 +71,13 @@ typedef ResidentDirectUpiScopeLoader =
     Future<ResidentDirectUpiScope> Function();
 typedef ResidentDirectUpiDocumentLoader =
     Future<ResidentDirectUpiDocument> Function(String documentId);
+typedef ResidentDirectUpiPaymentProofLoader =
+    Future<List<Map<String, dynamic>>> Function({
+      required String communityId,
+      required String flatId,
+      required String billId,
+      required String userId,
+    });
 
 class DirectUpiPaymentPreparation {
   const DirectUpiPaymentPreparation({
@@ -91,17 +104,20 @@ class ResidentDirectUpiService {
     ResidentDirectUpiScopeLoader? scopeLoader,
     ResidentDirectUpiDocumentLoader? billLoader,
     ResidentDirectUpiDocumentLoader? paymentConfigLoader,
+    ResidentDirectUpiPaymentProofLoader? paymentProofLoader,
   }) : _auth = auth,
        _firestore = firestore,
        _scopeLoader = scopeLoader,
        _billLoader = billLoader,
-       _paymentConfigLoader = paymentConfigLoader;
+       _paymentConfigLoader = paymentConfigLoader,
+       _paymentProofLoader = paymentProofLoader;
 
   final FirebaseAuth? _auth;
   final FirebaseFirestore? _firestore;
   final ResidentDirectUpiScopeLoader? _scopeLoader;
   final ResidentDirectUpiDocumentLoader? _billLoader;
   final ResidentDirectUpiDocumentLoader? _paymentConfigLoader;
+  final ResidentDirectUpiPaymentProofLoader? _paymentProofLoader;
 
   Future<DirectUpiPaymentPreparation> preparePayment(String billId) async {
     final id = billId.trim();
@@ -119,6 +135,7 @@ class ResidentDirectUpiService {
       failure: ResidentDirectUpiFailure.billUnavailable,
     );
     final bill = _requireBillForScope(billDocument, id, scope);
+    await _ensureNoPendingProof(scope, id);
 
     final configDocument = await _loadDocument(
       documentId: scope.communityId,
@@ -165,6 +182,72 @@ class ResidentDirectUpiService {
       payeeName: payeeName,
       paymentUri: paymentUri,
     );
+  }
+
+  /// Rechecks an authoritative bill and payment scope before proof upload.
+  Future<void> ensureNoPendingProofForBill(String billId) async {
+    final id = billId.trim();
+    if (id.isEmpty || id != billId || id.contains('/')) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.billUnavailable,
+      );
+    }
+
+    final scope = await _loadScope();
+    final billDocument = await _loadDocument(
+      documentId: id,
+      loader: _billLoader,
+      collection: 'bills',
+      failure: ResidentDirectUpiFailure.billUnavailable,
+    );
+    _requireBillForScope(billDocument, id, scope);
+    await _ensureNoPendingProof(scope, id);
+  }
+
+  Future<void> _ensureNoPendingProof(
+    ResidentDirectUpiScope scope,
+    String billId,
+  ) async {
+    try {
+      final loader = _paymentProofLoader;
+      final proofs = loader != null
+          ? await loader(
+              communityId: scope.communityId,
+              flatId: scope.flatId,
+              billId: billId,
+              userId: scope.uid,
+            )
+          : (await (_firestore ?? FirebaseFirestore.instance)
+                    .collection('payments')
+                    .where('communityId', isEqualTo: scope.communityId)
+                    .where('flatId', isEqualTo: scope.flatId)
+                    .where('billId', isEqualTo: billId)
+                    .where('userId', isEqualTo: scope.uid)
+                    .get(const GetOptions(source: Source.server)))
+                .docs
+                .map((document) => document.data())
+                .toList();
+
+      final hasPendingProof = proofs.any(
+        (proof) =>
+            proof['communityId'] == scope.communityId &&
+            proof['flatId'] == scope.flatId &&
+            proof['billId'] == billId &&
+            proof['userId'] == scope.uid &&
+            proof['status'] == 'pending',
+      );
+      if (hasPendingProof) {
+        throw const ResidentDirectUpiException(
+          ResidentDirectUpiFailure.paymentProofAlreadyPending,
+        );
+      }
+    } on ResidentDirectUpiException {
+      rethrow;
+    } catch (_) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.paymentProofStatusUnavailable,
+      );
+    }
   }
 
   Future<ResidentDirectUpiScope> _loadScope() async {

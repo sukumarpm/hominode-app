@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/resident_direct_upi_service.dart';
+
 class SubmitPaymentProofScreen extends StatefulWidget {
   final Map<String, dynamic> bill;
 
@@ -122,6 +124,8 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
     Reference? uploadedReceiptRef;
 
     try {
+      await ResidentDirectUpiService().ensureNoPendingProofForBill(billId);
+
       final paymentRef = FirebaseFirestore.instance
           .collection('payments')
           .doc();
@@ -179,6 +183,10 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
       if (!mounted) return;
 
       Navigator.pop(context, true);
+    } on ResidentDirectUpiException catch (error) {
+      if (!mounted) return;
+
+      _showMessage(error.message);
     } catch (e) {
       // Avoid leaving an orphan receipt if Firestore creation fails.
       if (uploadedReceiptRef != null) {
