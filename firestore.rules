@@ -1004,6 +1004,14 @@ function securityCanAccessCommunity(communityId) {
     && data.amount is number
     && data.amount > 0
 
+    // Required payment timestamps retain the existing client timestamp model.
+    && ('paymentDate' in data)
+    && data.paymentDate is timestamp
+    && ('createdAt' in data)
+    && data.createdAt is timestamp
+    && ('updatedAt' in data)
+    && data.updatedAt is timestamp
+
     // Private receipt path only.
     && data.receiptPath is string
     && paymentReceiptPathMatches(data)
@@ -1011,7 +1019,10 @@ function securityCanAccessCommunity(communityId) {
     && (
       !('transactionId' in data)
       || data.transactionId == null
-      || data.transactionId is string
+      || (
+        data.transactionId is string
+        && data.transactionId.size() <= 200
+      )
     )
 
     // Authoritative bill.

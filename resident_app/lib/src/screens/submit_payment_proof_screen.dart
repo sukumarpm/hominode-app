@@ -295,6 +295,7 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
 
             TextField(
               controller: _referenceController,
+              maxLength: 200,
               decoration: InputDecoration(
                 hintText: 'Optional',
                 filled: true,
