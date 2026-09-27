@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 // Receipt Data Model
 class Receipt {
@@ -33,10 +34,10 @@ class Receipt {
     required this.totalAmount,
     required this.billPeriod,
     required this.billItems,
-    this.societyName = 'SocietyConnect',
-    this.societyAddress = '123 Main Street, City, State - 123456',
-    this.contactEmail = 'support@societyconnect.com',
-    this.contactPhone = '+91 98765 43210',
+    this.societyName = 'Community',
+    this.societyAddress = '',
+    this.contactEmail = '',
+    this.contactPhone = '',
   });
 
   // Sample receipt for testing
@@ -86,7 +87,16 @@ class Receipt {
     });
 
     return Receipt(
-      transactionId: bill['transactionId'] as String? ?? 'N/A',
+      transactionId:
+          (bill['paymentReference'] as String?)?.trim().isNotEmpty == true
+          ? (bill['paymentReference'] as String).trim()
+          : (bill['transactionId'] as String?)?.trim().isNotEmpty == true
+          ? (bill['transactionId'] as String).trim()
+          : (bill['paymentId'] as String?)?.trim().isNotEmpty == true
+          ? (bill['paymentId'] as String).trim()
+          : (bill['id'] as String?)?.trim().isNotEmpty == true
+          ? (bill['id'] as String).trim()
+          : 'Receipt',
       dateTime: (bill['paidAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       residentName: bill['residentName'] as String? ?? 'Resident',
       flatNumber:
@@ -120,15 +130,86 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
   bool _isGenerating = false;
   Uint8List? _pdfBytes;
 
+  String _communityName = 'Community';
+  String _communityAddress = '';
+  String _communityEmail = '';
+  String _communityPhone = '';
+
   @override
   void initState() {
     super.initState();
-    _generatePdfInBackground();
+
+    _communityName = widget.receipt.societyName;
+    _communityAddress = widget.receipt.societyAddress;
+    _communityEmail = widget.receipt.contactEmail;
+    _communityPhone = widget.receipt.contactPhone;
+
+    _initializeReceipt();
+  }
+
+  Future<void> _initializeReceipt() async {
+    await _loadCommunityDetails();
+    await _generatePdfInBackground();
+  }
+
+  String _communityString(Object? value) {
+    if (value is! String) return '';
+    return value.trim();
+  }
+
+  Future<void> _loadCommunityDetails() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final profileSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get(const GetOptions(source: Source.server));
+
+      final communityId = _communityString(
+        profileSnapshot.data()?['communityId'],
+      );
+
+      if (communityId.isEmpty) return;
+
+      final communitySnapshot = await FirebaseFirestore.instance
+          .collection('communities')
+          .doc(communityId)
+          .get(const GetOptions(source: Source.server));
+
+      final data = communitySnapshot.data();
+      if (data == null || !mounted) return;
+
+      final name = _communityString(data['name']);
+
+      setState(() {
+        if (name.isNotEmpty) {
+          _communityName = name;
+        }
+
+        _communityAddress = _communityString(data['address']);
+        _communityEmail = _communityString(data['supportEmail']);
+        _communityPhone = _communityString(data['supportPhone']);
+      });
+    } catch (error) {
+      debugPrint('Unable to load receipt community details: $error');
+    }
+  }
+
+  Future<Uint8List> _buildReceiptPdf() {
+    return generatePdf(
+      widget.receipt,
+      communityName: _communityName,
+      communityAddress: _communityAddress,
+      communityEmail: _communityEmail,
+      communityPhone: _communityPhone,
+    );
   }
 
   Future<void> _generatePdfInBackground() async {
     try {
-      final bytes = await generatePdf(widget.receipt);
+      final bytes = await _buildReceiptPdf();
       if (mounted) {
         setState(() {
           _pdfBytes = bytes;
@@ -187,7 +268,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
         borderRadius: BorderRadius.circular(16.r),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -199,17 +280,13 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
           // Header with logo and title
           Row(
             children: [
-              Container(
-                width: 48.w,
-                height: 48.h,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0E4778),
-                  borderRadius: BorderRadius.circular(12.r),
-                ),
-                child: Icon(
-                  Icons.receipt_long,
-                  color: Colors.white,
-                  size: 28.w,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12.r),
+                child: Image.asset(
+                  'lib/assets/Resident_New.png',
+                  width: 48.w,
+                  height: 48.h,
+                  fit: BoxFit.contain,
                 ),
               ),
               SizedBox(width: 12.w),
@@ -217,7 +294,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    receipt.societyName,
+                    'HOMINODE',
                     style: TextStyle(
                       fontSize: 18.sp,
                       fontWeight: FontWeight.w700,
@@ -278,6 +355,12 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
           _buildDetailRow('Payment Method', receipt.paymentMethod),
           SizedBox(height: 12.h),
           _buildDetailRow('Bill Period', receipt.billPeriod),
+          SizedBox(height: 12.h),
+          _buildDetailRow('Community', _communityName),
+          if (_communityAddress.isNotEmpty) ...[
+            SizedBox(height: 12.h),
+            _buildDetailRow('Address', _communityAddress),
+          ],
 
           SizedBox(height: 24.h),
 
@@ -313,7 +396,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                     ),
                   ),
                   Text(
-                    '₹${item.amount.toStringAsFixed(0)}',
+                    '₹${item.amount.toStringAsFixed(2)}',
                     style: TextStyle(
                       fontSize: 15.sp,
                       fontWeight: FontWeight.w600,
@@ -344,7 +427,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                 ),
               ),
               Text(
-                '₹${receipt.totalAmount.toStringAsFixed(0)}',
+                '₹${receipt.totalAmount.toStringAsFixed(2)}',
                 style: TextStyle(
                   fontSize: 24.sp,
                   fontWeight: FontWeight.w700,
@@ -352,35 +435,6 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                 ),
               ),
             ],
-          ),
-
-          SizedBox(height: 24.h),
-
-          // QR Code
-          Center(
-            child: Container(
-              width: 152.w,
-              height: 152.h,
-              padding: EdgeInsets.all(16.w),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: const Color(0xFFE6E6E6)),
-                borderRadius: BorderRadius.circular(12.r),
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(8.r),
-                ),
-                child: Center(
-                  child: Icon(
-                    Icons.qr_code_2,
-                    size: 80.w,
-                    color: Color(0xFF0E4778),
-                  ),
-                ),
-              ),
-            ),
           ),
 
           SizedBox(height: 24.h),
@@ -396,7 +450,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  receipt.societyName,
+                  _communityName,
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.w600,
@@ -405,7 +459,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  receipt.societyAddress,
+                  _communityAddress,
                   style: TextStyle(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w400,
@@ -414,7 +468,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Email: ${receipt.contactEmail}',
+                  'Email: $_communityEmail',
                   style: TextStyle(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w400,
@@ -422,7 +476,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                   ),
                 ),
                 Text(
-                  'Phone: ${receipt.contactPhone}',
+                  'Phone: $_communityPhone',
                   style: TextStyle(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w400,
@@ -556,14 +610,19 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     );
   }
 
+  String _safeFilePart(String value) {
+    final cleaned = value.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    return cleaned.isEmpty ? 'receipt' : cleaned;
+  }
+
   Future<void> _handleDownload() async {
     setState(() => _isGenerating = true);
 
     try {
-      final bytes = _pdfBytes ?? await generatePdf(widget.receipt);
+      final bytes = _pdfBytes ?? await _buildReceiptPdf();
       await saveAndOpenPdf(
         bytes,
-        'receipt_${widget.receipt.transactionId}.pdf',
+        'receipt_${_safeFilePart(widget.receipt.transactionId)}.pdf',
       );
 
       if (mounted) {
@@ -584,8 +643,11 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     setState(() => _isGenerating = true);
 
     try {
-      final bytes = _pdfBytes ?? await generatePdf(widget.receipt);
-      await sharePdf(bytes, 'receipt_${widget.receipt.transactionId}.pdf');
+      final bytes = _pdfBytes ?? await _buildReceiptPdf();
+      await sharePdf(
+        bytes,
+        'receipt_${_safeFilePart(widget.receipt.transactionId)}.pdf',
+      );
     } catch (e) {
       if (mounted) {
         _showErrorSnackbar('Failed to share receipt: $e');
@@ -648,8 +710,29 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
 }
 
 // PDF Generation Function
-Future<Uint8List> generatePdf(Receipt receipt) async {
+Future<Uint8List> generatePdf(
+  Receipt receipt, {
+  required String communityName,
+  required String communityAddress,
+  required String communityEmail,
+  required String communityPhone,
+}) async {
   final pdf = pw.Document();
+
+  pw.MemoryImage? hominodeIcon;
+
+  try {
+    final iconData = await rootBundle.load('lib/assets/Resident_New.png');
+
+    hominodeIcon = pw.MemoryImage(
+      iconData.buffer.asUint8List(
+        iconData.offsetInBytes,
+        iconData.lengthInBytes,
+      ),
+    );
+  } catch (error) {
+    debugPrint('Unable to load Hominode icon for receipt PDF: $error');
+  }
 
   pdf.addPage(
     pw.Page(
@@ -661,28 +744,40 @@ Future<Uint8List> generatePdf(Receipt receipt) async {
             // Header
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
-                pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                pw.Row(
                   children: [
-                    pw.Text(
-                      receipt.societyName,
-                      style: pw.TextStyle(
-                        fontSize: 24.sp,
-                        fontWeight: pw.FontWeight.bold,
+                    if (hominodeIcon != null)
+                      pw.Container(
+                        width: 48,
+                        height: 48,
+                        child: pw.Image(hominodeIcon, fit: pw.BoxFit.contain),
                       ),
-                    ),
-                    pw.SizedBox(height: 4),
-                    pw.Text(
-                      'Payment Receipt',
-                      style: pw.TextStyle(fontSize: 14.sp),
+                    if (hominodeIcon != null) pw.SizedBox(width: 12),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'HOMINODE',
+                          style: pw.TextStyle(
+                            fontSize: 22,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          'Payment Receipt',
+                          style: const pw.TextStyle(fontSize: 14),
+                        ),
+                      ],
                     ),
                   ],
                 ),
                 pw.Container(
-                  padding: pw.EdgeInsets.symmetric(
-                    horizontal: 16.w,
-                    vertical: 8.h,
+                  padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
                   decoration: pw.BoxDecoration(
                     color: PdfColors.green100,
@@ -722,6 +817,9 @@ Future<Uint8List> generatePdf(Receipt receipt) async {
             ),
             _buildPdfDetailRow('Payment Method', receipt.paymentMethod),
             _buildPdfDetailRow('Bill Period', receipt.billPeriod),
+            _buildPdfDetailRow('Community', communityName),
+            if (communityAddress.isNotEmpty)
+              _buildPdfDetailRow('Address', communityAddress),
 
             pw.SizedBox(height: 32),
 
@@ -768,7 +866,7 @@ Future<Uint8List> generatePdf(Receipt receipt) async {
                       pw.Padding(
                         padding: pw.EdgeInsets.all(8.w),
                         child: pw.Text(
-                          '₹${item.amount.toStringAsFixed(0)}',
+                          'INR ${item.amount.toStringAsFixed(2)}',
                           textAlign: pw.TextAlign.right,
                         ),
                       ),
@@ -788,7 +886,7 @@ Future<Uint8List> generatePdf(Receipt receipt) async {
                     pw.Padding(
                       padding: pw.EdgeInsets.all(8.w),
                       child: pw.Text(
-                        '₹${receipt.totalAmount.toStringAsFixed(0)}',
+                        'INR ${receipt.totalAmount.toStringAsFixed(2)}',
                         style: pw.TextStyle(
                           fontWeight: pw.FontWeight.bold,
                           fontSize: 16.sp,
@@ -803,17 +901,6 @@ Future<Uint8List> generatePdf(Receipt receipt) async {
 
             pw.SizedBox(height: 32),
 
-            // QR Code
-            pw.Center(
-              child: pw.BarcodeWidget(
-                barcode: pw.Barcode.qrCode(),
-                data:
-                    'TXN:${receipt.transactionId}|AMT:${receipt.totalAmount}|DATE:${receipt.dateTime.toIso8601String()}',
-                width: 120,
-                height: 120,
-              ),
-            ),
-
             pw.Spacer(),
 
             // Footer
@@ -827,21 +914,21 @@ Future<Uint8List> generatePdf(Receipt receipt) async {
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.Text(
-                    receipt.societyName,
+                    communityName,
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                   pw.SizedBox(height: 4),
                   pw.Text(
-                    receipt.societyAddress,
+                    communityAddress,
                     style: pw.TextStyle(fontSize: 10.sp),
                   ),
                   pw.SizedBox(height: 4),
                   pw.Text(
-                    'Email: ${receipt.contactEmail}',
+                    'Email: $communityEmail',
                     style: pw.TextStyle(fontSize: 10.sp),
                   ),
                   pw.Text(
-                    'Phone: ${receipt.contactPhone}',
+                    'Phone: $communityPhone',
                     style: pw.TextStyle(fontSize: 10.sp),
                   ),
                 ],
