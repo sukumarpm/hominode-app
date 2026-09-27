@@ -8,6 +8,7 @@ const {
   initializeTestEnvironment,
 } = require('@firebase/rules-unit-testing');
 
+const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 let env;
 
 function directUpiProof(paymentId, fields = {}) {
@@ -34,6 +35,8 @@ function directUpiProof(paymentId, fields = {}) {
 }
 
 test.before(async () => {
+  if (!enabled) return;
+
   env = await initializeTestEnvironment({
     projectId: 'demo-hominode-upi',
     firestore: {
@@ -89,10 +92,12 @@ test.before(async () => {
 });
 
 test.after(async () => {
-  await env.cleanup();
+  if (env) await env.cleanup();
 });
 
-test('resident can create Direct UPI payment proof', async () => {
+const run = (name, callback) => test(name, {skip: !enabled}, callback);
+
+run('resident can create Direct UPI payment proof', async () => {
   const db = env.authenticatedContext('resident-test').firestore();
 
   const paymentId = 'payment-test';
@@ -102,7 +107,7 @@ test('resident can create Direct UPI payment proof', async () => {
   );
 });
 
-test('required payment timestamps must exist and be Firestore timestamps', async () => {
+run('required payment timestamps must exist and be Firestore timestamps', async () => {
   const db = env.authenticatedContext('resident-test').firestore();
 
   for (const field of ['paymentDate', 'createdAt', 'updatedAt']) {
@@ -123,7 +128,7 @@ test('required payment timestamps must exist and be Firestore timestamps', async
   }
 });
 
-test('transactionId remains optional, nullable, and capped at 200 characters', async () => {
+run('transactionId remains optional, nullable, and capped at 200 characters', async () => {
   const db = env.authenticatedContext('resident-test').firestore();
 
   const omittedId = 'transaction-omitted';
