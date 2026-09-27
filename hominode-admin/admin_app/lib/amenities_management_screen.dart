@@ -4,6 +4,8 @@ import 'package:table_calendar/table_calendar.dart';
 
 import 'desktop/admin_desktop_page_frame.dart';
 import 'services/amenity_service.dart';
+import 'services/admin_service.dart';
+import 'services/subscription_service.dart';
 import 'widgets/add_amenity_modal.dart';
 import 'widgets/custom_segmented_control.dart';
 import 'widgets/edit_amenity_modal.dart';
@@ -20,10 +22,81 @@ class AmenitiesManagementScreen extends StatefulWidget {
 
 class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
   final AmenityService _amenityService = AmenityService();
+  final AdminService _adminService = AdminService();
+  final SubscriptionService _subscriptionService = SubscriptionService();
+
   int selectedTab = 0; // 0 = Amenities, 1 = Bookings
+  bool _isEntitlementLoading = true;
+  bool _facilityBookingAllowed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEntitlement();
+  }
+
+  Future<void> _loadEntitlement() async {
+    var allowed = false;
+
+    try {
+      final communityId = _adminService.requireCurrentCommunityId();
+      final entitlement = await _subscriptionService.getEntitlement(
+        communityId,
+      );
+      allowed = entitlement?.canUseFeature('facilityBooking') == true;
+    } catch (error) {
+      debugPrint('Facility booking entitlement resolution failed: $error');
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _facilityBookingAllowed = allowed;
+
+      if (!_facilityBookingAllowed && selectedTab == 1) {
+        selectedTab = 0;
+      }
+
+      _isEntitlementLoading = false;
+    });
+  }
+
+  Future<void> _selectTab(int index) async {
+    if (index == 1 && !_facilityBookingAllowed) {
+      await _showBookingUnavailable();
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      selectedTab = index;
+    });
+  }
+
+  Future<void> _showBookingUnavailable() {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Facility booking unavailable'),
+        content: const Text(
+          'Facility booking management is available with Hominode Plus and Pro.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_isEntitlementLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (AdminDesktopPresentationScope.isActive(context)) {
       return AdminDesktopPageFrame(
         title: 'Amenities',
@@ -36,14 +109,16 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
                 : Icons.calendar_month_outlined,
             onPressed: selectedTab == 0
                 ? _showAddAmenityModal
-                : _showAllBookingsModal,
+                : _openAllBookingsIfAllowed,
           ),
         ],
         child: Column(
           children: [
             SegmentedControlExamples.amenitiesSegmentedControl(
               selectedIndex: selectedTab,
-              onChanged: (index) => setState(() => selectedTab = index),
+              onChanged: (index) {
+                _selectTab(index);
+              },
             ),
             SizedBox(height: 16.h),
             Expanded(
@@ -88,9 +163,7 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
             child: SegmentedControlExamples.amenitiesSegmentedControl(
               selectedIndex: selectedTab,
               onChanged: (index) {
-                setState(() {
-                  selectedTab = index;
-                });
+                _selectTab(index);
               },
             ),
           ),
@@ -106,7 +179,7 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
                 if (selectedTab == 0) {
                   _showAddAmenityModal();
                 } else {
-                  _showAllBookingsModal();
+                  await _openAllBookingsIfAllowed();
                 }
               },
             ),
@@ -1058,8 +1131,18 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => const AddAmenityModal(),
+      builder: (_) =>
+          AddAmenityModal(bookingConfigurationEnabled: _facilityBookingAllowed),
     );
+  }
+
+  Future<void> _openAllBookingsIfAllowed() async {
+    if (!_facilityBookingAllowed) {
+      await _showBookingUnavailable();
+      return;
+    }
+
+    _showAllBookingsModal();
   }
 
   void _showAllBookingsModal() {
@@ -1076,7 +1159,10 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => EditAmenityModal(amenity: amenity),
+      builder: (_) => EditAmenityModal(
+        amenity: amenity,
+        bookingConfigurationEnabled: _facilityBookingAllowed,
+      ),
     );
   }
 

@@ -239,7 +239,7 @@ class BillingService {
     };
   }
 
-  // Add new bill with charge breakdown and admin details
+  // Explicit one-off bill; recurring charges use createMaintenanceBills.
   Future<String> addBill({
     required String adminId,
     required String flatId,
@@ -288,6 +288,7 @@ class BillingService {
       }
 
       final docRef = await _firestore.collection(_collection).add({
+        'billingKind': 'ad_hoc',
         'adminId': adminId,
         'communityId': _adminService.requireCurrentCommunityId(),
         'adminName': adminProfile['name'] ?? '',
@@ -354,116 +355,51 @@ class BillingService {
     required DateTime dueDate,
     List<String>? specificFlatIds,
   }) async {
-    try {
-      print('🔍 Starting bill generation for admin: $adminId');
-      print('📅 Month: $month, Year: $year');
-      print('💰 Total Amount: ₹$totalAmount');
-      print('📊 Charge Breakdown: $chargeBreakdown');
-
-      // Query users collection for residents filtered by adminId
-      Query query = _firestore
-          .collection('users')
-          .where('role', isEqualTo: 'resident')
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
-          .where('flatId', isNotEqualTo: null);
-
-      // If specific flat IDs are provided, filter by them
-      if (specificFlatIds != null && specificFlatIds.isNotEmpty) {
-        print('🏢 Filtering by specific flats: $specificFlatIds');
-        query = query.where('flatId', whereIn: specificFlatIds);
-      } else {
-        print('🏢 Generating bills for ALL residents of admin $adminId');
-      }
-
-      final usersSnapshot = await query.get();
-      print(
-        '👥 Found ${usersSnapshot.docs.length} residents in users collection',
-      );
-
-      int count = 0;
-      int skipped = 0;
-
-      for (var doc in usersSnapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-
-        print('\n📄 Processing document: ${doc.id}');
-        print('   Data: $data');
-
-        // Extract resident data from Firestore
-        final storedResidentId = (data['residentId'] as String?)?.trim();
-        final residentUid = (data['uid'] as String?)?.trim();
-        final residentId = storedResidentId?.isNotEmpty == true
-            ? storedResidentId!
-            : residentUid?.isNotEmpty == true
-            ? residentUid!
-            : doc.id;
-        final residentName = data['name'] as String?;
-        final flatId = data['flatId'] as String?;
-        final flatLabel = data['flatLabel'] as String?;
-
-        print('   residentId: $residentId');
-        print('   residentName: $residentName');
-        print('   flatId: $flatId');
-        print('   flatLabel: $flatLabel');
-
-        // Validate required fields - skip if any are missing
-        if (residentId.isEmpty) {
-          print('   ⚠️ SKIPPED: Unable to resolve resident identifier');
-          skipped++;
-          continue;
-        }
-
-        if (residentName == null || residentName.isEmpty) {
-          print('   ⚠️ SKIPPED: Missing name field for resident $residentId');
-          skipped++;
-          continue;
-        }
-
-        if (flatId == null || flatId.isEmpty) {
-          print('   ⚠️ SKIPPED: Missing flatId for resident $residentId');
-          skipped++;
-          continue;
-        }
-
-        if (flatLabel == null || flatLabel.isEmpty) {
-          print('   ⚠️ SKIPPED: Missing flatLabel for resident $residentId');
-          skipped++;
-          continue;
-        }
-
-        // All required data present - create bill with adminId
-        await addBill(
-          adminId: adminId,
-          flatId: flatId,
-          flatLabel: flatLabel,
-          residentId: residentId,
-          residentName: residentName,
-          totalAmount: totalAmount,
-          chargeBreakdown: chargeBreakdown,
-          month: month,
-          year: year,
-          dueDate: dueDate,
-        );
-        count++;
-
-        print(
-          '   ✅ SUCCESS: Bill created for $residentName ($residentId) - Flat $flatLabel',
-        );
-      }
-
-      print('\n📊 SUMMARY:');
-      print('   Total residents found: ${usersSnapshot.docs.length}');
-      print('   Bills created: $count');
-      print('   Residents skipped: $skipped');
-
-      return count;
-    } catch (e) {
-      print('❌ Error generating bills: $e');
-      throw Exception('Failed to generate monthly bills: $e');
+    if (_adminService.getCurrentAdminId() != adminId) {
+      throw StateError('Admin not authenticated');
     }
+    final date = '${dueDate.year.toString().padLeft(4, '0')}-'
+        '${dueDate.month.toString().padLeft(2, '0')}-'
+        '${dueDate.day.toString().padLeft(2, '0')}';
+    final selected = specificFlatIds != null && specificFlatIds.isNotEmpty;
+    final response = await _functions.httpsCallable('createMaintenanceBills').call({
+      'communityId': _adminService.requireCurrentCommunityId(),
+      'scope': selected ? 'units' : 'community',
+      if (selected) 'flatIds': specificFlatIds,
+      'amount': totalAmount,
+      'chargeBreakdown': chargeBreakdown,
+      'chargeType': 'maintenance',
+      'month': month,
+      'year': year,
+      'dueDate': date,
+    });
+    final result = Map<String, dynamic>.from(response.data as Map);
+    // Preserve best-effort notifications only for newly committed bills.
+    for (final item in (result['createdBills'] as List? ?? const [])) {
+      final bill = Map<String, dynamic>.from(item as Map);
+      final amount = (bill['amount'] as num).toDouble();
+      try {
+        await _notificationService.createNotification(
+          title: 'New Bill Created',
+          message: 'Your bill of ₹${amount.toStringAsFixed(2)} for ${bill['month']} ${bill['year']} has been created. Due date: ${dueDate.day}/${dueDate.month}/${dueDate.year}',
+          type: NotificationType.payment,
+          priority: NotificationPriority.high,
+          recipientId: bill['residentId'] as String,
+          metadata: {
+            'billId': bill['billId'], 'amount': amount,
+            'month': bill['month'], 'year': bill['year'],
+            'dueDate': dueDate.toIso8601String(),
+          },
+        );
+      } catch (error) {
+        print('Failed to send bill notification: $error');
+      }
+    }
+    final conflicts = result['conflicts'] as List? ?? const [];
+    if (conflicts.isNotEmpty) {
+      throw StateError('${result['created']} bills created; ${conflicts.length} existing bills have different terms and were left unchanged.');
+    }
+    return (result['created'] as num).toInt();
   }
 
   // Mark bill as paid (with optional payment method for manual payments)

@@ -99,7 +99,11 @@ class AnnouncementsEventsService {
             .map((doc) => EventModel.fromFirestore(doc))
             .toList();
 
-        events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        events.sort((a, b) {
+          final aDate = a.eventDate ?? a.createdAt;
+          final bDate = b.eventDate ?? b.createdAt;
+          return aDate.compareTo(bDate);
+        });
 
         print('✅ Streamed ${events.length} events');
 

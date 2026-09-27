@@ -27,6 +27,45 @@ test('valid proof settles atomically with server-authored attribution and immuta
   assert.equal(bill.paymentId, 'p'); assert(bill.paidAt.toMillis());
   assert.equal([...db.values.values()].filter(v => v.action === 'payment.verify').length, 1);
 });
+test('legacy resident proof contract still verifies', async () => {
+  const f = fixture();
+  const payment = f.db.values.get('payments/p');
+  assert.equal(payment.method, 'external');
+  assert.equal(payment.status, 'pending');
+  assert.equal('provider' in payment, false);
+  assert.equal('verificationMode' in payment, false);
+  assert.equal('evidenceType' in payment, false);
+  await verify(f.args);
+  assert.equal(f.db.values.get('payments/p').status, 'completed');
+  assert.equal(f.db.values.get('bills/b').status, 'paid');
+});
+test('new Direct UPI proof contract verifies', async () => {
+  const f = fixture();
+  f.patch('payments/p', {
+    provider: 'direct_upi', method: 'upi', verificationMode: 'manual', evidenceType: 'receipt',
+  });
+  await verify(f.args);
+  assert.equal(f.db.values.get('payments/p').status, 'completed');
+  assert.equal(f.db.values.get('bills/b').status, 'paid');
+});
+test('mixed and malformed proof contracts cannot verify', async () => {
+  const invalidContracts = [
+    {method: 'external', provider: 'direct_upi'},
+    {provider: 'direct_upi', method: 'external'},
+    {provider: 'direct_upi', method: 'upi'},
+    {provider: 'direct_upi', method: 'upi', verificationMode: 'automatic', evidenceType: 'receipt'},
+    {provider: 'direct_upi', method: 'upi', verificationMode: 'manual'},
+    {provider: 'direct_upi', method: 'upi', verificationMode: 'manual', evidenceType: 'bank_statement'},
+    {provider: 'unsupported', method: 'upi', verificationMode: 'manual', evidenceType: 'receipt'},
+  ];
+  for (const fields of invalidContracts) {
+    const f = fixture();
+    f.db.values.set('payments/p', {...f.db.values.get('payments/p'), ...fields});
+    await assert.rejects(verify(f.args), {code: 'failed-precondition'});
+    assert.equal(f.db.values.get('bills/b').status, 'pending');
+    assert.equal([...f.db.values.values()].filter(v => v.action).length, 0);
+  }
+});
 for (const [name, path, patch, code] of [
   ['unauthorized Admin', 'admins/a', {authorizedCommunityIds: ['OTHER']}, 'permission-denied'],
   ['inactive Admin', 'admins/a', {isActive: false}, 'permission-denied'],

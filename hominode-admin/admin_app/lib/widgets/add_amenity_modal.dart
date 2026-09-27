@@ -12,8 +12,14 @@ import '../services/image_picker_service.dart';
 class AddAmenityModal extends StatefulWidget {
   final AmenityService? amenityService;
   final Stream<List<BuildingModel>>? buildings;
+  final bool bookingConfigurationEnabled;
 
-  const AddAmenityModal({super.key, this.amenityService, this.buildings});
+  const AddAmenityModal({
+    super.key,
+    this.amenityService,
+    this.buildings,
+    this.bookingConfigurationEnabled = true,
+  });
 
   @override
   State<AddAmenityModal> createState() => _AddAmenityModalState();
@@ -366,11 +372,21 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
                         color: Color(0xFF111111),
                       ),
                     ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        debugPrint('ADD_AMENITY_CLOSE_TAPPED');
+
+                        final navigator = Navigator.of(context);
+                        debugPrint('ADD_AMENITY_CAN_POP=${navigator.canPop()}');
+
+                        navigator.pop();
+                      },
+                      child: SizedBox(
+                        width: 56.w,
+                        height: 56.h,
+                        child: const Center(child: Icon(Icons.close, size: 30)),
+                      ),
                     ),
                   ],
                 ),
@@ -884,236 +900,240 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
                 ],
                 SizedBox(height: 20.h),
 
-                // Time Slots Section
-                Text(
-                  'Time Slots (Optional)',
-                  style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
+                if (widget.bookingConfigurationEnabled) ...[
+                  // Time Slots Section
+                  Text(
+                    'Time Slots (Optional)',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF111827),
+                    ),
                   ),
-                ),
-                SizedBox(height: 12.h),
+                  SizedBox(height: 12.h),
 
-                // Time Slot Grid
-                Container(
-                  padding: EdgeInsets.all(12.w),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF9FAFB),
-                    borderRadius: BorderRadius.circular(8.r),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    children: [
-                      // Quick Actions
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            '${_selectedTimeSlots.length} selected',
-                            style: TextStyle(
-                              fontSize: 12.sp,
-                              color: Color(0xFF6B7280),
-                            ),
-                          ),
-                          Row(
-                            children: [
-                              TextButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedTimeSlots.clear();
-                                    _selectedTimeSlots.addAll(
-                                      _predefinedTimeSlots,
-                                    );
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: const Color(0xFF0E4778),
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 8.w,
-                                  ),
-                                  minimumSize: const Size(0, 28),
-                                ),
-                                child: Text(
-                                  'All',
-                                  style: TextStyle(fontSize: 11.sp),
-                                ),
+                  // Time Slot Grid
+                  Container(
+                    padding: EdgeInsets.all(12.w),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(8.r),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Column(
+                      children: [
+                        // Quick Actions
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${_selectedTimeSlots.length} selected',
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                color: Color(0xFF6B7280),
                               ),
-                              TextButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedTimeSlots.clear();
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  foregroundColor: const Color(0xFFEF4444),
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 8.w,
-                                  ),
-                                  minimumSize: const Size(0, 28),
-                                ),
-                                child: Text(
-                                  'Clear',
-                                  style: TextStyle(fontSize: 11.sp),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 8.h),
-
-                      // Time Slot Chips
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _selectedTimeSlots.map((slot) {
-                          return Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 14.w,
-                              vertical: 10.h,
                             ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF0E4778),
-                              borderRadius: BorderRadius.circular(6.r),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
+                            Row(
                               children: [
-                                Text(
-                                  slot,
-                                  style: TextStyle(
-                                    fontSize: 13.sp,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                SizedBox(width: 6.w),
-                                GestureDetector(
-                                  onTap: () {
+                                TextButton(
+                                  onPressed: () {
                                     setState(() {
-                                      _selectedTimeSlots.remove(slot);
+                                      _selectedTimeSlots.clear();
+                                      _selectedTimeSlots.addAll(
+                                        _predefinedTimeSlots,
+                                      );
                                     });
                                   },
-                                  child: Icon(
-                                    Icons.close,
-                                    size: 16.w,
-                                    color: Colors.white,
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFF0E4778),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8.w,
+                                    ),
+                                    minimumSize: const Size(0, 28),
+                                  ),
+                                  child: Text(
+                                    'All',
+                                    style: TextStyle(fontSize: 11.sp),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _selectedTimeSlots.clear();
+                                    });
+                                  },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFFEF4444),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8.w,
+                                    ),
+                                    minimumSize: const Size(0, 28),
+                                  ),
+                                  child: Text(
+                                    'Clear',
+                                    style: TextStyle(fontSize: 11.sp),
                                   ),
                                 ),
                               ],
                             ),
-                          );
-                        }).toList(),
-                      ),
-                      SizedBox(height: 12.h),
+                          ],
+                        ),
+                        SizedBox(height: 8.h),
 
-                      // Predefined Time Slots
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _predefinedTimeSlots.map((slot) {
-                          final isSelected = _selectedTimeSlots.contains(slot);
-                          if (isSelected) return const SizedBox.shrink();
-
-                          return GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                _selectedTimeSlots.add(slot);
-                              });
-                            },
-                            child: Container(
+                        // Time Slot Chips
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _selectedTimeSlots.map((slot) {
+                            return Container(
                               padding: EdgeInsets.symmetric(
                                 horizontal: 14.w,
                                 vertical: 10.h,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: const Color(0xFF0E4778),
                                 borderRadius: BorderRadius.circular(6.r),
-                                border: Border.all(
-                                  color: const Color(0xFFE5E7EB),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    slot,
+                                    style: TextStyle(
+                                      fontSize: 13.sp,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  SizedBox(width: 6.w),
+                                  GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        _selectedTimeSlots.remove(slot);
+                                      });
+                                    },
+                                    child: Icon(
+                                      Icons.close,
+                                      size: 16.w,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        SizedBox(height: 12.h),
+
+                        // Predefined Time Slots
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _predefinedTimeSlots.map((slot) {
+                            final isSelected = _selectedTimeSlots.contains(
+                              slot,
+                            );
+                            if (isSelected) return const SizedBox.shrink();
+
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedTimeSlots.add(slot);
+                                });
+                              },
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 14.w,
+                                  vertical: 10.h,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(6.r),
+                                  border: Border.all(
+                                    color: const Color(0xFFE5E7EB),
+                                  ),
+                                ),
+                                child: Text(
+                                  slot,
+                                  style: TextStyle(
+                                    fontSize: 13.sp,
+                                    fontWeight: FontWeight.w500,
+                                    color: Color(0xFF374151),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        // Custom Time Slot Entry
+                        SizedBox(height: 12.h),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _customTimeSlotController,
+                                decoration: InputDecoration(
+                                  hintText: 'e.g., 10:00 PM - 11:00 PM',
+                                  hintStyle: TextStyle(fontSize: 12.sp),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12.w,
+                                    vertical: 8.h,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(6.r),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFFE5E7EB),
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(6.r),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFFE5E7EB),
+                                    ),
+                                  ),
+                                ),
+                                style: TextStyle(fontSize: 12.sp),
+                              ),
+                            ),
+                            SizedBox(width: 8.w),
+                            ElevatedButton(
+                              onPressed: () {
+                                if (_customTimeSlotController.text
+                                    .trim()
+                                    .isNotEmpty) {
+                                  setState(() {
+                                    _selectedTimeSlots.add(
+                                      _customTimeSlotController.text.trim(),
+                                    );
+                                    _customTimeSlotController.clear();
+                                  });
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0E4778),
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 16.w,
+                                  vertical: 8.h,
+                                ),
+                                minimumSize: const Size(0, 32),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(6.r),
                                 ),
                               ),
                               child: Text(
-                                slot,
-                                style: TextStyle(
-                                  fontSize: 13.sp,
-                                  fontWeight: FontWeight.w500,
-                                  color: Color(0xFF374151),
-                                ),
+                                'Add',
+                                style: TextStyle(fontSize: 12.sp),
                               ),
                             ),
-                          );
-                        }).toList(),
-                      ),
-
-                      // Custom Time Slot Entry
-                      SizedBox(height: 12.h),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _customTimeSlotController,
-                              decoration: InputDecoration(
-                                hintText: 'e.g., 10:00 PM - 11:00 PM',
-                                hintStyle: TextStyle(fontSize: 12.sp),
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12.w,
-                                  vertical: 8.h,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(6.r),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFE5E7EB),
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(6.r),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFE5E7EB),
-                                  ),
-                                ),
-                              ),
-                              style: TextStyle(fontSize: 12.sp),
-                            ),
-                          ),
-                          SizedBox(width: 8.w),
-                          ElevatedButton(
-                            onPressed: () {
-                              if (_customTimeSlotController.text
-                                  .trim()
-                                  .isNotEmpty) {
-                                setState(() {
-                                  _selectedTimeSlots.add(
-                                    _customTimeSlotController.text.trim(),
-                                  );
-                                  _customTimeSlotController.clear();
-                                });
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0E4778),
-                              foregroundColor: Colors.white,
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16.w,
-                                vertical: 8.h,
-                              ),
-                              minimumSize: const Size(0, 32),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6.r),
-                              ),
-                            ),
-                            child: Text(
-                              'Add',
-                              style: TextStyle(fontSize: 12.sp),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(height: 16.h),
+                  SizedBox(height: 16.h),
+                ],
 
                 // Description
                 TextFormField(
@@ -1129,295 +1149,297 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
                 ),
                 SizedBox(height: 20.h),
 
-                // Booking Configuration Section
-                Text(
-                  'Booking Configuration',
-                  style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
+                if (widget.bookingConfigurationEnabled) ...[
+                  // Booking Configuration Section
+                  Text(
+                    'Booking Configuration',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF111827),
+                    ),
                   ),
-                ),
-                SizedBox(height: 12.h),
+                  SizedBox(height: 12.h),
 
-                // Allow Multiple Bookings
-                Container(
-                  padding: EdgeInsets.all(16.w),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF9FAFB),
-                    borderRadius: BorderRadius.circular(8.r),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Allow Multiple Bookings',
-                                  style: TextStyle(
-                                    fontSize: 14.sp,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF111827),
-                                  ),
-                                ),
-                                SizedBox(height: 4.h),
-                                Text(
-                                  'Allow multiple residents to book the same time slot',
-                                  style: TextStyle(
-                                    fontSize: 12.sp,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Switch(
-                            value: _allowMultipleBookings,
-                            onChanged: (value) {
-                              setState(() {
-                                _allowMultipleBookings = value;
-                                if (!value) {
-                                  _maxCapacityController.text = '1';
-                                }
-                              });
-                            },
-                            activeThumbColor: const Color(0xFF0E4778),
-                          ),
-                        ],
-                      ),
-
-                      // Max Capacity (shown only if multiple bookings allowed)
-                      if (_allowMultipleBookings) ...[
-                        SizedBox(height: 16.h),
-                        TextFormField(
-                          controller: _maxCapacityController,
-                          decoration: InputDecoration(
-                            labelText: 'Maximum Capacity *',
-                            hintText: 'e.g., 30 for swimming pool',
-                            helperText:
-                                'Maximum number of people allowed at the same time',
-                            helperStyle: TextStyle(fontSize: 11.sp),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8.r),
-                            ),
-                            filled: true,
-                            fillColor: Colors.white,
-                          ),
-                          keyboardType: TextInputType.number,
-                          validator: (value) {
-                            if (_allowMultipleBookings &&
-                                (value == null || value.trim().isEmpty)) {
-                              return 'Please enter maximum capacity';
-                            }
-                            if (_allowMultipleBookings &&
-                                int.tryParse(value!) == null) {
-                              return 'Please enter a valid number';
-                            }
-                            if (_allowMultipleBookings &&
-                                int.parse(value!) < 2) {
-                              return 'Capacity must be at least 2';
-                            }
-                            return null;
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                SizedBox(height: 16.h),
-
-                // Booking Duration Options
-                Text(
-                  'Booking Duration Options',
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
-                  ),
-                ),
-                SizedBox(height: 8.h),
-                Container(
-                  padding: EdgeInsets.all(12.w),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF9FAFB),
-                    borderRadius: BorderRadius.circular(8.r),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Select how residents can book this amenity',
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      SizedBox(height: 12.h),
-
-                      // Selected Durations
-                      if (_selectedDurations.isNotEmpty)
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _selectedDurations.map((duration) {
-                            return Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 12.w,
-                                vertical: 8.h,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0E4778),
-                                borderRadius: BorderRadius.circular(6.r),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
+                  // Allow Multiple Bookings
+                  Container(
+                    padding: EdgeInsets.all(16.w),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(8.r),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    duration,
+                                    'Allow Multiple Bookings',
                                     style: TextStyle(
-                                      fontSize: 12.sp,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.white,
+                                      fontSize: 14.sp,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF111827),
                                     ),
                                   ),
-                                  if (_selectedDurations.length > 1) ...[
-                                    SizedBox(width: 6.w),
-                                    GestureDetector(
-                                      onTap: () {
-                                        setState(() {
-                                          _selectedDurations.remove(duration);
-                                        });
-                                      },
-                                      child: Icon(
-                                        Icons.close,
-                                        size: 14.w,
+                                  SizedBox(height: 4.h),
+                                  Text(
+                                    'Allow multiple residents to book the same time slot',
+                                    style: TextStyle(
+                                      fontSize: 12.sp,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch(
+                              value: _allowMultipleBookings,
+                              onChanged: (value) {
+                                setState(() {
+                                  _allowMultipleBookings = value;
+                                  if (!value) {
+                                    _maxCapacityController.text = '1';
+                                  }
+                                });
+                              },
+                              activeThumbColor: const Color(0xFF0E4778),
+                            ),
+                          ],
+                        ),
+
+                        // Max Capacity (shown only if multiple bookings allowed)
+                        if (_allowMultipleBookings) ...[
+                          SizedBox(height: 16.h),
+                          TextFormField(
+                            controller: _maxCapacityController,
+                            decoration: InputDecoration(
+                              labelText: 'Maximum Capacity *',
+                              hintText: 'e.g., 30 for swimming pool',
+                              helperText:
+                                  'Maximum number of people allowed at the same time',
+                              helperStyle: TextStyle(fontSize: 11.sp),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8.r),
+                              ),
+                              filled: true,
+                              fillColor: Colors.white,
+                            ),
+                            keyboardType: TextInputType.number,
+                            validator: (value) {
+                              if (_allowMultipleBookings &&
+                                  (value == null || value.trim().isEmpty)) {
+                                return 'Please enter maximum capacity';
+                              }
+                              if (_allowMultipleBookings &&
+                                  int.tryParse(value!) == null) {
+                                return 'Please enter a valid number';
+                              }
+                              if (_allowMultipleBookings &&
+                                  int.parse(value!) < 2) {
+                                return 'Capacity must be at least 2';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 16.h),
+
+                  // Booking Duration Options
+                  Text(
+                    'Booking Duration Options',
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF111827),
+                    ),
+                  ),
+                  SizedBox(height: 8.h),
+                  Container(
+                    padding: EdgeInsets.all(12.w),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(8.r),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Select how residents can book this amenity',
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        SizedBox(height: 12.h),
+
+                        // Selected Durations
+                        if (_selectedDurations.isNotEmpty)
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _selectedDurations.map((duration) {
+                              return Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 12.w,
+                                  vertical: 8.h,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0E4778),
+                                  borderRadius: BorderRadius.circular(6.r),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      duration,
+                                      style: TextStyle(
+                                        fontSize: 12.sp,
+                                        fontWeight: FontWeight.w500,
                                         color: Colors.white,
                                       ),
                                     ),
+                                    if (_selectedDurations.length > 1) ...[
+                                      SizedBox(width: 6.w),
+                                      GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _selectedDurations.remove(duration);
+                                          });
+                                        },
+                                        child: Icon(
+                                          Icons.close,
+                                          size: 14.w,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ],
                                   ],
-                                ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        SizedBox(height: 12.h),
+
+                        // Available Durations
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _predefinedDurations.map((duration) {
+                            final isSelected = _selectedDurations.contains(
+                              duration,
+                            );
+                            if (isSelected) return const SizedBox.shrink();
+
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedDurations.add(duration);
+                                });
+                              },
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 12.w,
+                                  vertical: 8.h,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(6.r),
+                                  border: Border.all(
+                                    color: const Color(0xFFE5E7EB),
+                                  ),
+                                ),
+                                child: Text(
+                                  duration,
+                                  style: TextStyle(
+                                    fontSize: 12.sp,
+                                    fontWeight: FontWeight.w500,
+                                    color: Color(0xFF374151),
+                                  ),
+                                ),
                               ),
                             );
                           }).toList(),
                         ),
-                      SizedBox(height: 12.h),
 
-                      // Available Durations
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _predefinedDurations.map((duration) {
-                          final isSelected = _selectedDurations.contains(
-                            duration,
-                          );
-                          if (isSelected) return const SizedBox.shrink();
-
-                          return GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                _selectedDurations.add(duration);
-                              });
-                            },
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 12.w,
-                                vertical: 8.h,
+                        // Custom Duration Entry
+                        SizedBox(height: 12.h),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _customDurationController,
+                                decoration: InputDecoration(
+                                  hintText: 'e.g., 4 hours',
+                                  hintStyle: TextStyle(fontSize: 12.sp),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12.w,
+                                    vertical: 8.h,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(6.r),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFFE5E7EB),
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(6.r),
+                                    borderSide: const BorderSide(
+                                      color: Color(0xFFE5E7EB),
+                                    ),
+                                  ),
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                ),
+                                style: TextStyle(fontSize: 12.sp),
                               ),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(6.r),
-                                border: Border.all(
-                                  color: const Color(0xFFE5E7EB),
+                            ),
+                            SizedBox(width: 8.w),
+                            ElevatedButton(
+                              onPressed: () {
+                                if (_customDurationController.text
+                                    .trim()
+                                    .isNotEmpty) {
+                                  setState(() {
+                                    _selectedDurations.add(
+                                      _customDurationController.text.trim(),
+                                    );
+                                    _customDurationController.clear();
+                                  });
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0E4778),
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 16.w,
+                                  vertical: 8.h,
+                                ),
+                                minimumSize: const Size(0, 32),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(6.r),
                                 ),
                               ),
                               child: Text(
-                                duration,
-                                style: TextStyle(
-                                  fontSize: 12.sp,
-                                  fontWeight: FontWeight.w500,
-                                  color: Color(0xFF374151),
-                                ),
+                                'Add',
+                                style: TextStyle(fontSize: 12.sp),
                               ),
                             ),
-                          );
-                        }).toList(),
-                      ),
-
-                      // Custom Duration Entry
-                      SizedBox(height: 12.h),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _customDurationController,
-                              decoration: InputDecoration(
-                                hintText: 'e.g., 4 hours',
-                                hintStyle: TextStyle(fontSize: 12.sp),
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12.w,
-                                  vertical: 8.h,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(6.r),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFE5E7EB),
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(6.r),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFE5E7EB),
-                                  ),
-                                ),
-                                filled: true,
-                                fillColor: Colors.white,
-                              ),
-                              style: TextStyle(fontSize: 12.sp),
-                            ),
-                          ),
-                          SizedBox(width: 8.w),
-                          ElevatedButton(
-                            onPressed: () {
-                              if (_customDurationController.text
-                                  .trim()
-                                  .isNotEmpty) {
-                                setState(() {
-                                  _selectedDurations.add(
-                                    _customDurationController.text.trim(),
-                                  );
-                                  _customDurationController.clear();
-                                });
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0E4778),
-                              foregroundColor: Colors.white,
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16.w,
-                                vertical: 8.h,
-                              ),
-                              minimumSize: const Size(0, 32),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6.r),
-                              ),
-                            ),
-                            child: Text(
-                              'Add',
-                              style: TextStyle(fontSize: 12.sp),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(height: 24.h),
+                  SizedBox(height: 24.h),
+                ],
 
                 // Submit Button
                 SizedBox(
@@ -1474,7 +1496,7 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
       return;
     }
 
-    if (_selectedDurations.isEmpty) {
+    if (widget.bookingConfigurationEnabled && _selectedDurations.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select at least one booking duration'),
@@ -1539,10 +1561,15 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
           tenantPricePerDay: tenantPricePerDay,
           description: description,
           iconName: _selectedIcon,
-          timeSlots: _selectedTimeSlots,
-          maxCapacity: maxCapacity,
-          allowMultipleBookings: _allowMultipleBookings,
-          bookingDurations: _selectedDurations,
+          timeSlots: widget.bookingConfigurationEnabled
+              ? _selectedTimeSlots
+              : const <String>[],
+          maxCapacity: widget.bookingConfigurationEnabled ? maxCapacity : 1,
+          allowMultipleBookings:
+              widget.bookingConfigurationEnabled && _allowMultipleBookings,
+          bookingDurations: widget.bookingConfigurationEnabled
+              ? _selectedDurations
+              : const <String>[],
           hasSubscriptionPackages: _hasSubscriptionPackages,
           subscriptionPackages: subscriptionPackages,
         );
@@ -1561,10 +1588,15 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
           tenantPricePerDay: tenantPricePerDay,
           description: description,
           iconName: _selectedIcon,
-          timeSlots: _selectedTimeSlots,
-          maxCapacity: maxCapacity,
-          allowMultipleBookings: _allowMultipleBookings,
-          bookingDurations: _selectedDurations,
+          timeSlots: widget.bookingConfigurationEnabled
+              ? _selectedTimeSlots
+              : const <String>[],
+          maxCapacity: widget.bookingConfigurationEnabled ? maxCapacity : 1,
+          allowMultipleBookings:
+              widget.bookingConfigurationEnabled && _allowMultipleBookings,
+          bookingDurations: widget.bookingConfigurationEnabled
+              ? _selectedDurations
+              : const <String>[],
           hasSubscriptionPackages: _hasSubscriptionPackages,
           subscriptionPackages: subscriptionPackages,
         );

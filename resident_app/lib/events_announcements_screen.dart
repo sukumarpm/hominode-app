@@ -247,84 +247,82 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   /// Announcement Card
   Widget _buildAnnouncementCard(AnnouncementModel announcement) {
     return Container(
-      margin: EdgeInsets.only(bottom: 12.h),
+      margin: EdgeInsets.only(bottom: 16.h),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: kCardBackground,
-        borderRadius: BorderRadius.circular(kCardRadius),
-        border: Border.all(color: kDivider, width: 1),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: const Color(0xFFE5EAF0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: Padding(
-        padding: EdgeInsets.all(16.w),
+        padding: EdgeInsets.all(18.w),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header: Category and Priority
             Row(
               children: [
-                // Category
                 Container(
                   padding: EdgeInsets.symmetric(
                     horizontal: 10.w,
-                    vertical: 4.h,
+                    vertical: 5.h,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(6.r),
+                    color: const Color(0xFFEAF3FF),
+                    borderRadius: BorderRadius.circular(20.r),
                   ),
                   child: Text(
                     announcement.category,
                     style: TextStyle(
                       fontSize: 11.sp,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF6B7280),
+                      fontWeight: FontWeight.w700,
+                      color: kPrimaryBlue,
                     ),
                   ),
                 ),
                 SizedBox(width: 8.w),
-                // Priority Badge
                 _buildPriorityBadge(announcement.priority),
+                const Spacer(),
+                Icon(Icons.campaign_outlined, size: 20.w, color: kPrimaryBlue),
               ],
             ),
-
-            SizedBox(height: 12.h),
-
-            // Title
+            SizedBox(height: 14.h),
             Text(
               announcement.title,
               style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
+                fontSize: 17.sp,
+                fontWeight: FontWeight.w700,
                 color: kSectionTitle,
+                height: 1.25,
               ),
             ),
-
             SizedBox(height: 8.h),
-
-            // Description (max 2 lines)
             Text(
               announcement.description,
               style: TextStyle(fontSize: 14.sp, color: kSubtitle, height: 1.5),
-              maxLines: 2,
+              maxLines: 4,
               overflow: TextOverflow.ellipsis,
             ),
-
+            SizedBox(height: 14.h),
+            const Divider(height: 1, color: Color(0xFFEEF1F5)),
             SizedBox(height: 12.h),
-
-            // Created Date
             Row(
               children: [
-                Icon(Icons.access_time, size: 14.w, color: kSubtitle),
-                SizedBox(width: 4.w),
+                Icon(Icons.schedule_outlined, size: 15.w, color: kSubtitle),
+                SizedBox(width: 5.w),
                 Text(
                   _formatDate(announcement.createdAt),
-                  style: TextStyle(fontSize: 12.sp, color: kSubtitle),
+                  style: TextStyle(
+                    fontSize: 12.sp,
+                    color: kSubtitle,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -337,148 +335,275 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   /// Event Card
   Widget _buildEventCard(EventModel event) {
     return Container(
-      margin: EdgeInsets.only(bottom: 12.h),
+      margin: EdgeInsets.only(bottom: 18.h),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: kCardBackground,
-        borderRadius: BorderRadius.circular(kCardRadius),
-        border: Border.all(color: kDivider, width: 1),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: const Color(0xFFE3E9F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: Padding(
-        padding: EdgeInsets.all(16.w),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header: Category and Status
-            Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (event.imageUrls.isNotEmpty)
+            _buildEventImageHeader(event.imageUrls),
+
+          Padding(
+            padding: EdgeInsets.all(18.w),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Category
-                Container(
+                Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 10.w,
+                        vertical: 5.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEAF3FF),
+                        borderRadius: BorderRadius.circular(20.r),
+                      ),
+                      child: Text(
+                        event.category,
+                        style: TextStyle(
+                          fontSize: 11.sp,
+                          fontWeight: FontWeight.w700,
+                          color: kPrimaryBlue,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8.w),
+                    _buildStatusBadge(event.status),
+                  ],
+                ),
+
+                SizedBox(height: 14.h),
+
+                Text(
+                  event.title,
+                  style: TextStyle(
+                    fontSize: 19.sp,
+                    fontWeight: FontWeight.w800,
+                    color: kSectionTitle,
+                    height: 1.2,
+                  ),
+                ),
+
+                if (event.description.isNotEmpty) ...[
+                  SizedBox(height: 8.h),
+                  Text(
+                    event.description,
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      color: kSubtitle,
+                      height: 1.5,
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+
+                SizedBox(height: 16.h),
+
+                Wrap(
+                  spacing: 14.w,
+                  runSpacing: 10.h,
+                  children: [
+                    if (event.eventDate != null)
+                      _eventMeta(
+                        Icons.calendar_month_outlined,
+                        _formatEventDate(event.eventDate!),
+                      ),
+                    if (event.location != null &&
+                        event.location!.trim().isNotEmpty)
+                      _eventMeta(Icons.location_on_outlined, event.location!),
+                    if (event.totalCapacity != null && event.totalCapacity! > 0)
+                      _eventMeta(
+                        Icons.groups_outlined,
+                        '${event.totalCapacity} capacity',
+                      ),
+                  ],
+                ),
+
+                SizedBox(height: 14.h),
+                const Divider(height: 1, color: Color(0xFFEEF1F5)),
+                SizedBox(height: 12.h),
+
+                Row(
+                  children: [
+                    Icon(Icons.schedule_outlined, size: 15.w, color: kSubtitle),
+                    SizedBox(width: 5.w),
+                    Text(
+                      'Posted ${_formatDate(event.createdAt)}',
+                      style: TextStyle(fontSize: 12.sp, color: kSubtitle),
+                    ),
+                    const Spacer(),
+                    if (event.imageUrls.length > 1)
+                      TextButton.icon(
+                        onPressed: () => _showEventGallery(event.imageUrls),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: Text('${event.imageUrls.length} photos'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _eventMeta(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 17.w, color: kPrimaryBlue),
+        SizedBox(width: 5.w),
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 240.w),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12.5.sp,
+              color: const Color(0xFF475569),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEventImageHeader(List<String> images) {
+    return GestureDetector(
+      onTap: () => _showEventGallery(images),
+      child: AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              images.first,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: const Color(0xFFEAF1F8),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.image_not_supported_outlined,
+                  size: 42.w,
+                  color: Colors.grey[500],
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.20),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (images.length > 1)
+              Positioned(
+                right: 12.w,
+                bottom: 12.h,
+                child: Container(
                   padding: EdgeInsets.symmetric(
                     horizontal: 10.w,
-                    vertical: 4.h,
+                    vertical: 6.h,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(6.r),
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(20.r),
                   ),
-                  child: Text(
-                    event.category,
-                    style: TextStyle(
-                      fontSize: 11.sp,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF6B7280),
-                    ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.photo_library_outlined,
+                        size: 15.w,
+                        color: Colors.white,
+                      ),
+                      SizedBox(width: 5.w),
+                      Text(
+                        '${images.length}',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.sp,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(width: 8.w),
-                // Status Badge
-                _buildStatusBadge(event.status),
-              ],
-            ),
-
-            SizedBox(height: 12.h),
-
-            // Title
-            Text(
-              event.title,
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: kSectionTitle,
               ),
-            ),
-
-            SizedBox(height: 8.h),
-
-            // Description (max 2 lines)
-            Text(
-              event.description,
-              style: TextStyle(fontSize: 14.sp, color: kSubtitle, height: 1.5),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-
-            SizedBox(height: 12.h),
-
-            // Event Date and Time
-            if (event.eventDate != null) ...[
-              Row(
-                children: [
-                  Icon(Icons.calendar_today, size: 14.w, color: kSubtitle),
-                  SizedBox(width: 4.w),
-                  Text(
-                    _formatEventDate(event.eventDate!),
-                    style: TextStyle(fontSize: 12.sp, color: kSubtitle),
-                  ),
-                  if (event.time != null && event.time!.isNotEmpty) ...[
-                    SizedBox(width: 8.w),
-                    Icon(Icons.access_time, size: 14.w, color: kSubtitle),
-                    SizedBox(width: 4.w),
-                    Text(
-                      event.time!,
-                      style: TextStyle(fontSize: 12.sp, color: kSubtitle),
-                    ),
-                  ],
-                ],
-              ),
-              SizedBox(height: 6.h),
-            ],
-
-            // Location
-            if (event.location != null && event.location!.isNotEmpty) ...[
-              Row(
-                children: [
-                  Icon(Icons.location_on, size: 14.w, color: kSubtitle),
-                  SizedBox(width: 4.w),
-                  Expanded(
-                    child: Text(
-                      event.location!,
-                      style: TextStyle(fontSize: 12.sp, color: kSubtitle),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 6.h),
-            ],
-
-            // RSVP Count (if available)
-            if (event.totalCapacity != null && event.totalCapacity! > 0) ...[
-              Row(
-                children: [
-                  Icon(Icons.people_outline, size: 14.w, color: kSubtitle),
-                  SizedBox(width: 4.w),
-                  Text(
-                    '${event.rsvpCount ?? 0}/${event.totalCapacity} attending',
-                    style: TextStyle(fontSize: 12.sp, color: kSubtitle),
-                  ),
-                ],
-              ),
-              SizedBox(height: 6.h),
-            ],
-
-            // Created Date
-            Row(
-              children: [
-                Icon(Icons.schedule, size: 14.w, color: kSubtitle),
-                SizedBox(width: 4.w),
-                Text(
-                  'Posted ${_formatDate(event.createdAt)}',
-                  style: TextStyle(fontSize: 12.sp, color: kSubtitle),
-                ),
-              ],
-            ),
           ],
         ),
       ),
+    );
+  }
+
+  void _showEventGallery(List<String> images) {
+    if (images.isEmpty) return;
+
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      builder: (dialogContext) {
+        return Dialog.fullscreen(
+          backgroundColor: Colors.black,
+          child: SafeArea(
+            child: Stack(
+              children: [
+                PageView.builder(
+                  itemCount: images.length,
+                  itemBuilder: (_, index) {
+                    return InteractiveViewer(
+                      child: Center(
+                        child: Image.network(
+                          images[index],
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.white54,
+                            size: 64,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: IconButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 30,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -487,6 +487,17 @@ function securityCanAccessCommunity(communityId) {
       allow create, update, delete: if false;
     }
 
+    // Community payment destinations are private community data. The Admin
+    // SDK callable is the only write path; clients may fetch one authorized
+    // community's config by document ID.
+    match /communityPaymentConfigs/{communityId} {
+      allow get: if validSuperAdmin()
+        || adminCanAccessCommunity(communityId)
+        || residentCanAccessCommunity(communityId);
+
+      allow create, update, delete: if false;
+    }
+
 
 
     // ============================================================
@@ -877,8 +888,10 @@ function securityCanAccessCommunity(communityId) {
           'adminId', 'communityId', 'adminName', 'adminEmail', 'adminPhone',
           'organization', 'flatId', 'flatLabel', 'buildingId', 'residentId',
           'residentName', 'amount', 'chargeBreakdown', 'month', 'year', 'type',
-          'status', 'dueDate', 'paidAt', 'createdAt', 'updatedAt'
+          'status', 'dueDate', 'paidAt', 'createdAt', 'updatedAt', 'billingKind'
         ])
+        && request.resource.data.billingKind == 'ad_hoc'
+        && !billId.matches('recurring_.*')
         && request.resource.data.adminId == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.get('paidAt', null) == null
@@ -916,86 +929,111 @@ function securityCanAccessCommunity(communityId) {
       }
 
       function residentPaymentCreateIsValid() {
-        return approvedResident()
+  let data = request.resource.data;
 
-          // The payment must belong to this authenticated resident.
-          && residentOwns(request.resource.data)
+  let profile = get(
+    /databases/$(database)/documents/users/$(request.auth.uid)
+  ).data;
 
-          // It must also belong to the resident's current flat/community.
-          && residentSameFlat(request.resource.data)
+  let billPath =
+    /databases/$(database)/documents/bills/$(data.billId);
 
-          // Only the V1 payment-proof fields are accepted.
-          && request.resource.data.keys().hasOnly([
-            'id',
-            'communityId',
-            'billId',
-            'flatId',
-            'userId',
-            'amount',
-            'method',
-            'status',
-            'transactionId',
-            'receiptPath',
-            'paymentDate',
-            'createdAt',
-            'updatedAt'
-          ])
+  let bill = get(billPath).data;
 
-          // Required ownership/scope values.
-          && request.resource.data.id == paymentId
-          && request.resource.data.userId == request.auth.uid
-          && request.resource.data.communityId
-              == userProfile().communityId
-          && request.resource.data.flatId
-              == userProfile().flatId
+  return signedIn()
 
-          // Valid V1 state.
-          && request.resource.data.method == 'external'
-          && request.resource.data.status == 'pending'
+    // Canonical resident eligibility — evaluated once.
+    && profile.uid == request.auth.uid
+    && profile.role == 'resident'
+    && profile.approvalStatus == 'approved'
+    && profile.isActive == true
+    && profile.get('status', 'active') == 'active'
+    && profile.communityId is string
+    && profile.communityId.size() > 0
+    && activeCommunity(profile.communityId)
+    && residentIdentityEligibleFor(profile)
 
-          // Required field types.
-          && request.resource.data.billId is string
-          && request.resource.data.billId.size() > 0
-          && request.resource.data.amount is number
-          && request.resource.data.amount > 0
+    // Exact V1 payment fields.
+    && data.keys().hasOnly([
+      'id',
+      'communityId',
+      'billId',
+      'flatId',
+      'userId',
+      'amount',
+      'method',
+      'provider',
+      'verificationMode',
+      'evidenceType',
+      'status',
+      'transactionId',
+      'receiptPath',
+      'paymentDate',
+      'createdAt',
+      'updatedAt'
+    ])
 
-          // Do NOT store a public/download URL for the receipt.
-          // Store only its protected Firebase Storage path.
-          && request.resource.data.receiptPath is string
-          && paymentReceiptPathMatches(request.resource.data)
+    // Resident ownership/scope.
+    && data.id == paymentId
+    && data.userId == request.auth.uid
+    && data.communityId == profile.communityId
+    && profile.flatId is string
+    && profile.flatId.size() > 0
+    && data.flatId == profile.flatId
 
-          && (
-            !('transactionId' in request.resource.data)
-            || request.resource.data.transactionId == null
-            || request.resource.data.transactionId is string
-          )
+    // Legacy proof or Direct UPI proof.
+    && (
+      (
+        data.method == 'external'
+        && !('provider' in data)
+        && !('verificationMode' in data)
+        && !('evidenceType' in data)
+      )
+      || (
+        data.provider == 'direct_upi'
+        && data.method == 'upi'
+        && data.verificationMode == 'manual'
+        && data.evidenceType == 'receipt'
+      )
+    )
 
-          // The referenced bill must actually exist.
-          && exists(
-            /databases/$(database)/documents/bills/$(request.resource.data.billId)
-          )
+    && data.status == 'pending'
 
-          // Payment scope must exactly match that bill.
-          && get(
-            /databases/$(database)/documents/bills/$(request.resource.data.billId)
-          ).data.communityId == request.resource.data.communityId
+    && data.billId is string
+    && data.billId.size() > 0
+    && data.amount is number
+    && data.amount > 0
 
-          && get(
-            /databases/$(database)/documents/bills/$(request.resource.data.billId)
-          ).data.flatId == request.resource.data.flatId
+    // Required payment timestamps retain the existing client timestamp model.
+    && ('paymentDate' in data)
+    && data.paymentDate is timestamp
+    && ('createdAt' in data)
+    && data.createdAt is timestamp
+    && ('updatedAt' in data)
+    && data.updatedAt is timestamp
 
-          // Resident can submit proof only against an unpaid bill.
-          && get(
-            /databases/$(database)/documents/bills/$(request.resource.data.billId)
-          ).data.status in ['pending', 'overdue']
-          && get(/databases/$(database)/documents/bills/$(request.resource.data.billId)).data.get('residentId', request.auth.uid) == request.auth.uid
-          && get(/databases/$(database)/documents/bills/$(request.resource.data.billId)).data.get('userId', request.auth.uid) == request.auth.uid
+    // Private receipt path only.
+    && data.receiptPath is string
+    && paymentReceiptPathMatches(data)
 
-          // Resident cannot submit an arbitrary amount.
-          && get(
-            /databases/$(database)/documents/bills/$(request.resource.data.billId)
-          ).data.amount == request.resource.data.amount;
-      }
+    && (
+      !('transactionId' in data)
+      || data.transactionId == null
+      || (
+        data.transactionId is string
+        && data.transactionId.size() <= 200
+      )
+    )
+
+    // Authoritative bill.
+    && exists(billPath)
+    && bill.communityId == data.communityId
+    && bill.flatId == data.flatId
+    && bill.status in ['pending', 'overdue']
+    && bill.get('residentId', request.auth.uid) == request.auth.uid
+    && bill.get('userId', request.auth.uid) == request.auth.uid
+    && bill.amount == data.amount;
+}
 
       // Resident can read only their own payment records.
       // Scoped Admin can read payment proofs for their community.

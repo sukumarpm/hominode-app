@@ -9,12 +9,14 @@ const {
 
 const {
     requireOperationalAdmin,
+    resolveFlatOccupant,
 } = require("./resident_identity");
 
 const BILL_SCOPES = new Set([
     "community",
     "building",
     "unit",
+    "units",
 ]);
 
 function clean(value) {
@@ -150,6 +152,8 @@ function validateRequest(data) {
         "month",
         "year",
         "dueDate",
+        "chargeType",
+        "flatIds",
     ]);
 
     if (
@@ -168,7 +172,7 @@ function validateRequest(data) {
     const scope = clean(data.scope).toLowerCase();
     const buildingId = clean(data.buildingId);
     const flatId = clean(data.flatId);
-    const month = clean(data.month);
+    const month = normalizeMonth(data.month);
     const year = clean(data.year);
 
     if (!communityId) {
@@ -238,244 +242,127 @@ function validateRequest(data) {
         month,
         year,
         dueDate: validateDueDate(data.dueDate),
+        chargeType: normalizeChargeType(data.chargeType),
+        flatIds: validateFlatIds(data.flatIds, scope),
+        billingPeriod: `${year}-${String(MONTHS.indexOf(month) + 1).padStart(2, "0")}`,
     };
 }
 
-async function validateScope(db, input) {
-    if (input.scope === "community") {
-        return;
-    }
-
-    const buildingRef = db
-        .collection("buildings")
-        .doc(input.buildingId);
-
-    const buildingSnapshot = await buildingRef.get();
-
-    if (
-        !buildingSnapshot.exists ||
-        buildingSnapshot.data()?.communityId !==
-        input.communityId
-    ) {
-        throw new RegistrationError(
-            "permission-denied",
-            "Building is outside the authorized community.",
-        );
-    }
-
-    if (input.scope !== "unit") {
-        return;
-    }
-
-    const flatSnapshot = await db
-        .collection("flats")
-        .doc(input.flatId)
-        .get();
-
-    const flat = flatSnapshot.data();
-
-    if (
-        !flatSnapshot.exists ||
-        flat?.communityId !== input.communityId ||
-        flat?.buildingId !== input.buildingId
-    ) {
-        throw new RegistrationError(
-            "permission-denied",
-            "Unit is outside the selected building or community.",
-        );
-    }
+const {createHash} = require('node:crypto');
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function normalizeMonth(value) {
+    const text = String(value ?? '').trim().toLowerCase();
+    const index = MONTHS.findIndex((month, i) => [month.toLowerCase(), month.slice(0, 3).toLowerCase(), String(i + 1), String(i + 1).padStart(2, '0')].includes(text));
+    if (index < 0) throw new RegistrationError('invalid-argument', 'A recognized billing month is required.');
+    return MONTHS[index];
 }
-
-async function createMaintenanceBillsCore({
-    db,
-    auth,
-    data,
-}) {
+function normalizeChargeType(value) {
+    const type = value == null ? 'maintenance' : clean(value).toLowerCase();
+    if (!/^[a-z][a-z0-9_-]{0,39}$/.test(type)) throw new RegistrationError('invalid-argument', 'A valid recurring charge type is required.');
+    return type;
+}
+function validId(value) {
+    return typeof value === 'string' && value.length > 0 && value.length <= 128 && value === value.trim() && !value.includes('/');
+}
+function validateFlatIds(value, scope) {
+    if (scope !== 'units') {
+        if (value != null) throw new RegistrationError('invalid-argument', 'Unit selection requires units scope.');
+        return [];
+    }
+    if (!Array.isArray(value) || !value.length || value.length > 2000 || value.some(id => !validId(id))) {
+        throw new RegistrationError('invalid-argument', 'Select valid units.');
+    }
+    return [...new Set(value)].sort();
+}
+function recurringBillId(communityId, flatId, chargeType, billingPeriod) {
+    return 'recurring_' + createHash('sha256').update(JSON.stringify([communityId, flatId, chargeType, billingPeriod])).digest('hex');
+}
+function sameTerms(bill, input) {
+    const sorted = object => JSON.stringify(Object.entries(object || {}).sort(([a], [b]) => a.localeCompare(b)));
+    return bill.amount === input.amount && bill.dueDate?.toMillis() === input.dueDate.getTime()
+        && sorted(bill.chargeBreakdown) === sorted(input.chargeBreakdown);
+}
+function matchesLegacyContract(bill, input) {
+    if (bill.billingKind === 'ad_hoc') return false;
+    try {
+        const period = bill.billingPeriod || `${String(bill.year)}-${String(MONTHS.indexOf(normalizeMonth(bill.month)) + 1).padStart(2, '0')}`;
+        const type = bill.chargeType || (['combined', 'maintenance'].includes(clean(bill.type).toLowerCase()) ? 'maintenance' : clean(bill.type).toLowerCase());
+        return period === input.billingPeriod && type === input.chargeType;
+    } catch (_) { return false; }
+}
+async function createMaintenanceBillsCore({db, auth, data}) {
     const input = validateRequest(data);
-
-    const actor = await requireOperationalAdmin(
-        db,
-        auth,
-        input.communityId,
-    );
-
-    await validateScope(db, input);
-
-    const [
-        residentSnapshot,
-        flatSnapshot,
-        adminSnapshot,
-    ] = await Promise.all([
-        db
-            .collection("users")
-            .where("communityId", "==", input.communityId)
-            .where("role", "==", "resident")
-            .get(),
-
-        db
-            .collection("flats")
-            .where("communityId", "==", input.communityId)
-            .get(),
-
-        db
-            .collection("admins")
-            .doc(actor.uid)
-            .get(),
-    ]);
-
-    const flats = new Map(
-        flatSnapshot.docs.map((doc) => [
-            doc.id,
-            doc.data(),
-        ]),
-    );
-
-    const residents = residentSnapshot.docs.filter((doc) => {
-        const resident = doc.data();
-        const flatId = clean(resident.flatId);
-
-        if (!flatId) {
-            return false;
-        }
-
-        if (
-            input.scope === "building" &&
-            clean(resident.buildingId) !== input.buildingId
-        ) {
-            return false;
-        }
-
-        if (
-            input.scope === "unit" &&
-            flatId !== input.flatId
-        ) {
-            return false;
-        }
-
-        return true;
-    });
-
-    if (!residents.length) {
-        throw new RegistrationError(
-            "failed-precondition",
-            "No assigned residents were found for the selected billing scope.",
-        );
+    if (!validId(input.communityId) || (input.buildingId && !validId(input.buildingId)) || (input.flatId && !validId(input.flatId))) {
+        throw new RegistrationError('invalid-argument', 'Invalid billing scope identifier.');
     }
-
-    const admin = adminSnapshot.data() || {};
-    const community = actor.community;
-
-    let created = 0;
-    let skipped = 0;
-    let batch = db.batch();
-    let batchWrites = 0;
-
-    async function commitBatch() {
-        if (!batchWrites) {
-            return;
+    await requireOperationalAdmin(db, auth, input.communityId);
+    if (['building', 'unit'].includes(input.scope)) {
+        const building = await db.collection('buildings').doc(input.buildingId).get();
+        if (!building.exists || building.data().communityId !== input.communityId) {
+            throw new RegistrationError('permission-denied', 'Building is outside the authorized community.');
         }
-
-        await batch.commit();
-        batch = db.batch();
-        batchWrites = 0;
     }
-
-    for (const residentDoc of residents) {
-        const resident = residentDoc.data();
-
-        const flatId = clean(resident.flatId);
-        const residentId =
-            clean(resident.residentId) ||
-            clean(resident.uid) ||
-            residentDoc.id;
-
-        const residentName = clean(resident.name);
-
-        const flat = flats.get(flatId) || {};
-
-        const flatLabel =
-            clean(resident.flatLabel) ||
-            clean(flat.flatLabel) ||
-            clean(flat.unitLabel) ||
-            clean(flat.flatNumber) ||
-            clean(flat.unitId) ||
-            flatId;
-
-        if (
-            !flatId ||
-            !residentId ||
-            !residentName ||
-            !flatLabel
-        ) {
-            skipped += 1;
-            continue;
+    let targets;
+    if (['unit', 'units'].includes(input.scope)) {
+        targets = await Promise.all((input.scope === 'unit' ? [input.flatId] : input.flatIds).map(id => db.collection('flats').doc(id).get()));
+        if (targets.some(doc => !doc.exists || doc.data().communityId !== input.communityId ||
+            (input.scope === 'unit' && doc.data().buildingId !== input.buildingId))) {
+            throw new RegistrationError('permission-denied', 'A selected unit is outside the authorized scope.');
         }
-
-        const billRef = db.collection("bills").doc();
-
-        batch.set(billRef, {
-            adminId: actor.uid,
-
-            communityId: input.communityId,
-
-            adminName: clean(admin.name),
-            adminEmail: clean(admin.email),
-            adminPhone:
-                clean(admin.phone) ||
-                clean(admin.phoneNumber),
-
-            organization:
-                clean(admin.organization) ||
-                clean(community.name),
-
-            flatId,
-            flatLabel,
-
-            residentId,
-            residentName,
-
-            amount: input.amount,
-            chargeBreakdown: input.chargeBreakdown,
-
-            month: input.month,
-            year: input.year,
-
-            type: "combined",
-            status: "pending",
-
-            dueDate: Timestamp.fromDate(input.dueDate),
-            paidAt: null,
-
-            createdAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
+    } else {
+        const snapshot = await db.collection('flats').where('communityId', '==', input.communityId).get();
+        targets = snapshot.docs.filter(doc => input.scope !== 'building' || doc.data().buildingId === input.buildingId);
+    }
+    const result = {success: true, scope: input.scope, created: 0, skipped: 0, existing: 0, conflicts: [], legacyMatches: [], createdBills: []};
+    for (const target of targets.sort((a, b) => a.id.localeCompare(b.id))) {
+        const id = recurringBillId(input.communityId, target.id, input.chargeType, input.billingPeriod);
+        const billRef = db.collection('bills').doc(id);
+        // Each target commits independently. A retry rediscovers targets and
+        // skips committed identities; no batch progress flag can be lost.
+        const outcome = await db.runTransaction(async transaction => {
+            const actor = await requireOperationalAdmin(db, auth, input.communityId, transaction);
+            const existing = await transaction.get(billRef);
+            if (existing.exists) return {kind: sameTerms(existing.data(), input) ? 'existing' : 'conflict'};
+            const flatSnapshot = await transaction.get(db.collection('flats').doc(target.id));
+            const flat = flatSnapshot.data();
+            if (!flatSnapshot.exists || flat.communityId !== input.communityId || flat.status !== 'occupied' ||
+                !validId(flat.buildingId) || (['building', 'unit'].includes(input.scope) && flat.buildingId !== input.buildingId)) return {kind: 'skipped'};
+            const building = await transaction.get(db.collection('buildings').doc(flat.buildingId));
+            if (!building.exists || building.data().communityId !== input.communityId) return {kind: 'skipped'};
+            let residentId;
+            try { residentId = resolveFlatOccupant(flat).uid; } catch (_) { return {kind: 'skipped'}; }
+            if (!validId(residentId)) return {kind: 'skipped'};
+            const resident = (await transaction.get(db.collection('users').doc(residentId))).data();
+            if (!resident || resident.uid !== residentId || resident.role !== 'resident' || resident.isActive !== true ||
+                resident.approvalStatus !== 'approved' || (resident.status != null && resident.status !== 'active') ||
+                resident.communityId !== input.communityId || resident.flatId !== target.id || resident.buildingId !== flat.buildingId) return {kind: 'skipped'};
+            // Existing random-ID bills have no reliable migration marker. Match
+            // their old period/type conservatively and report for reconciliation.
+            const history = await transaction.get(db.collection('bills').where('flatId', '==', target.id));
+            const legacy = history.docs.filter(doc => doc.data().communityId === input.communityId && matchesLegacyContract(doc.data(), input));
+            if (legacy.length) return {kind: 'legacy', billIds: legacy.map(doc => doc.id)};
+            const admin = (await transaction.get(db.collection('admins').doc(actor.uid))).data();
+            const residentName = clean(resident.name) || clean(resident.fullName) || residentId;
+            transaction.create(billRef, {
+                billingKind: 'recurring', billingPeriod: input.billingPeriod, chargeType: input.chargeType,
+                adminId: actor.uid, communityId: input.communityId,
+                adminName: clean(admin.name), adminEmail: clean(admin.email), adminPhone: clean(admin.phone) || clean(admin.phoneNumber),
+                organization: clean(admin.organization) || clean(actor.community.name),
+                buildingId: flat.buildingId, flatId: target.id,
+                flatLabel: clean(flat.flatLabel) || clean(flat.unitLabel) || clean(flat.flatNumber) || target.id,
+                residentId, residentName, amount: input.amount, chargeBreakdown: input.chargeBreakdown,
+                month: input.month, year: input.year, type: 'combined', status: 'pending',
+                dueDate: Timestamp.fromDate(input.dueDate), paidAt: null,
+                createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+            });
+            return {kind: 'created', bill: {billId: id, residentId, amount: input.amount, month: input.month, year: input.year}};
         });
-
-        created += 1;
-        batchWrites += 1;
-
-        // Leave room below Firestore's 500-write batch limit.
-        if (batchWrites >= 400) {
-            await commitBatch();
-        }
+        if (outcome.kind === 'created') { result.created++; result.createdBills.push(outcome.bill); }
+        else if (outcome.kind === 'existing') result.existing++;
+        else if (outcome.kind === 'conflict') result.conflicts.push(target.id);
+        else if (outcome.kind === 'legacy') { result.existing++; result.legacyMatches.push({flatId: target.id, billIds: outcome.billIds}); }
+        else result.skipped++;
     }
-
-    await commitBatch();
-
-    if (!created) {
-        throw new RegistrationError(
-            "failed-precondition",
-            "No valid resident bill records could be created.",
-        );
-    }
-
-    return {
-        success: true,
-        scope: input.scope,
-        created,
-        skipped,
-    };
+    return result;
 }
-
-module.exports = {
-    createMaintenanceBillsCore,
-};
+module.exports = {createMaintenanceBillsCore, recurringBillId};
