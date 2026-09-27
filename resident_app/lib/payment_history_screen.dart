@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import 'src/utils/payment_method.dart';
+
 class PaymentHistoryScreen extends StatelessWidget {
   const PaymentHistoryScreen({super.key, required this.paidBills});
 
@@ -47,6 +49,7 @@ class _PaymentHistoryCard extends StatelessWidget {
     final paymentReference =
         _nonEmptyString(bill['paymentReference']) ??
         _nonEmptyString(bill['transactionId']);
+    final paymentMethod = normalizePaymentMethod(bill['paymentMethod']);
     final period = [if (month != null) month, if (year != null) year].join(' ');
 
     return Card(
@@ -83,6 +86,7 @@ class _PaymentHistoryCard extends StatelessWidget {
               label: 'Payment date',
               value: paidAt == null ? 'Not recorded' : _formatDate(paidAt),
             ),
+            _DetailRow(label: 'Payment method', value: paymentMethod),
             if (billId != null)
               _DetailRow(label: 'Bill reference', value: billId),
             _DetailRow(

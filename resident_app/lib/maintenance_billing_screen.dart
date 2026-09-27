@@ -10,6 +10,8 @@ import 'src/components/standard_screen.dart';
 import 'src/providers/language_provider.dart';
 import 'src/screens/submit_payment_proof_screen.dart';
 import 'src/services/bill_firestore_service.dart';
+import 'src/utils/payment_method.dart';
+import 'src/widgets/cash_payment_info_card.dart';
 import 'src/widgets/direct_upi_payment_card.dart';
 
 // Design Constants
@@ -42,16 +44,77 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   final _billService = BillFirestoreService();
 
   Widget _buildSubmitPaymentCard(Map<String, dynamic> bill) {
-    return DirectUpiPaymentCard(
-      billId: bill['id']?.toString() ?? '',
-      onSubmitProof: () async {
-        await Navigator.push<bool>(
-          context,
-          MaterialPageRoute(
-            builder: (_) => SubmitPaymentProofScreen(bill: bill),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DirectUpiPaymentCard(
+          billId: bill['id']?.toString() ?? '',
+          onSubmitProof: () async {
+            await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SubmitPaymentProofScreen(bill: bill),
+              ),
+            );
+          },
+        ),
+        SizedBox(height: 12.h),
+        const CashPaymentInfoCard(),
+      ],
+    );
+  }
+
+  Widget _buildPaymentSubmittedCard(Map<String, dynamic> payment) {
+    final method = normalizePaymentMethod(payment['method']);
+    final provider = normalizePaymentProvider(payment['provider']);
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(kRadius),
+        border: Border.all(color: kDivider),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.hourglass_top_rounded, color: kPrimaryBlue, size: 28.w),
+          SizedBox(width: 14.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Payment Submitted',
+                  style: TextStyle(
+                    fontSize: 18.sp,
+                    fontWeight: FontWeight.w600,
+                    color: kDarkTitle,
+                  ),
+                ),
+                SizedBox(height: 6.h),
+                Text(
+                  '$method / $provider',
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w600,
+                    color: kPrimaryBlue,
+                  ),
+                ),
+                SizedBox(height: 6.h),
+                Text(
+                  'Your payment receipt has been submitted and is awaiting administrator verification.',
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    height: 1.4,
+                    color: kSubtext,
+                  ),
+                ),
+              ],
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -111,49 +174,6 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     );
   }
 
-  Widget _buildPaymentSubmittedCard() {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(20.w),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(kRadius),
-        border: Border.all(color: kDivider),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.hourglass_top_rounded, color: kPrimaryBlue, size: 28.w),
-          SizedBox(width: 14.w),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Payment Submitted',
-                  style: TextStyle(
-                    fontSize: 18.sp,
-                    fontWeight: FontWeight.w600,
-                    color: kDarkTitle,
-                  ),
-                ),
-                SizedBox(height: 6.h),
-                Text(
-                  'Your payment receipt has been submitted and is awaiting administrator verification.',
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    height: 1.4,
-                    color: kSubtext,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPaymentAction(Map<String, dynamic> bill) {
     final billId = bill['id']?.toString() ?? '';
 
@@ -186,7 +206,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
         final paymentStatus = payment?['status']?.toString().toLowerCase();
 
         if (paymentStatus == 'pending') {
-          return _buildPaymentSubmittedCard();
+          return _buildPaymentSubmittedCard(payment!);
         }
 
         if (paymentStatus == 'failed' && payment != null) {
@@ -729,6 +749,29 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                         fontWeight: FontWeight.w400,
                       ),
                     ),
+                    SizedBox(height: 4.h),
+                    Text(
+                      'Method: ${normalizePaymentMethod(payment['paymentMethod'])}',
+                      style: TextStyle(
+                        color: kSubtext,
+                        fontSize: 12.sp,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    if ((payment['paymentReference'] as String?)
+                            ?.trim()
+                            .isNotEmpty ==
+                        true) ...[
+                      SizedBox(height: 4.h),
+                      Text(
+                        'Reference: ${(payment['paymentReference'] as String).trim()}',
+                        style: TextStyle(
+                          color: kSubtext,
+                          fontSize: 12.sp,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

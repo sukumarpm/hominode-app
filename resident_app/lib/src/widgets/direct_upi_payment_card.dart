@@ -131,7 +131,10 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Payment', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            'UPI / Direct UPI',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 8),
           const Text(
             'Pay your bill directly to your community using a UPI app.',

@@ -120,6 +120,51 @@ test('manual payment is explicit Admin attestation, not fabricated receipt verif
   await assert.rejects(manual({...f.args, data: {billId: 'b', paymentMethod: 'manual'}}), {code: 'failed-precondition'});
   await assert.rejects(verify(f.args), {code: 'failed-precondition'});
 });
+test('cash is an Admin-attested completed payment that atomically settles the bill once', async () => {
+  const f = fixture();
+  const result = await manual({...f.args, data: {billId: 'b', paymentMethod: 'cash', paymentReference: 'CASH-103'}});
+  const payment = f.db.values.get(`payments/${result.paymentId}`);
+  const bill = f.db.values.get('bills/b');
+
+  assert.equal(payment.method, 'cash');
+  assert.equal(payment.status, 'completed');
+  assert.equal(payment.evidenceType, 'admin_attestation');
+  assert.equal(payment.transactionId, 'CASH-103');
+  assert.equal(payment.receiptPath, undefined);
+  assert.equal(bill.status, 'paid');
+  assert.equal(bill.paymentMethod, 'cash');
+  assert.equal(bill.paymentReference, 'CASH-103');
+  assert.equal(bill.paymentId, result.paymentId);
+  assert.equal(bill.settledBy, 'a');
+  assert(bill.paidAt.toMillis());
+  assert.equal([...f.db.values.values()].filter(v => v.action === 'payment.manual').length, 1);
+
+  await assert.rejects(
+    manual({...f.args, data: {billId: 'b', paymentMethod: 'cash'}}),
+    {code: 'failed-precondition'},
+  );
+  assert.equal([...f.db.values.values()].filter(v => v.action === 'payment.manual').length, 1);
+});
+test('cash settlement requires an authorized Admin for the bill community', async () => {
+  for (const [path, patch] of [
+    ['admins/a', {authorizedCommunityIds: ['OTHER']}],
+    ['admins/a', {isActive: false}],
+    ['admins/a', {role: 'superAdmin'}],
+  ]) {
+    const f = fixture();
+    f.patch(path, patch);
+    await assert.rejects(
+      manual({...f.args, data: {billId: 'b', paymentMethod: 'cash'}}),
+      {code: 'permission-denied'},
+    );
+    assert.equal(f.db.values.get('bills/b').status, 'pending');
+  }
+  const f = fixture();
+  await assert.rejects(
+    manual({...f.args, auth: {uid: 'r'}, data: {billId: 'b', paymentMethod: 'cash'}}),
+    {code: 'permission-denied'},
+  );
+});
 test('manual and reject enforce active-community and Super Admin restrictions', async () => {
   for (const change of [['admins/a', {role: 'superAdmin'}, 'permission-denied'], ['communities/C', {isActive: false}, 'failed-precondition']]) {
     for (const [core, data] of [[manual, {billId: 'b', paymentMethod: 'cash'}], [reject, {paymentId: 'p', rejectionReason: 'Wrong receipt'}]]) {

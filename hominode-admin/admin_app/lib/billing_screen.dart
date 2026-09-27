@@ -40,6 +40,8 @@ class _BillingScreenState extends State<BillingScreen> {
   final Set<String> _viewedPaymentReceiptIds = {};
   final TextEditingController _billingSearchController =
       TextEditingController();
+  final TextEditingController _paymentReferenceController =
+      TextEditingController();
 
   String _billingSearchQuery = '';
   String _statusFilter = 'all';
@@ -109,6 +111,7 @@ class _BillingScreenState extends State<BillingScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _billingSearchController.dispose();
+    _paymentReferenceController.dispose();
     super.dispose();
   }
 
@@ -1113,12 +1116,17 @@ class _BillingScreenState extends State<BillingScreen> {
             SizedBox(width: 8.w),
             Expanded(
               child: Semantics(
-                label: 'Mark as paid button',
+                label: 'Record payment button',
                 button: true,
                 child: ElevatedButton.icon(
-                  onPressed: () => _onMarkAsPaid(bill),
+                  onPressed:
+                      bill.status == 'paid' ||
+                          bill.paymentId?.trim().isNotEmpty == true ||
+                          bill.paidAt != null
+                      ? null
+                      : () => _onRecordPayment(bill),
                   icon: Icon(Icons.check, size: 16.w),
-                  label: const Text('Mark Paid'),
+                  label: const Text('Record Payment'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF10B981),
                     foregroundColor: Colors.white,
@@ -1197,6 +1205,13 @@ class _BillingScreenState extends State<BillingScreen> {
                 ),
               ),
             ],
+          ),
+
+          SizedBox(height: 6.h),
+          Text(
+            '${formatPaymentMethod(payment['method'])} / '
+            '${payment['provider']?.toString().trim().toLowerCase() == 'direct_upi' ? 'Direct UPI' : 'Not specified'}',
+            style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
           ),
 
           if (reference.isNotEmpty) ...[
@@ -1437,20 +1452,28 @@ class _BillingScreenState extends State<BillingScreen> {
     // - Send notification via preferred channel
   }
 
-  Future<void> _onMarkAsPaid(BillModel bill) async {
-    // Show confirmation dialog for manual payment
-    final confirmed = await showDialog<bool>(
+  Future<void> _onRecordPayment(BillModel bill) async {
+    if (bill.status == 'paid' ||
+        bill.paymentId?.trim().isNotEmpty == true ||
+        bill.paidAt != null) {
+      return;
+    }
+
+    _paymentReferenceController.clear();
+    final selection = await showDialog<Map<String, String>>(
       context: context,
       barrierDismissible: false,
       builder: (context) => _buildConfirmPaymentDialog(bill),
     );
+    _paymentReferenceController.clear();
 
-    if (confirmed != true) return;
+    if (selection == null) return;
 
     try {
-      await _billingService.markBillAsPaid(
+      await _billingService.recordPayment(
         bill.id,
-        paymentMethod: 'manual', // Manual payment by admin
+        paymentMethod: selection['paymentMethod']!,
+        paymentReference: selection['paymentReference'],
       );
 
       if (mounted) {
@@ -1461,7 +1484,9 @@ class _BillingScreenState extends State<BillingScreen> {
                 Icon(Icons.check_circle, color: Colors.white, size: 20.w),
                 SizedBox(width: 12.w),
                 Expanded(
-                  child: Text('Payment confirmed for ${bill.residentName}'),
+                  child: Text(
+                    '${selection['paymentMethod'] == 'cash' ? 'Cash payment' : 'Payment'} recorded for ${bill.residentName}',
+                  ),
                 ),
               ],
             ),
@@ -1478,7 +1503,7 @@ class _BillingScreenState extends State<BillingScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to mark as paid: $e'),
+            content: Text('Failed to record payment: $e'),
             backgroundColor: const Color(0xFFEF4444),
             duration: const Duration(seconds: 3),
           ),
@@ -1489,7 +1514,7 @@ class _BillingScreenState extends State<BillingScreen> {
 
   Widget _buildConfirmPaymentDialog(BillModel bill) {
     String selectedPaymentMethod = 'Cash';
-    final paymentMethods = ['Cash', 'Bank Transfer', 'Cheque', 'UPI', 'Other'];
+    const paymentMethods = offlinePaymentMethodOptions;
 
     return StatefulBuilder(
       builder: (context, setState) {
@@ -1540,7 +1565,7 @@ class _BillingScreenState extends State<BillingScreen> {
                         ),
                         SizedBox(height: 16.h),
                         Text(
-                          'Confirm Payment',
+                          'Record Payment',
                           style: TextStyle(
                             fontSize: 22.sp,
                             fontWeight: FontWeight.w700,
@@ -1549,7 +1574,7 @@ class _BillingScreenState extends State<BillingScreen> {
                         ),
                         SizedBox(height: 6.h),
                         Text(
-                          'Mark this bill as paid?',
+                          'Confirm the community received this payment.',
                           style: TextStyle(
                             fontSize: 14.sp,
                             color: Colors.grey[600],
@@ -1602,6 +1627,17 @@ class _BillingScreenState extends State<BillingScreen> {
                                 Icons.calendar_today_outlined,
                               ),
                             ],
+                          ),
+                        ),
+
+                        SizedBox(height: 16.h),
+
+                        TextField(
+                          controller: _paymentReferenceController,
+                          maxLength: 200,
+                          decoration: const InputDecoration(
+                            labelText: 'Reference / receipt number (optional)',
+                            border: OutlineInputBorder(),
                           ),
                         ),
 
@@ -1682,7 +1718,7 @@ class _BillingScreenState extends State<BillingScreen> {
                               SizedBox(width: 10.w),
                               Expanded(
                                 child: Text(
-                                  'This action will mark the bill as paid and cannot be undone.',
+                                  'This records that the community received payment and cannot be undone.',
                                   style: TextStyle(
                                     fontSize: 12.sp,
                                     color: Colors.grey[800],
@@ -1704,7 +1740,7 @@ class _BillingScreenState extends State<BillingScreen> {
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed: () => Navigator.of(context).pop(false),
+                            onPressed: () => Navigator.of(context).pop(),
                             style: OutlinedButton.styleFrom(
                               padding: EdgeInsets.symmetric(vertical: 14.h),
                               side: const BorderSide(
@@ -1728,7 +1764,14 @@ class _BillingScreenState extends State<BillingScreen> {
                         SizedBox(width: 12.w),
                         Expanded(
                           child: ElevatedButton(
-                            onPressed: () => Navigator.of(context).pop(true),
+                            onPressed: () => Navigator.of(context).pop({
+                              'paymentMethod': offlinePaymentMethodValue(
+                                selectedPaymentMethod,
+                              ),
+                              'paymentReference': _paymentReferenceController
+                                  .text
+                                  .trim(),
+                            }),
                             style: ElevatedButton.styleFrom(
                               padding: EdgeInsets.symmetric(vertical: 14.h),
                               backgroundColor: const Color(0xFF10B981),
@@ -1738,7 +1781,9 @@ class _BillingScreenState extends State<BillingScreen> {
                               ),
                             ),
                             child: Text(
-                              'Confirm',
+                              selectedPaymentMethod == 'Cash'
+                                  ? 'Confirm Cash Received'
+                                  : 'Confirm $selectedPaymentMethod Received',
                               style: TextStyle(
                                 fontSize: 16.sp,
                                 fontWeight: FontWeight.w600,
@@ -3316,6 +3361,7 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Widget _buildBillCard(BillModel bill) {
+    final paymentAttribution = formatSettlementAttribution(bill.paymentMethod);
     // Convert BillModel to display format
     final statusColor = bill.status == 'paid'
         ? const Color(0xFF10B981)
@@ -3493,6 +3539,32 @@ class _BillingScreenState extends State<BillingScreen> {
                       ),
                     ),
                   ],
+                ),
+              ],
+              if (bill.status == 'paid' && bill.paymentMethod != null) ...[
+                SizedBox(height: 8.h),
+                Text(
+                  'Payment method: ${bill.normalizedPaymentMethod}'
+                  '${paymentAttribution == null ? '' : ' / $paymentAttribution'}',
+                  style: TextStyle(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151),
+                  ),
+                ),
+              ],
+              if (bill.paymentReference?.trim().isNotEmpty == true) ...[
+                SizedBox(height: 6.h),
+                Text(
+                  'Payment reference: ${bill.paymentReference!.trim()}',
+                  style: TextStyle(fontSize: 12.sp, color: Color(0xFF6B7280)),
+                ),
+              ],
+              if (bill.paymentId?.trim().isNotEmpty == true) ...[
+                SizedBox(height: 4.h),
+                Text(
+                  'Payment ID: ${bill.paymentId!.trim()}',
+                  style: TextStyle(fontSize: 12.sp, color: Color(0xFF6B7280)),
                 ),
               ],
               SizedBox(height: 12.h),

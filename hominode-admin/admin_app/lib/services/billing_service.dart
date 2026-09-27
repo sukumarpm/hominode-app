@@ -8,6 +8,57 @@ import '../models/notification_models.dart';
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
 
+String formatPaymentMethod(Object? value) {
+  final method = value is String ? value.trim().toLowerCase() : '';
+  return switch (method) {
+    'upi' => 'UPI',
+    'cash' => 'Cash',
+    'bank_transfer' => 'Bank Transfer',
+    'cheque' => 'Cheque',
+    'manual' => 'Manual',
+    'external' => 'External',
+    '' => 'Not recorded',
+    _ =>
+      method
+          .replaceAll(RegExp(r'[_-]+'), ' ')
+          .split(' ')
+          .map(
+            (part) => part.isEmpty
+                ? part
+                : '${part[0].toUpperCase()}${part.substring(1)}',
+          )
+          .join(' '),
+  };
+}
+
+const List<String> offlinePaymentMethodOptions = [
+  'Cash',
+  'Bank Transfer',
+  'Cheque',
+];
+
+String offlinePaymentMethodValue(String label) => switch (label) {
+  'Cash' => 'cash',
+  'Bank Transfer' => 'bank_transfer',
+  'Cheque' => 'cheque',
+  _ => throw ArgumentError.value(
+    label,
+    'label',
+    'Unsupported offline payment method',
+  ),
+};
+
+String? formatSettlementAttribution(Object? paymentMethod) {
+  final method = paymentMethod is String
+      ? paymentMethod.trim().toLowerCase()
+      : '';
+  return switch (method) {
+    'upi' => 'Verified by Admin',
+    'cash' || 'bank_transfer' || 'cheque' || 'manual' => 'Recorded by Admin',
+    _ => null,
+  };
+}
+
 class BillingService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final String _collection = 'bills';
@@ -358,21 +409,24 @@ class BillingService {
     if (_adminService.getCurrentAdminId() != adminId) {
       throw StateError('Admin not authenticated');
     }
-    final date = '${dueDate.year.toString().padLeft(4, '0')}-'
+    final date =
+        '${dueDate.year.toString().padLeft(4, '0')}-'
         '${dueDate.month.toString().padLeft(2, '0')}-'
         '${dueDate.day.toString().padLeft(2, '0')}';
     final selected = specificFlatIds != null && specificFlatIds.isNotEmpty;
-    final response = await _functions.httpsCallable('createMaintenanceBills').call({
-      'communityId': _adminService.requireCurrentCommunityId(),
-      'scope': selected ? 'units' : 'community',
-      if (selected) 'flatIds': specificFlatIds,
-      'amount': totalAmount,
-      'chargeBreakdown': chargeBreakdown,
-      'chargeType': 'maintenance',
-      'month': month,
-      'year': year,
-      'dueDate': date,
-    });
+    final response = await _functions
+        .httpsCallable('createMaintenanceBills')
+        .call({
+          'communityId': _adminService.requireCurrentCommunityId(),
+          'scope': selected ? 'units' : 'community',
+          if (selected) 'flatIds': specificFlatIds,
+          'amount': totalAmount,
+          'chargeBreakdown': chargeBreakdown,
+          'chargeType': 'maintenance',
+          'month': month,
+          'year': year,
+          'dueDate': date,
+        });
     final result = Map<String, dynamic>.from(response.data as Map);
     // Preserve best-effort notifications only for newly committed bills.
     for (final item in (result['createdBills'] as List? ?? const [])) {
@@ -381,13 +435,16 @@ class BillingService {
       try {
         await _notificationService.createNotification(
           title: 'New Bill Created',
-          message: 'Your bill of ₹${amount.toStringAsFixed(2)} for ${bill['month']} ${bill['year']} has been created. Due date: ${dueDate.day}/${dueDate.month}/${dueDate.year}',
+          message:
+              'Your bill of ₹${amount.toStringAsFixed(2)} for ${bill['month']} ${bill['year']} has been created. Due date: ${dueDate.day}/${dueDate.month}/${dueDate.year}',
           type: NotificationType.payment,
           priority: NotificationPriority.high,
           recipientId: bill['residentId'] as String,
           metadata: {
-            'billId': bill['billId'], 'amount': amount,
-            'month': bill['month'], 'year': bill['year'],
+            'billId': bill['billId'],
+            'amount': amount,
+            'month': bill['month'],
+            'year': bill['year'],
             'dueDate': dueDate.toIso8601String(),
           },
         );
@@ -397,15 +454,17 @@ class BillingService {
     }
     final conflicts = result['conflicts'] as List? ?? const [];
     if (conflicts.isNotEmpty) {
-      throw StateError('${result['created']} bills created; ${conflicts.length} existing bills have different terms and were left unchanged.');
+      throw StateError(
+        '${result['created']} bills created; ${conflicts.length} existing bills have different terms and were left unchanged.',
+      );
     }
     return (result['created'] as num).toInt();
   }
 
-  // Mark bill as paid (with optional payment method for manual payments)
-  Future<void> markBillAsPaid(
+  // Record an Admin-attested offline payment through the trusted callable.
+  Future<void> recordPayment(
     String billId, {
-    String paymentMethod = 'manual',
+    required String paymentMethod,
     String? paymentReference,
   }) async {
     try {
@@ -426,13 +485,18 @@ class BillingService {
       if (!billDoc.exists) throw Exception('Bill not found');
 
       final billData = billDoc.data();
-      final residentId = billData?['residentId'];
-      final residentName = billData?['residentName'] ?? 'Unknown';
-      final amount = billData?['amount'] ?? 0.0;
+      if (billData == null ||
+          billData['status'] == 'paid' ||
+          billData['paymentId'] != null ||
+          billData['paidAt'] != null) {
+        throw StateError('This bill is already settled.');
+      }
+      final residentId = billData['residentId'];
+      final amount = billData['amount'] ?? 0.0;
       print('✅ STEP 2 PASSED');
 
       // STEP 3: Update Bill Status
-      print('📝 STEP 3: Marking bill as paid...');
+      print('📝 STEP 3: Recording payment...');
       await _functions.httpsCallable('recordManualPayment').call({
         'billId': billId,
         'paymentMethod': paymentMethod,
@@ -469,7 +533,7 @@ class BillingService {
       print('✅ BILL PAYMENT: COMPLETE');
     } catch (e) {
       print('❌ ERROR: $e');
-      throw Exception('Failed to mark bill as paid: $e');
+      throw Exception('Failed to record payment: $e');
     }
   }
 
@@ -516,6 +580,10 @@ class BillModel {
   final String status;
   final DateTime? dueDate;
   final DateTime? paidAt;
+  final String? paymentMethod;
+  final String? paymentReference;
+  final String? paymentId;
+  final String? settledBy;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -539,9 +607,15 @@ class BillModel {
     required this.status,
     this.dueDate,
     this.paidAt,
+    this.paymentMethod,
+    this.paymentReference,
+    this.paymentId,
+    this.settledBy,
     this.createdAt,
     this.updatedAt,
   });
+
+  String get normalizedPaymentMethod => formatPaymentMethod(paymentMethod);
 
   factory BillModel.fromMap(String id, Map<String, dynamic> data) {
     // Parse charge breakdown if it exists
@@ -573,6 +647,18 @@ class BillModel {
       status: data['status'] ?? 'pending',
       dueDate: (data['dueDate'] as Timestamp?)?.toDate(),
       paidAt: (data['paidAt'] as Timestamp?)?.toDate(),
+      paymentMethod: data['paymentMethod'] is String
+          ? data['paymentMethod'] as String
+          : null,
+      paymentReference: data['paymentReference'] is String
+          ? data['paymentReference'] as String
+          : null,
+      paymentId: data['paymentId'] is String
+          ? data['paymentId'] as String
+          : null,
+      settledBy: data['settledBy'] is String
+          ? data['settledBy'] as String
+          : null,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
     );
@@ -598,6 +684,10 @@ class BillModel {
       'status': status,
       'dueDate': dueDate != null ? Timestamp.fromDate(dueDate!) : null,
       'paidAt': paidAt != null ? Timestamp.fromDate(paidAt!) : null,
+      'paymentMethod': paymentMethod,
+      'paymentReference': paymentReference,
+      'paymentId': paymentId,
+      'settledBy': settledBy,
       'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : null,
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
     };

@@ -5,6 +5,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/src/screens/submit_payment_proof_screen.dart';
 import 'package:resident_app/src/services/resident_direct_upi_service.dart';
+import 'package:resident_app/src/widgets/cash_payment_info_card.dart';
 import 'package:resident_app/src/widgets/direct_upi_payment_card.dart';
 
 final _preparation = DirectUpiPaymentPreparation(
@@ -55,6 +56,28 @@ void main() {
 
     expect(find.text('Pay via UPI'), findsOneWidget);
     expect(find.text('Already paid? Submit payment proof'), findsOneWidget);
+    expect(find.text('UPI / Direct UPI'), findsOneWidget);
+  });
+
+  testWidgets('cash choice is informational and offers no settlement action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: CashPaymentInfoCard())),
+    );
+
+    expect(find.text('Cash'), findsOneWidget);
+    expect(
+      find.textContaining('Pay cash at your community office'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('the resident app does not mark cash bills paid'),
+      findsOneWidget,
+    );
+    expect(find.byType(ElevatedButton), findsNothing);
+    expect(find.byType(FilledButton), findsNothing);
+    expect(find.byType(TextButton), findsNothing);
   });
 
   testWidgets('prepares once with bill ID and launches exact prepared URI', (

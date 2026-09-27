@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/payment_history_screen.dart';
+import 'package:resident_app/receipt_screen.dart';
+import 'package:resident_app/src/utils/payment_method.dart';
 
 void main() {
   testWidgets('shows real paid bill fields newest first', (tester) async {
@@ -16,6 +18,8 @@ void main() {
               'amount': 1200,
               'status': 'paid',
               'paidAt': Timestamp.fromDate(DateTime(2026, 6, 2)),
+              'paymentMethod': 'cash',
+              'paymentReference': 'CASH-001',
             },
             {
               'id': 'bill-newer',
@@ -26,6 +30,7 @@ void main() {
               'paidAt': Timestamp.fromDate(DateTime(2026, 7, 3)),
               'paymentReference': 'ADMIN-RECEIPT-123',
               'transactionId': 'PAY-123',
+              'paymentMethod': 'upi',
             },
           ],
         ),
@@ -39,10 +44,30 @@ void main() {
     expect(find.text('Paid'), findsNWidgets(2));
     expect(find.text('ADMIN-RECEIPT-123'), findsOneWidget);
     expect(find.text('PAY-123'), findsNothing);
+    expect(find.text('Cash'), findsOneWidget);
+    expect(find.text('UPI'), findsOneWidget);
+    expect(find.text('CASH-001'), findsOneWidget);
 
     final newer = tester.getTopLeft(find.text('July 2026')).dy;
     final older = tester.getTopLeft(find.text('June 2026')).dy;
     expect(newer, lessThan(older));
+  });
+
+  test('normalizes payment methods consistently for history and receipts', () {
+    expect(normalizePaymentMethod('cash'), 'Cash');
+    expect(normalizePaymentMethod('upi'), 'UPI');
+    expect(normalizePaymentMethod('bank_transfer'), 'Bank Transfer');
+    expect(normalizePaymentMethod('cheque'), 'Cheque');
+    expect(normalizePaymentMethod('manual'), 'Manual');
+    expect(normalizePaymentMethod('external'), 'External');
+    expect(normalizePaymentProvider('direct_upi'), 'Direct UPI');
+
+    expect(Receipt.fromBill({'paymentMethod': 'cash'}).paymentMethod, 'Cash');
+    expect(Receipt.fromBill({'paymentMethod': 'upi'}).paymentMethod, 'UPI');
+    expect(
+      Receipt.fromBill({'paymentMethod': 'bank_transfer'}).paymentMethod,
+      'Bank Transfer',
+    );
   });
 
   testWidgets('does not invent a missing payment reference', (tester) async {
@@ -57,6 +82,6 @@ void main() {
     );
 
     expect(find.text('Payment reference'), findsNothing);
-    expect(find.text('Not recorded'), findsOneWidget);
+    expect(find.text('Not recorded'), findsNWidgets(2));
   });
 }

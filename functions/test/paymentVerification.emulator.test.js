@@ -193,6 +193,29 @@ run('manual payment creates an auditable record and races proof settlement safel
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(results.find(r => r.status === 'rejected').reason.code, 'failed-precondition');
 });
+run('cash Admin attestation settles atomically without receipt evidence and rejects duplicates', async () => {
+  const result = await manual({...args('cash-proof'), data: {billId: 'b', paymentMethod: 'cash', paymentReference: 'CASH-103'}});
+  const record = (await db.doc(`payments/${result.paymentId}`).get()).data();
+  const settledBill = (await db.doc('bills/b').get()).data();
+
+  assert.equal(record.method, 'cash');
+  assert.equal(record.status, 'completed');
+  assert.equal(record.evidenceType, 'admin_attestation');
+  assert.equal(record.transactionId, 'CASH-103');
+  assert.equal(record.receiptPath, undefined);
+  assert.equal(settledBill.status, 'paid');
+  assert.equal(settledBill.paymentMethod, 'cash');
+  assert.equal(settledBill.paymentReference, 'CASH-103');
+  assert.equal(settledBill.paymentId, result.paymentId);
+  assert.equal(settledBill.settledBy, 'a');
+  assert(settledBill.paidAt);
+
+  await assert.rejects(
+    manual({...args('cash-proof'), data: {billId: 'b', paymentMethod: 'cash'}}),
+    {code: 'failed-precondition'},
+  );
+  assert.equal((await db.collection('payments').where('method', '==', 'cash').get()).size, 1);
+});
 run('Resident cannot alter verification or settlement fields; linked unpaid history also cannot be deleted', async () => {
   await submit();
   for (const uid of ['r', 'a']) {

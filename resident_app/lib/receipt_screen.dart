@@ -10,6 +10,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'src/utils/payment_method.dart';
+
 // Receipt Data Model
 class Receipt {
   final String transactionId;
@@ -101,7 +103,7 @@ class Receipt {
       residentName: bill['residentName'] as String? ?? 'Resident',
       flatNumber:
           bill['flatLabel'] as String? ?? bill['flatId'] as String? ?? 'N/A',
-      paymentMethod: bill['paymentMethod'] as String? ?? 'N/A',
+      paymentMethod: normalizePaymentMethod(bill['paymentMethod']),
       totalAmount: (bill['amount'] as num?)?.toDouble() ?? 0,
       billPeriod: bill['month'] as String? ?? 'N/A',
       billItems: billItems,
