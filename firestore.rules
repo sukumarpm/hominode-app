@@ -1056,6 +1056,27 @@ function securityCanAccessCommunity(communityId) {
     }
     
     // ============================================================
+    // BILLING V2 — CLIENT READS ONLY
+    // ============================================================
+
+    match /{billingV2Collection}/{recordId} {
+      allow read: if billingV2Collection in [
+        'paymentProofsV2', 'paymentTransactions', 'paymentAllocations',
+        'residentCreditEntries', 'residentFinancialAccounts'
+      ] && (
+        adminCanAccessCommunity(resource.data.communityId)
+        || (
+          residentCanAccessCommunity(resource.data.communityId)
+          && resource.data.residentId == request.auth.uid
+        )
+      );
+
+      // Financial records and proof context are authored only by the backend.
+      // paymentSettlementsV2 is deliberately absent from the read allowlist.
+      allow create, update, delete: if false;
+    }
+
+    // ============================================================
     // VISITORS
     // ============================================================
 
