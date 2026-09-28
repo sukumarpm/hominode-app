@@ -18,6 +18,7 @@ const {
 } = require("./billing_management");
 
 const { createMonthlyBillingBatchV2Core } = require("./billing_batch");
+const { reviseMonthlyBillingBatchV2Core } = require("./billing_revision");
 
 const {
   createCommunityCore,
@@ -305,6 +306,10 @@ exports.createMaintenanceBills = appCheckedCallable(
 exports.createMonthlyBillingBatchV2 = appCheckedCallable(
   createMonthlyBillingBatchV2Core,
   "Monthly billing batch could not be generated.",
+);
+exports.reviseMonthlyBillingBatchV2 = appCheckedCallable(
+  reviseMonthlyBillingBatchV2Core,
+  "Monthly billing batch could not be revised.",
 );
 initializeApp();
 
