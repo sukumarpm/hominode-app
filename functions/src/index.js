@@ -17,6 +17,8 @@ const {
   createMaintenanceBillsCore,
 } = require("./billing_management");
 
+const { createMonthlyBillingBatchV2Core } = require("./billing_batch");
+
 const {
   createCommunityCore,
 } = require("./create_community");
@@ -299,6 +301,10 @@ exports.setCommunitySubscriptionStatus = callable(
 exports.createMaintenanceBills = appCheckedCallable(
   createMaintenanceBillsCore,
   "Maintenance bills could not be created.",
+);
+exports.createMonthlyBillingBatchV2 = appCheckedCallable(
+  createMonthlyBillingBatchV2Core,
+  "Monthly billing batch could not be generated.",
 );
 initializeApp();
 
