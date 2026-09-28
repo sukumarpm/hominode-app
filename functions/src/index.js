@@ -36,6 +36,13 @@ const {
 } = require("./payment_verification");
 
 const {
+  preparePaymentProofV2Core,
+  verifyPaymentProofV2Core,
+  rejectPaymentProofV2Core,
+  recordOfflinePaymentV2Core,
+} = require("./payment_v2");
+
+const {
   createAdminCore,
   updateAdminAssignmentsCore,
   setAdminActiveCore,
@@ -184,6 +191,11 @@ exports.verifyPaymentProof = appCheckedCallable(
   verifyPaymentProofCore,
   "Payment proof could not be verified."
 );
+
+exports.preparePaymentProofV2 = appCheckedCallable(preparePaymentProofV2Core, 'V2 payment proof could not be prepared.');
+exports.verifyPaymentProofV2 = appCheckedCallable(verifyPaymentProofV2Core, 'V2 payment proof could not be verified.');
+exports.rejectPaymentProofV2 = appCheckedCallable(rejectPaymentProofV2Core, 'V2 payment proof could not be rejected.');
+exports.recordOfflinePaymentV2 = appCheckedCallable(recordOfflinePaymentV2Core, 'V2 offline payment could not be recorded.');
 
 const { triggerSosCore, transitionSosCore, getSosContextCore } = require('./sos');
 const { dispatchSosEventCore } = require('./sos_notifications');
