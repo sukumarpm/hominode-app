@@ -19,6 +19,13 @@ const {
 
 const { createMonthlyBillingBatchV2Core } = require("./billing_batch");
 const { reviseMonthlyBillingBatchV2Core } = require("./billing_revision");
+const {
+  createBillingScheduleV2Core,
+  reviseBillingScheduleV2Core,
+  pauseBillingScheduleV2Core,
+  resumeBillingScheduleV2Core,
+  stopBillingScheduleV2Core,
+} = require("./billing_schedule");
 
 const {
   createCommunityCore,
@@ -322,6 +329,26 @@ exports.createMonthlyBillingBatchV2 = appCheckedCallable(
 exports.reviseMonthlyBillingBatchV2 = appCheckedCallable(
   reviseMonthlyBillingBatchV2Core,
   "Monthly billing batch could not be revised.",
+);
+exports.createBillingScheduleV2 = appCheckedCallable(
+  createBillingScheduleV2Core,
+  "Billing schedule could not be created.",
+);
+exports.reviseBillingScheduleV2 = appCheckedCallable(
+  reviseBillingScheduleV2Core,
+  "Billing schedule could not be revised.",
+);
+exports.pauseBillingScheduleV2 = appCheckedCallable(
+  pauseBillingScheduleV2Core,
+  "Billing schedule could not be paused.",
+);
+exports.resumeBillingScheduleV2 = appCheckedCallable(
+  resumeBillingScheduleV2Core,
+  "Billing schedule could not be resumed.",
+);
+exports.stopBillingScheduleV2 = appCheckedCallable(
+  stopBillingScheduleV2Core,
+  "Billing schedule could not be stopped.",
 );
 initializeApp();
 
