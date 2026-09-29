@@ -472,10 +472,13 @@ test('reservation fence blocks a second period and makes revisions effective aft
 test('malformed reservation, cross-community requests, and unexpected fields fail closed without writes', async () => {
   const f = fixture();
   const created = await f.createBase();
-  await assert.rejects(f.runReserve(created.scheduleId, '2030-02', {now: generationNow,
-    data: {communityId: 'C', scheduleId: created.scheduleId, billingPeriod: '2030-02', idempotencyKey: 'client'}}), {
-    code: 'invalid-argument',
-  });
+  for (const extra of [{idempotencyKey: 'client'}, {systemMode: true},
+    {systemActor: 'system:billing-scheduler'}, {bypassAuth: true}, {internal: true}, {scheduler: true}]) {
+    await assert.rejects(f.runReserve(created.scheduleId, '2030-02', {now: generationNow,
+      data: {communityId: 'C', scheduleId: created.scheduleId, billingPeriod: '2030-02', ...extra}}), {
+      code: 'invalid-argument',
+    });
+  }
   await assert.rejects(reserve({db: f.db, auth, now: generationNow,
     data: {communityId: 'OTHER', scheduleId: created.scheduleId, billingPeriod: '2030-02'}}), {code: 'permission-denied'});
   await f.runReserve(created.scheduleId, '2030-02', {now: generationNow});

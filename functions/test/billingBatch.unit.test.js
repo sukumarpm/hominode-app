@@ -5,6 +5,7 @@ const {sosStore} = require('./helpers/sos_store');
 const {createMonthlyBillingBatchV2Core: generate, monthlyBillIdV2,
   validateChargeLines, validateDueDateV2} = require('../src/billing_batch');
 const {recurringBillId, createMaintenanceBillsCore} = require('../src/billing_management');
+const {operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID} = require('../src/resident_identity');
 
 const auth = {uid: 'a', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
 const now = () => Date.parse('2030-01-15T20:00:00Z'); // Jan 16 in Manila.
@@ -195,6 +196,48 @@ test('idempotencyKey rejects changed terms and client totals; scope cannot expan
   assert.equal(f.db.values.get(`billingBatches/${first.batchId}`).generation.completed, 2);
 });
 
+test('an internal system authority creates a batch and retains its actor through nested target generation', async () => {
+  const f = fixture(1);
+  const result = await f.run({}, {auth: undefined, requireAuthority: operationalBillingSystemAuthority});
+  const batch = f.db.values.get(`billingBatches/${result.batchId}`);
+  const batchRevision = f.db.values.get(`billingBatches/${result.batchId}/revisions/revision_1`);
+  const target = f.db.values.get(`billingBatches/${result.batchId}/targets/f1`);
+  const bill = f.bill(1);
+  const billRevision = f.db.values.get(`bills/${target.billId}/revisions/revision_1`);
+  assert.equal(result.status, 'completed');
+  for (const row of [batch, batchRevision, target, bill, billRevision]) {
+    assert.equal(row.createdBy, SYSTEM_BILLING_ACTOR_ID);
+  }
+  assert.equal(batch.updatedBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(target.updatedBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(bill.updatedBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(f.db.values.has(`admins/${SYSTEM_BILLING_ACTOR_ID}`), false);
+  assert.equal(f.db.values.has(`users/${SYSTEM_BILLING_ACTOR_ID}`), false);
+  for (const collection of ['paymentTransactions', 'paymentAllocations', 'residentCreditEntries',
+    'residentFinancialAccounts', 'paymentSettlementsV2']) {
+    assert.equal(f.docs(collection).length, 0, collection);
+  }
+});
+
+test('system batch authority still rejects targets from a different community', async () => {
+  const f = fixture(1);
+  f.patch('flats/f1', {communityId: 'OTHER'});
+  await assert.rejects(f.run({scope: 'units', flatIds: ['f1']}, {
+    auth: undefined, requireAuthority: operationalBillingSystemAuthority,
+  }), {code: 'permission-denied'});
+  assert.equal(f.docs('billingBatches').length, 0);
+  assert.equal(f.docs('bills').length, 0);
+});
+
+test('client batch data cannot select system authority or bypass auth', async () => {
+  for (const extra of [{systemMode: true}, {systemActor: SYSTEM_BILLING_ACTOR_ID},
+    {bypassAuth: true}, {internal: true}, {scheduler: true}]) {
+    const f = fixture(1);
+    await assert.rejects(f.run(extra), {code: 'invalid-argument'});
+    assert.equal(f.docs('billingBatches').length, 0);
+  }
+});
+
 test('trusted schedule source is copied to batch and revision and participates in source-aware retry identity', async () => {
   const f = fixture();
   const source = {scheduleId: 'schedule-1', scheduleRevisionId: 'schedule-revision-4'};
@@ -380,7 +423,13 @@ test('only a verified-phone active operational community Admin can create or res
     await assert.rejects(f.run(), error => ['permission-denied', 'failed-precondition'].includes(error.code));
     assert.equal(f.docs('billingBatches').length, 1);
   }
-  const f = fixture(); await assert.rejects(f.run({}, {auth: null})); assert.equal(f.docs('billingBatches').length, 0);
+  for (const invalidAuth of [null,
+    {uid: 'a', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'password'}}},
+    {uid: 'a', token: {firebase: {sign_in_provider: 'phone'}}}]) {
+    const f = fixture();
+    await assert.rejects(f.run({}, {auth: invalidAuth}));
+    assert.equal(f.docs('billingBatches').length, 0);
+  }
 });
 
 test('authority and target eligibility are rechecked after initial materialization', async () => {

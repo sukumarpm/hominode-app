@@ -502,7 +502,8 @@ function reservationResult(generation, alreadyCompleted) {
   };
 }
 
-async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.now}) {
+async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.now,
+  requireAuthority = requireOperationalAdmin}) {
   const input = validateReservationRequest(data);
   const nowMs = now();
   if (!Number.isFinite(nowMs)) fail('The current time is invalid.', 'failed-precondition');
@@ -512,7 +513,7 @@ async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
   let alreadyCompleted = false;
 
   await db.runTransaction(async tx => {
-    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const actor = await requireAuthority(db, auth, input.communityId, tx);
     const scheduleSnapshot = await tx.get(scheduleRef);
     const generationSnapshot = await tx.get(generationRef);
     if (!scheduleSnapshot.exists) fail('Billing schedule was not found.', 'not-found');
@@ -593,6 +594,7 @@ async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
       dueDateKey: dateKeys.dueDateKey,
       status: 'reserved',
       createdBy: actor.uid,
+      updatedBy: actor.uid,
       createdAt,
       updatedAt: createdAt,
     };
@@ -755,7 +757,7 @@ function terminalExecutionResult(generation, alreadyCompleted) {
 }
 
 async function executeBillingSchedulePeriodV2Core({db, auth, data, now = Date.now,
-  createBatch = createMonthlyBillingBatchV2Core}) {
+  createBatch = createMonthlyBillingBatchV2Core, requireAuthority = requireOperationalAdmin}) {
   const input = validateExecutionRequest(data);
   const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
   const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
@@ -767,7 +769,7 @@ async function executeBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
   let terminalResult;
 
   await db.runTransaction(async tx => {
-    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const actor = await requireAuthority(db, auth, input.communityId, tx);
     const [scheduleSnapshot, generationSnapshot] = await Promise.all([tx.get(scheduleRef), tx.get(generationRef)]);
     if (!scheduleSnapshot.exists) fail('Billing schedule was not found.', 'not-found');
     if (!generationSnapshot.exists) fail('The billing period has not been reserved.', 'failed-precondition');
@@ -818,6 +820,7 @@ async function executeBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
       status: 'executing',
       batchId: expectedBatchId,
       batchIdempotencyKey: idempotencyKey,
+      updatedBy: actor.uid,
       updatedAt,
     });
     context = {generation, pinnedRevision, dueDateValidationNowMs};
@@ -827,14 +830,15 @@ async function executeBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
   const {generation, pinnedRevision, dueDateValidationNowMs} = context;
   const request = trustedBatchRequest(generation, pinnedRevision, idempotencyKey);
   const source = {scheduleId: input.scheduleId, scheduleRevisionId: generation.scheduleRevisionId};
-  const batchResult = await createBatch({db, auth, data: request, now, source, dueDateValidationNowMs});
+  const batchResult = await createBatch({db, auth, data: request, now, source, dueDateValidationNowMs,
+    requireAuthority});
 
   if (batchResult?.batchId !== expectedBatchId) {
     fail('The billing batch returned an unexpected identity.', 'failed-precondition');
   }
   if (batchResult.resumeRequired === true) {
     await persistExecutingBatchProgress({db, auth, input, generation, pinnedRevision, idempotencyKey,
-      batchId: expectedBatchId, now});
+      batchId: expectedBatchId, now, requireAuthority});
     const latest = (await generationRef.get()).data();
     return {...reservationResult(latest, false), success: true, resumeRequired: true,
       batchProgress: latest.latestBatchProgress};
@@ -844,17 +848,17 @@ async function executeBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
     fail('The billing batch has not reached a terminal accounted state.', 'failed-precondition');
   }
   return finalizeScheduleGeneration({db, auth, input, generation, pinnedRevision, idempotencyKey,
-    batchId: expectedBatchId, now});
+    batchId: expectedBatchId, now, requireAuthority});
 }
 
 async function persistExecutingBatchProgress({db, auth, input, generation, pinnedRevision,
-  idempotencyKey, batchId, now}) {
+  idempotencyKey, batchId, now, requireAuthority}) {
   const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
   const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
   const batchRef = db.collection('billingBatches').doc(batchId);
   const batchRevisionRef = db.collection(`billingBatches/${batchId}/revisions`).doc('revision_1');
   await db.runTransaction(async tx => {
-    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const actor = await requireAuthority(db, auth, input.communityId, tx);
     const [scheduleSnapshot, generationSnapshot, batchSnapshot, batchRevisionSnapshot] = await Promise.all([
       tx.get(scheduleRef), tx.get(generationRef), tx.get(batchRef), tx.get(batchRevisionRef),
     ]);
@@ -886,20 +890,21 @@ async function persistExecutingBatchProgress({db, auth, input, generation, pinne
       batchId,
       batchIdempotencyKey: idempotencyKey,
       latestBatchProgress: batchProgress(batchSnapshot.data()),
+      updatedBy: actor.uid,
       updatedAt: Timestamp.fromMillis(now()),
     });
   });
 }
 
 async function finalizeScheduleGeneration({db, auth, input, generation, pinnedRevision,
-  idempotencyKey, batchId, now}) {
+  idempotencyKey, batchId, now, requireAuthority}) {
   const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
   const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
   const batchRef = db.collection('billingBatches').doc(batchId);
   const batchRevisionRef = db.collection(`billingBatches/${batchId}/revisions`).doc('revision_1');
   let result;
   await db.runTransaction(async tx => {
-    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const actor = await requireAuthority(db, auth, input.communityId, tx);
     const [scheduleSnapshot, generationSnapshot, batchSnapshot, batchRevisionSnapshot] = await Promise.all([
       tx.get(scheduleRef), tx.get(generationRef), tx.get(batchRef), tx.get(batchRevisionRef),
     ]);
@@ -940,6 +945,7 @@ async function finalizeScheduleGeneration({db, auth, input, generation, pinnedRe
       batchIdempotencyKey: idempotencyKey,
       latestBatchProgress: batchProgress(batchSnapshot.data()),
       terminalCounters: counters,
+      updatedBy: actor.uid,
       completedAt,
       updatedAt: completedAt,
     };

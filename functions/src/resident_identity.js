@@ -16,6 +16,7 @@ const VERIFICATION_STATUSES = new Set([
 const RESIDENT_TYPES = new Set(["owner", "tenant"]);
 const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 const PROOF_CONTENT_TYPES = new Set(["image/jpeg", "image/png"]);
+const SYSTEM_BILLING_ACTOR_ID = "system:billing-scheduler";
 
 const clean = (value) => typeof value === "string" ? value.trim() : "";
 
@@ -189,6 +190,24 @@ async function requireOperationalAdmin(db, auth, communityId, transaction) {
     throw new RegistrationError("failed-precondition", "Community is inactive or unavailable.");
   }
   return { uid, community: { id: communityId, ...communitySnapshot.data() } };
+}
+
+async function requireOperationalBillingSystem(db, communityId, transaction) {
+  if (typeof communityId !== "string" || !communityId.trim() || communityId !== communityId.trim() ||
+    Buffer.byteLength(communityId, "utf8") > 128 || /[\/\u0000-\u001f\u007f]/.test(communityId) ||
+    [".", ".."].includes(communityId) || /^__.*__$/.test(communityId)) {
+    throw new RegistrationError("invalid-argument", "A billing community is required.");
+  }
+  const communityRef = db.collection("communities").doc(communityId);
+  const communitySnapshot = transaction ? await transaction.get(communityRef) : await communityRef.get();
+  if (!communitySnapshot.exists || communitySnapshot.data()?.isActive !== true) {
+    throw new RegistrationError("failed-precondition", "Community is inactive or unavailable.");
+  }
+  return { uid: SYSTEM_BILLING_ACTOR_ID, community: { ...communitySnapshot.data(), id: communityId } };
+}
+
+function operationalBillingSystemAuthority(db, _auth, communityId, transaction) {
+  return requireOperationalBillingSystem(db, communityId, transaction);
 }
 
 function validateApprovalInput(data) {
@@ -1780,6 +1799,9 @@ async function moveOutResidentCore({ db, auth, data }) {
 
 module.exports = {
   requireOperationalAdmin,
+  requireOperationalBillingSystem,
+  operationalBillingSystemAuthority,
+  SYSTEM_BILLING_ACTOR_ID,
   VERIFICATION_STATUSES,
   canonicalResidentType,
   trustedResidentType,

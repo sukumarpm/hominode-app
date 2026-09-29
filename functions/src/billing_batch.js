@@ -236,13 +236,13 @@ function validateTrustedSource(source) {
   return {scheduleId: source.scheduleId, scheduleRevisionId: source.scheduleRevisionId};
 }
 
-async function ensureBatch(db, auth, input, now, source, dueDateValidationNowMs) {
+async function ensureBatch(db, auth, input, now, source, dueDateValidationNowMs, requireAuthority) {
   const batchId = monthlyBillingBatchId(input.communityId, input.idempotencyKey);
   const batchRef = db.collection('billingBatches').doc(batchId);
   // Preserve the exact legacy hash for existing direct V2 batch requests.
   const requestHash = source ? hash({input, source}) : hash(input);
   await db.runTransaction(async transaction => {
-    const actor = await requireOperationalAdmin(db, auth, input.communityId, transaction);
+    const actor = await requireAuthority(db, auth, input.communityId, transaction);
     const existing = await transaction.get(batchRef);
     if (existing.exists) {
       if (existing.data().requestHash !== requestHash) {
@@ -259,7 +259,7 @@ async function ensureBatch(db, auth, input, now, source, dueDateValidationNowMs)
       currency: 'INR', chargeLines: input.chargeLines, amountMinor: input.amountMinor, ...dates};
     transaction.create(batchRef, {
       ...terms, scope: input.scope, initialScope, currentRevisionId: REVISION_ID, revisionNo: 1,
-      idempotencyKey: input.idempotencyKey, requestHash, createdBy: actor.uid, createdAt,
+      idempotencyKey: input.idempotencyKey, requestHash, createdBy: actor.uid, updatedBy: actor.uid, createdAt,
       ...(source || {}),
       updatedAt: FieldValue.serverTimestamp(), status: initialScope.flatIds.length ? 'generating' : 'completed',
       generation: {targetCount: initialScope.flatIds.length, materializedCount: 0,
@@ -277,10 +277,10 @@ async function ensureBatch(db, auth, input, now, source, dueDateValidationNowMs)
   return batchId;
 }
 
-async function materializeNextPage(db, auth, input, batchId) {
+async function materializeNextPage(db, auth, input, batchId, requireAuthority) {
   const batchRef = db.collection('billingBatches').doc(batchId);
   await db.runTransaction(async transaction => {
-    await requireOperationalAdmin(db, auth, input.communityId, transaction);
+    const actor = await requireAuthority(db, auth, input.communityId, transaction);
     const batch = (await transaction.get(batchRef)).data();
     const generation = {...batch.generation};
     if (!Array.isArray(batch.initialScope.targets)) {
@@ -293,11 +293,12 @@ async function materializeNextPage(db, auth, input, batchId) {
       transaction.create(db.collection(`billingBatches/${batchId}/targets`).doc(flatId), {
         schemaVersion: 2, communityId: input.communityId, flatId, frozenAssignment,
         billId: monthlyBillIdV2(input.communityId, flatId, input.billingPeriod),
-        status: 'pending', attempts: 0, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+        status: 'pending', attempts: 0, createdBy: actor.uid, updatedBy: actor.uid,
+        createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
       });
     }
     generation.materializedCount += assignments.length;
-    transaction.update(batchRef, {generation, updatedAt: FieldValue.serverTimestamp()});
+    transaction.update(batchRef, {generation, updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp()});
   });
 }
 
@@ -315,25 +316,27 @@ function generationStatus(generation) {
   return generation.reconciliationRequired ? 'reconciliation_required' : 'completed';
 }
 
-function finishTarget(transaction, batchRef, batch, targetRef, target, status, detail = {}) {
+function finishTarget(transaction, batchRef, batch, targetRef, target, status, actorUid, detail = {}) {
   const generation = {...batch.generation};
   if (target.status === 'failed') generation.failed--;
   const counter = {completed: 'completed', skipped: 'skipped', reconciliation_required: 'reconciliationRequired', failed: 'failed'}[status];
   generation[counter]++;
-  transaction.update(targetRef, {status, reason: null, ...detail, attempts: target.attempts + 1, updatedAt: FieldValue.serverTimestamp()});
-  transaction.update(batchRef, {generation, status: generationStatus(generation), updatedAt: FieldValue.serverTimestamp()});
+  transaction.update(targetRef, {status, reason: null, ...detail, attempts: target.attempts + 1,
+    updatedBy: actorUid, updatedAt: FieldValue.serverTimestamp()});
+  transaction.update(batchRef, {generation, status: generationStatus(generation), updatedBy: actorUid,
+    updatedAt: FieldValue.serverTimestamp()});
   return status;
 }
 
-async function generateTarget(db, auth, input, batchId, flatId) {
+async function generateTarget(db, auth, input, batchId, flatId, requireAuthority) {
   const batchRef = db.collection('billingBatches').doc(batchId);
   const targetRef = db.collection(`billingBatches/${batchId}/targets`).doc(flatId);
   return db.runTransaction(async transaction => {
-    await requireOperationalAdmin(db, auth, input.communityId, transaction);
+    const actor = await requireAuthority(db, auth, input.communityId, transaction);
     const batch = (await transaction.get(batchRef)).data();
     const target = (await transaction.get(targetRef)).data();
     if (!['pending', 'failed'].includes(target.status)) return 'alreadyCompleted';
-    const finish = (status, detail) => finishTarget(transaction, batchRef, batch, targetRef, target, status, detail);
+    const finish = (status, detail) => finishTarget(transaction, batchRef, batch, targetRef, target, status, actor.uid, detail);
     const billId = target.billId;
     const billRef = db.collection('bills').doc(billId);
     const assignmentRef = db.collection('billingAssignments').doc(billId);
@@ -394,28 +397,31 @@ async function generateTarget(db, auth, input, batchId, flatId) {
       flatLabel: clean(flat.flatLabel) || clean(flat.unitLabel) || clean(flat.flatNumber) || flatId};
     transaction.create(assignmentRef, {schemaVersion: 2, communityId: input.communityId, flatId,
       billingPeriod: input.billingPeriod, billingBatchId: batchId, billId,
+      createdBy: actor.uid, updatedBy: actor.uid,
       createdAt: FieldValue.serverTimestamp()});
     transaction.create(billRef, {...terms, ...identity, adminId: batch.createdBy,
       month: MONTHS[Number(input.billingPeriod.slice(5)) - 1], year: input.billingPeriod.slice(0, 4),
       type: 'combined', status: 'pending', currentRevisionId: REVISION_ID, revisionNo: 1,
+      createdBy: actor.uid, updatedBy: actor.uid,
       createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()});
     transaction.create(db.collection(`bills/${billId}/revisions`).doc(REVISION_ID), {
       ...terms, ...identity, billId, revisionId: REVISION_ID, revisionNo: 1,
-      createdBy: batch.createdBy, createdAt: FieldValue.serverTimestamp(),
+      createdBy: actor.uid, updatedBy: actor.uid, createdAt: FieldValue.serverTimestamp(),
     });
     return finish('completed');
   });
 }
 
-async function recordFailure(db, auth, input, batchId, flatId) {
+async function recordFailure(db, auth, input, batchId, flatId, requireAuthority) {
   const batchRef = db.collection('billingBatches').doc(batchId);
   const targetRef = db.collection(`billingBatches/${batchId}/targets`).doc(flatId);
   await db.runTransaction(async transaction => {
-    await requireOperationalAdmin(db, auth, input.communityId, transaction);
+    const actor = await requireAuthority(db, auth, input.communityId, transaction);
     const batch = (await transaction.get(batchRef)).data();
     const target = (await transaction.get(targetRef)).data();
     if (!['pending', 'failed'].includes(target.status)) return;
-    finishTarget(transaction, batchRef, batch, targetRef, target, 'failed', {reason: 'generation_failed_retry_required'});
+    finishTarget(transaction, batchRef, batch, targetRef, target, 'failed', actor.uid,
+      {reason: 'generation_failed_retry_required'});
   });
 }
 
@@ -423,16 +429,16 @@ async function recordFailure(db, auth, input, batchId, flatId) {
 // false. Each call materializes <=100 targets and attempts <=100 bills. Failed
 // targets remain retryable; skipped/conflicted targets require a later workflow.
 async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, source: rawSource,
-  dueDateValidationNowMs}) {
+  dueDateValidationNowMs, requireAuthority = requireOperationalAdmin}) {
   const input = validateRequest(data);
   const source = validateTrustedSource(rawSource);
   if (dueDateValidationNowMs !== undefined && (!source || !Number.isSafeInteger(dueDateValidationNowMs) ||
       !Number.isFinite(new Date(dueDateValidationNowMs).getTime()))) {
     invalid('A trusted schedule source is required for reserved-date recovery.');
   }
-  await requireOperationalAdmin(db, auth, input.communityId);
-  const batchId = await ensureBatch(db, auth, input, now, source, dueDateValidationNowMs);
-  await materializeNextPage(db, auth, input, batchId);
+  await requireAuthority(db, auth, input.communityId);
+  const batchId = await ensureBatch(db, auth, input, now, source, dueDateValidationNowMs, requireAuthority);
+  await materializeNextPage(db, auth, input, batchId, requireAuthority);
   const batchRef = db.collection('billingBatches').doc(batchId);
   const before = (await batchRef.get()).data();
   const targets = db.collection(`billingBatches/${batchId}/targets`);
@@ -443,13 +449,13 @@ async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, 
   const unresolved = [];
   for (const target of [...pending, ...failures]) {
     try {
-      if (await generateTarget(db, auth, input, batchId, target.id) === 'completed') created++;
+      if (await generateTarget(db, auth, input, batchId, target.id, requireAuthority) === 'completed') created++;
     } catch (error) {
       if (error instanceof RegistrationError) throw error;
       unresolved.push({flatId: target.id, reason: 'generation_failed_retry_required'});
       // A storage outage can also prevent the failure checkpoint. The durable
       // pending target still permits recovery, and this call reports the error.
-      try { await recordFailure(db, auth, input, batchId, target.id); } catch (failure) {
+      try { await recordFailure(db, auth, input, batchId, target.id, requireAuthority); } catch (failure) {
         if (failure instanceof RegistrationError) throw failure;
       }
     }

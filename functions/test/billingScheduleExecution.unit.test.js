@@ -14,6 +14,7 @@ const {
   scheduleBatchIdempotencyKey,
 } = require('../src/billing_schedule');
 const {createMonthlyBillingBatchV2Core: createBatch, monthlyBillingBatchId} = require('../src/billing_batch');
+const {operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID} = require('../src/resident_identity');
 
 const auth = {uid: 'admin-1', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
 const onHonolulu = value => Date.parse(`${value}-10:00`);
@@ -48,8 +49,8 @@ function fixture({count = 1, scheduleTerms = {}} = {}) {
   const revisionPath = (scheduleId, revisionId) => `${schedulePath(scheduleId)}/revisions/${revisionId}`;
   const docs = collection => [...db.values.entries()].filter(([key]) =>
     key.startsWith(`${collection}/`) && key.split('/').length === 2);
-  const reserve = (scheduleId, billingPeriod, now = reserveNow) => reservePeriod({db, auth, now,
-    data: {communityId: 'C', scheduleId, billingPeriod}});
+  const reserve = (scheduleId, billingPeriod, now = reserveNow, options = {}) => reservePeriod({db, auth, now,
+    data: {communityId: 'C', scheduleId, billingPeriod}, ...options});
   const execute = (scheduleId, billingPeriod, now = executeAfterDue, options = {}) => executePeriod({
     db, auth, now, data: {communityId: 'C', scheduleId, billingPeriod}, ...options,
   });
@@ -120,12 +121,67 @@ test('execution is allowed after pause or stop for an already reserved period', 
   }
 });
 
+test('trusted system authority reserves and resumes execution through every batch transaction without user auth', async () => {
+  const f = fixture({count: 101});
+  const {scheduleId} = await f.create(); // Human setup remains the existing Admin flow.
+  let authorityCalls = 0;
+  const requireSystem = (db, _auth, communityId, transaction) => {
+    authorityCalls++;
+    return operationalBillingSystemAuthority(db, _auth, communityId, transaction);
+  };
+
+  await assert.rejects(reservePeriod({db: f.db, auth: undefined, now: reserveNow, requireAuthority: requireSystem,
+    data: {communityId: 'OTHER', scheduleId, billingPeriod: '2030-02'}}), {code: 'permission-denied'});
+  assert.equal(f.db.values.has(f.generationPath(scheduleId, '2030-02')), false);
+
+  await f.reserve(scheduleId, '2030-02', reserveNow, {auth: undefined, requireAuthority: requireSystem});
+  const generationPath = f.generationPath(scheduleId, '2030-02');
+  assert.equal(f.db.values.get(generationPath).createdBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(f.db.values.get(generationPath).updatedBy, SYSTEM_BILLING_ACTOR_ID);
+
+  const first = await f.execute(scheduleId, '2030-02', executeAfterDue,
+    {auth: undefined, requireAuthority: requireSystem});
+  assert.equal(first.resumeRequired, true);
+  assert.equal(first.status, 'executing');
+  assert.equal(f.db.values.get(generationPath).updatedBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(f.db.values.get(f.schedulePath(scheduleId)).generatedThroughBillingPeriod, null);
+
+  const second = await f.execute(scheduleId, '2030-02', executeAfterDue,
+    {auth: undefined, requireAuthority: requireSystem});
+  assert.equal(second.status, 'completed');
+  assert.equal(f.db.values.get(generationPath).createdBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(f.db.values.get(generationPath).updatedBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(f.db.values.get(f.schedulePath(scheduleId)).updatedBy, SYSTEM_BILLING_ACTOR_ID);
+
+  const batchId = second.batchId;
+  const batch = f.db.values.get(`billingBatches/${batchId}`);
+  const batchRevision = f.db.values.get(`billingBatches/${batchId}/revisions/revision_1`);
+  assert.equal(batch.createdBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(batch.updatedBy, SYSTEM_BILLING_ACTOR_ID);
+  assert.equal(batchRevision.createdBy, SYSTEM_BILLING_ACTOR_ID);
+  for (const flatId of ['f1', 'f101']) {
+    const target = f.db.values.get(`billingBatches/${batchId}/targets/${flatId}`);
+    const billId = target.billId;
+    const bill = f.db.values.get(`bills/${billId}`);
+    const assignment = f.db.values.get(`billingAssignments/${billId}`);
+    const billRevision = f.db.values.get(`bills/${billId}/revisions/revision_1`);
+    for (const row of [target, bill, assignment, billRevision]) {
+      assert.equal(row.createdBy, SYSTEM_BILLING_ACTOR_ID);
+      assert.equal(row.updatedBy, SYSTEM_BILLING_ACTOR_ID);
+    }
+  }
+  assert(authorityCalls >= 15, `expected authority rechecks through nested transactions, saw ${authorityCalls}`);
+  assert.equal(f.db.values.has(`admins/${SYSTEM_BILLING_ACTOR_ID}`), false);
+  assert.equal(f.db.values.has(`users/${SYSTEM_BILLING_ACTOR_ID}`), false);
+});
+
 test('client cannot inject batch terms or execute an unreserved period', async () => {
   const f = fixture();
   const created = await f.create();
   for (const extra of [
     {idempotencyKey: 'client'}, {chargeLines: newLines}, {scope: 'unit'}, {amountMinor: 1},
-    {dueDate: '2030-02-01'}, {scheduleRevisionId: 'revision_1'},
+    {dueDate: '2030-02-01'}, {scheduleRevisionId: 'revision_1'}, {systemMode: true},
+    {systemActor: 'system:billing-scheduler'}, {bypassAuth: true},
   ]) {
     await assert.rejects(executePeriod({db: f.db, auth, now: executeAfterDue,
       data: {communityId: 'C', scheduleId: created.scheduleId, billingPeriod: '2030-02', ...extra}}), {
