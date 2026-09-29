@@ -5,7 +5,10 @@ const {sosStore} = require('./helpers/sos_store');
 const {paymentCases} = require('./helpers/payment_v2_cases');
 paymentCases(test, async () => {
   const objects = new Map();
-  const bucket = {name: 'test-bucket', file: path => ({getMetadata: async () => [objects.get(path)]})};
+  const bucket = {name: 'test-bucket', file: path => ({getMetadata: async () => {
+    if (!objects.has(path)) throw Object.assign(Error('Object not found'), {code: 404});
+    return [objects.get(path)];
+  }})};
   return {db: sosStore(), bucket, upload: async (path, metadata) => objects.set(path, {
     name: path, generation: '123', size: '10', contentType: 'image/jpeg', metadata,
   })};

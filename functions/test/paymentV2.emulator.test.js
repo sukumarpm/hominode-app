@@ -149,6 +149,17 @@ test.describe('Billing V2 read-only rules', {skip: !process.env.FIRESTORE_EMULAT
       for (const uid of ['r', 'a']) await assertFails(getDoc(doc(client(uid), `${name}/own/internal/private`)));
     }
   });
+  test('paymentProofGuardsV2 stays private and cannot be bypassed by client writes', async () => {
+    await seed({'paymentProofGuardsV2/private': {schemaVersion: 2, communityId: 'C', residentId: 'r', billId: 'v1', paymentId: 'proof'}});
+    for (const uid of ['r', 'a', 'multi', 'super', null]) {
+      const db = client(uid);
+      await assertFails(getDoc(doc(db, 'paymentProofGuardsV2/private')));
+      await assertFails(getDocs(query(collection(db, 'paymentProofGuardsV2'), where('communityId', '==', 'C'), where('residentId', '==', 'r'))));
+      await assertFails(setDoc(doc(db, 'paymentProofGuardsV2/new'), {communityId: 'C', residentId: 'r'}));
+      await assertFails(updateDoc(doc(db, 'paymentProofGuardsV2/private'), {paymentId: 'other'}));
+      await assertFails(deleteDoc(doc(db, 'paymentProofGuardsV2/private')));
+    }
+  });
   test('V1 bill reads and pending proof submission retain their existing permissions', async () => {
     const resident = client('r'), admin = client('a');
     await assertSucceeds(getDoc(doc(resident, 'bills/v1')));

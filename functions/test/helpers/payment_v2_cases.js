@@ -40,11 +40,117 @@ async function fixture(environment, amounts = [1000], timeZone = 'Asia/Manila') 
     await upload(result.receiptPath, {paymentId: result.paymentId, billId: bills[n], communityId: 'C', residentUid: 'r'});
     return {...result, data, approve: (options = {}) => verify({db, bucket, auth, now, data: {paymentId: result.paymentId}, ...options})};
   };
-  const revision = (amountMinor, n = 0) => revise({db, auth, now, data: {communityId: 'C', billingBatchId: batches[n],
-    expectedRevisionId: 'revision_1', idempotencyKey: 'edit', chargeLines: lines(amountMinor)}});
-  return {db, bucket, upload, ref, get, patch, bills, batches, rows, financialState, pay, proof, revision};
+  const revision = async (amountMinor, n = 0) => {
+    const batch = await get(`billingBatches/${batches[n]}`);
+    return revise({db, auth, now, data: {communityId: 'C', billingBatchId: batches[n],
+      expectedRevisionId: batch.currentRevisionId, idempotencyKey: `edit-${batch.revisionNo + 1}`, chargeLines: lines(amountMinor)}});
+  };
+  const prepareOnly = async (extra = {}, n = 0) => {
+    const bill = await get(`bills/${bills[n]}`);
+    const data = {billId: bills[n], submittedAmountMinor: bill.outstandingAmountMinor,
+      submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'prepare-only', receiptExtension: 'png', ...extra};
+    return {...await prepare({db, auth: {uid: 'r'}, now, data}), data};
+  };
+  return {db, bucket, upload, ref, get, patch, bills, batches, rows, financialState, pay, proof, revision, prepareOnly};
 }
 function paymentCases(test, environment) {
+  test('same-key preparation retry preserves the original proof after outstanding and revision change', async () => {
+    const f = await fixture(environment), first = await f.prepareOnly();
+    const before = await f.get(`paymentProofsV2/${first.paymentId}`);
+    await f.revision(1200);
+    const retry = await prepare({db: f.db, auth: {uid: 'r'}, data: first.data, now: () => now() + 5000});
+    assert.equal(retry.paymentId, first.paymentId); assert.equal(retry.receiptPath, first.receiptPath);
+    assert.deepEqual(await f.get(`paymentProofsV2/${first.paymentId}`), before);
+    assert.equal((await f.rows('paymentProofsV2')).length, 1);
+    assert((await f.financialState()).every(rows => rows.length === 0));
+  });
+  test('different preparation key is rejected while a proof is pending, and rejection permits a new proof', async () => {
+    const f = await fixture(environment), first = await f.prepareOnly();
+    await assert.rejects(f.prepareOnly({idempotencyKey: 'second'}), {code: 'failed-precondition', message: /payment_proof_already_pending/});
+    assert.equal((await f.rows('paymentProofsV2')).length, 1);
+    await reject({db: f.db, auth, data: {paymentId: first.paymentId, rejectionReason: 'Receipt missing'}});
+    const rejected = await f.get(`paymentProofsV2/${first.paymentId}`);
+    const second = await f.prepareOnly({idempotencyKey: 'second'});
+    assert.notEqual(second.paymentId, first.paymentId);
+    const oldRetry = await prepare({db: f.db, auth: {uid: 'r'}, now, data: first.data});
+    assert.equal(oldRetry.paymentId, first.paymentId); assert.equal(oldRetry.status, 'failed');
+    await assert.rejects(f.prepareOnly({idempotencyKey: 'third'}), /payment_proof_already_pending/);
+    assert.deepEqual(await f.get(`paymentProofsV2/${first.paymentId}`), rejected);
+    assert.equal((await f.rows('paymentProofsV2')).filter(([, p]) => p.status === 'pending').length, 1);
+    assert((await f.financialState()).every(rows => rows.length === 0));
+  });
+  test('simultaneous different-key preparations create only one pending proof', async () => {
+    const f = await fixture(environment);
+    const results = await Promise.allSettled([f.prepareOnly({idempotencyKey: 'one'}), f.prepareOnly({idempotencyKey: 'two'})]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    const rejected = results.find(result => result.status === 'rejected');
+    assert.equal(rejected.reason.code, 'failed-precondition'); assert.match(rejected.reason.message, /payment_proof_already_pending/);
+    assert.equal((await f.rows('paymentProofsV2')).length, 1);
+    assert.equal((await f.rows('paymentProofGuardsV2')).length, 1);
+    assert((await f.financialState()).every(rows => rows.length === 0));
+  });
+  test('simultaneous same-key preparations return the same proof', async () => {
+    const f = await fixture(environment);
+    const results = await Promise.all([f.prepareOnly(), f.prepareOnly()]);
+    assert.equal(results[0].paymentId, results[1].paymentId);
+    assert.equal((await f.rows('paymentProofsV2')).length, 1);
+  });
+  test('pending proof predating the guard still blocks a new key', async () => {
+    const f = await fixture(environment), first = await f.prepareOnly();
+    for (const [guardId] of await f.rows('paymentProofGuardsV2')) await f.ref(`paymentProofGuardsV2/${guardId}`).delete();
+    await assert.rejects(f.prepareOnly({idempotencyKey: 'other'}), /payment_proof_already_pending/);
+    assert.equal((await f.rows('paymentProofsV2')).length, 1);
+    assert.equal((await prepare({db: f.db, auth: {uid: 'r'}, now, data: first.data})).paymentId, first.paymentId);
+  });
+  test('pending proof for another bill does not block preparation', async () => {
+    const f = await fixture(environment, [1000, 1000]);
+    const first = await f.prepareOnly(), second = await f.prepareOnly({idempotencyKey: 'other-bill'}, 1);
+    assert.notEqual(first.paymentId, second.paymentId); assert.equal((await f.rows('paymentProofsV2')).length, 2);
+  });
+  test('completed proof permits a new exact-outstanding proof after upward revision', async () => {
+    const f = await fixture(environment), first = await f.proof(); await first.approve(); await f.revision(1200);
+    const before = await f.financialState();
+    const second = await f.prepareOnly({submittedAmountMinor: 200});
+    assert.notEqual(second.paymentId, first.paymentId);
+    assert.equal((await f.get(`paymentProofsV2/${second.paymentId}`)).submittedAmountMinor, 200);
+    assert.deepEqual(await f.financialState(), before);
+  });
+  test('preparation accepts exact partial outstanding derived from immutable ledger', async () => {
+    const f = await fixture(environment); await f.pay({amountMinor: 400}); const before = await f.financialState();
+    const p = await f.prepareOnly({submittedAmountMinor: 600});
+    assert.equal((await f.get(`paymentProofsV2/${p.paymentId}`)).submittedAmountMinor, 600);
+    assert.deepEqual(await f.financialState(), before);
+  });
+  for (const submittedAmountMinor of [599, 601, 1000]) {
+    test(`preparation rejects ${submittedAmountMinor} against current outstanding 600 without any proof or money writes`, async () => {
+      const f = await fixture(environment); await f.pay({amountMinor: 400}); const before = await f.financialState();
+      await assert.rejects(f.prepareOnly({submittedAmountMinor}), {code: 'failed-precondition', message: /submitted_amount_mismatch/});
+      assert.equal((await f.rows('paymentProofsV2')).length, 0); assert.equal((await f.rows('paymentProofGuardsV2')).length, 0);
+      assert.deepEqual(await f.financialState(), before);
+    });
+  }
+  test('zero submitted amount and zero outstanding cannot prepare a new proof', async () => {
+    const f = await fixture(environment);
+    await assert.rejects(f.prepareOnly({submittedAmountMinor: 0}), {code: 'invalid-argument'});
+    await f.pay(); const before = await f.financialState();
+    await assert.rejects(f.prepareOnly({submittedAmountMinor: 1}), {code: 'failed-precondition', message: /no outstanding/});
+    assert.equal((await f.rows('paymentProofsV2')).length, 0); assert.deepEqual(await f.financialState(), before);
+  });
+  test('stale submitted revision is rejected even when the submitted amount equals current outstanding', async () => {
+    const f = await fixture(environment); await f.revision(1200);
+    await assert.rejects(f.prepareOnly({submittedAmountMinor: 1200, submittedBillRevisionId: 'revision_1'}),
+      {code: 'failed-precondition', message: /Bill revision changed/});
+    assert.equal((await f.rows('paymentProofsV2')).length, 0); assert.equal((await f.rows('paymentProofGuardsV2')).length, 0);
+  });
+  test('prepared proof without uploaded receipt cannot create any financial effects', async () => {
+    const f = await fixture(environment), p = await f.prepareOnly({idempotencyKey: 'missing-evidence'});
+    const bill = await f.get(`bills/${f.bills[0]}`), proof = await f.get(`paymentProofsV2/${p.paymentId}`);
+    await assert.rejects(verify({db: f.db, bucket: f.bucket, auth, now, data: {paymentId: p.paymentId}}),
+      {code: 'failed-precondition', message: /receipt object does not exist/});
+    assert((await f.financialState()).every(rows => rows.length === 0));
+    assert.deepEqual(await f.get(`bills/${f.bills[0]}`), bill);
+    assert.deepEqual(await f.get(`paymentProofsV2/${p.paymentId}`), proof);
+  });
   test('Direct UPI exact payment captures submitted context and atomically settles with private receipt evidence', async () => {
     const f = await fixture(environment), p = await f.proof();
     const submitted = await f.get(`paymentProofsV2/${p.paymentId}`), previous = await f.get(`bills/${f.bills[0]}/revisions/revision_1`);
@@ -119,7 +225,8 @@ function paymentCases(test, environment) {
     assert((await f.rows('residentCreditEntries')).every(([, entry]) => entry.eventType === 'issued'));
   });
   for (const kind of ['proof', 'offline']) test(`${kind} retries preserve every financial effect, including after later revision`, async () => {
-    const f = await fixture(environment), p = kind === 'proof' ? await f.proof(1300) : null;
+    const f = await fixture(environment, [kind === 'proof' ? 1300 : 1000]), p = kind === 'proof' ? await f.proof(1300) : null;
+    if (p) await f.revision(1000); // Exact at preparation; later revision creates excess at approval.
     const execute = options => p ? p.approve(options) : f.pay({amountMinor: 1300}, options);
     const first = await execute(); const before = await f.financialState();
     const retry = await execute({now: () => now() + 5000});
@@ -137,7 +244,8 @@ function paymentCases(test, environment) {
     assert.deepEqual(await f.financialState(), before);
   });
   test('move-out and replacement never change historical payment ownership', async () => {
-    const f = await fixture(environment), p = await f.proof(400);
+    const f = await fixture(environment, [400]), p = await f.proof(400);
+    await f.revision(1000);
     await f.patch('users/r', {isActive: false, status: 'moved_out', communityId: 'OTHER', flatId: null});
     await f.patch('flats/f', {residentUserId: 'replacement'});
     await p.approve(); await f.pay({amountMinor: 700});
@@ -155,7 +263,8 @@ function paymentCases(test, environment) {
     });
   }
   for (const kind of ['proof', 'offline']) test(`${kind} injected failure rolls back proof, allocations, credit, account, bill and audit`, async () => {
-    const f = await fixture(environment), p = kind === 'proof' ? await f.proof(1300) : null;
+    const f = await fixture(environment, [kind === 'proof' ? 1300 : 1000]), p = kind === 'proof' ? await f.proof(1300) : null;
+    if (p) await f.revision(1000); // Exact at preparation; later revision creates excess at approval.
     const original = f.db.runTransaction.bind(f.db), before = await f.financialState(), bill = await f.get(`bills/${f.bills[0]}`);
     f.db.runTransaction = fn => original(async tx => {
       const create = tx.create.bind(tx);
@@ -201,7 +310,8 @@ function paymentCases(test, environment) {
     assert((await f.financialState()).every(rows => rows.length === 0));
   });
   test('preparation and offline requests reject forged balances, overdue and unsupported methods', async () => {
-    const f = await fixture(environment), p = await f.proof(400);
+    const f = await fixture(environment, [400]), p = await f.proof(400);
+    await f.revision(1000);
     for (const extra of [{outstandingAmountMinor: 2}, {isOverdue: false}, {amountMinor: 0}, {amountMinor: 0.1},
       {amountMinor: Number.MAX_SAFE_INTEGER + 1}, {paymentMethod: 'manual'}, {paymentMethod: 'upi'}]) await assert.rejects(f.pay(extra), {code: 'invalid-argument'});
     await assert.rejects(prepare({db: f.db, auth: {uid: 'other'}, now, data: p.data}));
@@ -260,14 +370,16 @@ function paymentCases(test, environment) {
     assert.equal((await f.rows('residentFinancialAccounts'))[0][1].version, 1); assert.equal((await f.rows('residentCreditEntries')).length, 1);
   });
   test('simultaneous proof and offline payments serialize account and cannot overallocate a bill', async () => {
-    const f = await fixture(environment), p = await f.proof(600);
+    const f = await fixture(environment, [600]), p = await f.proof(600);
+    await f.revision(1000);
     await Promise.all([p.approve(), f.pay({amountMinor: 600})]);
     assert.equal((await f.get(`bills/${f.bills[0]}`)).paidAmountMinor, 1000);
     const account = (await f.rows('residentFinancialAccounts'))[0][1]; assert.equal(account.availableCreditMinor, 200); assert.equal(account.version, 2);
     assert.equal((await f.rows('paymentTransactions')).length, 2);
   });
   test('simultaneous approval of the same proof creates exactly one payment and audit', async () => {
-    const f = await fixture(environment), p = await f.proof(1300);
+    const f = await fixture(environment, [1300]), p = await f.proof(1300);
+    await f.revision(1000);
     const results = await Promise.all([p.approve(), p.approve()]);
     assert.equal(results[0].transactionId, results[1].transactionId);
     assert.equal(results.filter(r => r.alreadyCompleted).length, 1);

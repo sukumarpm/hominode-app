@@ -167,6 +167,25 @@ async function preparePaymentProofV2Core({db, auth, data, now = Date.now}) {
     }
     const doc = await tx.get(db.collection('bills').doc(request.billId)), bill = doc.data();
     check(bill?.residentId === uid, 'Bill does not belong to this resident.');
+    // Different idempotency keys must contend on the same document, not just
+    // query an initially empty proof collection. The referenced proof's status
+    // is authoritative, so rejection/completion permits a later fresh intent
+    // without an old reviewer being able to clear a newer reservation.
+    const guardRef = db.collection('paymentProofGuardsV2').doc(`proof_guard_v2_${hash([uid, request.billId])}`);
+    const guard = (await tx.get(guardRef)).data();
+    if (guard) {
+      check(guard.schemaVersion === 2 && guard.residentId === uid && guard.billId === request.billId &&
+        guard.communityId === bill.communityId && validId(guard.paymentId), 'invalid_pending_proof_guard');
+      const guardedProof = (await tx.get(db.collection('paymentProofsV2').doc(guard.paymentId))).data();
+      check(guardedProof?.id === guard.paymentId && guardedProof.residentId === uid &&
+        guardedProof.billId === request.billId && guardedProof.communityId === bill.communityId &&
+        ['pending', 'failed', 'completed'].includes(guardedProof.status), 'invalid_pending_proof_guard');
+      check(guardedProof.status !== 'pending', 'payment_proof_already_pending: this resident already has a pending proof for this bill');
+    }
+    // Include pending proofs created before guards were introduced.
+    const pending = await tx.get(db.collection('paymentProofsV2').where('residentId', '==', uid)
+      .where('billId', '==', request.billId).where('status', '==', 'pending').limit(1));
+    check(pending.empty, 'payment_proof_already_pending: this resident already has a pending proof for this bill');
     const resident = (await tx.get(db.collection('users').doc(uid))).data();
     const community = (await tx.get(db.collection('communities').doc(id(bill.communityId)))).data();
     check(resident?.uid === uid && resident.role === 'resident' && community?.isActive === true, 'Resident/community is unavailable.');
@@ -176,11 +195,15 @@ async function preparePaymentProofV2Core({db, auth, data, now = Date.now}) {
     const checked = await verifyProjection(db, tx, entry, scope, history, nowMs);
     check(bill.currentRevisionId === request.submittedBillRevisionId, 'Bill revision changed; refresh before preparing payment.');
     check(checked.outstandingAmountMinor > 0, 'This bill has no outstanding liability.');
+    check(request.submittedAmountMinor === checked.outstandingAmountMinor,
+      'submitted_amount_mismatch: submittedAmountMinor must equal the current outstandingAmountMinor; refresh before preparing payment');
     const receiptPath = `payment_receipts/${scope.communityId}/${request.billId}/${uid}/${paymentId}.${request.receiptExtension}`;
     tx.create(ref, {schemaVersion: 2, id: paymentId, ...scope, userId: uid, billId: request.billId,
       submittedAmountMinor: request.submittedAmountMinor, submittedBillRevisionId: request.submittedBillRevisionId,
       submittedAt: Timestamp.fromMillis(nowMs), provider: 'direct_upi', method: 'upi', verificationMode: 'manual',
       evidenceType: 'receipt', status: 'pending', receiptPath, paymentReference: request.paymentReference, requestHash: hash(request)});
+    tx.set(guardRef, {schemaVersion: 2, communityId: scope.communityId, residentId: uid,
+      billId: request.billId, paymentId, updatedAt: stamp()});
     return {paymentId, receiptPath, status: 'pending'};
   });
 }
