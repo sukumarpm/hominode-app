@@ -137,6 +137,58 @@ class BillingService {
         });
   }
 
+  /// Streams the newest pending V2 proof for a bill, isolated from V1 payments.
+  Stream<Map<String, dynamic>?> streamPendingV2PaymentProofForBill({
+    required String communityId,
+    required String billId,
+  }) {
+    if (communityId.trim().isEmpty || billId.trim().isEmpty) {
+      return Stream.value(null);
+    }
+    return _firestore
+        .collection('paymentProofsV2')
+        .where('communityId', isEqualTo: communityId)
+        .where('billId', isEqualTo: billId)
+        .snapshots()
+        .map((snapshot) {
+          final pending = snapshot.docs.where((doc) {
+            final data = doc.data();
+            return data['schemaVersion'] == 2 &&
+                data['communityId'] == communityId &&
+                data['billId'] == billId &&
+                data['status'] == 'pending' &&
+                data['residentId'] is String &&
+                (data['residentId'] as String).trim().isNotEmpty &&
+                data['userId'] == data['residentId'] &&
+                data['id'] == doc.id &&
+                data['currency'] == 'INR' &&
+                data['submittedAmountMinor'] is int &&
+                (data['submittedAmountMinor'] as int) > 0 &&
+                (data['submittedAmountMinor'] as int) <= 9007199254740991 &&
+                data['receiptPath'] is String &&
+                (data['receiptPath'] as String).trim().isNotEmpty &&
+                (data['receiptPath'] as String).startsWith(
+                  'payment_receipts/$communityId/$billId/'
+                  '${data['residentId']}/${doc.id}.',
+                ) &&
+                data['submittedAt'] is Timestamp;
+          }).toList();
+          if (pending.isEmpty) return null;
+          pending.sort((a, b) {
+            final aDate = a.data()['submittedAt'];
+            final bDate = b.data()['submittedAt'];
+            final aMillis = aDate is Timestamp
+                ? aDate.millisecondsSinceEpoch
+                : 0;
+            final bMillis = bDate is Timestamp
+                ? bDate.millisecondsSinceEpoch
+                : 0;
+            return bMillis.compareTo(aMillis);
+          });
+          return {...pending.first.data(), 'id': pending.first.id};
+        });
+  }
+
   Future<Uint8List> loadPaymentReceipt(String receiptPath) async {
     if (receiptPath.trim().isEmpty) {
       throw Exception('Payment receipt path is missing');
@@ -160,6 +212,14 @@ class BillingService {
     await callable.call({'paymentId': paymentId});
   }
 
+  Future<void> verifyPaymentProofV2(String paymentId) async {
+    final id = paymentId.trim();
+    if (id.isEmpty) throw ArgumentError.value(paymentId, 'paymentId');
+    await _functions.httpsCallable('verifyPaymentProofV2').call({
+      'paymentId': id,
+    });
+  }
+
   Future<void> rejectPaymentProof({
     required String paymentId,
     required String rejectionReason,
@@ -170,6 +230,68 @@ class BillingService {
       'paymentId': paymentId,
       'rejectionReason': rejectionReason.trim(),
     });
+  }
+
+  Future<void> rejectPaymentProofV2({
+    required String paymentId,
+    required String rejectionReason,
+  }) async {
+    final id = paymentId.trim();
+    final reason = rejectionReason.trim();
+    if (id.isEmpty) throw ArgumentError.value(paymentId, 'paymentId');
+    if (reason.isEmpty || reason.length > 1000) {
+      throw ArgumentError.value(rejectionReason, 'rejectionReason');
+    }
+    await _functions.httpsCallable('rejectPaymentProofV2').call({
+      'paymentId': id,
+      'rejectionReason': reason,
+    });
+  }
+
+  Future<Map<String, dynamic>> recordOfflinePaymentV2({
+    required String communityId,
+    required String residentId,
+    required int amountMinor,
+    required String paymentMethod,
+    String? paymentReference,
+    required String idempotencyKey,
+  }) async {
+    const safeIntegerMax = 9007199254740991;
+    final community = communityId.trim();
+    final resident = residentId.trim();
+    final reference = paymentReference?.trim();
+    if (community.isEmpty) {
+      throw ArgumentError.value(communityId, 'communityId');
+    }
+    if (resident.isEmpty) {
+      throw ArgumentError.value(residentId, 'residentId');
+    }
+    if (amountMinor <= 0 || amountMinor > safeIntegerMax) {
+      throw ArgumentError.value(amountMinor, 'amountMinor');
+    }
+    if (!const {'cash', 'bank_transfer', 'cheque'}.contains(paymentMethod)) {
+      throw ArgumentError.value(paymentMethod, 'paymentMethod');
+    }
+    if (idempotencyKey.trim().isEmpty) {
+      throw ArgumentError.value(idempotencyKey, 'idempotencyKey');
+    }
+    if (reference != null && reference.length > 200) {
+      throw ArgumentError.value(paymentReference, 'paymentReference');
+    }
+    final response = await _functions
+        .httpsCallable('recordOfflinePaymentV2')
+        .call({
+          'communityId': community,
+          'residentId': resident,
+          'amountMinor': amountMinor,
+          'paymentMethod': paymentMethod,
+          'paymentReference': reference == null || reference.isEmpty
+              ? null
+              : reference,
+          // The UI owns attempt creation; retries must pass this same key.
+          'idempotencyKey': idempotencyKey,
+        });
+    return Map<String, dynamic>.from(response.data as Map);
   }
 
   final FirebaseStorage _storage = FirebaseStorage.instance;
@@ -586,6 +708,15 @@ class BillModel {
   final String? settledBy;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final int? schemaVersion;
+  final String? currency;
+  final int? amountMinor;
+  final int? paidAmountMinor;
+  final int? creditAppliedMinor;
+  final int? outstandingAmountMinor;
+  final String? currentRevisionId;
+  final String? billingPeriod;
+  final List<BillChargeLine> chargeLines;
 
   BillModel({
     required this.id,
@@ -613,9 +744,48 @@ class BillModel {
     this.settledBy,
     this.createdAt,
     this.updatedAt,
+    this.schemaVersion,
+    this.currency,
+    this.amountMinor,
+    this.paidAmountMinor,
+    this.creditAppliedMinor,
+    this.outstandingAmountMinor,
+    this.currentRevisionId,
+    this.billingPeriod,
+    this.chargeLines = const [],
   });
 
   String get normalizedPaymentMethod => formatPaymentMethod(paymentMethod);
+  bool get isV2 => schemaVersion == 2;
+
+  bool get hasValidInrV2Financials =>
+      isV2 &&
+      currency == 'INR' &&
+      _isSafeMinor(amountMinor) &&
+      _isSafeMinor(paidAmountMinor) &&
+      _isSafeMinor(creditAppliedMinor) &&
+      _isSafeMinor(outstandingAmountMinor) &&
+      amountMinor! > 0 &&
+      paidAmountMinor! <= amountMinor! &&
+      creditAppliedMinor! <= amountMinor! - paidAmountMinor! &&
+      outstandingAmountMinor! ==
+          amountMinor! - paidAmountMinor! - creditAppliedMinor! &&
+      currentRevisionId?.trim().isNotEmpty == true;
+
+  bool get isCurrentV2Liability =>
+      hasValidInrV2Financials &&
+      const {'pending', 'overdue', 'partially_paid'}.contains(status) &&
+      outstandingAmountMinor! > 0;
+
+  bool get isSettledV2 =>
+      hasValidInrV2Financials &&
+      (const {'paid', 'settled'}.contains(status) ||
+          outstandingAmountMinor == 0);
+
+  String formatV2MinorAmount(int? minorUnits) =>
+      hasValidInrV2Financials && _isSafeMinor(minorUnits)
+      ? formatInrMinorUnits(minorUnits!)
+      : 'Unavailable';
 
   factory BillModel.fromMap(String id, Map<String, dynamic> data) {
     // Parse charge breakdown if it exists
@@ -661,6 +831,29 @@ class BillModel {
           : null,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+      schemaVersion: data['schemaVersion'] is int
+          ? data['schemaVersion'] as int
+          : null,
+      currency: data['currency'] is String ? data['currency'] as String : null,
+      amountMinor: data['amountMinor'] is int
+          ? data['amountMinor'] as int
+          : null,
+      paidAmountMinor: data['paidAmountMinor'] is int
+          ? data['paidAmountMinor'] as int
+          : null,
+      creditAppliedMinor: data['creditAppliedMinor'] is int
+          ? data['creditAppliedMinor'] as int
+          : null,
+      outstandingAmountMinor: data['outstandingAmountMinor'] is int
+          ? data['outstandingAmountMinor'] as int
+          : null,
+      currentRevisionId: data['currentRevisionId'] is String
+          ? data['currentRevisionId'] as String
+          : null,
+      billingPeriod: data['billingPeriod'] is String
+          ? data['billingPeriod'] as String
+          : null,
+      chargeLines: _parseChargeLines(data['chargeLines']),
     );
   }
 
@@ -690,6 +883,76 @@ class BillModel {
       'settledBy': settledBy,
       'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : null,
       'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
+      if (isV2) ...{
+        'schemaVersion': schemaVersion,
+        'currency': currency,
+        'amountMinor': amountMinor,
+        'paidAmountMinor': paidAmountMinor,
+        'creditAppliedMinor': creditAppliedMinor,
+        'outstandingAmountMinor': outstandingAmountMinor,
+        'currentRevisionId': currentRevisionId,
+        'billingPeriod': billingPeriod,
+        'chargeLines': chargeLines.map((line) => line.toMap()).toList(),
+      },
     };
   }
+}
+
+class BillChargeLine {
+  final String lineId;
+  final String label;
+  final int amountMinor;
+
+  const BillChargeLine({
+    required this.lineId,
+    required this.label,
+    required this.amountMinor,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'lineId': lineId,
+    'label': label,
+    'amountMinor': amountMinor,
+  };
+}
+
+bool _isSafeMinor(Object? value) =>
+    value is int && value >= 0 && value <= 9007199254740991;
+
+String formatInrMinorUnits(int minorUnits) {
+  if (!_isSafeMinor(minorUnits)) return 'Unavailable';
+  final digits = minorUnits.toString().padLeft(3, '0');
+  final rupees = digits.substring(0, digits.length - 2);
+  final paise = digits.substring(digits.length - 2);
+  var grouped = rupees;
+  if (rupees.length > 3) {
+    final prefix = rupees.substring(0, rupees.length - 3);
+    final groups = <String>[];
+    var end = prefix.length;
+    while (end > 2) {
+      groups.insert(0, prefix.substring(end - 2, end));
+      end -= 2;
+    }
+    if (end > 0) groups.insert(0, prefix.substring(0, end));
+    grouped = '${groups.join(',')},${rupees.substring(rupees.length - 3)}';
+  }
+  return '₹$grouped.$paise';
+}
+
+List<BillChargeLine> _parseChargeLines(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((raw) {
+        final line = Map<String, dynamic>.from(raw);
+        final amountMinor = line['amountMinor'];
+        if (!_isSafeMinor(amountMinor)) return null;
+        return BillChargeLine(
+          lineId: line['lineId'] is String ? line['lineId'] as String : '',
+          label: line['label'] is String ? line['label'] as String : '',
+          amountMinor: amountMinor as int,
+        );
+      })
+      .whereType<BillChargeLine>()
+      .toList();
 }
