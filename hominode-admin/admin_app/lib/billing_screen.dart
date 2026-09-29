@@ -1,7 +1,9 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:excel/excel.dart' as xls;
 import 'package:firebase_auth/firebase_auth.dart';
@@ -14,6 +16,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'desktop/admin_desktop_page_frame.dart';
 import 'services/admin_tenant_context.dart';
@@ -34,6 +37,119 @@ bool isAdminBillingCurrentBill(BillModel bill) {
   }
   // Keep malformed V2 records visible so admins see an unavailable state.
   return !isAdminBillingHistoryBill(bill);
+}
+
+const _maxSafeMinorAmount = 9007199254740991;
+
+int? parseInrRupeesToMinorUnits(String input) {
+  final match = RegExp(r'^(\d+)(?:\.(\d{1,2}))?$').firstMatch(input.trim());
+  if (match == null) return null;
+  final wholeRupees = int.tryParse(match.group(1)!);
+  if (wholeRupees == null || wholeRupees > _maxSafeMinorAmount ~/ 100) {
+    return null;
+  }
+  final paiseText = (match.group(2) ?? '').padRight(2, '0');
+  final minorUnits = wholeRupees * 100 + (int.tryParse(paiseText) ?? 0);
+  if (minorUnits <= 0 || minorUnits > _maxSafeMinorAmount) return null;
+  return minorUnits;
+}
+
+String createOfflinePaymentIdempotencyKey({DateTime? now, Random? random}) {
+  final source = random ?? Random.secure();
+  final entropy = List<int>.generate(16, (_) => source.nextInt(256));
+  final token = base64UrlEncode(entropy).replaceAll('=', '');
+  return 'offline_${(now ?? DateTime.now()).microsecondsSinceEpoch}_$token';
+}
+
+class OfflinePaymentAttempt {
+  final String communityId;
+  final String residentId;
+  final int amountMinor;
+  final String paymentMethod;
+  final String? paymentReference;
+  final String idempotencyKey;
+
+  const OfflinePaymentAttempt({
+    required this.communityId,
+    required this.residentId,
+    required this.amountMinor,
+    required this.paymentMethod,
+    required this.paymentReference,
+    required this.idempotencyKey,
+  });
+
+  static OfflinePaymentAttempt? tryParse(String value) {
+    try {
+      final raw = jsonDecode(value);
+      if (raw is! Map<String, dynamic>) return null;
+      final communityId = raw['communityId'];
+      final residentId = raw['residentId'];
+      final amountMinor = raw['amountMinor'];
+      final paymentMethod = raw['paymentMethod'];
+      final paymentReference = raw['paymentReference'];
+      final idempotencyKey = raw['idempotencyKey'];
+      if (communityId is! String ||
+          communityId.trim().isEmpty ||
+          communityId != communityId.trim()) {
+        return null;
+      }
+      if (residentId is! String ||
+          residentId.trim().isEmpty ||
+          residentId != residentId.trim()) {
+        return null;
+      }
+      if (amountMinor is! int ||
+          amountMinor <= 0 ||
+          amountMinor > _maxSafeMinorAmount) {
+        return null;
+      }
+      if (!const {'cash', 'bank_transfer', 'cheque'}.contains(paymentMethod)) {
+        return null;
+      }
+      if (paymentReference != null &&
+          (paymentReference is! String ||
+              paymentReference.trim().isEmpty ||
+              paymentReference != paymentReference.trim() ||
+              paymentReference.length > 200)) {
+        return null;
+      }
+      if (idempotencyKey is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(idempotencyKey)) {
+        return null;
+      }
+      return OfflinePaymentAttempt(
+        communityId: communityId,
+        residentId: residentId,
+        amountMinor: amountMinor,
+        paymentMethod: paymentMethod as String,
+        paymentReference: paymentReference as String?,
+        idempotencyKey: idempotencyKey,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, dynamic> toJson() => {
+    'communityId': communityId,
+    'residentId': residentId,
+    'amountMinor': amountMinor,
+    'paymentMethod': paymentMethod,
+    'paymentReference': paymentReference,
+    'idempotencyKey': idempotencyKey,
+  };
+}
+
+class _OfflinePaymentInput {
+  final int amountMinor;
+  final String paymentMethod;
+  final String? paymentReference;
+
+  const _OfflinePaymentInput({
+    required this.amountMinor,
+    required this.paymentMethod,
+    required this.paymentReference,
+  });
 }
 
 // ============================================================================
@@ -93,6 +209,7 @@ class _BillingScreenState extends State<BillingScreen> {
   String get _adminId => FirebaseAuth.instance.currentUser?.uid ?? '';
   Timer? _searchDebounce;
   final Map<String, Stream<Map<String, dynamic>?>> _paymentProofStreams = {};
+  final Set<String> _offlinePaymentScopesInProgress = {};
 
   late String _exportRange = 'filtered';
 
@@ -1130,17 +1247,33 @@ class _BillingScreenState extends State<BillingScreen> {
 
   Widget _buildNormalPendingBillActions(BillModel bill) {
     if (bill.isV2) {
+      if (!bill.hasValidInrV2Financials || !bill.isCurrentV2Liability) {
+        return const Text('Offline payment recording unavailable');
+      }
       return Column(
         children: [
-          OutlinedButton.icon(
-            onPressed: () => _onSendReminder(bill),
-            icon: Icon(Icons.send_outlined, size: 16.w),
-            label: const Text('Remind'),
-          ),
-          SizedBox(height: 8.h),
-          const Text(
-            'Offline payment recording available in the next Billing V2 step',
-            textAlign: TextAlign.center,
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _onSendReminder(bill),
+                  icon: Icon(Icons.send_outlined, size: 16.w),
+                  label: const Text('Remind'),
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _onRecordOfflinePayment(bill),
+                  icon: Icon(Icons.payments_outlined, size: 16.w),
+                  label: const Text('Record Offline Payment'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       );
@@ -1551,6 +1684,376 @@ class _BillingScreenState extends State<BillingScreen> {
     // TODO: Integrate with push/SMS/WhatsApp APIs
     // - POST /api/bills/{id}/send-reminder
     // - Send notification via preferred channel
+  }
+
+  String _offlinePaymentAttemptKey(String communityId, String residentId) =>
+      'admin_v2_offline_payment:${base64UrlEncode(utf8.encode(jsonEncode([communityId, residentId]))).replaceAll('=', '')}';
+
+  Future<void> _onRecordOfflinePayment(BillModel bill) async {
+    if (!bill.isV2 ||
+        !bill.hasValidInrV2Financials ||
+        !bill.isCurrentV2Liability ||
+        bill.communityId.trim().isEmpty ||
+        bill.residentId.trim().isEmpty) {
+      return;
+    }
+    final scope = '${bill.communityId}:${bill.residentId}';
+    if (!_offlinePaymentScopesInProgress.add(scope)) return;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final preferenceKey = _offlinePaymentAttemptKey(
+        bill.communityId,
+        bill.residentId,
+      );
+      final saved = preferences.getString(preferenceKey);
+      if (saved != null) {
+        final existingAttempt = OfflinePaymentAttempt.tryParse(saved);
+        if (existingAttempt == null ||
+            existingAttempt.communityId != bill.communityId ||
+            existingAttempt.residentId != bill.residentId) {
+          await _showOfflineAttemptStorageError();
+          return;
+        }
+        final retry = await _confirmRetryOfflinePayment(existingAttempt);
+        if (retry == true) {
+          await _submitOfflinePaymentAttempt(
+            existingAttempt,
+            preferences,
+            preferenceKey,
+          );
+        }
+        return;
+      }
+
+      final input = await _showOfflinePaymentEntryDialog(bill);
+      if (input == null) return;
+      final attempt = OfflinePaymentAttempt(
+        communityId: bill.communityId,
+        residentId: bill.residentId,
+        amountMinor: input.amountMinor,
+        paymentMethod: input.paymentMethod,
+        paymentReference: input.paymentReference,
+        idempotencyKey: createOfflinePaymentIdempotencyKey(),
+      );
+      final persisted = await preferences.setString(
+        preferenceKey,
+        jsonEncode(attempt.toJson()),
+      );
+      if (!persisted) {
+        await _showOfflineAttemptStorageError();
+        return;
+      }
+      await _submitOfflinePaymentAttempt(attempt, preferences, preferenceKey);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Offline payment could not be started: $error'),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
+      );
+    } finally {
+      _offlinePaymentScopesInProgress.remove(scope);
+    }
+  }
+
+  Future<_OfflinePaymentInput?> _showOfflinePaymentEntryDialog(
+    BillModel bill,
+  ) async {
+    final amountController = TextEditingController();
+    final referenceController = TextEditingController();
+    var paymentMethod = 'cash';
+    var validationMessage = '';
+    try {
+      return await showDialog<_OfflinePaymentInput>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Record Offline Payment'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Payment received for the resident account.'),
+                  SizedBox(height: 12.h),
+                  Text('Resident: ${bill.residentName}'),
+                  Text('Flat / unit: ${bill.flatLabel}'),
+                  Text(
+                    'Selected bill outstanding (context only): '
+                    '${bill.formatV2MinorAmount(bill.outstandingAmountMinor)}',
+                  ),
+                  SizedBox(height: 12.h),
+                  const Text(
+                    'This payment is applied to the resident\'s oldest eligible '
+                    'outstanding bills first. It may not apply only to the bill '
+                    'shown here. Any excess becomes resident credit.',
+                  ),
+                  SizedBox(height: 16.h),
+                  TextField(
+                    controller: amountController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Payment amount (₹)',
+                      hintText: '0.00',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  SizedBox(height: 12.h),
+                  DropdownButtonFormField<String>(
+                    initialValue: paymentMethod,
+                    decoration: const InputDecoration(
+                      labelText: 'Payment method',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                      DropdownMenuItem(
+                        value: 'bank_transfer',
+                        child: Text('Bank Transfer'),
+                      ),
+                      DropdownMenuItem(value: 'cheque', child: Text('Cheque')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setDialogState(() => paymentMethod = value);
+                      }
+                    },
+                  ),
+                  SizedBox(height: 12.h),
+                  TextField(
+                    controller: referenceController,
+                    maxLength: 200,
+                    decoration: const InputDecoration(
+                      labelText: 'Reference (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (validationMessage.isNotEmpty) ...[
+                    SizedBox(height: 8.h),
+                    Text(
+                      validationMessage,
+                      style: const TextStyle(color: Color(0xFFDC2626)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final amountMinor = parseInrRupeesToMinorUnits(
+                    amountController.text,
+                  );
+                  if (amountMinor == null) {
+                    setDialogState(
+                      () => validationMessage =
+                          'Enter a positive INR amount with at most two decimal places.',
+                    );
+                    return;
+                  }
+                  final reference = referenceController.text.trim();
+                  if (reference.length > 200) {
+                    setDialogState(
+                      () => validationMessage =
+                          'Reference must be 200 characters or fewer.',
+                    );
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(
+                    _OfflinePaymentInput(
+                      amountMinor: amountMinor,
+                      paymentMethod: paymentMethod,
+                      paymentReference: reference.isEmpty ? null : reference,
+                    ),
+                  );
+                },
+                child: const Text('Continue'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      amountController.dispose();
+      referenceController.dispose();
+    }
+  }
+
+  Future<bool?> _confirmRetryOfflinePayment(OfflinePaymentAttempt attempt) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unresolved Offline Payment'),
+        content: Text(
+          'A previous request for ${formatInrMinorUnits(attempt.amountMinor)} '
+          '(${formatPaymentMethod(attempt.paymentMethod)}) has no confirmed result. '
+          'Retry the exact saved request before starting another payment?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Retry Saved Payment'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showOfflineAttemptStorageError() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Saved Payment Needs Review'),
+      content: const Text(
+        'The saved offline payment attempt could not be read or stored safely. '
+        'No new payment was submitted.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _submitOfflinePaymentAttempt(
+    OfflinePaymentAttempt attempt,
+    SharedPreferences preferences,
+    String preferenceKey,
+  ) async {
+    while (mounted) {
+      try {
+        final result = await _billingService.recordOfflinePaymentV2(
+          communityId: attempt.communityId,
+          residentId: attempt.residentId,
+          amountMinor: attempt.amountMinor,
+          paymentMethod: attempt.paymentMethod,
+          paymentReference: attempt.paymentReference,
+          idempotencyKey: attempt.idempotencyKey,
+        );
+        if (result['success'] != true) {
+          throw StateError('The callable did not confirm a successful result.');
+        }
+        await preferences.remove(preferenceKey);
+        await _showOfflinePaymentResult(attempt, result);
+        return;
+      } catch (error) {
+        if (!mounted) return;
+        final retry = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Payment Result Unresolved'),
+            content: Text(
+              'The request may have reached the server. The exact payment '
+              'attempt is saved and will not be replaced. Retry it to recover '
+              'the result.\n\n$error',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Close'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Retry Saved Payment'),
+              ),
+            ],
+          ),
+        );
+        if (retry != true) return;
+      }
+    }
+  }
+
+  Future<void> _showOfflinePaymentResult(
+    OfflinePaymentAttempt attempt,
+    Map<String, dynamic> result,
+  ) {
+    final alreadyCompleted = result['alreadyCompleted'] == true;
+    final transactionId = result['transactionId'] is String
+        ? result['transactionId'] as String
+        : 'Unavailable';
+    final allocations = result['allocations'] is List
+        ? result['allocations'] as List
+        : const [];
+    final excessCreditMinor = result['excessCreditMinor'];
+    final allocationLines = allocations
+        .whereType<Map>()
+        .map((raw) {
+          final allocation = Map<String, dynamic>.from(raw);
+          final billId = allocation['billId'];
+          final amountMinor = allocation['amountMinor'];
+          if (billId is! String ||
+              billId.isEmpty ||
+              amountMinor is! int ||
+              amountMinor <= 0 ||
+              amountMinor > _maxSafeMinorAmount) {
+            return null;
+          }
+          return '$billId: ${formatInrMinorUnits(amountMinor)}';
+        })
+        .whereType<String>()
+        .toList();
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          alreadyCompleted ? 'Payment Recovered' : 'Payment Recorded',
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                alreadyCompleted
+                    ? 'Payment already recorded. The previous request was recovered safely.'
+                    : 'Payment recorded for the resident account.',
+              ),
+              SizedBox(height: 12.h),
+              Text('Transaction ID: $transactionId'),
+              Text(
+                'Payment amount: ${formatInrMinorUnits(attempt.amountMinor)}',
+              ),
+              Text('Allocations: ${allocations.length}'),
+              if (allocationLines.isNotEmpty) ...[
+                SizedBox(height: 8.h),
+                for (final line in allocationLines) Text(line),
+              ],
+              if (excessCreditMinor is int &&
+                  excessCreditMinor > 0 &&
+                  excessCreditMinor <= _maxSafeMinorAmount) ...[
+                SizedBox(height: 8.h),
+                Text(
+                  'Excess resident credit: '
+                  '${formatInrMinorUnits(excessCreditMinor)}',
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _onRecordPayment(BillModel bill) async {
