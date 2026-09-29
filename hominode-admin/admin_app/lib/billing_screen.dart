@@ -23,6 +23,19 @@ import 'widgets/create_monthly_bill_modal.dart';
 import 'widgets/standard_bottom_nav.dart';
 import 'widgets/standard_header.dart';
 
+bool isAdminBillingHistoryBill(BillModel bill) {
+  if (!bill.isV2) return bill.status == 'paid';
+  return bill.hasValidInrV2Financials && bill.isSettledV2;
+}
+
+bool isAdminBillingCurrentBill(BillModel bill) {
+  if (!bill.isV2) {
+    return bill.status == 'pending' || bill.status == 'overdue';
+  }
+  // Keep malformed V2 records visible so admins see an unavailable state.
+  return !isAdminBillingHistoryBill(bill);
+}
+
 // ============================================================================
 // MAIN BILLING SCREEN
 // ============================================================================
@@ -87,14 +100,20 @@ class _BillingScreenState extends State<BillingScreen> {
   DateTime? _exportToDate;
 
   Stream<Map<String, dynamic>?> _paymentProofStreamForBill(BillModel bill) {
-    final key = '${bill.communityId}:${bill.id}';
+    final version = bill.isV2 ? 'v2' : 'v1';
+    final key = '$version:${bill.communityId}:${bill.id}';
 
     return _paymentProofStreams.putIfAbsent(
       key,
-      () => _billingService.streamPendingPaymentForBill(
-        communityId: bill.communityId,
-        billId: bill.id,
-      ),
+      () => bill.isV2
+          ? _billingService.streamPendingV2PaymentProofForBill(
+              communityId: bill.communityId,
+              billId: bill.id,
+            )
+          : _billingService.streamPendingPaymentForBill(
+              communityId: bill.communityId,
+              billId: bill.id,
+            ),
     );
   }
 
@@ -304,7 +323,12 @@ class _BillingScreenState extends State<BillingScreen> {
 
   List<BillModel> _getBillsForExport(List<BillModel> allBills) {
     // First apply the same search / advanced filters shown on screen.
-    var bills = _filterBills(allBills, paymentHistory: _selectedTab == 1);
+    // V2 reporting/export totals are deferred; keep these V1 decimal reports
+    // from treating the V2 compatibility amount as financial data.
+    var bills = _filterBills(
+      allBills.where((bill) => !bill.isV2).toList(),
+      paymentHistory: _selectedTab == 1,
+    );
 
     final now = DateTime.now();
 
@@ -388,11 +412,11 @@ class _BillingScreenState extends State<BillingScreen> {
     return bills.where((bill) {
       // Tab filter
       if (paymentHistory) {
-        if (bill.status != 'paid') {
+        if (!isAdminBillingHistoryBill(bill)) {
           return false;
         }
       } else {
-        if (bill.status != 'pending' && bill.status != 'overdue') {
+        if (!isAdminBillingCurrentBill(bill)) {
           return false;
         }
       }
@@ -405,6 +429,7 @@ class _BillingScreenState extends State<BillingScreen> {
           bill.id,
           bill.month,
           bill.year,
+          bill.billingPeriod ?? '',
           bill.status,
         ].join(' ').toLowerCase();
 
@@ -431,12 +456,16 @@ class _BillingScreenState extends State<BillingScreen> {
       }
 
       // Minimum amount
-      if (_minAmountFilter != null && bill.amount < _minAmountFilter!) {
+      if (!bill.isV2 &&
+          _minAmountFilter != null &&
+          bill.amount < _minAmountFilter!) {
         return false;
       }
 
       // Maximum amount
-      if (_maxAmountFilter != null && bill.amount > _maxAmountFilter!) {
+      if (!bill.isV2 &&
+          _maxAmountFilter != null &&
+          bill.amount > _maxAmountFilter!) {
         return false;
       }
 
@@ -889,7 +918,10 @@ class _BillingScreenState extends State<BillingScreen> {
     });
   }
 
-  Future<void> _onViewPaymentReceipt(Map<String, dynamic> payment) async {
+  Future<void> _onViewPaymentReceipt(
+    BillModel bill,
+    Map<String, dynamic> payment,
+  ) async {
     final receiptPath = payment['receiptPath']?.toString() ?? '';
 
     if (receiptPath.isEmpty) {
@@ -913,10 +945,11 @@ class _BillingScreenState extends State<BillingScreen> {
 
       final bytes = await _billingService.loadPaymentReceipt(receiptPath);
       final paymentId = payment['id']?.toString() ?? '';
+      final viewedReceiptKey = '${bill.isV2 ? 'v2' : 'v1'}:$paymentId';
 
       if (paymentId.isNotEmpty) {
         setState(() {
-          _viewedPaymentReceiptIds.add(paymentId);
+          _viewedPaymentReceiptIds.add(viewedReceiptKey);
         });
       }
       if (!mounted) return;
@@ -1059,10 +1092,17 @@ class _BillingScreenState extends State<BillingScreen> {
         );
       }
 
-      await _billingService.rejectPaymentProof(
-        paymentId: paymentId,
-        rejectionReason: reason,
-      );
+      if (bill.isV2) {
+        await _billingService.rejectPaymentProofV2(
+          paymentId: paymentId,
+          rejectionReason: reason,
+        );
+      } else {
+        await _billingService.rejectPaymentProof(
+          paymentId: paymentId,
+          rejectionReason: reason,
+        );
+      }
 
       if (!mounted) return;
 
@@ -1089,6 +1129,22 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Widget _buildNormalPendingBillActions(BillModel bill) {
+    if (bill.isV2) {
+      return Column(
+        children: [
+          OutlinedButton.icon(
+            onPressed: () => _onSendReminder(bill),
+            icon: Icon(Icons.send_outlined, size: 16.w),
+            label: const Text('Remind'),
+          ),
+          SizedBox(height: 8.h),
+          const Text(
+            'Offline payment recording available in the next Billing V2 step',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
     return Column(
       children: [
         Row(
@@ -1172,8 +1228,26 @@ class _BillingScreenState extends State<BillingScreen> {
   ) {
     final paymentId = payment['id']?.toString() ?? '';
 
-    final reference = payment['transactionId']?.toString().trim() ?? '';
-    final receiptViewed = _viewedPaymentReceiptIds.contains(paymentId);
+    final reference =
+        (bill.isV2 ? payment['paymentReference'] : payment['transactionId'])
+            ?.toString()
+            .trim() ??
+        '';
+    final viewedReceiptKey = '${bill.isV2 ? 'v2' : 'v1'}:$paymentId';
+    final receiptViewed = _viewedPaymentReceiptIds.contains(viewedReceiptKey);
+    final submittedAmountMinor = payment['submittedAmountMinor'];
+    final provider = payment['provider']?.toString().trim().toLowerCase();
+    final methodLabel = bill.isV2
+        ? '${provider == 'direct_upi' ? 'Direct UPI' : formatPaymentMethod(provider)} / '
+              '${formatPaymentMethod(payment['method'])}'
+        : '${formatPaymentMethod(payment['method'])} / '
+              '${provider == 'direct_upi' ? 'Direct UPI' : 'Not specified'}';
+    final submittedAmountAvailable =
+        !bill.isV2 ||
+        (payment['currency'] == 'INR' &&
+            submittedAmountMinor is int &&
+            submittedAmountMinor > 0 &&
+            submittedAmountMinor <= 9007199254740991);
 
     return Container(
       width: double.infinity,
@@ -1209,10 +1283,17 @@ class _BillingScreenState extends State<BillingScreen> {
 
           SizedBox(height: 6.h),
           Text(
-            '${formatPaymentMethod(payment['method'])} / '
-            '${payment['provider']?.toString().trim().toLowerCase() == 'direct_upi' ? 'Direct UPI' : 'Not specified'}',
+            methodLabel,
             style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
           ),
+
+          if (bill.isV2) ...[
+            SizedBox(height: 8.h),
+            Text(
+              'Submitted amount: ${submittedAmountAvailable ? formatInrMinorUnits(submittedAmountMinor as int) : 'Unavailable'}',
+              style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
+            ),
+          ],
 
           if (reference.isNotEmpty) ...[
             SizedBox(height: 8.h),
@@ -1227,7 +1308,7 @@ class _BillingScreenState extends State<BillingScreen> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _onViewPaymentReceipt(payment),
+              onPressed: () => _onViewPaymentReceipt(bill, payment),
               icon: const Icon(Icons.visibility_outlined),
               label: const Text('View Receipt'),
             ),
@@ -1251,7 +1332,10 @@ class _BillingScreenState extends State<BillingScreen> {
               SizedBox(width: 8.w),
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: paymentId.isEmpty || !receiptViewed
+                  onPressed:
+                      paymentId.isEmpty ||
+                          !receiptViewed ||
+                          !submittedAmountAvailable
                       ? null
                       : () => _onVerifyPaymentProof(bill, payment),
                   icon: const Icon(Icons.verified_outlined),
@@ -1294,16 +1378,29 @@ class _BillingScreenState extends State<BillingScreen> {
       return;
     }
 
+    final submittedAmountMinor = payment['submittedAmountMinor'];
+    if (bill.isV2 &&
+        (payment['currency'] != 'INR' ||
+            submittedAmountMinor is! int ||
+            submittedAmountMinor <= 0 ||
+            submittedAmountMinor > 9007199254740991)) {
+      return;
+    }
+
+    final confirmation = bill.isV2
+        ? 'Verify this submitted payment of '
+              '${formatInrMinorUnits(submittedAmountMinor as int)} '
+              'for ${bill.residentName}?'
+        : 'Confirm payment of ₹${bill.amount.toStringAsFixed(2)} '
+              'for ${bill.residentName}?';
+
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
           title: const Text('Verify Payment'),
-          content: Text(
-            'Confirm payment of ₹${bill.amount.toStringAsFixed(2)} '
-            'for ${bill.residentName}?',
-          ),
+          content: Text(confirmation),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -1335,7 +1432,11 @@ class _BillingScreenState extends State<BillingScreen> {
         );
       }
 
-      await _billingService.verifyPaymentProof(paymentId);
+      if (bill.isV2) {
+        await _billingService.verifyPaymentProofV2(paymentId);
+      } else {
+        await _billingService.verifyPaymentProof(paymentId);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
@@ -1453,6 +1554,7 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Future<void> _onRecordPayment(BillModel bill) async {
+    if (bill.isV2) return;
     if (bill.status == 'paid' ||
         bill.paymentId?.trim().isNotEmpty == true ||
         bill.paidAt != null) {
@@ -2928,7 +3030,9 @@ class _BillingScreenState extends State<BillingScreen> {
               return const Center(child: Text('Unable to load billing data.'));
             }
             final bills = snapshot.data ?? [];
-            final kpiData = _billingService.calculateKPIs(bills);
+            final kpiData = _billingService.calculateKPIs(
+              bills.where((bill) => !bill.isV2).toList(),
+            );
             return SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2985,7 +3089,9 @@ class _BillingScreenState extends State<BillingScreen> {
           }
 
           final bills = snapshot.data ?? [];
-          final kpiData = _billingService.calculateKPIs(bills);
+          final kpiData = _billingService.calculateKPIs(
+            bills.where((bill) => !bill.isV2).toList(),
+          );
 
           return CustomScrollView(
             physics: const BouncingScrollPhysics(),
@@ -3036,11 +3142,16 @@ class _BillingScreenState extends State<BillingScreen> {
       );
     }
 
-    Widget cell(String value, {int flex = 1, FontWeight? weight}) => Expanded(
+    Widget cell(
+      String value, {
+      int flex = 1,
+      int maxLines = 1,
+      FontWeight? weight,
+    }) => Expanded(
       flex: flex,
       child: Text(
         value,
-        maxLines: 1,
+        maxLines: maxLines,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: const Color(0xFF334E68),
@@ -3084,7 +3195,12 @@ class _BillingScreenState extends State<BillingScreen> {
                   cell(bill.residentName, flex: 2, weight: FontWeight.w600),
                   cell(bill.flatLabel),
                   cell('${bill.month} ${bill.year}'),
-                  cell('₹${bill.amount.toStringAsFixed(0)}'),
+                  cell(
+                    bill.isV2
+                        ? _v2TableAmountLabel(bill)
+                        : '₹${bill.amount.toStringAsFixed(0)}',
+                    maxLines: bill.isV2 ? 4 : 1,
+                  ),
                   cell(bill.status),
                   SizedBox(width: 250, child: _buildActionButtons(bill)),
                 ],
@@ -3093,6 +3209,16 @@ class _BillingScreenState extends State<BillingScreen> {
         ],
       ),
     );
+  }
+
+  String _v2TableAmountLabel(BillModel bill) {
+    if (!bill.hasValidInrV2Financials) return 'Billing details unavailable';
+    return [
+      'Total: ${bill.formatV2MinorAmount(bill.amountMinor)}',
+      'Paid: ${bill.formatV2MinorAmount(bill.paidAmountMinor)}',
+      'Credit applied: ${bill.formatV2MinorAmount(bill.creditAppliedMinor)}',
+      'Outstanding: ${bill.formatV2MinorAmount(bill.outstandingAmountMinor)}',
+    ].join('\n');
   }
 
   // ============================================================================
@@ -3360,24 +3486,107 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
+  Widget _buildDueDate(BillModel bill) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Due Date',
+        style: TextStyle(fontSize: 13.sp, color: const Color(0xFF9CA3AF)),
+      ),
+      SizedBox(height: 6.h),
+      Text(
+        bill.dueDate != null
+            ? DateFormat('yyyy-MM-dd').format(bill.dueDate!)
+            : 'N/A',
+        style: TextStyle(
+          fontSize: 16.sp,
+          fontWeight: FontWeight.w600,
+          color: const Color(0xFF111111),
+        ),
+      ),
+    ],
+  );
+
+  Widget _buildV2BillFinancials(BillModel bill) {
+    if (!bill.hasValidInrV2Financials) {
+      return Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(14.w),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(8.r),
+        ),
+        child: const Text('Billing details unavailable'),
+      );
+    }
+    final rows = <(String, int?)>[
+      ('Total', bill.amountMinor),
+      ('Paid', bill.paidAmountMinor),
+      ('Credit applied', bill.creditAppliedMinor),
+      ('Outstanding', bill.outstandingAmountMinor),
+    ];
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(14.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(8.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final (label, amountMinor) in rows)
+            Padding(
+              padding: EdgeInsets.only(bottom: 4.h),
+              child: Row(
+                children: [
+                  Expanded(child: Text(label)),
+                  Text(bill.formatV2MinorAmount(amountMinor)),
+                ],
+              ),
+            ),
+          SizedBox(height: 6.h),
+          _buildDueDate(bill),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBillCard(BillModel bill) {
     final paymentAttribution = formatSettlementAttribution(bill.paymentMethod);
-    // Convert BillModel to display format
-    final statusColor = bill.status == 'paid'
+    final statusColor = bill.isV2 && !bill.hasValidInrV2Financials
+        ? const Color(0xFF6B7280)
+        : bill.isV2 && bill.isSettledV2 || bill.status == 'paid'
         ? const Color(0xFF10B981)
         : bill.status == 'overdue'
         ? const Color(0xFFEF4444)
         : const Color(0xFFF59E0B);
 
-    final statusText = bill.status == 'paid'
+    final statusText = bill.isV2 && !bill.hasValidInrV2Financials
+        ? 'Unavailable'
+        : bill.isV2 && bill.isSettledV2
+        ? 'Settled'
+        : bill.isV2 && bill.status == 'partially_paid'
+        ? 'Partially Paid'
+        : !bill.isV2 && bill.status == 'paid'
         ? 'Paid'
         : bill.status == 'overdue'
         ? 'Overdue'
         : 'Pending';
 
+    final semanticAmount = !bill.isV2
+        ? 'amount ₹${bill.amount.toStringAsFixed(0)}'
+        : bill.hasValidInrV2Financials
+        ? 'Total ${bill.formatV2MinorAmount(bill.amountMinor)}, '
+              'Paid ${bill.formatV2MinorAmount(bill.paidAmountMinor)}, '
+              'Credit applied ${bill.formatV2MinorAmount(bill.creditAppliedMinor)}, '
+              'Outstanding ${bill.formatV2MinorAmount(bill.outstandingAmountMinor)}'
+        : 'billing details unavailable';
+
     return Semantics(
       label:
-          'Bill card for ${bill.residentName}, unit ${bill.flatLabel}, status $statusText, amount ₹${bill.amount.toStringAsFixed(0)}',
+          'Bill card for ${bill.residentName}, unit ${bill.flatLabel}, '
+          'status $statusText, $semanticAmount',
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -3445,82 +3654,66 @@ class _BillingScreenState extends State<BillingScreen> {
               ),
               SizedBox(height: 14.h),
               // Amount & Due Date
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF9FAFB),
-                  borderRadius: BorderRadius.circular(8.r),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Amount',
-                            style: TextStyle(
-                              fontSize: 13.sp,
-                              color: Color(0xFF9CA3AF),
-                            ),
-                          ),
-                          SizedBox(height: 6.h),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                Icons.currency_rupee,
-                                size: 16.w,
-                                color: Color(0xFF111111),
+              if (bill.isV2)
+                _buildV2BillFinancials(bill)
+              else
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 14.w,
+                    vertical: 12.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(8.r),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Amount',
+                              style: TextStyle(
+                                fontSize: 13.sp,
+                                color: Color(0xFF9CA3AF),
                               ),
-                              Text(
-                                bill.amount
-                                    .toStringAsFixed(0)
-                                    .replaceAllMapped(
-                                      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-                                      (Match m) => '${m[1]},',
-                                    ),
-                                style: TextStyle(
-                                  fontSize: 16.sp,
-                                  fontWeight: FontWeight.w600,
+                            ),
+                            SizedBox(height: 6.h),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.currency_rupee,
+                                  size: 16.w,
                                   color: Color(0xFF111111),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Due Date',
-                            style: TextStyle(
-                              fontSize: 13.sp,
-                              color: Color(0xFF9CA3AF),
+                                Text(
+                                  bill.amount
+                                      .toStringAsFixed(0)
+                                      .replaceAllMapped(
+                                        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+                                        (Match m) => '${m[1]},',
+                                      ),
+                                  style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF111111),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          SizedBox(height: 6.h),
-                          Text(
-                            bill.dueDate != null
-                                ? DateFormat('yyyy-MM-dd').format(bill.dueDate!)
-                                : 'N/A',
-                            style: TextStyle(
-                              fontSize: 16.sp,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF111111),
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                      Expanded(child: _buildDueDate(bill)),
+                    ],
+                  ),
                 ),
-              ),
               // Paid status (if paid)
-              if (bill.status == 'paid' && bill.paidAt != null) ...[
+              if (!bill.isV2 &&
+                  bill.status == 'paid' &&
+                  bill.paidAt != null) ...[
                 SizedBox(height: 10.h),
                 Row(
                   children: [
@@ -3541,7 +3734,9 @@ class _BillingScreenState extends State<BillingScreen> {
                   ],
                 ),
               ],
-              if (bill.status == 'paid' && bill.paymentMethod != null) ...[
+              if (!bill.isV2 &&
+                  bill.status == 'paid' &&
+                  bill.paymentMethod != null) ...[
                 SizedBox(height: 8.h),
                 Text(
                   'Payment method: ${bill.normalizedPaymentMethod}'
@@ -3553,14 +3748,15 @@ class _BillingScreenState extends State<BillingScreen> {
                   ),
                 ),
               ],
-              if (bill.paymentReference?.trim().isNotEmpty == true) ...[
+              if (!bill.isV2 &&
+                  bill.paymentReference?.trim().isNotEmpty == true) ...[
                 SizedBox(height: 6.h),
                 Text(
                   'Payment reference: ${bill.paymentReference!.trim()}',
                   style: TextStyle(fontSize: 12.sp, color: Color(0xFF6B7280)),
                 ),
               ],
-              if (bill.paymentId?.trim().isNotEmpty == true) ...[
+              if (!bill.isV2 && bill.paymentId?.trim().isNotEmpty == true) ...[
                 SizedBox(height: 4.h),
                 Text(
                   'Payment ID: ${bill.paymentId!.trim()}',
@@ -3584,7 +3780,17 @@ class _BillingScreenState extends State<BillingScreen> {
       'status=${bill.status}, community=${bill.communityId}',
     );
 
-    if (bill.status == 'paid') {
+    if (bill.isV2 && !bill.hasValidInrV2Financials) {
+      return const Text('Payment and proof review unavailable');
+    }
+    if (bill.isV2 && bill.isSettledV2) {
+      return const Text('Settled V2 bill');
+    }
+    if (bill.isV2 && !bill.isCurrentV2Liability) {
+      return const Text('Payment and proof review unavailable');
+    }
+
+    if (!bill.isV2 && bill.status == 'paid') {
       // Download + Delete buttons for paid bills
       return Row(
         children: [
