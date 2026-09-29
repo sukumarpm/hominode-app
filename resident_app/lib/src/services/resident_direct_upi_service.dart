@@ -114,6 +114,8 @@ typedef ResidentDirectUpiReceiptUploader =
       required String contentType,
       required Map<String, String> customMetadata,
     });
+typedef ResidentDirectUpiReceiptMetadataLoader =
+    Future<Map<String, dynamic>?> Function(String receiptPath);
 
 /// Retain this object for retries of the same intent, including ambiguous
 /// callable/upload failures. Never create a new key just because upload failed.
@@ -185,6 +187,7 @@ class ResidentDirectUpiService {
     ResidentDirectUpiV2ProofLoader? v2ProofLoader,
     ResidentDirectUpiPrepareProof? prepareProof,
     ResidentDirectUpiReceiptUploader? receiptUploader,
+    ResidentDirectUpiReceiptMetadataLoader? receiptMetadataLoader,
     FirebaseFunctions? functions,
     FirebaseStorage? storage,
   }) : _auth = auth,
@@ -196,6 +199,7 @@ class ResidentDirectUpiService {
        _v2ProofLoader = v2ProofLoader,
        _prepareProof = prepareProof,
        _receiptUploader = receiptUploader,
+       _receiptMetadataLoader = receiptMetadataLoader,
        _functions = functions,
        _storage = storage;
 
@@ -208,6 +212,7 @@ class ResidentDirectUpiService {
   final ResidentDirectUpiV2ProofLoader? _v2ProofLoader;
   final ResidentDirectUpiPrepareProof? _prepareProof;
   final ResidentDirectUpiReceiptUploader? _receiptUploader;
+  final ResidentDirectUpiReceiptMetadataLoader? _receiptMetadataLoader;
   final FirebaseFunctions? _functions;
   final FirebaseStorage? _storage;
 
@@ -520,20 +525,197 @@ class ResidentDirectUpiService {
     final contentType = ['jpg', 'jpeg'].contains(attempt.receiptExtension)
         ? 'image/jpeg'
         : 'image/${attempt.receiptExtension}';
+    await _uploadReceipt(
+      receiptPath: receiptPath as String,
+      bytes: attempt._bytes,
+      contentType: contentType,
+      customMetadata: customMetadata,
+    );
+    return attempt._uploaded = ResidentV2ProofSubmission(
+      paymentId: paymentId,
+      receiptPath: receiptPath,
+    );
+  }
+
+  /// Completes a proof whose backend reservation survived an app restart.
+  /// It reuses the proof's server-authored receiptPath and never prepares a
+  /// second proof. Existing matching evidence is treated as an already-finished
+  /// upload, making retries safe after an ambiguous client failure.
+  Future<ResidentV2ProofSubmission> resumeV2PaymentProofUpload({
+    required Map<String, dynamic> proof,
+    required Uint8List receiptBytes,
+    required String receiptExtension,
+  }) async {
+    final scope = await _loadScope();
+    final context = _existingProofContext(proof, scope);
+    final paymentId = context.paymentId;
+    final receiptPath = context.receiptPath;
+    if (!['jpg', 'jpeg', 'png', 'heic', 'heif'].contains(receiptExtension) ||
+        receiptBytes.isEmpty ||
+        receiptBytes.length >= 10 * 1024 * 1024) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.receiptInvalid,
+      );
+    }
+
+    final existing = await _readExistingReceipt(receiptPath);
+    if (existing != null) {
+      _requireMatchingReceipt(existing, context);
+      return ResidentV2ProofSubmission(
+        paymentId: paymentId,
+        receiptPath: receiptPath,
+      );
+    }
+
+    final contentType = ['jpg', 'jpeg'].contains(receiptExtension)
+        ? 'image/jpeg'
+        : 'image/$receiptExtension';
+    await _uploadReceipt(
+      receiptPath: receiptPath,
+      bytes: receiptBytes,
+      contentType: contentType,
+      customMetadata: context.customMetadata,
+    );
+    return ResidentV2ProofSubmission(
+      paymentId: paymentId,
+      receiptPath: receiptPath,
+    );
+  }
+
+  /// Used on the restart recovery screen to avoid asking for a duplicate
+  /// receipt when the existing pending proof already has its evidence object.
+  Future<bool> isV2ProofReceiptUploaded(Map<String, dynamic> proof) async {
+    final scope = await _loadScope();
+    final context = _existingProofContext(proof, scope);
+    final existing = await _readExistingReceipt(context.receiptPath);
+    if (existing == null) return false;
+    _requireMatchingReceipt(existing, context);
+    return true;
+  }
+
+  ({
+    String paymentId,
+    String billId,
+    String receiptPath,
+    Map<String, String> customMetadata,
+  })
+  _existingProofContext(
+    Map<String, dynamic> proof,
+    ResidentDirectUpiScope scope,
+  ) {
+    final paymentId = proof['id'];
+    final billId = proof['billId'];
+    final receiptPath = proof['receiptPath'];
+    if (proof['schemaVersion'] != 2 ||
+        proof['status'] != 'pending' ||
+        !_validId(paymentId) ||
+        !_validId(billId) ||
+        proof['communityId'] != scope.communityId ||
+        proof['residentId'] != scope.uid ||
+        proof['userId'] != scope.uid ||
+        !_safeMinor(proof['submittedAmountMinor']) ||
+        proof['submittedAmountMinor'] == 0 ||
+        !_validId(proof['submittedBillRevisionId']) ||
+        receiptPath is! String ||
+        !_validProofReceiptPath(
+          receiptPath,
+          communityId: scope.communityId,
+          billId: billId as String,
+          residentId: scope.uid,
+          paymentId: paymentId as String,
+        )) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofPreparationFailed,
+      );
+    }
+    return (
+      paymentId: paymentId,
+      billId: billId,
+      receiptPath: receiptPath,
+      customMetadata: {
+        'paymentId': paymentId,
+        'billId': billId,
+        'communityId': scope.communityId,
+        'residentUid': scope.uid,
+      },
+    );
+  }
+
+  void _requireMatchingReceipt(
+    Map<String, dynamic> existing,
+    ({
+      String paymentId,
+      String billId,
+      String receiptPath,
+      Map<String, String> customMetadata,
+    })
+    context,
+  ) {
+    final metadata = existing['customMetadata'];
+    final custom = metadata is Map ? metadata : const <String, dynamic>{};
+    final size = int.tryParse(existing['size']?.toString() ?? '');
+    final contentType = existing['contentType']?.toString() ?? '';
+    if ((existing['fullPath'] ?? existing['name']) != context.receiptPath ||
+        size == null ||
+        size <= 0 ||
+        size >= 10 * 1024 * 1024 ||
+        !RegExp(r'^image/(jpeg|jpg|png|heic|heif)$').hasMatch(contentType) ||
+        context.customMetadata.entries.any(
+          (entry) => custom[entry.key] != entry.value,
+        )) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofUploadFailed,
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>?> _readExistingReceipt(String receiptPath) async {
+    try {
+      final loader = _receiptMetadataLoader;
+      if (loader != null) return await loader(receiptPath);
+      final metadata = await (_storage ?? FirebaseStorage.instance)
+          .ref(receiptPath)
+          .getMetadata();
+      return {
+        'fullPath': metadata.fullPath,
+        'size': metadata.size,
+        'contentType': metadata.contentType,
+        'customMetadata': metadata.customMetadata,
+      };
+    } on FirebaseException catch (error) {
+      if (error.code == 'object-not-found' || error.code == 'not-found') {
+        return null;
+      }
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofUploadFailed,
+      );
+    } catch (_) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofUploadFailed,
+      );
+    }
+  }
+
+  Future<void> _uploadReceipt({
+    required String receiptPath,
+    required Uint8List bytes,
+    required String contentType,
+    required Map<String, String> customMetadata,
+  }) async {
     try {
       final upload = _receiptUploader;
       if (upload != null) {
         await upload(
-          receiptPath: receiptPath as String,
-          bytes: Uint8List.fromList(attempt._bytes),
+          receiptPath: receiptPath,
+          bytes: Uint8List.fromList(bytes),
           contentType: contentType,
           customMetadata: customMetadata,
         );
       } else {
         await (_storage ?? FirebaseStorage.instance)
-            .ref(receiptPath as String)
+            .ref(receiptPath)
             .putData(
-              attempt._bytes,
+              bytes,
               SettableMetadata(
                 contentType: contentType,
                 customMetadata: customMetadata,
@@ -541,16 +723,11 @@ class ResidentDirectUpiService {
             );
       }
     } catch (_) {
-      // Do not delete create-only evidence, alter the pending proof, or claim
-      // financial success. The same attempt can retry the reserved upload.
+      // Keep the reservation intact so the same proof can be resumed safely.
       throw const ResidentDirectUpiException(
         ResidentDirectUpiFailure.proofUploadFailed,
       );
     }
-    return attempt._uploaded = ResidentV2ProofSubmission(
-      paymentId: paymentId,
-      receiptPath: receiptPath,
-    );
   }
 
   Future<ResidentDirectUpiScope> _loadScope() async {
@@ -778,3 +955,19 @@ bool _validId(dynamic value) =>
     value != '.' &&
     value != '..' &&
     !RegExp(r'^__.*__$').hasMatch(value);
+bool _validProofReceiptPath(
+  String path, {
+  required String communityId,
+  required String billId,
+  required String residentId,
+  required String paymentId,
+}) {
+  final prefix = 'payment_receipts/$communityId/$billId/$residentId/$paymentId';
+  return [
+    'jpg',
+    'jpeg',
+    'png',
+    'heic',
+    'heif',
+  ].any((extension) => path == '$prefix.$extension');
+}

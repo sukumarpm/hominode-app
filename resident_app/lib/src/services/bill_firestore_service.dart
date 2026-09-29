@@ -7,8 +7,29 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'user_data_service.dart';
 
 class BillFirestoreService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final UserDataService _userDataService = UserDataService();
+  BillFirestoreService({
+    FirebaseFirestore? firestore,
+    UserDataService? userDataService,
+    Stream<List<Map<String, dynamic>>> Function()? billsStreamLoader,
+    Stream<Map<String, dynamic>?> Function(String billId)?
+    v1PaymentStreamLoader,
+    Stream<Map<String, dynamic>?> Function(String billId)? v2ProofStreamLoader,
+  }) : _firestore = firestore,
+       _userDataService = userDataService,
+       _billsStreamLoader = billsStreamLoader,
+       _v1PaymentStreamLoader = v1PaymentStreamLoader,
+       _v2ProofStreamLoader = v2ProofStreamLoader;
+
+  final FirebaseFirestore? _firestore;
+  final UserDataService? _userDataService;
+  final Stream<List<Map<String, dynamic>>> Function()? _billsStreamLoader;
+  final Stream<Map<String, dynamic>?> Function(String billId)?
+  _v1PaymentStreamLoader;
+  final Stream<Map<String, dynamic>?> Function(String billId)?
+  _v2ProofStreamLoader;
+
+  FirebaseFirestore get firestore => _firestore ?? FirebaseFirestore.instance;
+  UserDataService get userDataService => _userDataService ?? UserDataService();
 
   static const String billsCollection = 'bills';
   static const String paymentsCollection = 'payments';
@@ -39,6 +60,11 @@ class BillFirestoreService {
   Stream<Map<String, dynamic>?> streamLatestPaymentForBill(
     String billId,
   ) async* {
+    final injected = _v1PaymentStreamLoader;
+    if (injected != null) {
+      yield* injected(billId);
+      return;
+    }
     final scope = await _getResidentScope();
     final user = FirebaseAuth.instance.currentUser;
 
@@ -52,7 +78,7 @@ class BillFirestoreService {
     print('   flatId: ${scope.flatId}');
     print('   userId: ${user.uid}');
 
-    yield* _firestore
+    yield* firestore
         .collection(paymentsCollection)
         .where('communityId', isEqualTo: scope.communityId)
         .where('flatId', isEqualTo: scope.flatId)
@@ -91,10 +117,48 @@ class BillFirestoreService {
         });
   }
 
+  /// V2 proofs are private to their canonical resident and bill context.
+  /// This stream never reads the legacy `payments` collection.
+  Stream<Map<String, dynamic>?> streamLatestV2ProofForBill(
+    String billId,
+  ) async* {
+    final injected = _v2ProofStreamLoader;
+    if (injected != null) {
+      yield* injected(billId);
+      return;
+    }
+    final scope = await _getResidentScope();
+    final user = FirebaseAuth.instance.currentUser;
+    if (scope == null || user == null || billId.isEmpty) {
+      yield null;
+      return;
+    }
+
+    yield* firestore
+        .collection('paymentProofsV2')
+        .where('communityId', isEqualTo: scope.communityId)
+        .where('residentId', isEqualTo: user.uid)
+        .where('billId', isEqualTo: billId)
+        .snapshots()
+        .map((snapshot) {
+          final proofs = snapshot.docs.map((doc) {
+            return <String, dynamic>{...doc.data(), 'id': doc.id};
+          }).toList();
+          proofs.sort((first, second) {
+            final firstAt = first['submittedAt'] as Timestamp?;
+            final secondAt = second['submittedAt'] as Timestamp?;
+            return (secondAt?.millisecondsSinceEpoch ?? 0).compareTo(
+              firstAt?.millisecondsSinceEpoch ?? 0,
+            );
+          });
+          return proofs.isEmpty ? null : proofs.first;
+        });
+  }
+
   /// Resolve tenant authority plus the resident's secondary flat scope.
   Future<({String communityId, String flatId})?> _getResidentScope() async {
     try {
-      final userData = await _userDataService.getCurrentUserData();
+      final userData = await userDataService.getCurrentUserData();
 
       if (userData == null) {
         print('❌ BillService: User data not found');
@@ -134,7 +198,7 @@ class BillFirestoreService {
       print('   flatId: ${scope.flatId}');
 
       // Use Firestore .where() for server-side filtering by flatId
-      final snapshot = await _firestore
+      final snapshot = await firestore
           .collection(billsCollection)
           .where('communityId', isEqualTo: scope.communityId)
           .where('flatId', isEqualTo: scope.flatId)
@@ -186,7 +250,7 @@ class BillFirestoreService {
       print('   flatId: ${scope.flatId}');
 
       // Use Firestore .where() for server-side filtering by flatId
-      final snapshot = await _firestore
+      final snapshot = await firestore
           .collection(billsCollection)
           .where('communityId', isEqualTo: scope.communityId)
           .where('status', isEqualTo: 'pending')
@@ -252,7 +316,7 @@ class BillFirestoreService {
       print('   flatId: ${scope.flatId}');
 
       // Use Firestore .where() for server-side filtering by flatId
-      final snapshot = await _firestore
+      final snapshot = await firestore
           .collection(billsCollection)
           .where('communityId', isEqualTo: scope.communityId)
           .where('status', isEqualTo: 'paid')
@@ -293,6 +357,11 @@ class BillFirestoreService {
 
   /// Stream bills (real-time updates) by flatId with Firestore .where() filtering
   Stream<List<Map<String, dynamic>>> streamBills() async* {
+    final injected = _billsStreamLoader;
+    if (injected != null) {
+      yield* injected();
+      return;
+    }
     final scope = await _getResidentScope();
 
     if (scope == null) {
@@ -306,7 +375,7 @@ class BillFirestoreService {
     print('   ✓ Applied communityId and flatId tenant filters');
 
     // Use Firestore .where() for server-side filtering by flatId
-    yield* _firestore
+    yield* firestore
         .collection(billsCollection)
         .where('communityId', isEqualTo: scope.communityId)
         .where('flatId', isEqualTo: scope.flatId)
@@ -334,6 +403,9 @@ class BillFirestoreService {
 
   /// Get bill breakdown
   Map<String, double> getBillBreakdown(Map<String, dynamic> bill) {
+    if (isV2Bill(bill)) {
+      return {};
+    }
     // Check if chargeBreakdown exists (nested structure)
     if (bill.containsKey('chargeBreakdown')) {
       final breakdown = bill['chargeBreakdown'] as Map<String, dynamic>?;
@@ -364,4 +436,43 @@ class BillFirestoreService {
   double calculateTotal(Map<String, double> breakdown) {
     return breakdown.values.fold(0, (sum, value) => sum + value);
   }
+
+  static bool isV2Bill(Map<String, dynamic> bill) => bill['schemaVersion'] == 2;
+
+  static bool isV2InrBill(Map<String, dynamic> bill) =>
+      isV2Bill(bill) && bill['currency'] == 'INR';
+
+  static String formatV2BillMinorUnits(
+    Map<String, dynamic> bill,
+    Object? value,
+  ) => isV2InrBill(bill) ? formatInrMinorUnits(value) : '—';
+
+  /// Formats V2 integer paise without converting through a floating point
+  /// value. Returns an em dash for malformed data so it cannot look payable.
+  static String formatInrMinorUnits(Object? value) {
+    if (value is! int || value < 0 || value > 9007199254740991) return '—';
+    final whole = value ~/ 100;
+    final paise = (value % 100).toString().padLeft(2, '0');
+    return '₹$whole.$paise';
+  }
+
+  static List<BillChargeLine> getV2ChargeLines(Map<String, dynamic> bill) {
+    if (!isV2InrBill(bill) || bill['chargeLines'] is! List) return const [];
+    return (bill['chargeLines'] as List).whereType<Map>().map((line) {
+      final amount = line['amountMinor'];
+      return BillChargeLine(
+        label: line['label'] is String && (line['label'] as String).isNotEmpty
+            ? line['label'] as String
+            : 'Charge',
+        amountMinor: amount is int && amount >= 0 ? amount : null,
+      );
+    }).toList();
+  }
+}
+
+class BillChargeLine {
+  const BillChargeLine({required this.label, required this.amountMinor});
+
+  final String label;
+  final int? amountMinor;
 }

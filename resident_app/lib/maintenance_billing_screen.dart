@@ -10,6 +10,7 @@ import 'src/components/standard_screen.dart';
 import 'src/providers/language_provider.dart';
 import 'src/screens/submit_payment_proof_screen.dart';
 import 'src/services/bill_firestore_service.dart';
+import 'src/services/resident_direct_upi_service.dart';
 import 'src/utils/payment_method.dart';
 import 'src/widgets/cash_payment_info_card.dart';
 import 'src/widgets/direct_upi_payment_card.dart';
@@ -33,7 +34,16 @@ const kRadius = 16.0;
 
 /// Maintenance & Billing Screen - Real-time Firestore Integration
 class MaintenanceBillingScreen extends StatefulWidget {
-  const MaintenanceBillingScreen({super.key});
+  const MaintenanceBillingScreen({
+    super.key,
+    this.billService,
+    this.directUpiService,
+    this.languageCodeOverride,
+  });
+
+  final BillFirestoreService? billService;
+  final ResidentDirectUpiService? directUpiService;
+  final String? languageCodeOverride;
 
   @override
   State<MaintenanceBillingScreen> createState() =>
@@ -41,7 +51,10 @@ class MaintenanceBillingScreen extends StatefulWidget {
 }
 
 class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
-  final _billService = BillFirestoreService();
+  late final BillFirestoreService _billService =
+      widget.billService ?? BillFirestoreService();
+  late final ResidentDirectUpiService _directUpiService =
+      widget.directUpiService ?? ResidentDirectUpiService();
 
   Widget _buildSubmitPaymentCard(Map<String, dynamic> bill) {
     return Column(
@@ -49,11 +62,15 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
       children: [
         DirectUpiPaymentCard(
           billId: bill['id']?.toString() ?? '',
+          preparePayment: _directUpiService.preparePayment,
           onSubmitProof: () async {
             await Navigator.push<bool>(
               context,
               MaterialPageRoute(
-                builder: (_) => SubmitPaymentProofScreen(bill: bill),
+                builder: (_) => SubmitPaymentProofScreen(
+                  bill: bill,
+                  service: _directUpiService,
+                ),
               ),
             );
           },
@@ -158,7 +175,10 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                 await Navigator.push<bool>(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => SubmitPaymentProofScreen(bill: bill),
+                    builder: (_) => SubmitPaymentProofScreen(
+                      bill: bill,
+                      service: _directUpiService,
+                    ),
                   ),
                 );
               },
@@ -177,25 +197,49 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
   Widget _buildPaymentAction(Map<String, dynamic> bill) {
     final billId = bill['id']?.toString() ?? '';
 
+    if (BillFirestoreService.isV2Bill(bill)) {
+      final outstanding = bill['outstandingAmountMinor'];
+      if (!BillFirestoreService.isV2InrBill(bill)) {
+        return _buildV2BillUnavailableCard(bill);
+      }
+      if (outstanding is! int || outstanding <= 0) {
+        return _buildV2NoOutstandingCard();
+      }
+      return StreamBuilder<Map<String, dynamic>?>(
+        stream: _billService.streamLatestV2ProofForBill(billId),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return _buildPaymentStatusUnavailableCard();
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final proof = snapshot.data;
+          final status = proof?['status']?.toString().toLowerCase();
+          if (status == 'pending' && proof != null) {
+            return _buildV2PendingProofCard(bill, proof);
+          }
+          if (status == 'failed' && proof != null) {
+            return _buildPaymentRejectedCard(bill, proof);
+          }
+          if (status == 'completed' && proof != null) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildV2CompletedProofCard(),
+                SizedBox(height: 12.h),
+                _buildSubmitPaymentCard(bill),
+              ],
+            );
+          }
+          return _buildSubmitPaymentCard(bill);
+        },
+      );
+    }
+
     return StreamBuilder<Map<String, dynamic>?>(
       stream: _billService.streamLatestPaymentForBill(billId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          print('❌ PAYMENT STREAM ERROR: ${snapshot.error}');
-
-          return Container(
-            width: double.infinity,
-            padding: EdgeInsets.all(20.w),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(kRadius),
-              border: Border.all(color: kDivider),
-            ),
-            child: Text(
-              'Unable to load payment status. Please try again.',
-              style: TextStyle(fontSize: 14.sp, color: kSubtext),
-            ),
-          );
+          return _buildPaymentStatusUnavailableCard();
         }
 
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -218,116 +262,239 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     );
   }
 
+  Widget _buildPaymentStatusUnavailableCard() => Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(20.w),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(kRadius),
+      border: Border.all(color: kDivider),
+    ),
+    child: Text(
+      'Unable to load payment status. Please try again.',
+      style: TextStyle(fontSize: 14.sp, color: kSubtext),
+    ),
+  );
+
+  Widget _buildV2NoOutstandingCard() => Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(20.w),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(kRadius),
+      border: Border.all(color: kDivider),
+    ),
+    child: const Text('No outstanding balance. No payment is due.'),
+  );
+
+  Widget _buildV2BillUnavailableCard(Map<String, dynamic> bill) => Container(
+    key: ValueKey('v2-bill-unavailable-${bill['id']}'),
+    width: double.infinity,
+    padding: EdgeInsets.all(20.w),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(kRadius),
+      border: Border.all(color: kDivider),
+    ),
+    child: const Text(
+      'Billing details unavailable. Please contact your community administrator.',
+    ),
+  );
+
+  Widget _buildV2PendingProofCard(
+    Map<String, dynamic> bill,
+    Map<String, dynamic> proof,
+  ) => Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(20.w),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(kRadius),
+      border: Border.all(color: kDivider),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Payment submitted / awaiting Admin verification',
+          style: TextStyle(
+            fontSize: 16.sp,
+            fontWeight: FontWeight.w600,
+            color: kPrimaryBlue,
+          ),
+        ),
+        SizedBox(height: 8.h),
+        Text(
+          'Your bill remains open until the payment is verified.',
+          style: TextStyle(fontSize: 14.sp, color: kSubtext),
+        ),
+        SizedBox(height: 8.h),
+        TextButton.icon(
+          onPressed: () async {
+            await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SubmitPaymentProofScreen(
+                  bill: bill,
+                  existingV2Proof: proof,
+                  service: _directUpiService,
+                ),
+              ),
+            );
+          },
+          icon: const Icon(Icons.receipt_long_outlined),
+          label: const Text('Check receipt or resume upload'),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildV2CompletedProofCard() => Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(20.w),
+    decoration: BoxDecoration(
+      color: kSuccessBg,
+      borderRadius: BorderRadius.circular(kRadius),
+      border: Border.all(color: kDivider),
+    ),
+    child: const Text('Payment verified by your community administrator.'),
+  );
+
   @override
   Widget build(BuildContext context) {
+    final languageCode = widget.languageCodeOverride;
+    if (languageCode != null) return _buildForLanguage(languageCode);
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, _) {
-        return StandardScreen(
-          key: ValueKey(languageProvider.currentLanguageCode),
-          title: 'maintenance_billing'.tr(),
-          showBackButton: false,
-          isScrollable: true,
-          padding: const EdgeInsets.all(kSpacing),
-          body: StreamBuilder<List<Map<String, dynamic>>>(
-            stream: _billService.streamBills(),
-            builder: (context, snapshot) {
-              // Loading state
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(kPrimaryBlue),
-                  ),
-                );
-              }
-
-              // Error state
-              if (snapshot.hasError) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.error_outline, size: 64.w, color: Colors.red),
-                      SizedBox(height: 16.h),
-                      Text(
-                        'error_loading_bills'.tr(),
-                        style: TextStyle(
-                          fontSize: 18.sp,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      SizedBox(height: 8.h),
-                      Text(
-                        snapshot.error.toString(),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14.sp,
-                          color: Colors.grey[500],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }
-
-              final bills = snapshot.data ?? [];
-
-              // Pending and overdue bills are both unpaid current bills.
-              final pendingBills = bills
-                  .where(
-                    (bill) =>
-                        bill['status'] == 'pending' ||
-                        bill['status'] == 'overdue',
-                  )
-                  .toList();
-              final paidBills = bills
-                  .where((bill) => bill['status'] == 'paid')
-                  .toList();
-
-              // Get current pending bill (most recent)
-              final currentBill = pendingBills.isNotEmpty
-                  ? pendingBills.first
-                  : null;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Current Bill Card
-                  if (currentBill != null)
-                    _buildCurrentBillCard(currentBill)
-                  else
-                    _buildNoBillCard(),
-
-                  SizedBox(height: 20.h),
-
-                  // Bill Breakdown Card
-                  if (currentBill != null) _buildBillBreakdownCard(currentBill),
-
-                  if (currentBill != null) SizedBox(height: 24.h),
-                  if (currentBill != null) _buildPaymentAction(currentBill),
-
-                  if (currentBill != null) SizedBox(height: 24.h),
-
-                  // Payment History Section
-                  if (paidBills.isNotEmpty)
-                    _buildPaymentHistorySection(paidBills)
-                  else if (currentBill == null)
-                    _buildNoHistoryCard(),
-                ],
-              );
-            },
-          ),
-        );
+        return _buildForLanguage(languageProvider.currentLanguageCode);
       },
     );
   }
 
+  Widget _buildForLanguage(String languageCode) {
+    return StandardScreen(
+      key: ValueKey(languageCode),
+      title: 'maintenance_billing'.tr(),
+      showBackButton: false,
+      isScrollable: true,
+      padding: const EdgeInsets.all(kSpacing),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _billService.streamBills(),
+        builder: (context, snapshot) {
+          // Loading state
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(kPrimaryBlue),
+              ),
+            );
+          }
+
+          // Error state
+          if (snapshot.hasError) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline, size: 64.w, color: Colors.red),
+                  SizedBox(height: 16.h),
+                  Text(
+                    'error_loading_bills'.tr(),
+                    style: TextStyle(
+                      fontSize: 18.sp,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  SizedBox(height: 8.h),
+                  Text(
+                    snapshot.error.toString(),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          final bills = snapshot.data ?? [];
+
+          // Pending and overdue bills are both unpaid current bills.
+          final pendingBills = bills
+              .where((bill) => _isCurrentBill(bill))
+              .toList();
+          final paidBills = bills.where((bill) => _isPaidBill(bill)).toList();
+
+          // Keep the established most-recent V1 card and render every V2
+          // liability so no outstanding billing period is hidden.
+          var includedV1Bill = false;
+          final currentBills = pendingBills.where((bill) {
+            if (BillFirestoreService.isV2Bill(bill)) return true;
+            if (includedV1Bill) return false;
+            includedV1Bill = true;
+            return true;
+          }).toList();
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Current Bill Card
+              if (currentBills.isEmpty)
+                _buildNoBillCard()
+              else
+                ...currentBills.expand((bill) {
+                  if (BillFirestoreService.isV2Bill(bill) &&
+                      !BillFirestoreService.isV2InrBill(bill)) {
+                    return [
+                      _buildV2BillUnavailableCard(bill),
+                      SizedBox(height: 24.h),
+                    ];
+                  }
+                  return [
+                    _buildCurrentBillCard(bill),
+                    SizedBox(height: 20.h),
+                    _buildBillBreakdownCard(bill),
+                    SizedBox(height: 24.h),
+                    _buildPaymentAction(bill),
+                    SizedBox(height: 24.h),
+                  ];
+                }),
+
+              // Payment History Section
+              if (paidBills.isNotEmpty)
+                _buildPaymentHistorySection(paidBills)
+              else if (currentBills.isEmpty)
+                _buildNoHistoryCard(),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  bool _isCurrentBill(Map<String, dynamic> bill) {
+    final status = bill['status'];
+    if (status == 'pending' || status == 'overdue') return true;
+    return BillFirestoreService.isV2Bill(bill) && status == 'partially_paid';
+  }
+
+  bool _isPaidBill(Map<String, dynamic> bill) {
+    final status = bill['status'];
+    if (status == 'paid') return true;
+    return BillFirestoreService.isV2Bill(bill) && status == 'settled';
+  }
+
   /// Current Bill Card with orange gradient
   Widget _buildCurrentBillCard(Map<String, dynamic> bill) {
-    final amount = (bill['amount'] as num?)?.toDouble() ?? 0;
+    final isV2 = BillFirestoreService.isV2Bill(bill);
+    final amount = isV2
+        ? BillFirestoreService.formatV2BillMinorUnits(bill, bill['amountMinor'])
+        : '₹${((bill['amount'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}';
     final dueDate = (bill['dueDate'] as Timestamp?)?.toDate();
     final status = bill['status'] as String? ?? 'pending';
-    final month = bill['month'] as String? ?? 'Current';
+    final month = isV2
+        ? _displayBillingPeriod(bill['billingPeriod']?.toString())
+        : bill['month'] as String? ?? 'Current';
 
     // Format due date
     String dueDateStr = 'Due Date: Not Set';
@@ -375,14 +542,19 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '$month Bill',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18.sp,
-                  fontWeight: FontWeight.w600,
+              Expanded(
+                child: Text(
+                  '$month Bill',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18.sp,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
+              SizedBox(width: 12.w),
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 6.h),
                 decoration: BoxDecoration(
@@ -394,6 +566,8 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                       ? 'Pending'
                       : status == 'overdue'
                       ? 'Overdue'
+                      : status == 'partially_paid'
+                      ? 'Partially paid'
                       : 'Paid',
                   style: TextStyle(
                     color: kPendingText,
@@ -409,7 +583,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
 
           // Amount
           Text(
-            '₹${amount.toStringAsFixed(0)}',
+            amount,
             style: TextStyle(
               color: Colors.white,
               fontSize: 48.sp,
@@ -432,6 +606,28 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
         ],
       ),
     );
+  }
+
+  String _displayBillingPeriod(String? value) {
+    if (value == null || !RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(value)) {
+      return value ?? 'Current';
+    }
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    final pieces = value.split('-');
+    return '${months[int.parse(pieces[1]) - 1]} ${pieces[0]}';
   }
 
   /// No Bill Card
@@ -468,6 +664,9 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
 
   /// Bill Breakdown Card
   Widget _buildBillBreakdownCard(Map<String, dynamic> bill) {
+    if (BillFirestoreService.isV2Bill(bill)) {
+      return _buildV2BillBreakdownCard(bill);
+    }
     final breakdown = _billService.getBillBreakdown(bill);
     final total = _billService.calculateTotal(breakdown);
 
@@ -558,19 +757,100 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
     );
   }
 
+  Widget _buildV2BillBreakdownCard(Map<String, dynamic> bill) {
+    final lines = BillFirestoreService.getV2ChargeLines(bill);
+    final rows = <({String label, Object? amount})>[
+      (label: 'Total bill', amount: bill['amountMinor']),
+      (label: 'Paid', amount: bill['paidAmountMinor']),
+      (label: 'Credit applied', amount: bill['creditAppliedMinor']),
+      (label: 'Outstanding', amount: bill['outstandingAmountMinor']),
+    ];
+    return Container(
+      key: ValueKey('v2-bill-breakdown-${bill['id']}'),
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(kRadius),
+        border: Border.all(color: kDivider, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Bill Breakdown',
+            style: TextStyle(
+              color: kDarkTitle,
+              fontSize: 18.sp,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          SizedBox(height: 12.h),
+          ...rows.map(
+            (row) => Padding(
+              padding: EdgeInsets.only(bottom: 10.h),
+              child: _buildBreakdownItem(
+                row.label,
+                BillFirestoreService.formatV2BillMinorUnits(bill, row.amount),
+              ),
+            ),
+          ),
+          const Divider(color: kDivider, thickness: 1),
+          Text(
+            'Charge details',
+            style: TextStyle(
+              color: kDarkTitle,
+              fontSize: 15.sp,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          SizedBox(height: 12.h),
+          if (lines.isEmpty)
+            Text(
+              'No charge details available',
+              style: TextStyle(color: kSubtext, fontSize: 14.sp),
+            )
+          else
+            ...lines.map(
+              (line) => Padding(
+                padding: EdgeInsets.only(bottom: 10.h),
+                child: _buildBreakdownItem(
+                  line.label,
+                  BillFirestoreService.formatV2BillMinorUnits(
+                    bill,
+                    line.amountMinor,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// Individual breakdown item
   Widget _buildBreakdownItem(String label, String amount) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: kSubtext,
-            fontSize: 15.sp,
-            fontWeight: FontWeight.w400,
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: kSubtext,
+              fontSize: 15.sp,
+              fontWeight: FontWeight.w400,
+            ),
           ),
         ),
+        SizedBox(width: 8.w),
         Text(
           amount,
           style: TextStyle(
@@ -592,12 +872,16 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Payment History',
-              style: TextStyle(
-                color: kDarkTitle,
-                fontSize: 18.sp,
-                fontWeight: FontWeight.w600,
+            Expanded(
+              child: Text(
+                'Payment History',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: kDarkTitle,
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             TextButton(
@@ -673,8 +957,16 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
 
   /// Individual payment history item
   Widget _buildPaymentHistoryItem(Map<String, dynamic> payment) {
-    final month = payment['month'] as String? ?? 'Unknown';
-    final amount = (payment['amount'] as num?)?.toDouble() ?? 0;
+    final isV2 = BillFirestoreService.isV2Bill(payment);
+    final month = isV2
+        ? _displayBillingPeriod(payment['billingPeriod']?.toString())
+        : payment['month'] as String? ?? 'Unknown';
+    final amount = isV2
+        ? BillFirestoreService.formatV2BillMinorUnits(
+            payment,
+            payment['amountMinor'],
+          )
+        : '₹${((payment['amount'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)}';
     final paidAt = (payment['paidAt'] as Timestamp?)?.toDate();
     // Format paid date
     String paidDateStr = 'Paid';
@@ -781,7 +1073,7 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '₹${amount.toStringAsFixed(0)}',
+                    amount,
                     style: TextStyle(
                       color: kDarkTitle,
                       fontSize: 16.sp,
@@ -789,36 +1081,38 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                     ),
                   ),
                   SizedBox(height: 4.h),
-                  InkWell(
-                    onTap: () {
-                      // Navigate to Receipt Screen
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              ReceiptScreen(receipt: Receipt.fromBill(payment)),
-                        ),
-                      );
-                    },
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.download_outlined,
-                          color: kPrimaryBlue,
-                          size: 16.w,
-                        ),
-                        SizedBox(width: 4.w),
-                        Text(
-                          'Receipt',
-                          style: TextStyle(
-                            color: kPrimaryBlue,
-                            fontSize: 14.sp,
-                            fontWeight: FontWeight.w500,
+                  if (!isV2)
+                    InkWell(
+                      onTap: () {
+                        // Navigate to Receipt Screen
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ReceiptScreen(
+                              receipt: Receipt.fromBill(payment),
+                            ),
                           ),
-                        ),
-                      ],
+                        );
+                      },
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.download_outlined,
+                            color: kPrimaryBlue,
+                            size: 16.w,
+                          ),
+                          SizedBox(width: 4.w),
+                          Text(
+                            'Receipt',
+                            style: TextStyle(
+                              color: kPrimaryBlue,
+                              fontSize: 14.sp,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
                 ],
               ),
             ],

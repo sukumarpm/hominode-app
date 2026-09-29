@@ -53,6 +53,8 @@ class _Fixture {
   Object? callableError;
   bool uploadFails = false;
   bool proofReadFails = false;
+  Map<String, dynamic>? existingReceiptMetadata;
+  final receiptMetadataReads = <String>[];
   int v1Reads = 0;
   int v2Reads = 0;
   Completer<void>? uploadGate;
@@ -110,6 +112,10 @@ class _Fixture {
           if (uploadGate != null) await uploadGate!.future;
           if (uploadFails) throw StateError('private URL and raw SDK error');
         },
+    receiptMetadataLoader: (receiptPath) async {
+      receiptMetadataReads.add(receiptPath);
+      return existingReceiptMetadata;
+    },
   );
   Future<ResidentV2ProofSubmissionAttempt> attempt({
     String extension = 'jpg',
@@ -121,6 +127,19 @@ class _Fixture {
     paymentReference: reference,
   );
 }
+
+Map<String, dynamic> _existingPendingProof() => {
+  'schemaVersion': 2,
+  'id': 'reserved-proof',
+  'communityId': 'community',
+  'residentId': 'resident',
+  'userId': 'resident',
+  'billId': 'bill',
+  'submittedAmountMinor': 100000,
+  'submittedBillRevisionId': 'revision_1',
+  'status': 'pending',
+  'receiptPath': 'payment_receipts/community/bill/resident/reserved-proof.png',
+};
 
 void main() {
   test(
@@ -347,6 +366,89 @@ void main() {
       );
       expect(f.calls, isEmpty);
       expect(f.v1Reads, 0);
+    },
+  );
+  test(
+    'restart recovery uploads to the reserved proof path without preparing another proof',
+    () async {
+      final f = _Fixture();
+      final result = await f.service.resumeV2PaymentProofUpload(
+        proof: _existingPendingProof(),
+        receiptBytes: Uint8List.fromList([1, 2, 3]),
+        receiptExtension: 'jpg',
+      );
+
+      expect(result.paymentId, 'reserved-proof');
+      expect(
+        result.receiptPath,
+        'payment_receipts/community/bill/resident/reserved-proof.png',
+      );
+      expect(f.calls, isEmpty);
+      expect(f.uploads.single['receiptPath'], result.receiptPath);
+      expect(f.uploads.single['metadata'], {
+        'paymentId': 'reserved-proof',
+        'billId': 'bill',
+        'communityId': 'community',
+        'residentUid': 'resident',
+      });
+      expect(f.receiptMetadataReads, [result.receiptPath]);
+    },
+  );
+
+  test(
+    'restart recovery recognizes matching existing evidence and does not overwrite it',
+    () async {
+      final f = _Fixture()
+        ..existingReceiptMetadata = {
+          'fullPath':
+              'payment_receipts/community/bill/resident/reserved-proof.png',
+          'size': 100,
+          'contentType': 'image/png',
+          'customMetadata': {
+            'paymentId': 'reserved-proof',
+            'billId': 'bill',
+            'communityId': 'community',
+            'residentUid': 'resident',
+          },
+        };
+      expect(
+        await f.service.isV2ProofReceiptUploaded(_existingPendingProof()),
+        true,
+      );
+      final result = await f.service.resumeV2PaymentProofUpload(
+        proof: _existingPendingProof(),
+        receiptBytes: Uint8List.fromList([9, 8, 7]),
+        receiptExtension: 'jpg',
+      );
+
+      expect(result.paymentId, 'reserved-proof');
+      expect(f.uploads, isEmpty);
+      expect(f.calls, isEmpty);
+    },
+  );
+
+  test(
+    'restart recovery rejects evidence metadata from another proof',
+    () async {
+      final f = _Fixture()
+        ..existingReceiptMetadata = {
+          'fullPath':
+              'payment_receipts/community/bill/resident/reserved-proof.png',
+          'size': 100,
+          'contentType': 'image/png',
+          'customMetadata': {
+            'paymentId': 'other-proof',
+            'billId': 'bill',
+            'communityId': 'community',
+            'residentUid': 'resident',
+          },
+        };
+      await expectLater(
+        f.service.isV2ProofReceiptUploaded(_existingPendingProof()),
+        _failure(ResidentDirectUpiFailure.proofUploadFailed),
+      );
+      expect(f.uploads, isEmpty);
+      expect(f.calls, isEmpty);
     },
   );
   test(

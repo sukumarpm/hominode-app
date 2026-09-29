@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import 'src/services/bill_firestore_service.dart';
 import 'src/utils/payment_method.dart';
 
 class PaymentHistoryScreen extends StatelessWidget {
@@ -41,6 +42,7 @@ class _PaymentHistoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final paidAt = _dateFrom(bill['paidAt']);
+    final isV2 = BillFirestoreService.isV2Bill(bill);
     final amount = bill['amount'] as num?;
     final billId = _nonEmptyString(bill['id']);
     final month = _nonEmptyString(bill['month']);
@@ -50,7 +52,15 @@ class _PaymentHistoryCard extends StatelessWidget {
         _nonEmptyString(bill['paymentReference']) ??
         _nonEmptyString(bill['transactionId']);
     final paymentMethod = normalizePaymentMethod(bill['paymentMethod']);
-    final period = [if (month != null) month, if (year != null) year].join(' ');
+    final billingPeriod = _displayBillingPeriod(bill['billingPeriod']);
+    final period = isV2
+        ? billingPeriod ?? 'Paid bill'
+        : [if (month != null) month, if (year != null) year].join(' ');
+    final amountText = isV2
+        ? BillFirestoreService.formatV2BillMinorUnits(bill, bill['amountMinor'])
+        : amount == null
+        ? null
+        : '₹${amount.toDouble().toStringAsFixed(2)}';
 
     return Card(
       margin: EdgeInsets.zero,
@@ -72,9 +82,9 @@ class _PaymentHistoryCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (amount != null)
+                if (amountText != null)
                   Text(
-                    '₹${amount.toDouble().toStringAsFixed(2)}',
+                    amountText,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -100,6 +110,28 @@ class _PaymentHistoryCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _displayBillingPeriod(Object? value) {
+  if (value is! String || !RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(value)) {
+    return null;
+  }
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  final pieces = value.split('-');
+  return '${months[int.parse(pieces[1]) - 1]} ${pieces[0]}';
 }
 
 class _DetailRow extends StatelessWidget {

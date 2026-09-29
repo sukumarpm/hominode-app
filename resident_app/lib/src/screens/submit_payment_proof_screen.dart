@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,12 +8,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/bill_firestore_service.dart';
 import '../services/resident_direct_upi_service.dart';
+
+typedef PaymentReceiptPicker = Future<XFile?> Function(ImageSource source);
 
 class SubmitPaymentProofScreen extends StatefulWidget {
   final Map<String, dynamic> bill;
+  final Map<String, dynamic>? existingV2Proof;
+  final ResidentDirectUpiService? service;
+  final PaymentReceiptPicker? receiptPicker;
 
-  const SubmitPaymentProofScreen({super.key, required this.bill});
+  const SubmitPaymentProofScreen({
+    super.key,
+    required this.bill,
+    this.existingV2Proof,
+    this.service,
+    this.receiptPicker,
+  });
 
   @override
   State<SubmitPaymentProofScreen> createState() =>
@@ -24,9 +37,33 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
   final _picker = ImagePicker();
 
   XFile? _receiptImage;
+  Uint8List? _receiptBytes;
   bool _isSubmitting = false;
+  bool? _existingReceiptUploaded;
+
+  ResidentDirectUpiService get _service =>
+      widget.service ?? ResidentDirectUpiService();
 
   static const Color _primaryBlue = Color(0xFF0E4778);
+
+  @override
+  void initState() {
+    super.initState();
+    final proof = widget.existingV2Proof;
+    if (proof != null) _checkExistingReceipt(proof);
+  }
+
+  Future<void> _checkExistingReceipt(Map<String, dynamic> proof) async {
+    try {
+      final uploaded = await _service.isV2ProofReceiptUploaded(proof);
+      if (mounted) setState(() => _existingReceiptUploaded = uploaded);
+    } on ResidentDirectUpiException catch (error) {
+      if (mounted) {
+        setState(() => _existingReceiptUploaded = false);
+        _showMessage(error.message);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -36,16 +73,20 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
 
   Future<void> _pickReceipt(ImageSource source) async {
     try {
-      final image = await _picker.pickImage(
-        source: source,
-        imageQuality: 85,
-        maxWidth: 1800,
-      );
+      final image = widget.receiptPicker == null
+          ? await _picker.pickImage(
+              source: source,
+              imageQuality: 85,
+              maxWidth: 1800,
+            )
+          : await widget.receiptPicker!(source);
 
       if (image == null || !mounted) return;
+      final bytes = await image.readAsBytes();
 
       setState(() {
         _receiptImage = image;
+        _receiptBytes = bytes;
       });
     } catch (e) {
       if (!mounted) return;
@@ -92,9 +133,10 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
   Future<void> _submitPaymentProof() async {
     if (_isSubmitting) return;
 
-    final user = FirebaseAuth.instance.currentUser;
+    final isV2 = widget.bill['schemaVersion'] == 2;
+    final user = isV2 ? null : FirebaseAuth.instance.currentUser;
 
-    if (user == null) {
+    if (!isV2 && user == null) {
       _showMessage('Please sign in again.');
       return;
     }
@@ -107,12 +149,20 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
     final billId = widget.bill['id']?.toString() ?? '';
     final communityId = widget.bill['communityId']?.toString() ?? '';
     final flatId = widget.bill['flatId']?.toString() ?? '';
+    final v2Amount =
+        widget.existingV2Proof?['submittedAmountMinor'] ??
+        widget.bill['outstandingAmountMinor'];
     final amount = (widget.bill['amount'] as num?)?.toDouble() ?? 0;
+    final amountValid = isV2
+        ? BillFirestoreService.isV2InrBill(widget.bill) &&
+              v2Amount is int &&
+              v2Amount > 0
+        : amount > 0;
 
     if (billId.isEmpty ||
         communityId.isEmpty ||
-        flatId.isEmpty ||
-        amount <= 0) {
+        (!isV2 && flatId.isEmpty) ||
+        !amountValid) {
       _showMessage('Bill information is incomplete.');
       return;
     }
@@ -124,19 +174,46 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
     Reference? uploadedReceiptRef;
 
     try {
-      await ResidentDirectUpiService().ensureNoPendingProofForBill(billId);
+      if (isV2) {
+        final bytes = Uint8List.fromList(
+          _receiptBytes ?? await _receiptImage!.readAsBytes(),
+        );
+        final extension = _fileExtension(_receiptImage!.name);
+        final existingProof = widget.existingV2Proof;
+        if (existingProof != null) {
+          await _service.resumeV2PaymentProofUpload(
+            proof: existingProof,
+            receiptBytes: bytes,
+            receiptExtension: extension,
+          );
+        } else {
+          final preparation = await _service.preparePayment(billId);
+          final attempt = _service.createV2ProofSubmissionAttempt(
+            preparation: preparation,
+            receiptBytes: bytes,
+            receiptExtension: extension,
+            paymentReference: _referenceController.text,
+          );
+          await _service.submitV2PaymentProof(attempt);
+        }
+        if (mounted) Navigator.pop(context, true);
+        return;
+      }
+
+      final residentUid = user!.uid;
+      await _service.ensureNoPendingProofForBill(billId);
 
       final paymentRef = FirebaseFirestore.instance
           .collection('payments')
           .doc();
 
-      final extension = _fileExtension(_receiptImage!.path);
+      final extension = _fileExtension(_receiptImage!.name);
 
       final storagePath =
           'payment_receipts/'
           '$communityId/'
           '$billId/'
-          '${user.uid}/'
+          '$residentUid/'
           '${paymentRef.id}.$extension';
 
       uploadedReceiptRef = FirebaseStorage.instance.ref().child(storagePath);
@@ -160,7 +237,7 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
         'communityId': communityId,
         'billId': billId,
         'flatId': flatId,
-        'userId': user.uid,
+        'userId': residentUid,
         'amount': amount,
         'provider': 'direct_upi',
         'method': 'upi',
@@ -243,7 +320,14 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final amount = (widget.bill['amount'] as num?)?.toDouble() ?? 0;
+    final isV2 = widget.bill['schemaVersion'] == 2;
+    final displayAmount = isV2
+        ? BillFirestoreService.formatV2BillMinorUnits(
+            widget.bill,
+            widget.existingV2Proof?['submittedAmountMinor'] ??
+                widget.bill['outstandingAmountMinor'],
+          )
+        : '₹${((widget.bill['amount'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}';
 
     return Scaffold(
       appBar: AppBar(
@@ -268,13 +352,15 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Amount Due',
+                  Text(
+                    widget.existingV2Proof == null
+                        ? 'Amount Due'
+                        : 'Reserved Payment Amount',
                     style: TextStyle(color: Colors.grey),
                   ),
                   SizedBox(height: 6.h),
                   Text(
-                    '₹${amount.toStringAsFixed(2)}',
+                    displayAmount,
                     style: TextStyle(
                       fontSize: 30.sp,
                       fontWeight: FontWeight.w700,
@@ -285,6 +371,21 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
               ),
             ),
 
+            if (_existingReceiptUploaded == true) ...[
+              SizedBox(height: 16.h),
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE9FCEB),
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                child: const Text(
+                  'Receipt already uploaded. This payment is awaiting Admin verification.',
+                ),
+              ),
+            ],
+
             SizedBox(height: 20.h),
 
             Text(
@@ -293,19 +394,20 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
             ),
             SizedBox(height: 8.h),
 
-            TextField(
-              controller: _referenceController,
-              maxLength: 200,
-              decoration: InputDecoration(
-                hintText: 'Optional',
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12.r),
-                  borderSide: BorderSide.none,
+            if (_existingReceiptUploaded != true)
+              TextField(
+                controller: _referenceController,
+                maxLength: 200,
+                decoration: InputDecoration(
+                  hintText: 'Optional',
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12.r),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
-            ),
 
             SizedBox(height: 24.h),
 
@@ -316,43 +418,44 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
 
             SizedBox(height: 10.h),
 
-            InkWell(
-              onTap: _isSubmitting ? null : _chooseReceiptSource,
-              borderRadius: BorderRadius.circular(16.r),
-              child: Container(
-                width: double.infinity,
-                height: 180.h,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16.r),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: _receiptImage == null
-                    ? Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.receipt_long_outlined,
-                            size: 42.w,
-                            color: _primaryBlue,
+            if (_existingReceiptUploaded != true)
+              InkWell(
+                onTap: _isSubmitting ? null : _chooseReceiptSource,
+                borderRadius: BorderRadius.circular(16.r),
+                child: Container(
+                  width: double.infinity,
+                  height: 180.h,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16.r),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: _receiptImage == null
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.receipt_long_outlined,
+                              size: 42.w,
+                              color: _primaryBlue,
+                            ),
+                            SizedBox(height: 10.h),
+                            const Text('Take photo or choose from gallery'),
+                          ],
+                        )
+                      : ClipRRect(
+                          borderRadius: BorderRadius.circular(16.r),
+                          child: Image.memory(
+                            _receiptBytes!,
+                            fit: BoxFit.cover,
                           ),
-                          SizedBox(height: 10.h),
-                          const Text('Take photo or choose from gallery'),
-                        ],
-                      )
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(16.r),
-                        child: Image.file(
-                          File(_receiptImage!.path),
-                          fit: BoxFit.cover,
                         ),
-                      ),
+                ),
               ),
-            ),
 
             SizedBox(height: 12.h),
 
-            if (_receiptImage != null)
+            if (_existingReceiptUploaded != true && _receiptImage != null)
               TextButton.icon(
                 onPressed: _isSubmitting ? null : _chooseReceiptSource,
                 icon: const Icon(Icons.refresh),
@@ -365,7 +468,9 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
               width: double.infinity,
               height: 52.h,
               child: ElevatedButton(
-                onPressed: _isSubmitting ? null : _submitPaymentProof,
+                onPressed: _isSubmitting || _existingReceiptUploaded == true
+                    ? null
+                    : _submitPaymentProof,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _primaryBlue,
                   foregroundColor: Colors.white,
@@ -382,7 +487,13 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
                           color: Colors.white,
                         ),
                       )
-                    : const Text('Submit for Verification'),
+                    : Text(
+                        _existingReceiptUploaded == true
+                            ? 'Awaiting Admin verification'
+                            : widget.existingV2Proof == null
+                            ? 'Submit for Verification'
+                            : 'Resume Receipt Upload',
+                      ),
               ),
             ),
 
