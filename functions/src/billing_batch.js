@@ -26,6 +26,10 @@ function monthlyBillIdV2(communityId, flatId, billingPeriod) {
   return `monthly_v2_${hash([communityId, flatId, billingPeriod])}`;
 }
 
+function monthlyBillingBatchId(communityId, idempotencyKey) {
+  return `monthly_batch_v2_${hash([communityId, idempotencyKey])}`;
+}
+
 function validateChargeLines(raw) {
   if (!Array.isArray(raw) || !raw.length || raw.length > 20) invalid('Provide 1 to 20 charge lines.');
   const ids = new Set();
@@ -232,8 +236,8 @@ function validateTrustedSource(source) {
   return {scheduleId: source.scheduleId, scheduleRevisionId: source.scheduleRevisionId};
 }
 
-async function ensureBatch(db, auth, input, now, source) {
-  const batchId = `monthly_batch_v2_${hash([input.communityId, input.idempotencyKey])}`;
+async function ensureBatch(db, auth, input, now, source, dueDateValidationNowMs) {
+  const batchId = monthlyBillingBatchId(input.communityId, input.idempotencyKey);
   const batchRef = db.collection('billingBatches').doc(batchId);
   // Preserve the exact legacy hash for existing direct V2 batch requests.
   const requestHash = source ? hash({input, source}) : hash(input);
@@ -247,7 +251,8 @@ async function ensureBatch(db, auth, input, now, source) {
       return; // Original local creation date and immutable revision survive retries.
     }
     const nowMs = now();
-    const dates = validateDueDateV2(input.dueDateKey, actor.community, nowMs);
+    const validationNowMs = dueDateValidationNowMs ?? nowMs;
+    const dates = validateDueDateV2(input.dueDateKey, actor.community, validationNowMs);
     const initialScope = await resolveInitialScope(db, transaction, input);
     const createdAt = Timestamp.fromMillis(nowMs);
     const terms = {schemaVersion: 2, communityId: input.communityId, billingPeriod: input.billingPeriod,
@@ -417,11 +422,16 @@ async function recordFailure(db, auth, input, batchId, flatId) {
 // Contract: retry the identical payload/idempotencyKey until resumeRequired is
 // false. Each call materializes <=100 targets and attempts <=100 bills. Failed
 // targets remain retryable; skipped/conflicted targets require a later workflow.
-async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, source: rawSource}) {
+async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, source: rawSource,
+  dueDateValidationNowMs}) {
   const input = validateRequest(data);
   const source = validateTrustedSource(rawSource);
+  if (dueDateValidationNowMs !== undefined && (!source || !Number.isSafeInteger(dueDateValidationNowMs) ||
+      !Number.isFinite(new Date(dueDateValidationNowMs).getTime()))) {
+    invalid('A trusted schedule source is required for reserved-date recovery.');
+  }
   await requireOperationalAdmin(db, auth, input.communityId);
-  const batchId = await ensureBatch(db, auth, input, now, source);
+  const batchId = await ensureBatch(db, auth, input, now, source, dueDateValidationNowMs);
   await materializeNextPage(db, auth, input, batchId);
   const batchRef = db.collection('billingBatches').doc(batchId);
   const before = (await batchRef.get()).data();
@@ -461,5 +471,5 @@ async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, 
     remaining, resumeRequired: remaining > 0, generation};
 }
 
-module.exports = {createMonthlyBillingBatchV2Core, monthlyBillIdV2, validateChargeLines,
-  validateDueDateV2, localBillingPeriodFromMillis};
+module.exports = {createMonthlyBillingBatchV2Core, monthlyBillIdV2, monthlyBillingBatchId,
+  validateChargeLines, validateDueDateV2, localBillingPeriodFromMillis};

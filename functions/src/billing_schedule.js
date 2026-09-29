@@ -2,7 +2,8 @@ const {createHash} = require('node:crypto');
 const {Timestamp} = require('firebase-admin/firestore');
 const {RegistrationError} = require('./register_resident');
 const {requireOperationalAdmin} = require('./resident_identity');
-const {validateChargeLines, localBillingPeriodFromMillis} = require('./billing_batch');
+const {validateChargeLines, localBillingPeriodFromMillis, monthlyBillingBatchId,
+  createMonthlyBillingBatchV2Core} = require('./billing_batch');
 
 const SCHEDULE_SCHEMA_VERSION = 2;
 const MAX_TARGETS = 5000;
@@ -465,16 +466,24 @@ function assertPinnedRevision(schedule, revision, generation, scheduleId, commun
   }
 }
 
-function assertExistingGeneration(schedule, generation, scheduleId, communityId, billingPeriodValue) {
+function assertExistingGeneration(generation, scheduleId, communityId, billingPeriodValue) {
   if (!generation || generation.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
       generation.scheduleId !== scheduleId || generation.communityId !== communityId ||
-      generation.billingPeriod !== billingPeriodValue || generation.status !== 'reserved' ||
+      generation.billingPeriod !== billingPeriodValue ||
+      !['reserved', 'executing', 'completed', 'reconciliation_required'].includes(generation.status) ||
       !validId(generation.scheduleRevisionId) || !Number.isSafeInteger(generation.scheduleRevisionNo) ||
       generation.scheduleRevisionNo < 1 || !validId(generation.createdBy) ||
       !timestampIso(generation.createdAt) || !timestampIso(generation.updatedAt) ||
-      schedule.generationInProgressBillingPeriod !== billingPeriodValue ||
-      schedule.generationInProgressScheduleRevisionId !== generation.scheduleRevisionId) {
+      typeof generation.generationDateKey !== 'string' || typeof generation.dueDateKey !== 'string') {
     fail('The existing billing schedule generation reservation is inconsistent.', 'failed-precondition');
+  }
+}
+
+function assertGenerationFenceMatches(schedule, generation) {
+  assertGenerationFence(schedule);
+  if (schedule.generationInProgressBillingPeriod !== generation.billingPeriod ||
+      schedule.generationInProgressScheduleRevisionId !== generation.scheduleRevisionId) {
+    fail('The schedule generation fence does not match its reservation.', 'failed-precondition');
   }
 }
 
@@ -512,8 +521,16 @@ async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
 
     if (generationSnapshot.exists) {
       const generation = generationSnapshot.data();
-      assertExistingGeneration(schedule, generation, input.scheduleId, input.communityId, input.billingPeriod);
-      assertGenerationFence(schedule);
+      assertExistingGeneration(generation, input.scheduleId, input.communityId, input.billingPeriod);
+      if (['reserved', 'executing'].includes(generation.status)) {
+        assertGenerationFenceMatches(schedule, generation);
+      } else {
+        const generatedThrough = schedule.generatedThroughBillingPeriod;
+        if (typeof generatedThrough !== 'string' || !PERIOD_PATTERN.test(generatedThrough) ||
+            generatedThrough < input.billingPeriod) {
+          fail('The terminal generation is not accounted by the schedule.', 'failed-precondition');
+        }
+      }
       const currentRevisionSnapshot = await tx.get(revisionCollection.doc(schedule.currentRevisionId));
       if (!currentRevisionSnapshot.exists) fail('The current schedule revision is missing.', 'failed-precondition');
       assertCurrentRevision(schedule, currentRevisionSnapshot.data(), input.scheduleId);
@@ -591,6 +608,357 @@ async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.no
   return {success: true, ...reservationResult(result, alreadyCompleted)};
 }
 
+function validateExecutionRequest(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) ||
+      Object.keys(data).some(key => !['communityId', 'scheduleId', 'billingPeriod'].includes(key)) ||
+      !validId(data.communityId) || !validId(data.scheduleId)) {
+    fail('Invalid billing schedule execution request.');
+  }
+  return {
+    communityId: data.communityId,
+    scheduleId: data.scheduleId,
+    billingPeriod: billingPeriod(data.billingPeriod, 'billingPeriod'),
+  };
+}
+
+function timestampMillis(value) {
+  const millis = typeof value?.toMillis === 'function' ? value.toMillis() :
+    value instanceof Date ? value.getTime() : NaN;
+  return Number.isSafeInteger(millis) ? millis : null;
+}
+
+function scheduleBatchIdempotencyKey(scheduleId, billingPeriodValue) {
+  return `schedule_v2_${hash(['billing-schedule', scheduleId, billingPeriodValue])}`;
+}
+
+function batchProgress(batch) {
+  const generation = batch.generation;
+  return {
+    status: batch.status,
+    generation: {
+      targetCount: generation.targetCount,
+      materializedCount: generation.materializedCount,
+      completed: generation.completed,
+      skipped: generation.skipped,
+      reconciliationRequired: generation.reconciliationRequired,
+      failed: generation.failed,
+    },
+  };
+}
+
+function assertBatchLinkage(batch, batchRevision, batchId, generation, revision, idempotencyKey) {
+  const chargeTerms = validateChargeLines(revision.chargeLines);
+  if (!batch || batch.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
+      batch.communityId !== generation.communityId || batch.billingPeriod !== generation.billingPeriod ||
+      batch.scheduleId !== generation.scheduleId || batch.scheduleRevisionId !== generation.scheduleRevisionId ||
+      batch.idempotencyKey !== idempotencyKey || batch.currentRevisionId !== 'revision_1' ||
+      batch.currency !== 'INR' || batch.dueDateKey !== generation.dueDateKey ||
+      batch.amountMinor !== chargeTerms.amountMinor ||
+      JSON.stringify(batch.chargeLines) !== JSON.stringify(chargeTerms.chargeLines) ||
+      !batchRevision || batchRevision.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
+      batchRevision.billingBatchId !== batchId || batchRevision.revisionId !== 'revision_1' ||
+      batchRevision.revisionNo !== 1 || batchRevision.communityId !== generation.communityId ||
+      batchRevision.billingPeriod !== generation.billingPeriod ||
+      batchRevision.scheduleId !== generation.scheduleId ||
+      batchRevision.scheduleRevisionId !== generation.scheduleRevisionId ||
+      batchRevision.currency !== 'INR' || batchRevision.dueDateKey !== generation.dueDateKey ||
+      batchRevision.amountMinor !== chargeTerms.amountMinor ||
+      JSON.stringify(batchRevision.chargeLines) !== JSON.stringify(chargeTerms.chargeLines)) {
+    fail('The persisted billing batch does not match its schedule reservation.', 'failed-precondition');
+  }
+}
+
+function assertBatchProgressState(batch) {
+  const generation = batch?.generation;
+  if (!generation || !['generating', 'unresolved', 'completed', 'reconciliation_required'].includes(batch.status) ||
+      !['targetCount', 'materializedCount', 'completed', 'skipped', 'reconciliationRequired', 'failed']
+        .every(key => Number.isSafeInteger(generation[key]) && generation[key] >= 0) ||
+      generation.materializedCount > generation.targetCount ||
+      generation.completed + generation.skipped + generation.reconciliationRequired > generation.targetCount) {
+    fail('The persisted billing batch progress is invalid.', 'failed-precondition');
+  }
+}
+
+function assertTerminalBatch(batch, generation) {
+  assertBatchProgressState(batch);
+  const progress = batch.generation;
+  const accounted = progress.completed + progress.skipped + progress.reconciliationRequired;
+  if (!['completed', 'reconciliation_required'].includes(batch.status) || progress.failed !== 0 ||
+      progress.materializedCount !== progress.targetCount || accounted !== progress.targetCount ||
+      (batch.status === 'completed' && progress.reconciliationRequired !== 0) ||
+      (batch.status === 'reconciliation_required' && progress.reconciliationRequired === 0) ||
+      (generation && generation.status !== batch.status)) {
+    fail('The billing batch is not in a terminal accounted state.', 'failed-precondition');
+  }
+}
+
+function assertReservationCreatedDuringWindow(generation, revision, community) {
+  const createdAtMs = timestampMillis(generation.createdAt);
+  const dateKeys = billingScheduleDateKeys(revision, generation.billingPeriod);
+  if (createdAtMs === null || !dateKeys ||
+      localBillingPeriodFromMillis(createdAtMs, community) !== generation.billingPeriod) {
+    fail('The reservation creation time is invalid.', 'failed-precondition');
+  }
+  const localDate = localDateKeyFromMillis(createdAtMs, community);
+  if (localDate < dateKeys.generationDateKey || localDate > dateKeys.dueDateKey) {
+    fail('The reservation was not created during its generation window.', 'failed-precondition');
+  }
+  return createdAtMs;
+}
+
+function assertTerminalGenerationAccounting(schedule, generation) {
+  const generatedThrough = schedule.generatedThroughBillingPeriod;
+  if (typeof generatedThrough !== 'string' || !PERIOD_PATTERN.test(generatedThrough) ||
+      generatedThrough < generation.billingPeriod || !timestampIso(generation.completedAt) ||
+      !validId(generation.batchId)) {
+    fail('The terminal generation is not accounted by the schedule.', 'failed-precondition');
+  }
+}
+
+function assertGenerationSequence(schedule, generation, pinnedRevision) {
+  let expectedPeriod;
+  if (schedule.generatedThroughBillingPeriod == null) {
+    expectedPeriod = pinnedRevision.startBillingPeriod;
+  } else {
+    if (typeof schedule.generatedThroughBillingPeriod !== 'string' ||
+        !PERIOD_PATTERN.test(schedule.generatedThroughBillingPeriod)) {
+      fail('The stored generated-through period is invalid.', 'failed-precondition');
+    }
+    expectedPeriod = nextBillingPeriod(schedule.generatedThroughBillingPeriod);
+  }
+  if (generation.billingPeriod !== expectedPeriod) {
+    fail('The reserved billing period is not next in the generation sequence.', 'failed-precondition');
+  }
+}
+
+function trustedBatchRequest(generation, revision, idempotencyKey) {
+  const request = {
+    communityId: generation.communityId,
+    billingPeriod: generation.billingPeriod,
+    idempotencyKey,
+    scope: revision.scope,
+    chargeLines: revision.chargeLines,
+    dueDate: generation.dueDateKey,
+  };
+  if (revision.scope === 'building' || revision.scope === 'unit') request.buildingId = revision.buildingId;
+  if (revision.scope === 'unit') request.flatId = revision.flatId;
+  if (revision.scope === 'units') request.flatIds = revision.flatIds;
+  return request;
+}
+
+function terminalExecutionResult(generation, alreadyCompleted) {
+  return {
+    success: true,
+    ...reservationResult(generation, alreadyCompleted),
+    resumeRequired: false,
+  };
+}
+
+async function executeBillingSchedulePeriodV2Core({db, auth, data, now = Date.now,
+  createBatch = createMonthlyBillingBatchV2Core}) {
+  const input = validateExecutionRequest(data);
+  const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
+  const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
+  const idempotencyKey = scheduleBatchIdempotencyKey(input.scheduleId, input.billingPeriod);
+  const expectedBatchId = monthlyBillingBatchId(input.communityId, idempotencyKey);
+  const nowMs = now();
+  if (!Number.isSafeInteger(nowMs)) fail('The current time is invalid.', 'failed-precondition');
+  let context;
+  let terminalResult;
+
+  await db.runTransaction(async tx => {
+    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const [scheduleSnapshot, generationSnapshot] = await Promise.all([tx.get(scheduleRef), tx.get(generationRef)]);
+    if (!scheduleSnapshot.exists) fail('Billing schedule was not found.', 'not-found');
+    if (!generationSnapshot.exists) fail('The billing period has not been reserved.', 'failed-precondition');
+    const schedule = scheduleSnapshot.data();
+    const generation = generationSnapshot.data();
+    assertScheduleIdentity(schedule, input.scheduleId, input.communityId);
+    assertExistingGeneration(generation, input.scheduleId, input.communityId, input.billingPeriod);
+
+    if (['completed', 'reconciliation_required'].includes(generation.status)) {
+      assertTerminalGenerationAccounting(schedule, generation);
+      const revisionSnapshot = await tx.get(revisionCollection.doc(generation.scheduleRevisionId));
+      const batchRef = db.collection('billingBatches').doc(generation.batchId);
+      const batchSnapshot = await tx.get(batchRef);
+      const batchRevisionSnapshot = await tx.get(db.collection(`billingBatches/${generation.batchId}/revisions`).doc('revision_1'));
+      if (!revisionSnapshot.exists || !batchSnapshot.exists || !batchRevisionSnapshot.exists) {
+        fail('The terminal generation record is incomplete.', 'failed-precondition');
+      }
+      const pinnedRevision = revisionSnapshot.data();
+      assertPinnedRevision(schedule, pinnedRevision, generation, input.scheduleId, input.communityId);
+      if (generation.batchIdempotencyKey !== idempotencyKey || expectedBatchId !== generation.batchId) {
+        fail('The terminal generation batch identity is inconsistent.', 'failed-precondition');
+      }
+      const batch = batchSnapshot.data();
+      assertBatchLinkage(batch, batchRevisionSnapshot.data(), generation.batchId, generation, pinnedRevision, idempotencyKey);
+      assertTerminalBatch(batch, generation);
+      terminalResult = terminalExecutionResult(generation, true);
+      return;
+    }
+
+    if (!['reserved', 'executing'].includes(generation.status)) {
+      fail('The billing period is not available for execution.', 'failed-precondition');
+    }
+    assertGenerationFenceMatches(schedule, generation);
+    if (generation.batchId != null && generation.batchId !== expectedBatchId) {
+      fail('The generation is linked to a different billing batch.', 'failed-precondition');
+    }
+    if (generation.batchIdempotencyKey != null && generation.batchIdempotencyKey !== idempotencyKey) {
+      fail('The generation idempotency identity is inconsistent.', 'failed-precondition');
+    }
+    const revisionSnapshot = await tx.get(revisionCollection.doc(generation.scheduleRevisionId));
+    if (!revisionSnapshot.exists) fail('The pinned schedule revision is missing.', 'failed-precondition');
+    const pinnedRevision = revisionSnapshot.data();
+    assertPinnedRevision(schedule, pinnedRevision, generation, input.scheduleId, input.communityId);
+    assertGenerationSequence(schedule, generation, pinnedRevision);
+    const dueDateValidationNowMs = assertReservationCreatedDuringWindow(generation, pinnedRevision, actor.community);
+    const updatedAt = Timestamp.fromMillis(nowMs);
+    tx.update(generationRef, {
+      status: 'executing',
+      batchId: expectedBatchId,
+      batchIdempotencyKey: idempotencyKey,
+      updatedAt,
+    });
+    context = {generation, pinnedRevision, dueDateValidationNowMs};
+  });
+
+  if (terminalResult) return terminalResult;
+  const {generation, pinnedRevision, dueDateValidationNowMs} = context;
+  const request = trustedBatchRequest(generation, pinnedRevision, idempotencyKey);
+  const source = {scheduleId: input.scheduleId, scheduleRevisionId: generation.scheduleRevisionId};
+  const batchResult = await createBatch({db, auth, data: request, now, source, dueDateValidationNowMs});
+
+  if (batchResult?.batchId !== expectedBatchId) {
+    fail('The billing batch returned an unexpected identity.', 'failed-precondition');
+  }
+  if (batchResult.resumeRequired === true) {
+    await persistExecutingBatchProgress({db, auth, input, generation, pinnedRevision, idempotencyKey,
+      batchId: expectedBatchId, now});
+    const latest = (await generationRef.get()).data();
+    return {...reservationResult(latest, false), success: true, resumeRequired: true,
+      batchProgress: latest.latestBatchProgress};
+  }
+  if (batchResult.resumeRequired !== false || batchResult.failed !== 0 ||
+      !['completed', 'reconciliation_required'].includes(batchResult.status)) {
+    fail('The billing batch has not reached a terminal accounted state.', 'failed-precondition');
+  }
+  return finalizeScheduleGeneration({db, auth, input, generation, pinnedRevision, idempotencyKey,
+    batchId: expectedBatchId, now});
+}
+
+async function persistExecutingBatchProgress({db, auth, input, generation, pinnedRevision,
+  idempotencyKey, batchId, now}) {
+  const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
+  const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
+  const batchRef = db.collection('billingBatches').doc(batchId);
+  const batchRevisionRef = db.collection(`billingBatches/${batchId}/revisions`).doc('revision_1');
+  await db.runTransaction(async tx => {
+    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const [scheduleSnapshot, generationSnapshot, batchSnapshot, batchRevisionSnapshot] = await Promise.all([
+      tx.get(scheduleRef), tx.get(generationRef), tx.get(batchRef), tx.get(batchRevisionRef),
+    ]);
+    if (!scheduleSnapshot.exists || !generationSnapshot.exists || !batchSnapshot.exists || !batchRevisionSnapshot.exists) {
+      fail('The executing billing batch state is incomplete.', 'failed-precondition');
+    }
+    const schedule = scheduleSnapshot.data();
+    const currentGeneration = generationSnapshot.data();
+    assertScheduleIdentity(schedule, input.scheduleId, input.communityId);
+    assertExistingGeneration(currentGeneration, input.scheduleId, input.communityId, input.billingPeriod);
+    if (currentGeneration.status !== 'executing') fail('The generation is no longer executing.', 'failed-precondition');
+    assertGenerationFenceMatches(schedule, currentGeneration);
+    if (currentGeneration.scheduleRevisionId !== generation.scheduleRevisionId ||
+        currentGeneration.batchId !== batchId || currentGeneration.batchIdempotencyKey !== idempotencyKey) {
+      fail('The executing generation identity changed.', 'failed-precondition');
+    }
+    const pinnedSnapshot = await tx.get(revisionCollection.doc(currentGeneration.scheduleRevisionId));
+    if (!pinnedSnapshot.exists) fail('The pinned schedule revision is missing.', 'failed-precondition');
+    const currentPinned = pinnedSnapshot.data();
+    assertPinnedRevision(schedule, currentPinned, currentGeneration, input.scheduleId, input.communityId);
+    assertBatchLinkage(batchSnapshot.data(), batchRevisionSnapshot.data(), batchId,
+      currentGeneration, currentPinned, idempotencyKey);
+    assertBatchProgressState(batchSnapshot.data());
+    if (['completed', 'reconciliation_required'].includes(batchSnapshot.data().status)) {
+      fail('The batch is terminal but execution reported more work.', 'failed-precondition');
+    }
+    tx.update(generationRef, {
+      status: 'executing',
+      batchId,
+      batchIdempotencyKey: idempotencyKey,
+      latestBatchProgress: batchProgress(batchSnapshot.data()),
+      updatedAt: Timestamp.fromMillis(now()),
+    });
+  });
+}
+
+async function finalizeScheduleGeneration({db, auth, input, generation, pinnedRevision,
+  idempotencyKey, batchId, now}) {
+  const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
+  const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
+  const batchRef = db.collection('billingBatches').doc(batchId);
+  const batchRevisionRef = db.collection(`billingBatches/${batchId}/revisions`).doc('revision_1');
+  let result;
+  await db.runTransaction(async tx => {
+    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const [scheduleSnapshot, generationSnapshot, batchSnapshot, batchRevisionSnapshot] = await Promise.all([
+      tx.get(scheduleRef), tx.get(generationRef), tx.get(batchRef), tx.get(batchRevisionRef),
+    ]);
+    if (!scheduleSnapshot.exists || !generationSnapshot.exists || !batchSnapshot.exists || !batchRevisionSnapshot.exists) {
+      fail('The final billing generation state is incomplete.', 'failed-precondition');
+    }
+    const schedule = scheduleSnapshot.data();
+    const currentGeneration = generationSnapshot.data();
+    assertScheduleIdentity(schedule, input.scheduleId, input.communityId);
+    assertExistingGeneration(currentGeneration, input.scheduleId, input.communityId, input.billingPeriod);
+    const pinnedSnapshot = await tx.get(revisionCollection.doc(currentGeneration.scheduleRevisionId));
+    if (!pinnedSnapshot.exists) fail('The pinned schedule revision is missing.', 'failed-precondition');
+    const currentPinned = pinnedSnapshot.data();
+    assertPinnedRevision(schedule, currentPinned, currentGeneration, input.scheduleId, input.communityId);
+    assertBatchLinkage(batchSnapshot.data(), batchRevisionSnapshot.data(), batchId,
+      currentGeneration, currentPinned, idempotencyKey);
+
+    if (['completed', 'reconciliation_required'].includes(currentGeneration.status)) {
+      assertTerminalGenerationAccounting(schedule, currentGeneration);
+      assertTerminalBatch(batchSnapshot.data(), currentGeneration);
+      result = terminalExecutionResult(currentGeneration, true);
+      return;
+    }
+    if (currentGeneration.status !== 'executing') fail('The generation is no longer executing.', 'failed-precondition');
+    assertGenerationFenceMatches(schedule, currentGeneration);
+    if (currentGeneration.scheduleRevisionId !== generation.scheduleRevisionId ||
+        currentGeneration.batchId !== batchId || currentGeneration.batchIdempotencyKey !== idempotencyKey) {
+      fail('The generation identity changed before finalization.', 'failed-precondition');
+    }
+    assertTerminalBatch(batchSnapshot.data(), null);
+    assertGenerationSequence(schedule, currentGeneration, currentPinned);
+    const batchStatus = batchSnapshot.data().status;
+    const completedAt = Timestamp.fromMillis(now());
+    const counters = {...batchSnapshot.data().generation};
+    const terminalPatch = {
+      status: batchStatus,
+      batchId,
+      batchIdempotencyKey: idempotencyKey,
+      latestBatchProgress: batchProgress(batchSnapshot.data()),
+      terminalCounters: counters,
+      completedAt,
+      updatedAt: completedAt,
+    };
+    if (batchStatus === 'reconciliation_required') {
+      terminalPatch.reconciliationRequiredCount = counters.reconciliationRequired;
+    }
+    tx.update(generationRef, terminalPatch);
+    tx.update(scheduleRef, {
+      generatedThroughBillingPeriod: input.billingPeriod,
+      generationInProgressBillingPeriod: null,
+      generationInProgressScheduleRevisionId: null,
+      updatedBy: actor.uid,
+      updatedAt: completedAt,
+    });
+    result = {...currentGeneration, ...terminalPatch};
+  });
+  return terminalExecutionResult(result, false);
+}
+
 async function transitionBillingSchedule({db, auth, data, now, fromStatuses, toStatus}) {
   const input = validateLifecycleRequest(data);
   const {schedule: scheduleRef} = scheduleRefs(db, input.scheduleId);
@@ -655,6 +1023,8 @@ module.exports = {
   createBillingScheduleV2Core,
   reviseBillingScheduleV2Core,
   reserveBillingSchedulePeriodV2Core,
+  executeBillingSchedulePeriodV2Core,
+  scheduleBatchIdempotencyKey,
   pauseBillingScheduleV2Core,
   resumeBillingScheduleV2Core,
   stopBillingScheduleV2Core,

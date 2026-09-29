@@ -233,6 +233,33 @@ test('source-less batch request hash and documents remain exactly compatible', a
   assert.equal(Object.hasOwn(revision, 'scheduleRevisionId'), false);
 });
 
+test('trusted schedule recovery validates due date at reservation time but preserves actual batch createdAt', async () => {
+  const f = fixture();
+  const source = {scheduleId: 'schedule-recovery', scheduleRevisionId: 'revision-pinned'};
+  const dueDateValidationNowMs = Date.parse('2030-01-15T16:00:00Z'); // Jan 16 in Manila.
+  const executionNow = Date.parse('2030-03-01T03:00:00Z');
+  await assert.rejects(f.run({}, {now: () => executionNow}), {code: 'invalid-argument'});
+  const first = await f.run({}, {now: () => executionNow, source, dueDateValidationNowMs});
+  const batch = f.db.values.get(`billingBatches/${first.batchId}`);
+  assert.equal(batch.createdAt.toMillis(), executionNow);
+  assert.equal(batch.creationLocalDate, '2030-01-16');
+  const retry = await f.run({}, {now: () => executionNow + 86400000, source, dueDateValidationNowMs});
+  assert.equal(retry.batchId, first.batchId);
+  assert.equal(f.docs('billingBatches').length, 1);
+});
+
+test('due-date recovery anchor requires a trusted schedule source and a safe integer timestamp', async () => {
+  const f = fixture();
+  await assert.rejects(f.run({}, {dueDateValidationNowMs: now()}), {code: 'invalid-argument'});
+  for (const dueDateValidationNowMs of ['2030-01-15', NaN, Infinity,
+    Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(f.run({}, {
+      source: {scheduleId: 's', scheduleRevisionId: 'r'}, dueDateValidationNowMs,
+    }), {code: 'invalid-argument'});
+  }
+  assert.equal(f.docs('billingBatches').length, 0);
+});
+
 test('trusted source is strictly validated and client data cannot inject schedule linkage', async () => {
   for (const source of [null, {}, {scheduleId: 's'}, {scheduleId: 's', scheduleRevisionId: 'r', extra: true},
     {scheduleId: 's/x', scheduleRevisionId: 'r'}, {scheduleId: 's', scheduleRevisionId: ''}]) {

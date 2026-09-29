@@ -23,6 +23,7 @@ const {
   createBillingScheduleV2Core,
   reviseBillingScheduleV2Core,
   reserveBillingSchedulePeriodV2Core,
+  executeBillingSchedulePeriodV2Core,
   pauseBillingScheduleV2Core,
   resumeBillingScheduleV2Core,
   stopBillingScheduleV2Core,
@@ -342,6 +343,10 @@ exports.reviseBillingScheduleV2 = appCheckedCallable(
 exports.reserveBillingSchedulePeriodV2 = appCheckedCallable(
   reserveBillingSchedulePeriodV2Core,
   "Billing schedule period could not be reserved.",
+);
+exports.executeBillingSchedulePeriodV2 = appCheckedCallable(
+  executeBillingSchedulePeriodV2Core,
+  "Billing schedule period could not be executed.",
 );
 exports.pauseBillingScheduleV2 = appCheckedCallable(
   pauseBillingScheduleV2Core,

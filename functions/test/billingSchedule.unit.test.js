@@ -12,6 +12,8 @@ const {
   createBillingScheduleV2Core: create,
   reviseBillingScheduleV2Core: revise,
   reserveBillingSchedulePeriodV2Core: reserve,
+  executeBillingSchedulePeriodV2Core: execute,
+  scheduleBatchIdempotencyKey,
   pauseBillingScheduleV2Core: pause,
   resumeBillingScheduleV2Core: resume,
   stopBillingScheduleV2Core: stop,
@@ -587,6 +589,7 @@ test('callable exports use the existing trusted App Check wrapper and V1 batch s
   const indexSource = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
   for (const callable of [
     'createBillingScheduleV2', 'reviseBillingScheduleV2', 'reserveBillingSchedulePeriodV2',
+    'executeBillingSchedulePeriodV2',
     'pauseBillingScheduleV2', 'resumeBillingScheduleV2', 'stopBillingScheduleV2',
   ]) {
     assert.match(indexSource, new RegExp(`exports\\.${callable} = appCheckedCallable\\(`));
@@ -594,7 +597,7 @@ test('callable exports use the existing trusted App Check wrapper and V1 batch s
   assert.match(indexSource, /exports\.createMonthlyBillingBatchV2 = appCheckedCallable\(\s*createMonthlyBillingBatchV2Core,/);
   const batchSource = fs.readFileSync(path.join(__dirname, '../src/billing_batch.js'), 'utf8');
   assert.match(batchSource, /async function createMonthlyBillingBatchV2Core/);
-  assert.match(batchSource, /module\.exports = \{createMonthlyBillingBatchV2Core, monthlyBillIdV2, validateChargeLines,\s*validateDueDateV2, localBillingPeriodFromMillis\}/);
+  assert.match(batchSource, /module\.exports = \{createMonthlyBillingBatchV2Core, monthlyBillIdV2, monthlyBillingBatchId,\s*validateChargeLines, validateDueDateV2, localBillingPeriodFromMillis\}/);
 });
 
 test('schedule module has no direct billing or financial writes, deletion, or generated-bill logic', () => {
