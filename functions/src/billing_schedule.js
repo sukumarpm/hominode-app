@@ -2,7 +2,7 @@ const {createHash} = require('node:crypto');
 const {Timestamp} = require('firebase-admin/firestore');
 const {RegistrationError} = require('./register_resident');
 const {requireOperationalAdmin} = require('./resident_identity');
-const {validateChargeLines} = require('./billing_batch');
+const {validateChargeLines, localBillingPeriodFromMillis} = require('./billing_batch');
 
 const SCHEDULE_SCHEMA_VERSION = 2;
 const MAX_TARGETS = 5000;
@@ -35,6 +35,14 @@ function billingPeriod(value, label) {
   return value;
 }
 
+function nextBillingPeriod(value) {
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
+    fail('Invalid billing period.', 'failed-precondition');
+  }
+  const [year, month] = value.split('-').map(Number);
+  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
 function optionalEndPeriod(value, start) {
   if (value === null) return null;
   const end = billingPeriod(value, 'endBillingPeriod');
@@ -60,6 +68,9 @@ function validateScheduleTerms(data) {
     if (!Number.isInteger(data[key]) || data[key] < 1 || data[key] > 28) {
       fail(`${key} must be an integer from 1 to 28.`);
     }
+  }
+  if (data.dueDay < data.generationDay) {
+    fail('dueDay must be on or after generationDay.');
   }
   const startBillingPeriod = billingPeriod(data.startBillingPeriod, 'startBillingPeriod');
   const endBillingPeriod = optionalEndPeriod(data.endBillingPeriod, startBillingPeriod);
@@ -146,6 +157,26 @@ function isBillingPeriodInSchedule(schedule, period) {
     (schedule.endBillingPeriod === null || period <= schedule.endBillingPeriod);
 }
 
+function effectivePeriodForRevision(schedule, input, community, nowMs) {
+  const candidates = [input.startBillingPeriod, localBillingPeriodFromMillis(nowMs, community)];
+  if (schedule.generatedThroughBillingPeriod != null) {
+    if (typeof schedule.generatedThroughBillingPeriod !== 'string' ||
+        !PERIOD_PATTERN.test(schedule.generatedThroughBillingPeriod)) {
+      fail('The stored generated-through period is invalid.', 'failed-precondition');
+    }
+    const generatedThrough = schedule.generatedThroughBillingPeriod;
+    candidates.push(nextBillingPeriod(generatedThrough));
+  }
+  const effectiveFromBillingPeriod = candidates.sort().at(-1);
+  if (!PERIOD_PATTERN.test(effectiveFromBillingPeriod)) {
+    fail('The effective billing period is outside the supported range.', 'failed-precondition');
+  }
+  if (input.endBillingPeriod !== null && input.endBillingPeriod < effectiveFromBillingPeriod) {
+    fail('endBillingPeriod must not be before the effective billing period.');
+  }
+  return effectiveFromBillingPeriod;
+}
+
 /** Calendar keys are strings; interpretation as local dates belongs to community time zone logic. */
 function billingScheduleDateKeys(schedule, period) {
   if (!isBillingPeriodInSchedule(schedule, period) ||
@@ -212,6 +243,10 @@ async function createBillingScheduleV2Core({db, auth, data, now = Date.now}) {
           existingRevision.data().requestHash !== requestHash) {
         fail('This idempotencyKey belongs to different billing schedule terms.', 'already-exists');
       }
+      const currentRevisionSnapshot = schedule.currentRevisionId === revisionId ?
+        existingRevision : await tx.get(revisionCollection.doc(schedule.currentRevisionId));
+      if (!currentRevisionSnapshot.exists) fail('The current schedule revision is missing.', 'failed-precondition');
+      assertCurrentRevision(schedule, currentRevisionSnapshot.data(), scheduleId);
       alreadyCompleted = true;
       return;
     }
@@ -220,11 +255,13 @@ async function createBillingScheduleV2Core({db, auth, data, now = Date.now}) {
 
     const createdAt = Timestamp.fromMillis(now());
     const terms = scheduleTerms(input);
+    const effectiveFromBillingPeriod = input.startBillingPeriod;
     tx.create(scheduleRef, {
       ...terms,
       id: scheduleId,
       status: 'active',
       currentRevisionId: revisionId,
+      currentRevisionEffectiveFromBillingPeriod: effectiveFromBillingPeriod,
       revisionNo: 1,
       idempotencyKey: input.idempotencyKey,
       requestHash,
@@ -239,6 +276,7 @@ async function createBillingScheduleV2Core({db, auth, data, now = Date.now}) {
     });
     tx.create(revisionRef, {
       ...terms,
+      effectiveFromBillingPeriod,
       scheduleId,
       revisionId,
       revisionNo: 1,
@@ -258,6 +296,10 @@ function assertCurrentRevision(schedule, revision, scheduleId) {
       revision.scheduleId !== scheduleId || revision.revisionId !== schedule.currentRevisionId ||
       revision.revisionNo !== schedule.revisionNo || revision.communityId !== schedule.communityId ||
       revision.currency !== schedule.currency || revision.frequency !== schedule.frequency ||
+      schedule.currentRevisionEffectiveFromBillingPeriod !== revision.effectiveFromBillingPeriod ||
+      typeof revision.effectiveFromBillingPeriod !== 'string' ||
+      !PERIOD_PATTERN.test(revision.effectiveFromBillingPeriod) ||
+      !isBillingPeriodInSchedule(revision, revision.effectiveFromBillingPeriod) ||
       JSON.stringify(scheduleTerms(schedule)) !== JSON.stringify(scheduleTerms(revision))) {
     fail('The current immutable schedule revision is inconsistent.', 'failed-precondition');
   }
@@ -271,6 +313,7 @@ async function reviseBillingScheduleV2Core({db, auth, data, now = Date.now}) {
   const requestHash = hash(input);
   let revisionNo;
   let alreadyCompleted = false;
+  const nowMs = now();
 
   await db.runTransaction(async tx => {
     const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
@@ -284,6 +327,15 @@ async function reviseBillingScheduleV2Core({db, auth, data, now = Date.now}) {
       if (existing.requestHash !== requestHash || existing.scheduleId !== input.scheduleId) {
         fail('This revision idempotencyKey belongs to different schedule terms.', 'already-exists');
       }
+      if (typeof existing.effectiveFromBillingPeriod !== 'string' ||
+          !PERIOD_PATTERN.test(existing.effectiveFromBillingPeriod) ||
+          !isBillingPeriodInSchedule(existing, existing.effectiveFromBillingPeriod)) {
+        fail('The immutable schedule revision is inconsistent.', 'failed-precondition');
+      }
+      const currentRevisionSnapshot = existing.revisionId === schedule.currentRevisionId ?
+        existingRevision : await tx.get(revisionCollection.doc(schedule.currentRevisionId));
+      if (!currentRevisionSnapshot.exists) fail('The current schedule revision is missing.', 'failed-precondition');
+      assertCurrentRevision(schedule, currentRevisionSnapshot.data(), input.scheduleId);
       revisionNo = existing.revisionNo;
       alreadyCompleted = true;
       return;
@@ -300,10 +352,12 @@ async function reviseBillingScheduleV2Core({db, auth, data, now = Date.now}) {
     await validateScopeOwnership(db, tx, input);
 
     const terms = scheduleTerms({...schedule, ...input});
-    const createdAt = Timestamp.fromMillis(now());
+    const effectiveFromBillingPeriod = effectivePeriodForRevision(schedule, input, actor.community, nowMs);
+    const createdAt = Timestamp.fromMillis(nowMs);
     revisionNo = schedule.revisionNo + 1;
     tx.create(revisionRef, {
       ...terms,
+      effectiveFromBillingPeriod,
       scheduleId: input.scheduleId,
       revisionId,
       revisionNo,
@@ -317,6 +371,7 @@ async function reviseBillingScheduleV2Core({db, auth, data, now = Date.now}) {
     tx.update(scheduleRef, {
       ...terms,
       currentRevisionId: revisionId,
+      currentRevisionEffectiveFromBillingPeriod: effectiveFromBillingPeriod,
       revisionNo,
       updatedBy: actor.uid,
       updatedAt: createdAt,
@@ -347,6 +402,9 @@ async function transitionBillingSchedule({db, auth, data, now, fromStatuses, toS
     if (!snapshot.exists) fail('Billing schedule was not found.', 'not-found');
     const schedule = snapshot.data();
     assertScheduleIdentity(schedule, input.scheduleId, input.communityId);
+    const currentRevisionSnapshot = await tx.get(db.collection(`billingSchedules/${input.scheduleId}/revisions`).doc(schedule.currentRevisionId));
+    if (!currentRevisionSnapshot.exists) fail('The current schedule revision is missing.', 'failed-precondition');
+    assertCurrentRevision(schedule, currentRevisionSnapshot.data(), input.scheduleId);
     if (!fromStatuses.includes(schedule.status)) {
       fail(`Cannot change billing schedule from ${schedule.status} to ${toStatus}.`, 'failed-precondition');
     }
@@ -394,6 +452,7 @@ module.exports = {
   billingScheduleRevisionId,
   billingScheduleDateKeys,
   isBillingPeriodInSchedule,
+  nextBillingPeriod,
   createBillingScheduleV2Core,
   reviseBillingScheduleV2Core,
   pauseBillingScheduleV2Core,

@@ -195,6 +195,66 @@ test('idempotencyKey rejects changed terms and client totals; scope cannot expan
   assert.equal(f.db.values.get(`billingBatches/${first.batchId}`).generation.completed, 2);
 });
 
+test('trusted schedule source is copied to batch and revision and participates in source-aware retry identity', async () => {
+  const f = fixture();
+  const source = {scheduleId: 'schedule-1', scheduleRevisionId: 'schedule-revision-4'};
+  const first = await f.run({}, {source});
+  const batchPath = `billingBatches/${first.batchId}`;
+  const batch = f.db.values.get(batchPath);
+  const revision = f.db.values.get(`${batchPath}/revisions/revision_1`);
+  for (const row of [batch, revision]) {
+    assert.equal(row.scheduleId, source.scheduleId);
+    assert.equal(row.scheduleRevisionId, source.scheduleRevisionId);
+  }
+  const retry = await f.run({}, {source});
+  assert.equal(retry.batchId, first.batchId);
+  await assert.rejects(f.run({}, {source: {...source, scheduleRevisionId: 'schedule-revision-5'}}), {code: 'already-exists'});
+  await assert.rejects(f.run({}, {source: {...source, scheduleId: 'schedule-2'}}), {code: 'already-exists'});
+  assert.deepEqual(f.db.values.get(batchPath), batch);
+  assert.deepEqual(f.db.values.get(`${batchPath}/revisions/revision_1`), revision);
+});
+
+test('source-less batch request hash and documents remain exactly compatible', async () => {
+  const f = fixture();
+  const result = await f.run();
+  const normalized = {
+    communityId: 'C', billingPeriod: '2030-01', idempotencyKey: 'issue-january',
+    scope: 'community', buildingId: null, flatId: null, flatIds: [],
+    chargeLines: [{lineId: 'maintenance-base', code: 'maintenance', label: 'Maintenance', amountMinor: 100001}],
+    amountMinor: 100001, dueDateKey: '2030-02-16',
+  };
+  const expectedHash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+  const root = f.db.values.get(`billingBatches/${result.batchId}`);
+  assert.equal(root.requestHash, expectedHash);
+  assert.equal(Object.hasOwn(root, 'scheduleId'), false);
+  assert.equal(Object.hasOwn(root, 'scheduleRevisionId'), false);
+  const revision = f.db.values.get(`billingBatches/${result.batchId}/revisions/revision_1`);
+  assert.equal(Object.hasOwn(revision, 'scheduleId'), false);
+  assert.equal(Object.hasOwn(revision, 'scheduleRevisionId'), false);
+});
+
+test('trusted source is strictly validated and client data cannot inject schedule linkage', async () => {
+  for (const source of [null, {}, {scheduleId: 's'}, {scheduleId: 's', scheduleRevisionId: 'r', extra: true},
+    {scheduleId: 's/x', scheduleRevisionId: 'r'}, {scheduleId: 's', scheduleRevisionId: ''}]) {
+    const f = fixture();
+    await assert.rejects(f.run({}, {source}), {code: 'invalid-argument'});
+    assert.equal(f.docs('billingBatches').length, 0);
+  }
+  for (const injection of [{scheduleId: 's'}, {scheduleRevisionId: 'r'}]) {
+    const f = fixture();
+    await assert.rejects(f.run(injection), {code: 'invalid-argument'});
+    assert.equal(f.docs('billingBatches').length, 0);
+  }
+});
+
+test('batch core contains no recurring schedule writes or financial ledger writes', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../src/billing_batch.js'), 'utf8');
+  assert.doesNotMatch(source, /collection\(['"]billingSchedules['"]\)/);
+  assert.doesNotMatch(source, /paymentTransactions|paymentAllocations|residentCreditEntries|residentFinancialAccounts|paymentSettlementsV2/);
+});
+
 test('overlapping V2 scopes/charge lines reserve only one monthly liability', async () => {
   const f = fixture(); await f.run({scope: 'unit', buildingId: 'b', flatId: 'f1'});
   const first = f.bill(1);

@@ -82,6 +82,14 @@ function localDateKeyFromMillis(value, timeZone) {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
+function localBillingPeriodFromMillis(value, community) {
+  if (!Number.isFinite(value)) {
+    throw new RegistrationError('failed-precondition', 'The current time is invalid.');
+  }
+  const timeZone = requireCommunityTimeZone(community);
+  return localDateKeyFromMillis(value, timeZone).slice(0, 7);
+}
+
 function startOfLocalDay(key, timeZone) {
   const nominal = Date.parse(`${key}T00:00:00Z`);
   let low = nominal - 2 * DAY_MS;
@@ -214,10 +222,21 @@ async function resolveInitialScope(db, transaction, input) {
   return initialScope;
 }
 
-async function ensureBatch(db, auth, input, now) {
+function validateTrustedSource(source) {
+  if (source === undefined) return null;
+  if (!source || typeof source !== 'object' || Array.isArray(source) ||
+      Object.keys(source).sort().join(',') !== 'scheduleId,scheduleRevisionId' ||
+      !validId(source.scheduleId) || !validId(source.scheduleRevisionId)) {
+    invalid('Invalid trusted schedule source.');
+  }
+  return {scheduleId: source.scheduleId, scheduleRevisionId: source.scheduleRevisionId};
+}
+
+async function ensureBatch(db, auth, input, now, source) {
   const batchId = `monthly_batch_v2_${hash([input.communityId, input.idempotencyKey])}`;
   const batchRef = db.collection('billingBatches').doc(batchId);
-  const requestHash = hash(input);
+  // Preserve the exact legacy hash for existing direct V2 batch requests.
+  const requestHash = source ? hash({input, source}) : hash(input);
   await db.runTransaction(async transaction => {
     const actor = await requireOperationalAdmin(db, auth, input.communityId, transaction);
     const existing = await transaction.get(batchRef);
@@ -236,12 +255,14 @@ async function ensureBatch(db, auth, input, now) {
     transaction.create(batchRef, {
       ...terms, scope: input.scope, initialScope, currentRevisionId: REVISION_ID, revisionNo: 1,
       idempotencyKey: input.idempotencyKey, requestHash, createdBy: actor.uid, createdAt,
+      ...(source || {}),
       updatedAt: FieldValue.serverTimestamp(), status: initialScope.flatIds.length ? 'generating' : 'completed',
       generation: {targetCount: initialScope.flatIds.length, materializedCount: 0,
         completed: 0, skipped: 0, reconciliationRequired: 0, failed: 0},
     });
     transaction.create(db.collection(`billingBatches/${batchId}/revisions`).doc(REVISION_ID), {
       ...terms, billingBatchId: batchId, revisionId: REVISION_ID, revisionNo: 1,
+      ...(source || {}),
       initialScope, createdBy: actor.uid, createdAt,
       // Applicability belongs to each line. This initial revision applies all
       // lines to the frozen scope; future revisions can describe subsets.
@@ -396,10 +417,11 @@ async function recordFailure(db, auth, input, batchId, flatId) {
 // Contract: retry the identical payload/idempotencyKey until resumeRequired is
 // false. Each call materializes <=100 targets and attempts <=100 bills. Failed
 // targets remain retryable; skipped/conflicted targets require a later workflow.
-async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now}) {
+async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, source: rawSource}) {
   const input = validateRequest(data);
+  const source = validateTrustedSource(rawSource);
   await requireOperationalAdmin(db, auth, input.communityId);
-  const batchId = await ensureBatch(db, auth, input, now);
+  const batchId = await ensureBatch(db, auth, input, now, source);
   await materializeNextPage(db, auth, input, batchId);
   const batchRef = db.collection('billingBatches').doc(batchId);
   const before = (await batchRef.get()).data();
@@ -439,4 +461,5 @@ async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now})
     remaining, resumeRequired: remaining > 0, generation};
 }
 
-module.exports = {createMonthlyBillingBatchV2Core, monthlyBillIdV2, validateChargeLines, validateDueDateV2};
+module.exports = {createMonthlyBillingBatchV2Core, monthlyBillIdV2, validateChargeLines,
+  validateDueDateV2, localBillingPeriodFromMillis};

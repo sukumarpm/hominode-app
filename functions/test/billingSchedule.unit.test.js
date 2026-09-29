@@ -8,12 +8,14 @@ const {
   billingScheduleRevisionId,
   billingScheduleDateKeys,
   isBillingPeriodInSchedule,
+  nextBillingPeriod,
   createBillingScheduleV2Core: create,
   reviseBillingScheduleV2Core: revise,
   pauseBillingScheduleV2Core: pause,
   resumeBillingScheduleV2Core: resume,
   stopBillingScheduleV2Core: stop,
 } = require('../src/billing_schedule');
+const {localBillingPeriodFromMillis} = require('../src/billing_batch');
 
 const auth = {uid: 'admin-1', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
 const now = () => Date.parse('2030-01-02T03:04:05Z');
@@ -46,7 +48,7 @@ function fixture() {
   const runCreate = (extra = {}, options = {}) => create({
     db, auth, now, data: {...baseInput, ...extra}, ...options,
   });
-  const createBase = async (extra = {}) => runCreate(extra);
+  const createBase = async (extra = {}, options = {}) => runCreate(extra, options);
   const schedulePath = scheduleId => `billingSchedules/${scheduleId}`;
   const revisionPath = (scheduleId, revisionId) => `${schedulePath(scheduleId)}/revisions/${revisionId}`;
   const docs = collection => [...db.values.entries()].filter(([key]) =>
@@ -73,7 +75,8 @@ async function createThenBuildRevision(extra = {}) {
     reason: '  New future schedule terms  ',
     ...extra,
   };
-  return {f, created, schedule, data, run: (changes = {}) => revise({db: f.db, auth, now, data: {...data, ...changes}})};
+  return {f, created, schedule, data, run: (changes = {}, options = {}) =>
+    revise({db: f.db, auth, now, data: {...data, ...changes}, ...options})};
 }
 
 test('creates an active monthly schedule and revision 1 atomically with complete terms', async () => {
@@ -94,6 +97,7 @@ test('creates an active monthly schedule and revision 1 atomically with complete
   assert.equal(schedule.currency, 'INR');
   assert.equal(schedule.frequency, 'monthly');
   assert.equal(schedule.currentRevisionId, 'revision_1');
+  assert.equal(schedule.currentRevisionEffectiveFromBillingPeriod, '2030-02');
   assert.equal(schedule.revisionNo, 1);
   assert.equal(schedule.createdBy, 'admin-1');
   assert.equal(schedule.updatedBy, 'admin-1');
@@ -101,6 +105,7 @@ test('creates an active monthly schedule and revision 1 atomically with complete
   assert.deepEqual(revision.chargeLines, [{...baseInput.chargeLines[0], label: 'Maintenance'}]);
   assert.equal(revision.scheduleId, result.scheduleId);
   assert.equal(revision.revisionId, 'revision_1');
+  assert.equal(revision.effectiveFromBillingPeriod, '2030-02');
   assert.equal(revision.revisionNo, 1);
   assert.equal(revision.createdBy, 'admin-1');
   assert.equal(revision.createdAt.toMillis(), now());
@@ -150,6 +155,13 @@ test('generationDay and dueDay accept only integers from 1 through 28', async ()
   }
   for (const dueDay of [0, 29, 2.5, '28']) {
     await assert.rejects(f.runCreate({dueDay}), {code: 'invalid-argument'});
+  }
+  for (const [generationDay, dueDay] of [[20, 19], [28, 1]]) {
+    await assert.rejects(f.runCreate({generationDay, dueDay}), {code: 'invalid-argument'});
+  }
+  for (const [generationDay, dueDay] of [[5, 5], [1, 28]]) {
+    const result = await f.runCreate({generationDay, dueDay, idempotencyKey: `valid-days-${generationDay}-${dueDay}`});
+    assert(result.scheduleId);
   }
 });
 
@@ -237,10 +249,71 @@ test('revision updates future terms once and preserves immutable revision 1', as
   assert.equal(revision.scheduleId, f.created.scheduleId);
   assert.equal(revision.previousRevisionId, 'revision_1');
   assert.equal(revision.reason, 'New future schedule terms');
+  assert.equal(revision.effectiveFromBillingPeriod, '2030-03');
+  assert.equal(schedule.currentRevisionEffectiveFromBillingPeriod, '2030-03');
   assert.equal(revision.createdBy, 'admin-1');
   assert.equal(revision.createdAt.toMillis(), now());
   assert.deepEqual(f.f.db.values.get(f.f.revisionPath(f.created.scheduleId, 'revision_1')), originalRevision);
   assert.equal(f.f.docs('bills').length, 0);
+});
+
+test('revision effective period is max(start, community-local current month, next after generated-through)', async () => {
+  const currentNow = () => Date.parse('2030-04-15T12:00:00Z'); // Apr 15 in Honolulu.
+  for (const [generatedThroughBillingPeriod, expected] of [
+    [null, '2030-04'], ['2030-02', '2030-04'], ['2030-04', '2030-05'],
+    ['2030-06', '2030-07'], ['2030-12', '2031-01'],
+  ]) {
+    const f = await createThenBuildRevision();
+    if (generatedThroughBillingPeriod) {
+      f.f.set(f.f.schedulePath(f.created.scheduleId), {
+        ...f.schedule, generatedThroughBillingPeriod,
+      });
+    }
+    const first = await f.run({startBillingPeriod: '2030-01'}, {now: currentNow});
+    const revisionPath = f.f.revisionPath(f.created.scheduleId, first.revisionId);
+    assert.equal(f.f.db.values.get(revisionPath).effectiveFromBillingPeriod, expected);
+    assert.equal(f.f.db.values.get(f.f.schedulePath(f.created.scheduleId)).currentRevisionEffectiveFromBillingPeriod, expected);
+  }
+});
+
+test('effective period uses community timezone, stays stable on retries, and rejects an earlier end period', async () => {
+  const millis = Date.parse('2030-04-01T05:00:00Z');
+  const original = process.env.TZ;
+  try {
+    for (const hostZone of ['UTC', 'Pacific/Honolulu', 'Asia/Tokyo']) {
+      process.env.TZ = hostZone;
+      assert.equal(localBillingPeriodFromMillis(millis, {timeZone: 'Pacific/Honolulu'}), '2030-03');
+    }
+  } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
+  assert.equal(nextBillingPeriod('2032-02'), '2032-03');
+  assert.equal(nextBillingPeriod('2032-12'), '2033-01');
+
+  const f = await createThenBuildRevision();
+  const laterNow = () => Date.parse('2030-04-15T12:00:00Z');
+  const first = await f.run({startBillingPeriod: '2030-01'}, {now: laterNow});
+  const storedEffective = f.f.db.values.get(f.f.revisionPath(f.created.scheduleId, first.revisionId)).effectiveFromBillingPeriod;
+  const retry = await f.run({startBillingPeriod: '2030-01'}, {now: () => Date.parse('2030-10-15T12:00:00Z')});
+  assert.equal(retry.alreadyCompleted, true);
+  assert.equal(f.f.db.values.get(f.f.revisionPath(f.created.scheduleId, first.revisionId)).effectiveFromBillingPeriod, storedEffective);
+
+  const invalid = await createThenBuildRevision();
+  await assert.rejects(invalid.run({startBillingPeriod: '2030-01', endBillingPeriod: '2030-03'}, {now: laterNow}), {
+    code: 'invalid-argument',
+  });
+});
+
+test('current root effective-period pointer must match its immutable revision', async () => {
+  const createdFixture = fixture();
+  const created = await createdFixture.createBase();
+  const rootPath = createdFixture.schedulePath(created.scheduleId);
+  const root = createdFixture.db.values.get(rootPath);
+  createdFixture.set(rootPath, {...root, currentRevisionEffectiveFromBillingPeriod: '2030-03'});
+  await assert.rejects(createdFixture.runCreate(), {code: 'failed-precondition'});
+
+  const f = await createThenBuildRevision();
+  const stored = f.f.db.values.get(f.f.schedulePath(f.created.scheduleId));
+  f.f.set(f.f.schedulePath(f.created.scheduleId), {...stored, currentRevisionEffectiveFromBillingPeriod: '2030-04'});
+  await assert.rejects(f.run(), {code: 'failed-precondition'});
 });
 
 test('stale expected revision fails and exact retry is safe', async () => {
@@ -346,7 +419,7 @@ test('callable exports use the existing trusted App Check wrapper and V1 batch s
   assert.match(indexSource, /exports\.createMonthlyBillingBatchV2 = appCheckedCallable\(\s*createMonthlyBillingBatchV2Core,/);
   const batchSource = fs.readFileSync(path.join(__dirname, '../src/billing_batch.js'), 'utf8');
   assert.match(batchSource, /async function createMonthlyBillingBatchV2Core/);
-  assert.match(batchSource, /module\.exports = \{createMonthlyBillingBatchV2Core, monthlyBillIdV2, validateChargeLines, validateDueDateV2\}/);
+  assert.match(batchSource, /module\.exports = \{createMonthlyBillingBatchV2Core, monthlyBillIdV2, validateChargeLines,\s*validateDueDateV2, localBillingPeriodFromMillis\}/);
 });
 
 test('schedule module has no direct billing or financial writes, deletion, or generated-bill logic', () => {
