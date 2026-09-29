@@ -148,6 +148,18 @@ function scheduleTerms(schedule) {
   };
 }
 
+function hasValidStoredScheduleTerms(schedule) {
+  try {
+    const flatIds = schedule.scope === 'units' ? schedule.flatIds : null;
+    const normalized = validateScheduleTerms({...schedule, flatIds});
+    return schedule.scope === 'units' ?
+      JSON.stringify(normalized.flatIds) === JSON.stringify(schedule.flatIds) :
+      Array.isArray(schedule.flatIds) && schedule.flatIds.length === 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 function isBillingPeriodInSchedule(schedule, period) {
   if (typeof period !== 'string' || !PERIOD_PATTERN.test(period) ||
       typeof schedule?.startBillingPeriod !== 'string' || !PERIOD_PATTERN.test(schedule.startBillingPeriod) ||
@@ -159,6 +171,8 @@ function isBillingPeriodInSchedule(schedule, period) {
 
 function effectivePeriodForRevision(schedule, input, community, nowMs) {
   const candidates = [input.startBillingPeriod, localBillingPeriodFromMillis(nowMs, community)];
+  const hasReservation = assertGenerationFence(schedule);
+  if (hasReservation) candidates.push(nextBillingPeriod(schedule.generationInProgressBillingPeriod));
   if (schedule.generatedThroughBillingPeriod != null) {
     if (typeof schedule.generatedThroughBillingPeriod !== 'string' ||
         !PERIOD_PATTERN.test(schedule.generatedThroughBillingPeriod)) {
@@ -175,6 +189,19 @@ function effectivePeriodForRevision(schedule, input, community, nowMs) {
     fail('endBillingPeriod must not be before the effective billing period.');
   }
   return effectiveFromBillingPeriod;
+}
+
+function assertGenerationFence(schedule) {
+  const period = schedule.generationInProgressBillingPeriod;
+  const revisionId = schedule.generationInProgressScheduleRevisionId;
+  if ((period == null) !== (revisionId == null)) {
+    fail('The schedule generation fence is inconsistent.', 'failed-precondition');
+  }
+  if (period == null) return false;
+  if (typeof period !== 'string' || !PERIOD_PATTERN.test(period) || !validId(revisionId)) {
+    fail('The schedule generation fence is invalid.', 'failed-precondition');
+  }
+  return true;
 }
 
 /** Calendar keys are strings; interpretation as local dates belongs to community time zone logic. */
@@ -273,6 +300,8 @@ async function createBillingScheduleV2Core({db, auth, data, now = Date.now}) {
       statusChangedAt: createdAt,
       lifecycleRevision: 0,
       generatedThroughBillingPeriod: null,
+      generationInProgressBillingPeriod: null,
+      generationInProgressScheduleRevisionId: null,
     });
     tx.create(revisionRef, {
       ...terms,
@@ -292,8 +321,12 @@ async function createBillingScheduleV2Core({db, auth, data, now = Date.now}) {
 }
 
 function assertCurrentRevision(schedule, revision, scheduleId) {
-  if (!revision || revision.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
+  if (!revision || !hasValidStoredScheduleTerms(revision) || !hasValidStoredScheduleTerms(schedule) ||
+      !validId(schedule.currentRevisionId) ||
+      !Number.isSafeInteger(schedule.revisionNo) || schedule.revisionNo < 1 ||
+      revision.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
       revision.scheduleId !== scheduleId || revision.revisionId !== schedule.currentRevisionId ||
+      !Number.isSafeInteger(revision.revisionNo) || revision.revisionNo < 1 ||
       revision.revisionNo !== schedule.revisionNo || revision.communityId !== schedule.communityId ||
       revision.currency !== schedule.currency || revision.frequency !== schedule.frequency ||
       schedule.currentRevisionEffectiveFromBillingPeriod !== revision.effectiveFromBillingPeriod ||
@@ -392,6 +425,172 @@ function validateLifecycleRequest(data) {
   return {communityId: data.communityId, scheduleId: data.scheduleId, reason: clean(data.reason) || null};
 }
 
+function validateReservationRequest(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) ||
+      Object.keys(data).some(key => !['communityId', 'scheduleId', 'billingPeriod'].includes(key)) ||
+      !validId(data.communityId) || !validId(data.scheduleId)) {
+    fail('Invalid billing schedule generation reservation request.');
+  }
+  return {
+    communityId: data.communityId,
+    scheduleId: data.scheduleId,
+    billingPeriod: billingPeriod(data.billingPeriod, 'billingPeriod'),
+  };
+}
+
+function localDateKeyFromMillis(value, community) {
+  // Validate the trusted time zone through the same community-local period helper
+  // used by billing batches before formatting the day key.
+  localBillingPeriodFromMillis(value, community);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: clean(community.timeZone), year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(value));
+  const part = type => parts.find(item => item.type === type).value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function assertPinnedRevision(schedule, revision, generation, scheduleId, communityId) {
+  const period = generation.billingPeriod;
+  const dateKeys = billingScheduleDateKeys(revision || {}, period);
+  if (!revision || !hasValidStoredScheduleTerms(revision) || revision.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
+      revision.scheduleId !== scheduleId || revision.revisionId !== generation.scheduleRevisionId ||
+      !Number.isSafeInteger(revision.revisionNo) || revision.revisionNo !== generation.scheduleRevisionNo || revision.communityId !== communityId ||
+      revision.currency !== 'INR' || revision.frequency !== 'monthly' ||
+      typeof revision.effectiveFromBillingPeriod !== 'string' ||
+      !PERIOD_PATTERN.test(revision.effectiveFromBillingPeriod) || revision.effectiveFromBillingPeriod > period ||
+      !isBillingPeriodInSchedule(revision, period) || !dateKeys ||
+      generation.generationDateKey !== dateKeys.generationDateKey ||
+      generation.dueDateKey !== dateKeys.dueDateKey) {
+    fail('The reserved generation does not match its immutable schedule revision.', 'failed-precondition');
+  }
+}
+
+function assertExistingGeneration(schedule, generation, scheduleId, communityId, billingPeriodValue) {
+  if (!generation || generation.schemaVersion !== SCHEDULE_SCHEMA_VERSION ||
+      generation.scheduleId !== scheduleId || generation.communityId !== communityId ||
+      generation.billingPeriod !== billingPeriodValue || generation.status !== 'reserved' ||
+      !validId(generation.scheduleRevisionId) || !Number.isSafeInteger(generation.scheduleRevisionNo) ||
+      generation.scheduleRevisionNo < 1 || !validId(generation.createdBy) ||
+      !timestampIso(generation.createdAt) || !timestampIso(generation.updatedAt) ||
+      schedule.generationInProgressBillingPeriod !== billingPeriodValue ||
+      schedule.generationInProgressScheduleRevisionId !== generation.scheduleRevisionId) {
+    fail('The existing billing schedule generation reservation is inconsistent.', 'failed-precondition');
+  }
+}
+
+function timestampIso(value) {
+  if (typeof value?.toDate === 'function') return value.toDate().toISOString();
+  if (value instanceof Date) return value.toISOString();
+  return null;
+}
+
+function reservationResult(generation, alreadyCompleted) {
+  return {
+    ...generation,
+    createdAt: timestampIso(generation.createdAt),
+    updatedAt: timestampIso(generation.updatedAt),
+    alreadyCompleted,
+  };
+}
+
+async function reserveBillingSchedulePeriodV2Core({db, auth, data, now = Date.now}) {
+  const input = validateReservationRequest(data);
+  const nowMs = now();
+  if (!Number.isFinite(nowMs)) fail('The current time is invalid.', 'failed-precondition');
+  const {schedule: scheduleRef, revisionCollection} = scheduleRefs(db, input.scheduleId);
+  const generationRef = db.collection(`billingSchedules/${input.scheduleId}/generations`).doc(input.billingPeriod);
+  let result;
+  let alreadyCompleted = false;
+
+  await db.runTransaction(async tx => {
+    const actor = await requireOperationalAdmin(db, auth, input.communityId, tx);
+    const scheduleSnapshot = await tx.get(scheduleRef);
+    const generationSnapshot = await tx.get(generationRef);
+    if (!scheduleSnapshot.exists) fail('Billing schedule was not found.', 'not-found');
+    const schedule = scheduleSnapshot.data();
+    assertScheduleIdentity(schedule, input.scheduleId, input.communityId);
+
+    if (generationSnapshot.exists) {
+      const generation = generationSnapshot.data();
+      assertExistingGeneration(schedule, generation, input.scheduleId, input.communityId, input.billingPeriod);
+      assertGenerationFence(schedule);
+      const currentRevisionSnapshot = await tx.get(revisionCollection.doc(schedule.currentRevisionId));
+      if (!currentRevisionSnapshot.exists) fail('The current schedule revision is missing.', 'failed-precondition');
+      assertCurrentRevision(schedule, currentRevisionSnapshot.data(), input.scheduleId);
+      const pinnedRevisionSnapshot = generation.scheduleRevisionId === schedule.currentRevisionId ?
+        currentRevisionSnapshot : await tx.get(revisionCollection.doc(generation.scheduleRevisionId));
+      if (!pinnedRevisionSnapshot.exists) fail('The pinned schedule revision is missing.', 'failed-precondition');
+      assertPinnedRevision(schedule, pinnedRevisionSnapshot.data(), generation, input.scheduleId, input.communityId);
+      result = generation;
+      alreadyCompleted = true;
+      return;
+    }
+
+    if (schedule.status !== 'active') fail('Only an active billing schedule can reserve a new period.', 'failed-precondition');
+    if (assertGenerationFence(schedule)) {
+      fail('Another billing period is already reserved for this schedule.', 'failed-precondition');
+    }
+    if (!isBillingPeriodInSchedule(schedule, input.billingPeriod)) {
+      fail('The billing period is outside the schedule bounds.', 'failed-precondition');
+    }
+    let expectedPeriod = schedule.startBillingPeriod;
+    if (schedule.generatedThroughBillingPeriod != null) {
+      if (typeof schedule.generatedThroughBillingPeriod !== 'string' ||
+          !PERIOD_PATTERN.test(schedule.generatedThroughBillingPeriod)) {
+        fail('The stored generated-through period is invalid.', 'failed-precondition');
+      }
+      expectedPeriod = nextBillingPeriod(schedule.generatedThroughBillingPeriod);
+    }
+    if (input.billingPeriod !== expectedPeriod) {
+      fail('Only the next ungenerated billing period can be reserved.', 'failed-precondition');
+    }
+
+    const currentRevisionSnapshot = await tx.get(revisionCollection.doc(schedule.currentRevisionId));
+    if (!currentRevisionSnapshot.exists) fail('The current schedule revision is missing.', 'failed-precondition');
+    const revision = currentRevisionSnapshot.data();
+    assertCurrentRevision(schedule, revision, input.scheduleId);
+    if (revision.effectiveFromBillingPeriod > input.billingPeriod ||
+        !isBillingPeriodInSchedule(revision, input.billingPeriod)) {
+      fail('The current schedule revision is not effective for this billing period.', 'failed-precondition');
+    }
+
+    const localPeriod = localBillingPeriodFromMillis(nowMs, actor.community);
+    if (input.billingPeriod !== localPeriod) {
+      fail('Only the community-local current billing period can be reserved.', 'failed-precondition');
+    }
+    const dateKeys = billingScheduleDateKeys(revision, input.billingPeriod);
+    const localDateKey = localDateKeyFromMillis(nowMs, actor.community);
+    if (!dateKeys || localDateKey < dateKeys.generationDateKey || localDateKey > dateKeys.dueDateKey) {
+      fail('The current community-local date is outside the generation window.', 'failed-precondition');
+    }
+
+    const createdAt = Timestamp.fromMillis(nowMs);
+    result = {
+      schemaVersion: SCHEDULE_SCHEMA_VERSION,
+      scheduleId: input.scheduleId,
+      communityId: input.communityId,
+      billingPeriod: input.billingPeriod,
+      scheduleRevisionId: schedule.currentRevisionId,
+      scheduleRevisionNo: schedule.revisionNo,
+      generationDateKey: dateKeys.generationDateKey,
+      dueDateKey: dateKeys.dueDateKey,
+      status: 'reserved',
+      createdBy: actor.uid,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    tx.create(generationRef, result);
+    tx.update(scheduleRef, {
+      generationInProgressBillingPeriod: input.billingPeriod,
+      generationInProgressScheduleRevisionId: schedule.currentRevisionId,
+      updatedBy: actor.uid,
+      updatedAt: createdAt,
+    });
+  });
+
+  return {success: true, ...reservationResult(result, alreadyCompleted)};
+}
+
 async function transitionBillingSchedule({db, auth, data, now, fromStatuses, toStatus}) {
   const input = validateLifecycleRequest(data);
   const {schedule: scheduleRef} = scheduleRefs(db, input.scheduleId);
@@ -455,6 +654,7 @@ module.exports = {
   nextBillingPeriod,
   createBillingScheduleV2Core,
   reviseBillingScheduleV2Core,
+  reserveBillingSchedulePeriodV2Core,
   pauseBillingScheduleV2Core,
   resumeBillingScheduleV2Core,
   stopBillingScheduleV2Core,

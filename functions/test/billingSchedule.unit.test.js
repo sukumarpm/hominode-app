@@ -11,6 +11,7 @@ const {
   nextBillingPeriod,
   createBillingScheduleV2Core: create,
   reviseBillingScheduleV2Core: revise,
+  reserveBillingSchedulePeriodV2Core: reserve,
   pauseBillingScheduleV2Core: pause,
   resumeBillingScheduleV2Core: resume,
   stopBillingScheduleV2Core: stop,
@@ -49,11 +50,14 @@ function fixture() {
     db, auth, now, data: {...baseInput, ...extra}, ...options,
   });
   const createBase = async (extra = {}, options = {}) => runCreate(extra, options);
+  const runReserve = (scheduleId, billingPeriod, options = {}) => reserve({
+    db, auth, data: {communityId: 'C', scheduleId, billingPeriod}, now, ...options,
+  });
   const schedulePath = scheduleId => `billingSchedules/${scheduleId}`;
   const revisionPath = (scheduleId, revisionId) => `${schedulePath(scheduleId)}/revisions/${revisionId}`;
   const docs = collection => [...db.values.entries()].filter(([key]) =>
     key.startsWith(`${collection}/`) && key.split('/').length === 2);
-  return {db, set, runCreate, createBase, schedulePath, revisionPath, docs};
+  return {db, set, runCreate, createBase, runReserve, schedulePath, revisionPath, docs};
 }
 
 async function createThenBuildRevision(extra = {}) {
@@ -102,6 +106,8 @@ test('creates an active monthly schedule and revision 1 atomically with complete
   assert.equal(schedule.createdBy, 'admin-1');
   assert.equal(schedule.updatedBy, 'admin-1');
   assert.equal(schedule.generatedThroughBillingPeriod, null);
+  assert.equal(schedule.generationInProgressBillingPeriod, null);
+  assert.equal(schedule.generationInProgressScheduleRevisionId, null);
   assert.deepEqual(revision.chargeLines, [{...baseInput.chargeLines[0], label: 'Maintenance'}]);
   assert.equal(revision.scheduleId, result.scheduleId);
   assert.equal(revision.revisionId, 'revision_1');
@@ -316,6 +322,173 @@ test('current root effective-period pointer must match its immutable revision', 
   await assert.rejects(f.run(), {code: 'failed-precondition'});
 });
 
+const onHonolulu = value => Date.parse(`${value}-10:00`);
+const generationNow = () => onHonolulu('2030-02-05T12:00:00');
+
+test('active schedule reserves its next period and pins revision terms and date keys', async () => {
+  const f = fixture();
+  const created = await f.createBase();
+  const before = f.db.values.get(f.schedulePath(created.scheduleId));
+  const result = await f.runReserve(created.scheduleId, '2030-02', {now: generationNow});
+  const path = `${f.schedulePath(created.scheduleId)}/generations/2030-02`;
+  const generation = f.db.values.get(path);
+  const schedule = f.db.values.get(f.schedulePath(created.scheduleId));
+  assert.equal(result.alreadyCompleted, false);
+  assert.equal(result.scheduleRevisionId, 'revision_1');
+  assert.equal(result.scheduleRevisionNo, 1);
+  assert.equal(generation.schemaVersion, 2);
+  assert.equal(generation.communityId, 'C');
+  assert.equal(generation.billingPeriod, '2030-02');
+  assert.equal(generation.scheduleRevisionId, 'revision_1');
+  assert.equal(generation.scheduleRevisionNo, 1);
+  assert.equal(generation.generationDateKey, '2030-02-05');
+  assert.equal(generation.dueDateKey, '2030-02-20');
+  assert.equal(generation.status, 'reserved');
+  assert.equal(generation.createdBy, 'admin-1');
+  assert(generation.createdAt);
+  assert(generation.updatedAt);
+  assert.equal(schedule.generationInProgressBillingPeriod, '2030-02');
+  assert.equal(schedule.generationInProgressScheduleRevisionId, generation.scheduleRevisionId);
+  assert.equal(schedule.generatedThroughBillingPeriod, before.generatedThroughBillingPeriod);
+  for (const key of ['paymentId', 'amountMinor', 'paidAmountMinor', 'outstandingAmountMinor']) {
+    assert.equal(Object.hasOwn(generation, key), false);
+  }
+  assert.deepEqual(f.docs('bills'), []);
+  assert.deepEqual(f.docs('billingBatches'), []);
+});
+
+test('exact retry returns the original pinned reservation after revise, pause, and stop', async () => {
+  for (const laterAction of ['revision', 'pause', 'stop']) {
+    const f = fixture();
+    const created = await f.createBase();
+    const first = await f.runReserve(created.scheduleId, '2030-02', {now: generationNow});
+    const path = `${f.schedulePath(created.scheduleId)}/generations/2030-02`;
+    const original = f.db.values.get(path);
+    if (laterAction === 'revision') {
+      const changes = await createThenBuildRevision();
+      const revisionData = {...changes.data, communityId: 'C', scheduleId: created.scheduleId,
+        expectedRevisionId: 'revision_1', startBillingPeriod: '2030-03'};
+      await revise({db: f.db, auth, now: generationNow, data: revisionData});
+    } else if (laterAction === 'pause') {
+      await pause({db: f.db, auth, now, data: {communityId: 'C', scheduleId: created.scheduleId}});
+    } else {
+      await stop({db: f.db, auth, now, data: {communityId: 'C', scheduleId: created.scheduleId}});
+    }
+    const retry = await f.runReserve(created.scheduleId, '2030-02', {now: generationNow});
+    assert.equal(retry.alreadyCompleted, true, laterAction);
+    assert.equal(retry.scheduleRevisionId, first.scheduleRevisionId, laterAction);
+    assert.equal(retry.scheduleRevisionNo, first.scheduleRevisionNo, laterAction);
+    assert.equal(retry.generationDateKey, original.generationDateKey, laterAction);
+    assert.deepEqual(f.db.values.get(path), original, laterAction);
+    const root = f.db.values.get(f.schedulePath(created.scheduleId));
+    assert.equal(root.generationInProgressBillingPeriod, '2030-02', laterAction);
+    assert.equal(root.generationInProgressScheduleRevisionId, original.scheduleRevisionId, laterAction);
+  }
+});
+
+test('new reservations reject paused/stopped schedules, out-of-range periods, gaps, and missed periods', async () => {
+  for (const status of ['paused', 'stopped']) {
+    const f = fixture();
+    const created = await f.createBase();
+    const action = status === 'paused' ? pause : stop;
+    await action({db: f.db, auth, now, data: {communityId: 'C', scheduleId: created.scheduleId}});
+    await assert.rejects(f.runReserve(created.scheduleId, '2030-02', {now: generationNow}), {code: 'failed-precondition'});
+  }
+  const beforeStart = fixture();
+  const created = await beforeStart.createBase();
+  await assert.rejects(beforeStart.runReserve(created.scheduleId, '2030-01', {now: generationNow}), {code: 'failed-precondition'});
+
+  const afterEnd = fixture();
+  const bounded = await afterEnd.createBase({endBillingPeriod: '2030-02'});
+  await assert.rejects(afterEnd.runReserve(bounded.scheduleId, '2030-03', {now: generationNow}), {code: 'failed-precondition'});
+
+  const gap = fixture();
+  const gapSchedule = await gap.createBase();
+  await assert.rejects(gap.runReserve(gapSchedule.scheduleId, '2030-04', {now: generationNow}), {code: 'failed-precondition'});
+  await assert.rejects(gap.runReserve(gapSchedule.scheduleId, '2030-03', {now: () => onHonolulu('2030-03-05T12:00:00')}), {
+    code: 'failed-precondition',
+  });
+});
+
+test('generation window uses community-local date inclusively from generation through due day', async () => {
+  const cases = [
+    ['2030-02-04T23:59:59', false],
+    ['2030-02-05T00:00:00', true],
+    ['2030-02-20T23:59:59', true],
+    ['2030-02-21T00:00:00', false],
+  ];
+  for (const [localDateTime, accepted] of cases) {
+    const f = fixture();
+    const created = await f.createBase();
+    const result = f.runReserve(created.scheduleId, '2030-02', {now: () => onHonolulu(localDateTime)});
+    if (accepted) {
+      assert.equal((await result).status, 'reserved', localDateTime);
+    } else {
+      await assert.rejects(result, {code: 'failed-precondition'});
+      assert.equal(f.db.values.has(`${f.schedulePath(created.scheduleId)}/generations/2030-02`), false);
+    }
+  }
+});
+
+test('reservation local-window decisions are independent of the host timezone', async () => {
+  const original = process.env.TZ;
+  try {
+    for (const hostZone of ['UTC', 'Pacific/Honolulu', 'Asia/Tokyo']) {
+      process.env.TZ = hostZone;
+      const f = fixture();
+      const created = await f.createBase();
+      assert.equal((await f.runReserve(created.scheduleId, '2030-02', {now: generationNow})).status, 'reserved');
+    }
+  } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
+});
+
+test('reservation fence blocks a second period and makes revisions effective after the pinned period', async () => {
+  const f = fixture();
+  const created = await f.createBase({startBillingPeriod: '2030-01'});
+  const rootPath = f.schedulePath(created.scheduleId);
+  f.set(rootPath, {...f.db.values.get(rootPath), generatedThroughBillingPeriod: '2030-03'});
+  const aprilNow = () => onHonolulu('2030-04-05T12:00:00');
+  await f.runReserve(created.scheduleId, '2030-04', {now: aprilNow});
+  await assert.rejects(f.runReserve(created.scheduleId, '2030-05', {now: () => onHonolulu('2030-05-05T12:00:00')}), {
+    code: 'failed-precondition',
+  });
+  const generationPath = `${rootPath}/generations/2030-04`;
+  const pinnedBefore = f.db.values.get(generationPath);
+  const revision = await createThenBuildRevision();
+  const result = await revise({db: f.db, auth, now: aprilNow, data: {
+    ...revision.data, communityId: 'C', scheduleId: created.scheduleId,
+    expectedRevisionId: 'revision_1', startBillingPeriod: '2030-01',
+  }});
+  const nextRevision = f.db.values.get(f.revisionPath(created.scheduleId, result.revisionId));
+  assert.equal(nextRevision.effectiveFromBillingPeriod, '2030-05');
+  assert.deepEqual(f.db.values.get(generationPath), pinnedBefore);
+  const root = f.db.values.get(rootPath);
+  assert.equal(root.generationInProgressBillingPeriod, '2030-04');
+  assert.equal(root.generationInProgressScheduleRevisionId, 'revision_1');
+});
+
+test('malformed reservation, cross-community requests, and unexpected fields fail closed without writes', async () => {
+  const f = fixture();
+  const created = await f.createBase();
+  await assert.rejects(f.runReserve(created.scheduleId, '2030-02', {now: generationNow,
+    data: {communityId: 'C', scheduleId: created.scheduleId, billingPeriod: '2030-02', idempotencyKey: 'client'}}), {
+    code: 'invalid-argument',
+  });
+  await assert.rejects(reserve({db: f.db, auth, now: generationNow,
+    data: {communityId: 'OTHER', scheduleId: created.scheduleId, billingPeriod: '2030-02'}}), {code: 'permission-denied'});
+  await f.runReserve(created.scheduleId, '2030-02', {now: generationNow});
+  const path = `${f.schedulePath(created.scheduleId)}/generations/2030-02`;
+  f.set(path, {...f.db.values.get(path), scheduleRevisionNo: 99});
+  await assert.rejects(f.runReserve(created.scheduleId, '2030-02', {now: generationNow}), {code: 'failed-precondition'});
+  assert.deepEqual(f.docs('bills'), []);
+  assert.deepEqual(f.docs('billingBatches'), []);
+  for (const collection of [
+    'paymentTransactions', 'paymentAllocations', 'residentCreditEntries',
+    'residentFinancialAccounts', 'paymentSettlementsV2',
+  ]) assert.equal(f.docs(collection).length, 0, collection);
+  assert.equal(f.db.values.get(f.schedulePath(created.scheduleId)).generatedThroughBillingPeriod, null);
+});
+
 test('stale expected revision fails and exact retry is safe', async () => {
   const f = await createThenBuildRevision();
   const result = await f.run();
@@ -412,8 +585,10 @@ test('no schedule operation writes bills or financial ledger documents', async (
 
 test('callable exports use the existing trusted App Check wrapper and V1 batch source stays untouched', () => {
   const indexSource = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
-  for (const name of ['create', 'revise', 'pause', 'resume', 'stop']) {
-    const callable = `${name}BillingScheduleV2`;
+  for (const callable of [
+    'createBillingScheduleV2', 'reviseBillingScheduleV2', 'reserveBillingSchedulePeriodV2',
+    'pauseBillingScheduleV2', 'resumeBillingScheduleV2', 'stopBillingScheduleV2',
+  ]) {
     assert.match(indexSource, new RegExp(`exports\\.${callable} = appCheckedCallable\\(`));
   }
   assert.match(indexSource, /exports\.createMonthlyBillingBatchV2 = appCheckedCallable\(\s*createMonthlyBillingBatchV2Core,/);

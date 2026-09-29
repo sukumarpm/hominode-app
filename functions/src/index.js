@@ -22,6 +22,7 @@ const { reviseMonthlyBillingBatchV2Core } = require("./billing_revision");
 const {
   createBillingScheduleV2Core,
   reviseBillingScheduleV2Core,
+  reserveBillingSchedulePeriodV2Core,
   pauseBillingScheduleV2Core,
   resumeBillingScheduleV2Core,
   stopBillingScheduleV2Core,
@@ -337,6 +338,10 @@ exports.createBillingScheduleV2 = appCheckedCallable(
 exports.reviseBillingScheduleV2 = appCheckedCallable(
   reviseBillingScheduleV2Core,
   "Billing schedule could not be revised.",
+);
+exports.reserveBillingSchedulePeriodV2 = appCheckedCallable(
+  reserveBillingSchedulePeriodV2Core,
+  "Billing schedule period could not be reserved.",
 );
 exports.pauseBillingScheduleV2 = appCheckedCallable(
   pauseBillingScheduleV2Core,
