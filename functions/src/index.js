@@ -6,6 +6,8 @@ const { getMessaging } = require("firebase-admin/messaging");
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const logger = require("firebase-functions/logger");
 const { defineSecret } = require("firebase-functions/params");
 
 const {
@@ -18,6 +20,7 @@ const {
 } = require("./billing_management");
 
 const { createMonthlyBillingBatchV2Core } = require("./billing_batch");
+const { runRecurringBillingV2SchedulerCore } = require("./billing_recurring_scheduler");
 const { reviseMonthlyBillingBatchV2Core } = require("./billing_revision");
 const {
   createBillingScheduleV2Core,
@@ -360,6 +363,13 @@ exports.stopBillingScheduleV2 = appCheckedCallable(
   stopBillingScheduleV2Core,
   "Billing schedule could not be stopped.",
 );
+exports.runRecurringBillingV2Scheduler = onSchedule({
+  schedule: "every 60 minutes",
+  timeZone: "Etc/UTC",
+  maxInstances: 1,
+  concurrency: 1,
+  timeoutSeconds: 540,
+}, async () => runRecurringBillingV2SchedulerCore({db: getFirestore(), logger}));
 initializeApp();
 
 /*
