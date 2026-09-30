@@ -916,6 +916,34 @@ function securityCanAccessCommunity(communityId) {
     }
 
     // ============================================================
+    // BILLING V2 — RECURRING SCHEDULE ADMIN READS
+    // ============================================================
+
+    match /billingSchedules/{scheduleId} {
+      allow read: if ('communityId' in resource.data)
+        && adminCanAccessCommunity(resource.data.communityId);
+      allow create, update, delete: if false;
+
+      match /revisions/{revisionId} {
+        allow read: if ('communityId' in resource.data)
+          && adminCanAccessCommunity(resource.data.communityId);
+        allow create, update, delete: if false;
+      }
+
+      match /generations/{generationId} {
+        allow read: if ('communityId' in resource.data)
+          && adminCanAccessCommunity(resource.data.communityId);
+        allow create, update, delete: if false;
+      }
+
+      match /lifecycleEvents/{eventId} {
+        allow read: if ('communityId' in resource.data)
+          && adminCanAccessCommunity(resource.data.communityId);
+        allow create, update, delete: if false;
+      }
+    }
+
+    // ============================================================
     // PAYMENTS
     // Resident submits external payment proof.
     // Admin verification is handled server-side.

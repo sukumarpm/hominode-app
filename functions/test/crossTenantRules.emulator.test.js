@@ -59,6 +59,24 @@ test.before(async () => {
     set("bills", "bill-a", { communityId: "community-a", buildingId: "building-a", flatId: "flat-a", amount: 100, status: "pending" });
     set("bills", "bill-tv", { communityId: "community-a", buildingId: "building-a", flatId: "flat-tv", amount: 150, userId: "tenant-verified" });
     set("bills", "bill-b", { communityId: "community-b", buildingId: "building-b", flatId: "flat-b", amount: 200 });
+    set("billingSchedules", "schedule-a", {id: "schedule-a", communityId: "community-a", status: "active"});
+    set("billingSchedules", "schedule-b", {id: "schedule-b", communityId: "community-b", status: "active"});
+    set("billingSchedules", "schedule-no-community", {id: "schedule-no-community", status: "active"});
+    set("billingSchedules/schedule-a/revisions", "revision-a", {communityId: "community-a", revisionNo: 1});
+    set("billingSchedules/schedule-a/revisions", "revision-foreign", {communityId: "community-b", revisionNo: 2});
+    set("billingSchedules/schedule-a/revisions", "revision-no-community", {revisionNo: 3});
+    set("billingSchedules/schedule-a/generations", "generation-a", {communityId: "community-a", billingPeriod: "2030-01"});
+    set("billingSchedules/schedule-a/generations", "generation-foreign", {communityId: "community-b", billingPeriod: "2030-02"});
+    set("billingSchedules/schedule-a/generations", "generation-no-community", {billingPeriod: "2030-03"});
+    set("billingSchedules/schedule-a/lifecycleEvents", "event-a", {communityId: "community-a", toStatus: "paused"});
+    set("billingSchedules/schedule-a/lifecycleEvents", "event-foreign", {communityId: "community-b", toStatus: "stopped"});
+    set("billingSchedules/schedule-a/lifecycleEvents", "event-no-community", {toStatus: "active"});
+    set("billingSchedules/schedule-b/revisions", "revision-b", {communityId: "community-b", revisionNo: 1});
+    set("billingSchedules/schedule-b/generations", "generation-b", {communityId: "community-b", billingPeriod: "2030-01"});
+    set("billingSchedules/schedule-b/lifecycleEvents", "event-b", {communityId: "community-b", toStatus: "paused"});
+    set("paymentProofsV2", "proof-a", {communityId: "community-a", residentId: "resident-a", schemaVersion: 2});
+    set("billingBatches", "batch-a", {communityId: "community-a", billingPeriod: "2030-01"});
+    set("systemJobs", "recurringBillingScheduler", {activeCursorScheduleId: "schedule-a"});
     set("visitors", "visitor-a", { communityId: "community-a", buildingId: "building-a", flatId: "flat-a", hostUserId: "resident-a", visitorName: "Guest A", purpose: "Visit", status: "expected", isApproved: false, approvedBy: null, approvedAt: null, actualArrival: null, departure: null });
     set("visitors", "visitor-approved-a", { communityId: "community-a", buildingId: "building-a", flatId: "flat-a", hostUserId: "resident-a", visitorName: "Approved Guest", purpose: "Visit", status: "approved", isApproved: true, approvedBy: "admin-a", approvedAt: new Date(), actualArrival: null, departure: null });
     set("visitors", "visitor-b", { communityId: "community-b", buildingId: "building-b", flatId: "flat-b", hostUserId: "resident-b", visitorName: "Guest B", purpose: "Visit", status: "expected", isApproved: false, approvedBy: null, approvedAt: null, actualArrival: null, departure: null });
@@ -102,6 +120,98 @@ test("ordinary admins remain confined to authorized active communities", { skip:
   await assertFails(dbFor("admin-a").collection("bills").doc("bill-b").get());
   await assertFails(dbFor("admin-b").collection("bills").doc("bill-a").update({ amount: 1 }));
   await assertFails(dbFor("admin-off").collection("bills").doc("missing").set({ communityId: "community-off", amount: 1 }));
+});
+
+test("authorized Admins can read and query only community-scoped recurring schedule records", { skip: !enabled }, async () => {
+  const adminA = dbFor("admin-a");
+  await assertSucceeds(adminA.collection("billingSchedules").doc("schedule-a").get());
+  const schedules = await assertSucceeds(adminA.collection("billingSchedules")
+    .where("communityId", "==", "community-a").get());
+  assert.deepEqual(schedules.docs.map(doc => doc.id), ["schedule-a"]);
+  await assertSucceeds(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("revisions").doc("revision-a").get());
+  await assertSucceeds(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("generations").doc("generation-a").get());
+  await assertSucceeds(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("lifecycleEvents").doc("event-a").get());
+
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-b").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-no-community").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("revisions").doc("revision-foreign").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("revisions").doc("revision-no-community").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("generations").doc("generation-foreign").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("generations").doc("generation-no-community").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("lifecycleEvents").doc("event-foreign").get());
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-a")
+    .collection("lifecycleEvents").doc("event-no-community").get());
+  await assertFails(dbFor("admin-b").collection("billingSchedules").doc("schedule-a")
+    .collection("revisions").doc("revision-a").get());
+});
+
+test("residents, superAdmins, and unauthenticated clients cannot read recurring schedules", { skip: !enabled }, async () => {
+  const paths = [
+    ["billingSchedules", "schedule-a"],
+    ["billingSchedules/schedule-a/revisions", "revision-a"],
+    ["billingSchedules/schedule-a/generations", "generation-a"],
+    ["billingSchedules/schedule-a/lifecycleEvents", "event-a"],
+  ];
+  for (const [collectionPath, id] of paths) {
+    const residentRef = dbFor("resident-a").doc(`${collectionPath}/${id}`);
+    const superAdminRef = dbFor("super").doc(`${collectionPath}/${id}`);
+    const unauthenticatedRef = environment.unauthenticatedContext().firestore().doc(`${collectionPath}/${id}`);
+    await assertFails(residentRef.get());
+    await assertFails(superAdminRef.get());
+    await assertFails(unauthenticatedRef.get());
+  }
+});
+
+test("Admins cannot directly write schedule roots, revisions, generations, or lifecycle events", { skip: !enabled }, async () => {
+  const adminA = dbFor("admin-a");
+  const root = adminA.collection("billingSchedules").doc("schedule-a");
+  await assertFails(adminA.collection("billingSchedules").doc("schedule-new").set({
+    id: "schedule-new", communityId: "community-a", status: "active",
+  }));
+  await assertFails(root.update({status: "paused"}));
+  await assertFails(root.delete());
+
+  const nestedCollections = ["revisions", "generations", "lifecycleEvents"];
+  const existingIds = ["revision-a", "generation-a", "event-a"];
+  for (let index = 0; index < nestedCollections.length; index += 1) {
+    const collection = root.collection(nestedCollections[index]);
+    await assertFails(collection.doc(`new-${nestedCollections[index]}`).set({communityId: "community-a"}));
+    await assertFails(collection.doc(existingIds[index]).update({clientWrite: true}));
+    await assertFails(collection.doc(existingIds[index]).delete());
+  }
+});
+
+test("scheduler state remains backend-only and existing Billing V2 reads are unchanged", { skip: !enabled }, async () => {
+  const adminA = dbFor("admin-a");
+  const residentA = dbFor("resident-a");
+  await assertFails(adminA.collection("systemJobs").doc("recurringBillingScheduler").get());
+  await assertFails(adminA.collection("systemJobs").get());
+  await assertFails(adminA.collection("systemJobs").doc("recurringBillingScheduler").update({activeCursorScheduleId: "forged"}));
+  await assertFails(adminA.collection("systemJobs").doc("new-job").set({activeCursorScheduleId: "forged"}));
+  await assertFails(adminA.collection("systemJobs").doc("recurringBillingScheduler").delete());
+  await assertFails(residentA.collection("systemJobs").doc("recurringBillingScheduler").get());
+  await assertFails(residentA.collection("systemJobs").get());
+  await assertFails(residentA.collection("systemJobs").doc("new-job").set({activeCursorScheduleId: "forged"}));
+  await assertFails(residentA.collection("systemJobs").doc("recurringBillingScheduler").update({activeCursorScheduleId: "forged"}));
+  await assertFails(residentA.collection("systemJobs").doc("recurringBillingScheduler").delete());
+  await assertFails(environment.unauthenticatedContext().firestore()
+    .collection("systemJobs").doc("recurringBillingScheduler").get());
+  await assertFails(environment.unauthenticatedContext().firestore()
+    .collection("systemJobs").doc("new-job").set({activeCursorScheduleId: "forged"}));
+
+  await assertSucceeds(adminA.collection("bills").doc("bill-a").get());
+  await assertSucceeds(adminA.collection("paymentProofsV2").doc("proof-a").get());
+  await assertSucceeds(residentA.collection("paymentProofsV2").doc("proof-a").get());
+  await assertFails(adminA.collection("billingBatches").doc("batch-a").get());
+  await assertFails(adminA.collection("billingBatches").doc("batch-a").update({status: "completed"}));
 });
 
 test("residents cannot cross tenant or flat boundaries", { skip: !enabled }, async () => {
