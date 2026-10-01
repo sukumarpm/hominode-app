@@ -21,6 +21,7 @@ const AUDIT_ACTIONS = Object.freeze({
   communityConfigurationUpdate: "community.configuration_update",
   communityStatusUpdate: "community.status_update",
   communityLocationUpdate: "community.location_update",
+  billingReconciliationResolve: "billing.reconciliation_resolve",
 });
 
 function requiredString(value, field, maxLength) {

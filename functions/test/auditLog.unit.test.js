@@ -26,6 +26,7 @@ const requiredActions = [
   "community.configuration_update",
   "community.status_update",
   "community.location_update",
+  "billing.reconciliation_resolve",
 ].sort();
 
 function auditDb({fail = false} = {}) {
@@ -82,6 +83,7 @@ test("critical action allowlist is exact and wired into trusted mutation modules
     security_management: ["securityCreate", "securityAssign", "securityAssignmentRemove"],
     tenant_management: ["communityConfigurationUpdate", "communityStatusUpdate"],
     community_location_management: ["communityLocationUpdate"],
+    billing_reconciliation: ["billingReconciliationResolve"],
   };
   for (const [moduleName, actions] of Object.entries(sourceByModule)) {
     const source = fs.readFileSync(

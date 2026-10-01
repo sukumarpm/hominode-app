@@ -4,6 +4,7 @@ const {createHash} = require('node:crypto');
 const {sosStore} = require('./helpers/sos_store');
 const {createMonthlyBillingBatchV2Core: generate, monthlyBillIdV2,
   validateChargeLines, validateDueDateV2} = require('../src/billing_batch');
+const {resolveBillingReconciliationV2Core: resolveReconciliation, resolutionId} = require('../src/billing_reconciliation');
 const {recurringBillId, createMaintenanceBillsCore} = require('../src/billing_management');
 const {operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID} = require('../src/resident_identity');
 
@@ -32,6 +33,8 @@ function fixture(count = 2) {
   const bill = n => db.values.get(`bills/${monthlyBillIdV2('C', `f${n}`, data.billingPeriod)}`);
   return {db, set, patch, addUnit, run, docs, bill};
 }
+
+const auditRecordId = value => `billing_reconciliation_resolve_v2_${value}`;
 
 test('all standard codes and multiple lines have stable identities and an integer calculated total', () => {
   const codes = ['maintenance', 'water', 'parking', 'service', 'electricity', 'security', 'other'];
@@ -557,4 +560,383 @@ test('richer assignment manifest rejects oversized scopes before creating a batc
   for (let n = 1; n <= 200; n++) f.patch(`flats/f${n}`, {status: 'x'.repeat(4000)});
   await assert.rejects(f.run(), error => error.code === 'invalid-argument' && /Select fewer units/.test(error.message));
   assert.equal(f.docs('billingBatches').length, 0); assert.equal(f.docs('bills').length, 0);
+});
+
+test('resolver converts existing-liability reconciliation target to skipped, preserves V1 bill, and finalizes counters', async () => {
+  const f = fixture(1);
+  f.set('bills/legacy-f1', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingKind: 'recurring',
+    billingPeriod: '2030-01',
+    status: 'pending',
+    amount: 100,
+  });
+  const generated = await f.run();
+  assert.equal(generated.reconciliationRequired, 1);
+  const targetPath = `billingBatches/${generated.batchId}/targets/f1`;
+  const targetBefore = f.db.values.get(targetPath);
+  const legacyBefore = f.db.values.get('bills/legacy-f1');
+
+  const resolved = await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: generated.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-f1'],
+      resolutionType: 'existing_liability_confirmed',
+      note: 'Legacy liability confirmed by admin.',
+    },
+  });
+
+  assert.equal(resolved.success, true);
+  assert.equal(resolved.alreadyCompleted, false);
+  assert.equal(resolved.status, 'completed');
+
+  const targetAfter = f.db.values.get(targetPath);
+  assert.equal(targetAfter.status, 'skipped');
+  assert.equal(targetAfter.conflictStatus, 'reconciliation_required');
+  assert.equal(targetAfter.conflictReason, 'existing_liability_requires_reconciliation');
+  assert.deepEqual(targetAfter.conflictingBillIds, ['legacy-f1']);
+  assert.equal(targetAfter.reason, 'existing_liability_requires_reconciliation');
+  assert.deepEqual(targetAfter.billIds, ['legacy-f1']);
+  assert.equal(targetAfter.reconciliationResolution.resolutionType, 'existing_liability_confirmed');
+  assert(targetAfter.reconciliationResolution.resolutionId);
+
+  const batch = f.db.values.get(`billingBatches/${generated.batchId}`);
+  assert.equal(batch.status, 'completed');
+  assert.equal(batch.generation.reconciliationRequired, 0);
+  assert.equal(batch.generation.skipped, 1);
+  assert.equal(batch.generation.completed, 0);
+  assert.equal(batch.generation.failed, 0);
+  assert.equal(batch.generation.materializedCount, 1);
+  assert.equal(batch.generation.targetCount, 1);
+
+  const resolutionRecords = [...f.db.values.entries()].filter(([path]) =>
+    path.startsWith(`billingBatches/${generated.batchId}/reconciliations/`));
+  assert.equal(resolutionRecords.length, 1);
+  const resolution = resolutionRecords[0][1];
+  const expectedResolutionId = resolutionId(generated.batchId, 'f1', 'existing_liability_confirmed', ['legacy-f1']);
+  assert.equal(targetAfter.reconciliationResolution.resolutionId, expectedResolutionId);
+  assert.equal(resolution.schemaVersion, 2);
+  assert.equal(resolution.communityId, 'C');
+  assert.equal(resolution.batchId, generated.batchId);
+  assert.equal(resolution.flatId, 'f1');
+  assert.equal(resolution.billingPeriod, '2030-01');
+  assert.equal(resolution.resolutionType, 'existing_liability_confirmed');
+  assert.deepEqual(resolution.conflictingBillIds, ['legacy-f1']);
+  assert.equal(resolution.note, 'Legacy liability confirmed by admin.');
+  assert.equal(resolutionRecords[0][0], `billingBatches/${generated.batchId}/reconciliations/${expectedResolutionId}`);
+
+  assert.deepEqual(f.db.values.get('bills/legacy-f1'), legacyBefore);
+  assert.equal(f.db.values.has(`bills/${targetBefore.billId}`), false);
+  assert.equal(f.db.values.has(`billingAssignments/${targetBefore.billId}`), false);
+  const auditPath = `auditLogs/${auditRecordId(expectedResolutionId)}`;
+  const audit = f.db.values.get(auditPath);
+  assert(audit);
+  assert.equal(f.docs('auditLogs').length, 1);
+  assert.equal(audit.action, 'billing.reconciliation_resolve');
+  assert.equal(audit.targetType, 'billing_batch_target');
+  assert.equal(audit.targetId, `${generated.batchId}:f1`);
+  assert.equal(audit.metadata.resolutionId, expectedResolutionId);
+  assert.deepEqual(audit.metadata.conflictingBillIds, ['legacy-f1']);
+});
+
+test('resolver retry is idempotent and does not duplicate resolution or audit writes', async () => {
+  const f = fixture(1);
+  f.set('bills/legacy-f1', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingKind: 'recurring',
+    billingPeriod: '2030-01',
+  });
+  const generated = await f.run();
+  const request = {
+    communityId: 'C',
+    batchId: generated.batchId,
+    flatId: 'f1',
+    expectedConflictingBillIds: ['legacy-f1'],
+    resolutionType: 'existing_liability_confirmed',
+  };
+
+  const first = await resolveReconciliation({db: f.db, auth, data: request});
+  const second = await resolveReconciliation({db: f.db, auth, data: request});
+  assert.equal(first.alreadyCompleted, false);
+  assert.equal(second.alreadyCompleted, true);
+  assert.equal(first.status, 'completed');
+  assert.equal(second.status, 'completed');
+
+  const resolutionRecords = [...f.db.values.entries()].filter(([path]) =>
+    path.startsWith(`billingBatches/${generated.batchId}/reconciliations/`));
+  assert.equal(resolutionRecords.length, 1);
+  const deterministicResolutionId = resolutionRecords[0][0].split('/').pop();
+  assert.equal(resolutionRecords[0][1].flatId, 'f1');
+  const audit = f.db.values.get(`auditLogs/${auditRecordId(deterministicResolutionId)}`);
+  assert(audit);
+  assert.equal(audit.metadata.resolutionId, deterministicResolutionId);
+  assert.deepEqual(audit.metadata.conflictingBillIds, ['legacy-f1']);
+  assert.equal(f.docs('auditLogs').length, 1);
+});
+
+test('resolver retry rejects changed conflict IDs even after the target is already resolved', async () => {
+  const f = fixture(1);
+  f.set('bills/legacy-f1', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingKind: 'recurring',
+    billingPeriod: '2030-01',
+  });
+  const generated = await f.run();
+  await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: generated.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-f1'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  });
+
+  await assert.rejects(resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: generated.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-f2'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  }), {code: 'failed-precondition'});
+  assert.equal(f.docs('auditLogs').length, 1);
+});
+
+test('resolver rejects malformed batch generation counters before mutation', async () => {
+  const f = fixture(1);
+  f.set('bills/legacy-f1', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingKind: 'recurring',
+    billingPeriod: '2030-01',
+  });
+  const generated = await f.run();
+  const batchPath = `billingBatches/${generated.batchId}`;
+  const batch = f.db.values.get(batchPath);
+  f.patch(batchPath, {
+    generation: {
+      ...batch.generation,
+      targetCount: 1,
+      materializedCount: 2,
+      completed: 0,
+      skipped: 0,
+      reconciliationRequired: 1,
+      failed: 1,
+    },
+  });
+
+  await assert.rejects(resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: generated.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-f1'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  }), {code: 'failed-precondition'});
+  assert.equal(f.db.values.get(`billingBatches/${generated.batchId}/targets/f1`).status, 'reconciliation_required');
+});
+
+test('resolver rejects impossible target/materialization state without mutation', async () => {
+  const f = fixture(1);
+  f.set('bills/legacy-f1', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingKind: 'recurring',
+    billingPeriod: '2030-01',
+  });
+  const generated = await f.run();
+  const batchPath = `billingBatches/${generated.batchId}`;
+  const batch = f.db.values.get(batchPath);
+  f.patch(batchPath, {
+    generation: {
+      ...batch.generation,
+      targetCount: 1,
+      materializedCount: 0,
+      completed: 0,
+      skipped: 0,
+      reconciliationRequired: 1,
+      failed: 0,
+    },
+  });
+
+  await assert.rejects(resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: generated.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-f1'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  }), {code: 'failed-precondition'});
+
+  assert.equal(f.db.values.get(batchPath).generation.materializedCount, 0);
+  assert.equal(f.db.values.get(`billingBatches/${generated.batchId}/targets/f1`).status, 'reconciliation_required');
+  assert.equal(f.docs('auditLogs').length, 0);
+});
+
+test('resolver rejects malformed or partial schedule linkage on the batch', async () => {
+  const make = async () => {
+    const f = fixture(1);
+    f.set('bills/legacy-f1', {
+      communityId: 'C',
+      flatId: 'f1',
+      billingKind: 'recurring',
+      billingPeriod: '2030-01',
+    });
+    const generated = await f.run();
+    return {f, generated};
+  };
+
+  for (const patch of [
+    {scheduleId: 'schedule-1', scheduleRevisionId: null},
+    {scheduleId: null, scheduleRevisionId: 'revision-1'},
+    {scheduleId: 'invalid/id', scheduleRevisionId: 'revision-1'},
+    {scheduleId: 'schedule-1', scheduleRevisionId: 'invalid/revision'},
+  ]) {
+    const {f, generated} = await make();
+    const batchPath = `billingBatches/${generated.batchId}`;
+    f.patch(batchPath, patch);
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f1'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'failed-precondition'});
+    assert.equal(f.db.values.get(`billingBatches/${generated.batchId}/targets/f1`).status, 'reconciliation_required');
+    assert.equal(f.docs('auditLogs').length, 0);
+  }
+});
+
+test('resolver rejects changed conflicts, ad-hoc conflicts, wrong period, altered bills, and cross-community access', async () => {
+  const make = async () => {
+    const f = fixture(1);
+    f.set('bills/legacy-f1', {
+      communityId: 'C',
+      flatId: 'f1',
+      billingKind: 'recurring',
+      billingPeriod: '2030-01',
+    });
+    const generated = await f.run();
+    return {f, generated};
+  };
+
+  {
+    const {f, generated} = await make();
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f2'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'failed-precondition'});
+  }
+
+  {
+    const {f, generated} = await make();
+    f.patch('bills/legacy-f1', {billingKind: 'ad_hoc'});
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f1'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'failed-precondition'});
+  }
+
+  {
+    const {f, generated} = await make();
+    f.patch('bills/legacy-f1', {billingPeriod: '2030-02'});
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f1'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'failed-precondition'});
+  }
+
+  {
+    const {f, generated} = await make();
+    f.patch('bills/legacy-f1', {flatId: 'f2'});
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f1'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'failed-precondition'});
+  }
+
+  {
+    const {f, generated} = await make();
+    const targetBillId = f.db.values.get(`billingBatches/${generated.batchId}/targets/f1`).billId;
+    f.set(`bills/${targetBillId}`, {communityId: 'C', flatId: 'f1'});
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f1'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'failed-precondition'});
+  }
+
+  {
+    const {f, generated} = await make();
+    const outsiderAuth = {uid: 'outsider', token: auth.token};
+    f.set('admins/outsider', {uid: 'outsider', role: 'admin', isActive: true, authorizedCommunityIds: ['OTHER']});
+    await assert.rejects(resolveReconciliation({
+      db: f.db,
+      auth: outsiderAuth,
+      data: {
+        communityId: 'C',
+        batchId: generated.batchId,
+        flatId: 'f1',
+        expectedConflictingBillIds: ['legacy-f1'],
+        resolutionType: 'existing_liability_confirmed',
+      },
+    }), {code: 'permission-denied'});
+  }
 });

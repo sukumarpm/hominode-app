@@ -13,6 +13,7 @@ const {
   stopBillingScheduleV2Core: stopSchedule,
   scheduleBatchIdempotencyKey,
 } = require('../src/billing_schedule');
+const {resolveBillingReconciliationV2Core: resolveReconciliation} = require('../src/billing_reconciliation');
 const {createMonthlyBillingBatchV2Core: createBatch, monthlyBillingBatchId} = require('../src/billing_batch');
 const {operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID} = require('../src/resident_identity');
 
@@ -286,6 +287,244 @@ test('terminal retry survives a later revision and later period reservation with
   assert.equal(f.docs('bills').length, 1);
 });
 
+test('schedule-linked reconciliation resolution remains read-before-write safe and finalizes generation counters', async () => {
+  const f = fixture();
+  const scheduleId = await reserveFebruary(f);
+  f.set('bills/legacy-feb', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingPeriod: '2030-02',
+    billingKind: 'recurring',
+    status: 'pending',
+  });
+
+  const executed = await f.execute(scheduleId, '2030-02');
+  assert.equal(executed.status, 'reconciliation_required');
+  const generationPath = f.generationPath(scheduleId, '2030-02');
+  const generationBefore = f.db.values.get(generationPath);
+  const scheduleBefore = f.db.values.get(f.schedulePath(scheduleId));
+  assert.equal(generationBefore.reconciliationRequiredCount, 1);
+  assert.equal(scheduleBefore.generatedThroughBillingPeriod, '2030-02');
+
+  const resolved = await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-feb'],
+      resolutionType: 'existing_liability_confirmed',
+      note: 'Confirmed in schedule execution review.',
+    },
+  });
+  assert.equal(resolved.success, true);
+  assert.equal(resolved.status, 'completed');
+
+  const batch = f.db.values.get(`billingBatches/${executed.batchId}`);
+  const generationAfter = f.db.values.get(generationPath);
+  const scheduleAfter = f.db.values.get(f.schedulePath(scheduleId));
+  const resolutionRecords = [...f.db.values.entries()].filter(([key]) =>
+    key.startsWith(`billingBatches/${executed.batchId}/reconciliations/`));
+  assert.equal(resolutionRecords.length, 1);
+  const deterministicResolutionId = resolutionRecords[0][0].split('/').pop();
+  const audit = f.db.values.get(`auditLogs/billing_reconciliation_resolve_v2_${deterministicResolutionId}`);
+
+  assert.equal(batch.status, 'completed');
+  assert.equal(batch.generation.reconciliationRequired, 0);
+  assert.equal(generationAfter.status, 'completed');
+  assert.equal(generationAfter.reconciliationRequiredCount, 0);
+  assert.equal(generationAfter.latestBatchProgress.status, 'completed');
+  assert.equal(generationAfter.latestBatchProgress.generation.reconciliationRequired, 0);
+  assert.deepEqual(generationAfter.terminalCounters, batch.generation);
+  assert(generationAfter.reconciliationResolvedAt);
+  assert.equal(generationAfter.reconciliationResolutionId, deterministicResolutionId);
+  assert.equal(scheduleAfter.generatedThroughBillingPeriod, '2030-02');
+  assert.equal(scheduleAfter.generationInProgressBillingPeriod, null);
+  assert.equal(scheduleAfter.status, 'active');
+  assert(audit);
+  assert.equal(audit.action, 'billing.reconciliation_resolve');
+  assert.equal(audit.targetId, `${executed.batchId}:f1`);
+  assert.equal(audit.metadata.resolutionId, deterministicResolutionId);
+});
+
+test('reconciliation resolution does not reactivate a stopped schedule', async () => {
+  const f = fixture();
+  const scheduleId = await reserveFebruary(f);
+  await stopSchedule({db: f.db, auth, now: reserveNow,
+    data: {communityId: 'C', scheduleId}});
+  f.set('bills/legacy-feb', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingPeriod: '2030-02',
+    billingKind: 'recurring',
+    status: 'pending',
+  });
+  const executed = await f.execute(scheduleId, '2030-02');
+  assert.equal(executed.status, 'reconciliation_required');
+  assert.equal(f.db.values.get(f.schedulePath(scheduleId)).status, 'stopped');
+
+  await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-feb'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  });
+  assert.equal(f.db.values.get(f.schedulePath(scheduleId)).status, 'stopped');
+});
+
+test('schedule-linked reconciliation rejects generation scheduleRevisionId mismatch', async () => {
+  const f = fixture();
+  const scheduleId = await reserveFebruary(f);
+  f.set('bills/legacy-feb', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingPeriod: '2030-02',
+    billingKind: 'recurring',
+    status: 'pending',
+  });
+  const executed = await f.execute(scheduleId, '2030-02');
+  const generationPath = f.generationPath(scheduleId, '2030-02');
+  f.set(generationPath, {
+    ...f.db.values.get(generationPath),
+    scheduleRevisionId: 'tampered-revision',
+  });
+
+  await assert.rejects(resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-feb'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  }), {code: 'failed-precondition'});
+  assert.equal(f.db.values.get(`billingBatches/${executed.batchId}/targets/f1`).status, 'reconciliation_required');
+  assert.equal(f.docs('auditLogs').length, 0);
+});
+
+test('two-target schedule-linked reconciliation stays partial then becomes fully completed', async () => {
+  const f = fixture({count: 2});
+  const scheduleId = await reserveFebruary(f);
+  f.set('bills/legacy-feb-f1', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingPeriod: '2030-02',
+    billingKind: 'recurring',
+    status: 'pending',
+  });
+  f.set('bills/legacy-feb-f2', {
+    communityId: 'C',
+    flatId: 'f2',
+    billingPeriod: '2030-02',
+    billingKind: 'recurring',
+    status: 'pending',
+  });
+
+  const executed = await f.execute(scheduleId, '2030-02');
+  assert.equal(executed.status, 'reconciliation_required');
+  const generationPath = f.generationPath(scheduleId, '2030-02');
+
+  const first = await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-feb-f1'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  });
+  assert.equal(first.status, 'reconciliation_required');
+
+  const batchAfterFirst = f.db.values.get(`billingBatches/${executed.batchId}`);
+  const generationAfterFirst = f.db.values.get(generationPath);
+  assert.equal(batchAfterFirst.status, 'reconciliation_required');
+  assert.equal(batchAfterFirst.generation.reconciliationRequired, 1);
+  assert.equal(generationAfterFirst.status, 'reconciliation_required');
+  assert.equal(generationAfterFirst.reconciliationRequiredCount, 1);
+  assert.deepEqual(generationAfterFirst.terminalCounters, batchAfterFirst.generation);
+  assert.equal(generationAfterFirst.latestBatchProgress.status, 'reconciliation_required');
+
+  const second = await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f2',
+      expectedConflictingBillIds: ['legacy-feb-f2'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  });
+  assert.equal(second.status, 'completed');
+
+  const batchAfterSecond = f.db.values.get(`billingBatches/${executed.batchId}`);
+  const generationAfterSecond = f.db.values.get(generationPath);
+  assert.equal(batchAfterSecond.status, 'completed');
+  assert.equal(batchAfterSecond.generation.reconciliationRequired, 0);
+  assert.equal(generationAfterSecond.status, 'completed');
+  assert.equal(generationAfterSecond.reconciliationRequiredCount, 0);
+  assert.deepEqual(generationAfterSecond.terminalCounters, batchAfterSecond.generation);
+  assert.equal(generationAfterSecond.latestBatchProgress.status, 'completed');
+});
+
+test('schedule-linked idempotent retry leaves batch, generation, and target state unchanged', async () => {
+  const f = fixture();
+  const scheduleId = await reserveFebruary(f);
+  f.set('bills/legacy-feb', {
+    communityId: 'C',
+    flatId: 'f1',
+    billingPeriod: '2030-02',
+    billingKind: 'recurring',
+    status: 'pending',
+  });
+  const executed = await f.execute(scheduleId, '2030-02');
+  await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-feb'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  });
+
+  const batchPath = `billingBatches/${executed.batchId}`;
+  const targetPath = `billingBatches/${executed.batchId}/targets/f1`;
+  const generationPath = f.generationPath(scheduleId, '2030-02');
+  const batchBeforeRetry = f.db.values.get(batchPath);
+  const targetBeforeRetry = f.db.values.get(targetPath);
+  const generationBeforeRetry = f.db.values.get(generationPath);
+
+  const retry = await resolveReconciliation({
+    db: f.db,
+    auth,
+    data: {
+      communityId: 'C',
+      batchId: executed.batchId,
+      flatId: 'f1',
+      expectedConflictingBillIds: ['legacy-feb'],
+      resolutionType: 'existing_liability_confirmed',
+    },
+  });
+  assert.equal(retry.alreadyCompleted, true);
+  assert.deepEqual(f.db.values.get(batchPath), batchBeforeRetry);
+  assert.deepEqual(f.db.values.get(targetPath), targetBeforeRetry);
+  assert.deepEqual(f.db.values.get(generationPath), generationBeforeRetry);
+  assert.equal(f.docs('auditLogs').length, 1);
+});
+
 test('finalization re-reads persisted batch linkage and refuses altered community, period, or revision', async () => {
   for (const [field, value] of [['communityId', 'OTHER'], ['billingPeriod', '2030-03'],
     ['scheduleRevisionId', 'different-revision']]) {
@@ -331,4 +570,5 @@ test('executor contains no direct bill, assignment, or financial ledger writes',
 test('execute callable is App Check wrapped and wired to the schedule execution core', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
   assert.match(source, /exports\.executeBillingSchedulePeriodV2 = appCheckedCallable\(\s*executeBillingSchedulePeriodV2Core,/);
+  assert.match(source, /exports\.resolveBillingReconciliationV2 = appCheckedCallable\(\s*resolveBillingReconciliationV2Core,/);
 });

@@ -20,6 +20,7 @@ const {
 } = require("./billing_management");
 
 const { createMonthlyBillingBatchV2Core } = require("./billing_batch");
+const { resolveBillingReconciliationV2Core } = require("./billing_reconciliation");
 const { runRecurringBillingV2SchedulerCore } = require("./billing_recurring_scheduler");
 const { reviseMonthlyBillingBatchV2Core } = require("./billing_revision");
 const {
@@ -330,6 +331,10 @@ exports.createMaintenanceBills = appCheckedCallable(
 exports.createMonthlyBillingBatchV2 = appCheckedCallable(
   createMonthlyBillingBatchV2Core,
   "Monthly billing batch could not be generated.",
+);
+exports.resolveBillingReconciliationV2 = appCheckedCallable(
+  resolveBillingReconciliationV2Core,
+  "Billing reconciliation could not be resolved.",
 );
 exports.reviseMonthlyBillingBatchV2 = appCheckedCallable(
   reviseMonthlyBillingBatchV2Core,
