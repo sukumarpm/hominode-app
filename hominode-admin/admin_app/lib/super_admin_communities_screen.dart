@@ -253,6 +253,7 @@ class _SuperAdminCommunityDetailsScreenState
                     'Name': tenant.name,
                     'Slug': tenant.slug,
                     'Website path': tenant.websitePath,
+                    'Time zone': tenant.timeZone ?? '',
                     'Database ID': tenant.databaseId,
                     'Status': tenant.isActive ? 'Active' : 'Inactive',
                     'Brand name': tenant.brandName ?? '',
@@ -309,6 +310,7 @@ class _TenantFormDialogState extends State<_TenantFormDialog> {
       'name': TextEditingController(text: t?.name),
       'slug': TextEditingController(text: t?.slug),
       'websitePath': TextEditingController(text: t?.websitePath),
+      'timeZone': TextEditingController(text: t?.timeZone),
       'databaseId': TextEditingController(
         text: t?.databaseId ?? TenantConfig.defaultDatabaseId,
       ),
@@ -399,8 +401,15 @@ class _TenantFormDialogState extends State<_TenantFormDialog> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: TextFormField(
                     controller: entry.value,
-                    decoration: InputDecoration(labelText: _label(entry.key)),
+                    decoration: InputDecoration(
+                      labelText: _label(entry.key),
+                      hintText: entry.key == 'timeZone' ? 'Asia/Manila' : null,
+                    ),
                     validator: entry.key == 'name'
+                        ? (value) => value == null || value.trim().isEmpty
+                              ? 'Required'
+                              : null
+                        : entry.key == 'timeZone'
                         ? (value) => value == null || value.trim().isEmpty
                               ? 'Required'
                               : null
@@ -543,6 +552,7 @@ class _TenantFormDialogState extends State<_TenantFormDialog> {
     'name': 'Name',
     'slug': 'Slug',
     'websitePath': 'Website path',
+    'timeZone': 'Time zone',
     'databaseId': 'Database ID',
     'brandName': 'Brand name (optional)',
     'logoUrl': 'Logo URL (optional)',

@@ -134,10 +134,15 @@ class TenantRegistryService {
     if (websitePath.isEmpty) {
       throw ArgumentError('Enter a valid website path.');
     }
+    final timeZone = value('timeZone');
+    if (timeZone.isEmpty) {
+      throw ArgumentError('Time zone is required.');
+    }
     return {
       'name': name,
       'slug': slug,
       'websitePath': websitePath,
+      'timeZone': timeZone,
       'databaseId': value('databaseId').isEmpty
           ? TenantConfig.defaultDatabaseId
           : value('databaseId'),

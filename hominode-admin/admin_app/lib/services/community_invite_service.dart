@@ -52,12 +52,19 @@ class CommunityInviteService {
     required String communityId,
     required String name,
     required String slug,
+    required String timeZone,
     CommunityLocation? location,
   }) {
+    final canonicalTimeZone = timeZone.trim();
+    if (canonicalTimeZone.isEmpty) {
+      throw ArgumentError('Time zone is required.');
+    }
+
     final payload = <String, dynamic>{
       'communityId': normalizeCommunityId(communityId),
       'name': name.trim(),
       'slug': normalizeSlug(slug),
+      'timeZone': canonicalTimeZone,
       'locationConfigured': location != null,
     };
 
@@ -83,12 +90,14 @@ class CommunityInviteService {
     required String communityId,
     required String name,
     required String slug,
+    required String timeZone,
     CommunityLocation? location,
   }) async {
     final payload = communityCreationPayload(
       communityId: communityId,
       name: name,
       slug: slug,
+      timeZone: timeZone,
       location: location,
     );
 
@@ -102,6 +111,10 @@ class CommunityInviteService {
 
     if (payload['slug']!.isEmpty) {
       throw ArgumentError('Enter a valid slug.');
+    }
+
+    if ((payload['timeZone'] as String).trim().isEmpty) {
+      throw ArgumentError('Time zone is required.');
     }
 
     // Community location is optional during initial creation.

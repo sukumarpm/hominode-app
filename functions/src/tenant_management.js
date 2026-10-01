@@ -33,11 +33,42 @@ const RESERVED_SLUGS = new Set([
 ]);
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const normalizeCommunityId = (value) => String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^[-_]+|[-_]+$/g, "");
+const MAX_TIME_ZONE_LENGTH = 100;
 const optionalString = (value, max = 500) => {
   const result = String(value ?? "").trim();
   if (result.length > max) throw new RegistrationError("invalid-argument", "Tenant metadata is too long.");
   return result || null;
 };
+
+function normalizeIanaTimeZone(value, {required = true} = {}) {
+  if (value == null) {
+    if (!required) return undefined;
+    throw new RegistrationError("invalid-argument", "A valid time zone is required.");
+  }
+
+  if (typeof value !== "string") {
+    throw new RegistrationError("invalid-argument", "A valid time zone is required.");
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_TIME_ZONE_LENGTH) {
+    throw new RegistrationError("invalid-argument", "A valid time zone is required.");
+  }
+
+  try {
+    const canonical = new Intl.DateTimeFormat("en-US", {
+      timeZone: trimmed,
+    }).resolvedOptions().timeZone;
+
+    if (typeof canonical !== "string" || !canonical.trim()) {
+      throw new Error("Invalid canonical time zone.");
+    }
+
+    return canonical;
+  } catch {
+    throw new RegistrationError("invalid-argument", "A valid IANA time zone is required.");
+  }
+}
 
 function validateCommunityLocationMetadata(data) {
   const hasLocationConfigured = hasOwn(
@@ -196,7 +227,8 @@ function validateCommunityLocationMetadata(data) {
   };
 }
 
-function validateTenantMetadata(data) {
+function validateTenantMetadata(data, options = {}) {
+  const requireTimeZone = options?.requireTimeZone === true;
   const allowedKeys = new Set([
     "communityId",
     "name",
@@ -206,6 +238,7 @@ function validateTenantMetadata(data) {
     "brandName",
     "logoUrl",
     "primaryColor",
+    "timeZone",
     "locationConfigured",
     "location",
   ]);
@@ -243,6 +276,14 @@ function validateTenantMetadata(data) {
   const locationMetadata =
     validateCommunityLocationMetadata(data);
 
+  if (requireTimeZone && !hasOwn(data, "timeZone")) {
+    throw new RegistrationError("invalid-argument", "A valid IANA time zone is required.");
+  }
+
+  const timeZone = hasOwn(data, "timeZone")
+    ? normalizeIanaTimeZone(data.timeZone)
+    : undefined;
+
   return {
     communityId,
     name,
@@ -255,6 +296,7 @@ function validateTenantMetadata(data) {
       optionalString(data?.logoUrl, 1000),
     primaryColor:
       optionalString(data?.primaryColor, 32),
+    ...(timeZone ? {timeZone} : {}),
     ...locationMetadata,
   };
 }
@@ -376,6 +418,7 @@ module.exports = {
   SLUG_PATTERN,
   normalizeCommunityId,
   validateTenantMetadata,
+  normalizeIanaTimeZone,
   validateCommunityLocationMetadata,
   requireActiveSuperAdmin,
   rejectLegacyDuplicate,

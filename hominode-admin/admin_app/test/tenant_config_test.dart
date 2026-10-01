@@ -13,6 +13,7 @@ void main() {
       'slug': 'green-valley',
       'websitePath': 'communities/green-valley',
       'databaseId': 'green-valley-db',
+      'timeZone': 'Asia/Manila',
       'isActive': true,
       'logoUrl': 'https://example.com/logo.png',
       'brandName': 'Green Valley Living',
@@ -28,6 +29,7 @@ void main() {
     expect(tenant.slug, 'green-valley');
     expect(tenant.websitePath, 'communities/green-valley');
     expect(tenant.databaseId, 'green-valley-db');
+    expect(tenant.timeZone, 'Asia/Manila');
     expect(tenant.brandName, 'Green Valley Living');
     expect(tenant.countryCode, 'PH');
     expect(
@@ -46,6 +48,7 @@ void main() {
     expect(tenant.slug, 'green-valley');
     expect(tenant.websitePath, 'green-valley');
     expect(tenant.databaseId, TenantConfig.defaultDatabaseId);
+    expect(tenant.timeZone, isNull);
     expect(tenant.brandName, 'Green Valley');
     expect(tenant.logoUrl, isNull);
     expect(tenant.primaryColor, isNull);
@@ -135,15 +138,28 @@ void main() {
         'name': ' Green Valley ',
         'slug': 'Green Valley',
         'websitePath': '',
+        'timeZone': 'Asia/Manila',
         'databaseId': '',
         'brandName': '',
       });
       expect(payload['slug'], 'green-valley');
       expect(payload['websitePath'], 'green-valley');
+      expect(payload['timeZone'], 'Asia/Manila');
       expect(payload['databaseId'], TenantConfig.defaultDatabaseId);
       expect(payload['brandName'], 'Green Valley');
     },
   );
+
+  test('create/update payload rejects blank time zone', () {
+    expect(
+      () => TenantRegistryService.mutationPayload({
+        'name': 'Green Valley',
+        'slug': 'green-valley',
+        'timeZone': '   ',
+      }),
+      throwsArgumentError,
+    );
+  });
 
   test('create form rejects an empty normalized slug', () {
     expect(

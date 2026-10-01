@@ -1,6 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {validateTenantMetadata, updateCommunityCore, setCommunityActiveCore} = require("../src/tenant_management");
+const {
+  validateTenantMetadata,
+  normalizeIanaTimeZone,
+  updateCommunityCore,
+  setCommunityActiveCore,
+} = require("../src/tenant_management");
 
 const auth = {uid: "super-1", token: {phone_number: "+15550000001", firebase: {sign_in_provider: "phone"}}};
 
@@ -20,6 +25,13 @@ test("tenant validation normalizes defaults and rejects non-canonical slug", () 
   assert.throws(() => validateTenantMetadata({name: "Green Valley", slug: "Green Valley"}), {code: "invalid-argument"});
 });
 
+test("timezone validator canonicalizes valid IANA values and rejects invalid values", () => {
+  assert.equal(normalizeIanaTimeZone(" Asia/Manila "), "Asia/Manila");
+  assert.throws(() => normalizeIanaTimeZone("Invalid/Timezone"), {
+    code: "invalid-argument",
+  });
+});
+
 test("duplicate slug and websitePath are rejected", async () => {
   const db = fakeDb({...superSeed, "communities/OTHER": {slug: "taken", websitePath: "taken-path"}});
   await assert.rejects(updateCommunityCore({db, auth, data: {communityId: "GV", name: "Green Valley", slug: "taken", websitePath: "new-path"}}), {code: "already-exists"});
@@ -28,13 +40,45 @@ test("duplicate slug and websitePath are rejected", async () => {
 
 test("superAdmin edits metadata and changes active status", async () => {
   const db = fakeDb(superSeed);
-  await updateCommunityCore({db, auth, data: {communityId: "GV", name: "Green Valley Prime", slug: "green-valley-prime", websitePath: "green-valley-prime", databaseId: "(default)", brandName: "GV Prime"}});
+  await updateCommunityCore({db, auth, data: {communityId: "GV", name: "Green Valley Prime", slug: "green-valley", websitePath: "green-valley-prime", databaseId: "(default)", brandName: "GV Prime"}});
   assert.equal(db.values.get("communities/GV").name, "Green Valley Prime");
   assert.equal(db.values.get("communities/GV").brandName, "GV Prime");
   await setCommunityActiveCore({db, auth, data: {communityId: "GV", isActive: false}});
   assert.equal(db.values.get("communities/GV").isActive, false);
   await setCommunityActiveCore({db, auth, data: {communityId: "GV", isActive: true}});
   assert.equal(db.values.get("communities/GV").isActive, true);
+});
+
+test("update with supplied timezone persists canonical timezone", async () => {
+  const db = fakeDb({...superSeed, "communities/GV": {...superSeed["communities/GV"], timeZone: "Asia/Kolkata"}});
+  await updateCommunityCore({
+    db,
+    auth,
+    data: {
+      communityId: "GV",
+      name: "Green Valley",
+      slug: "green-valley",
+      websitePath: "green-valley",
+      timeZone: " Asia/Manila ",
+    },
+  });
+  assert.equal(db.values.get("communities/GV").timeZone, "Asia/Manila");
+});
+
+test("update without timezone preserves existing stored timezone", async () => {
+  const db = fakeDb({...superSeed, "communities/GV": {...superSeed["communities/GV"], timeZone: "Asia/Manila"}});
+  await updateCommunityCore({
+    db,
+    auth,
+    data: {
+      communityId: "GV",
+      name: "Green Valley",
+      slug: "green-valley",
+      websitePath: "green-valley",
+      brandName: "Green Valley Community",
+    },
+  });
+  assert.equal(db.values.get("communities/GV").timeZone, "Asia/Manila");
 });
 
 test("ordinary admin cannot mutate tenant registry", async () => {

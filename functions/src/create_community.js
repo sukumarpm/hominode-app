@@ -16,7 +16,7 @@ const {
 } = require("./tenant_management");
 
 const validateCommunityInput = (data) =>
-  validateTenantMetadata(data);
+  validateTenantMetadata(data, {requireTimeZone: true});
 
 function locationsMatch(existing, expected) {
   const existingConfigured =
@@ -67,6 +67,7 @@ function isIdempotentCommunity(
     existing.slug === expected.slug &&
     (existing.websitePath ?? existing.slug) ===
     expected.websitePath &&
+    existing.timeZone === expected.timeZone &&
     existing.isActive === true &&
     existing.createdBy === creatorUid &&
     locationsMatch(existing, expected)

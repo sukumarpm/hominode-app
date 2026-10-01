@@ -36,12 +36,32 @@ test("community ID and slug normalization are deterministic", () => {
 });
 
 test("input requires a lowercase kebab-case slug", () => {
-  const input = validateCommunityInput({ communityId: "gv 0701", name: " Green Valley ", slug: "green-valley" });
+  const input = validateCommunityInput({ communityId: "gv 0701", name: " Green Valley ", slug: "green-valley", timeZone: "Asia/Manila" });
   assert.equal(input.communityId, "GV-0701");
   assert.equal(input.websitePath, "green-valley");
   assert.equal(input.databaseId, "(default)");
-  assert.throws(() => validateCommunityInput({ communityId: "GV-0701", name: "Green Valley", slug: "Green Valley" }), { code: "invalid-argument" });
-  assert.throws(() => validateCommunityInput({ communityId: "GV-0701", name: "Green Valley", slug: "green-valley", isActive: false }), { code: "invalid-argument" });
+  assert.equal(input.timeZone, "Asia/Manila");
+  assert.throws(() => validateCommunityInput({ communityId: "GV-0701", name: "Green Valley", slug: "Green Valley", timeZone: "Asia/Manila" }), { code: "invalid-argument" });
+  assert.throws(() => validateCommunityInput({ communityId: "GV-0701", name: "Green Valley", slug: "green-valley", isActive: false, timeZone: "Asia/Manila" }), { code: "invalid-argument" });
+});
+
+test("create requires an explicit valid timezone", () => {
+  assert.throws(() =>
+    validateCommunityInput({
+      communityId: "GV-0701",
+      name: "Green Valley",
+      slug: "green-valley",
+    }),
+  { code: "invalid-argument" });
+
+  assert.throws(() =>
+    validateCommunityInput({
+      communityId: "GV-0701",
+      name: "Green Valley",
+      slug: "green-valley",
+      timeZone: "Mars/Base",
+    }),
+  { code: "invalid-argument" });
 });
 
 test("community may be created without a configured location", () => {
@@ -49,6 +69,7 @@ test("community may be created without a configured location", () => {
     communityId: "GV-0701",
     name: "Green Valley",
     slug: "green-valley",
+    timeZone: "Asia/Manila",
     locationConfigured: false,
   });
 
@@ -68,6 +89,7 @@ test("valid community location is normalized", () => {
     communityId: "GV-0701",
     name: "Green Valley",
     slug: "green-valley",
+    timeZone: " Asia/Manila ",
     locationConfigured: true,
     location: {
       latitude: 14.554729,
@@ -108,6 +130,8 @@ test("valid community location is normalized", () => {
     input.location.attendanceRadiusMeters,
     150,
   );
+
+  assert.equal(input.timeZone, "Asia/Manila");
 });
 
 test("invalid community latitude is rejected", () => {
@@ -117,6 +141,7 @@ test("invalid community latitude is rejected", () => {
         communityId: "GV-0701",
         name: "Green Valley",
         slug: "green-valley",
+        timeZone: "Asia/Manila",
         locationConfigured: true,
         location: {
           latitude: 100,
@@ -139,6 +164,7 @@ test("invalid community longitude is rejected", () => {
         communityId: "GV-0701",
         name: "Green Valley",
         slug: "green-valley",
+        timeZone: "Asia/Manila",
         locationConfigured: true,
         location: {
           latitude: 14.554729,
@@ -161,6 +187,7 @@ test("empty community address is rejected", () => {
         communityId: "GV-0701",
         name: "Green Valley",
         slug: "green-valley",
+        timeZone: "Asia/Manila",
         locationConfigured: true,
         location: {
           latitude: 14.554729,
@@ -182,6 +209,7 @@ test("invalid attendance radius is rejected", () => {
         communityId: "GV-0701",
         name: "Green Valley",
         slug: "green-valley",
+        timeZone: "Asia/Manila",
         locationConfigured: true,
         location: {
           latitude: 14.554729,
@@ -204,6 +232,7 @@ test("client supplied location timestamp is rejected", () => {
         communityId: "GV-0701",
         name: "Green Valley",
         slug: "green-valley",
+        timeZone: "Asia/Manila",
         locationConfigured: true,
         location: {
           latitude: 14.554729,
@@ -238,6 +267,7 @@ test("active superAdmin creates a community with location", async () => {
         communityId: "LOC-001",
         name: "Location Community",
         slug: "location-community",
+        timeZone: "Asia/Manila",
         locationConfigured: true,
         location: {
           latitude: 14.554729,
@@ -290,19 +320,22 @@ test("active superAdmin creates a community with location", async () => {
   assert.ok(
     stored.location.updatedAt,
   );
+
+  assert.equal(stored.timeZone, "Asia/Manila");
 });
 
 test("idempotency requires matching values and creator", () => {
-  const input = { communityId: "GV-0701", name: "Green Valley", slug: "green-valley", websitePath: "green-valley" };
-  assert.equal(isIdempotentCommunity({ name: "Green Valley", slug: "green-valley", isActive: true, createdBy: "admin-1" }, input, "admin-1"), true);
-  assert.equal(isIdempotentCommunity({ name: "Other", slug: "green-valley", isActive: true, createdBy: "admin-1" }, input, "admin-1"), false);
-  assert.equal(isIdempotentCommunity({ name: "Green Valley", slug: "green-valley", isActive: true, createdBy: "admin-2" }, input, "admin-1"), false);
+  const input = { communityId: "GV-0701", name: "Green Valley", slug: "green-valley", websitePath: "green-valley", timeZone: "Asia/Manila" };
+  assert.equal(isIdempotentCommunity({ name: "Green Valley", slug: "green-valley", timeZone: "Asia/Manila", isActive: true, createdBy: "admin-1" }, input, "admin-1"), true);
+  assert.equal(isIdempotentCommunity({ name: "Green Valley", slug: "green-valley", timeZone: "Asia/Kolkata", isActive: true, createdBy: "admin-1" }, input, "admin-1"), false);
+  assert.equal(isIdempotentCommunity({ name: "Other", slug: "green-valley", timeZone: "Asia/Manila", isActive: true, createdBy: "admin-1" }, input, "admin-1"), false);
+  assert.equal(isIdempotentCommunity({ name: "Green Valley", slug: "green-valley", timeZone: "Asia/Manila", isActive: true, createdBy: "admin-2" }, input, "admin-1"), false);
 });
 
 test("ordinary admin cannot create a community", async () => {
   const db = fakeDb({ uid: "actor-1", role: "admin", isActive: true, authorizedCommunityIds: ["EXISTING"] });
   await assert.rejects(
-    createCommunityCore({ db, auth, data: { communityId: "NEW", name: "New Community", slug: "new-community" } }),
+    createCommunityCore({ db, auth, data: { communityId: "NEW", name: "New Community", slug: "new-community", timeZone: "Asia/Manila" } }),
     { code: "permission-denied" },
   );
   assert.equal(db.values.has("communities/NEW"), false);
@@ -311,8 +344,9 @@ test("ordinary admin cannot create a community", async () => {
 test("active superAdmin creates a community without self-assignment", async () => {
   const admin = { uid: "actor-1", role: "superAdmin", isActive: true, authorizedCommunityIds: [] };
   const db = fakeDb(admin);
-  const result = await createCommunityCore({ db, auth, data: { communityId: "NEW", name: "New Community", slug: "new-community" } });
+  const result = await createCommunityCore({ db, auth, data: { communityId: "NEW", name: "New Community", slug: "new-community", timeZone: "Asia/Manila" } });
   assert.deepEqual(result, { communityId: "NEW", idempotent: false });
   assert.equal(db.values.get("communities/NEW").createdBy, "actor-1");
+  assert.equal(db.values.get("communities/NEW").timeZone, "Asia/Manila");
   assert.deepEqual(db.values.get("admins/actor-1").authorizedCommunityIds, []);
 });

@@ -29,12 +29,27 @@ void main() {
         communityId: ' gv 0701 ',
         name: ' Green Valley ',
         slug: 'Green Valley',
+        timeZone: 'Asia/Manila',
       ),
       {
         'communityId': 'GV-0701',
         'name': 'Green Valley',
         'slug': 'green-valley',
+        'timeZone': 'Asia/Manila',
+        'locationConfigured': false,
       },
+    );
+  });
+
+  test('trusted community payload rejects blank timezone', () {
+    expect(
+      () => CommunityInviteService.communityCreationPayload(
+        communityId: ' gv 0701 ',
+        name: ' Green Valley ',
+        slug: 'Green Valley',
+        timeZone: '   ',
+      ),
+      throwsArgumentError,
     );
   });
 

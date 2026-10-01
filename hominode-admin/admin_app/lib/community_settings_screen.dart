@@ -520,6 +520,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
   late final TextEditingController _idController;
   late final TextEditingController _nameController;
   late final TextEditingController _slugController;
+  late final TextEditingController _timeZoneController;
   bool _submitting = false;
   CommunityLocation? _location;
 
@@ -531,6 +532,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
     );
     _nameController = TextEditingController();
     _slugController = TextEditingController();
+    _timeZoneController = TextEditingController();
   }
 
   @override
@@ -538,6 +540,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
     _idController.dispose();
     _nameController.dispose();
     _slugController.dispose();
+    _timeZoneController.dispose();
     super.dispose();
   }
 
@@ -549,6 +552,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
         communityId: _idController.text,
         name: _nameController.text,
         slug: _slugController.text,
+        timeZone: _timeZoneController.text,
         location: _location,
       );
       if (!mounted) return;
@@ -607,6 +611,17 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
                   validator: (value) =>
                       CommunityInviteService.normalizeSlug(value ?? '').isEmpty
                       ? 'Enter a valid slug'
+                      : null,
+                ),
+
+                TextFormField(
+                  controller: _timeZoneController,
+                  decoration: const InputDecoration(
+                    labelText: 'Time zone',
+                    hintText: 'Asia/Manila',
+                  ),
+                  validator: (value) => value?.trim().isEmpty == true
+                      ? 'Time zone is required'
                       : null,
                 ),
 

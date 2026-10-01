@@ -127,6 +127,7 @@ class TenantConfig {
     required this.isActive,
     required this.createdBy,
     required this.locationConfigured,
+    this.timeZone,
     this.location,
     this.logoUrl,
     this.brandName,
@@ -151,6 +152,7 @@ class TenantConfig {
   final String? countryCode;
 
   final String createdBy;
+  final String? timeZone;
 
   final bool locationConfigured;
   final CommunityLocation? location;
@@ -224,6 +226,7 @@ class TenantConfig {
       primaryColor: optionalString('primaryColor'),
       countryCode: _validCountryCode(optionalString('countryCode')),
       createdBy: stringValue('createdBy'),
+      timeZone: optionalString('timeZone'),
       locationConfigured: locationConfigured,
       location: location,
       createdAt: dateValue('createdAt'),
