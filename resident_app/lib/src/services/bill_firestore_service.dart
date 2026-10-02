@@ -44,6 +44,15 @@ class BillFirestoreService {
   // Cache duration: 30 seconds
   static const Duration _cacheDuration = Duration(seconds: 30);
 
+  static Map<String, dynamic> normalizeBillDocument(
+    Map<String, dynamic> raw,
+    String documentId,
+  ) {
+    final bill = Map<String, dynamic>.from(raw);
+    bill['id'] = documentId;
+    return bill;
+  }
+
   /// Clear cache (call when data changes)
   void clearCache() {
     _cachedCurrentBill = null;
@@ -207,9 +216,7 @@ class BillFirestoreService {
       print('   ✓ Applied communityId and flatId tenant filters');
 
       final bills = snapshot.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        return data;
+        return normalizeBillDocument(doc.data(), doc.id);
       }).toList();
 
       // Sort by due date (newest first)
@@ -276,8 +283,10 @@ class BillFirestoreService {
         return bDate.compareTo(aDate);
       });
 
-      final data = matchingBills.first.data();
-      data['id'] = matchingBills.first.id;
+      final data = normalizeBillDocument(
+        matchingBills.first.data(),
+        matchingBills.first.id,
+      );
 
       // Cache the result
       _cachedCurrentBill = data;
@@ -326,9 +335,7 @@ class BillFirestoreService {
       print('   ✓ Applied communityId and flatId tenant filters');
 
       final payments = snapshot.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        return data;
+        return normalizeBillDocument(doc.data(), doc.id);
       }).toList();
 
       // Sort by paid date (newest first)
@@ -382,9 +389,7 @@ class BillFirestoreService {
         .snapshots()
         .map((snapshot) {
           final bills = snapshot.docs.map((doc) {
-            final data = doc.data();
-            data['id'] = doc.id;
-            return data;
+            return normalizeBillDocument(doc.data(), doc.id);
           }).toList();
 
           // Sort by due date (newest first)
@@ -437,7 +442,8 @@ class BillFirestoreService {
     return breakdown.values.fold(0, (sum, value) => sum + value);
   }
 
-  static bool isV2Bill(Map<String, dynamic> bill) => bill['schemaVersion'] == 2;
+  static bool isV2Bill(Map<String, dynamic> bill) =>
+      bill['schemaVersion'] is int && bill['schemaVersion'] == 2;
 
   static bool isV2InrBill(Map<String, dynamic> bill) =>
       isV2Bill(bill) && bill['currency'] == 'INR';

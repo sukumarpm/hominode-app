@@ -3,7 +3,7 @@ import 'package:resident_app/src/services/bill_firestore_service.dart';
 
 void main() {
   test('only schemaVersion 2 selects the V2 billing contract', () {
-    for (final schemaVersion in [null, 1, '2', 3]) {
+    for (final schemaVersion in [null, 1, '2', 3, 2.0, 2.5]) {
       expect(
         BillFirestoreService.isV2Bill({'schemaVersion': schemaVersion}),
         isFalse,
@@ -93,5 +93,44 @@ void main() {
       }),
       isEmpty,
     );
+  });
+
+  test('normalizeBillDocument preserves V1 shape and injects id', () {
+    final normalized = BillFirestoreService.normalizeBillDocument({
+      'communityId': 'C',
+      'flatId': 'f1',
+      'type': 'maintenance',
+      'amount': 1200.0,
+      'status': 'pending',
+    }, 'bill-v1');
+
+    expect(normalized['id'], 'bill-v1');
+    expect(normalized['schemaVersion'], isNull);
+    expect(normalized['type'], 'maintenance');
+    expect(normalized['amount'], 1200.0);
+    expect(normalized.containsKey('chargeLines'), isFalse);
+  });
+
+  test('normalizeBillDocument does not alter authoritative source values', () {
+    final normalized = BillFirestoreService.normalizeBillDocument({
+      'schemaVersion': 2.0,
+      'communityId': 'C',
+      'flatId': 'f1',
+      'amountMinor': 250000.5,
+      'outstandingAmountMinor': 125000.5,
+      'paidAmountMinor': 125000.5,
+      'creditAppliedMinor': 0.5,
+      'status': '',
+      'chargeLines': 'invalid',
+    }, 'bill-v2');
+
+    expect(normalized['id'], 'bill-v2');
+    expect(normalized['schemaVersion'], 2.0);
+    expect(normalized['amountMinor'], 250000.5);
+    expect(normalized['outstandingAmountMinor'], 125000.5);
+    expect(normalized['paidAmountMinor'], 125000.5);
+    expect(normalized['creditAppliedMinor'], 0.5);
+    expect(normalized['status'], '');
+    expect(normalized['chargeLines'], 'invalid');
   });
 }
