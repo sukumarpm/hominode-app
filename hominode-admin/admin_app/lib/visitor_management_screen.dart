@@ -1291,6 +1291,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     final exitTime = visitor.checkOutTime ?? DateTime.now();
     final duration = exitTime.difference(entryTime);
     final durationText = _formatDuration(duration);
+    final spansMultipleDays = !_isSameCalendarDay(entryTime, exitTime);
 
     return Container(
       decoration: BoxDecoration(
@@ -1401,7 +1402,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                         ),
                         SizedBox(height: 4.h),
                         Text(
-                          _formatTime(entryTime),
+                          spansMultipleDays
+                              ? _formatDateTime(entryTime)
+                              : _formatTime(entryTime),
                           style: TextStyle(
                             fontSize: 14.sp,
                             fontWeight: FontWeight.w600,
@@ -1434,7 +1437,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                         ),
                         SizedBox(height: 4.h),
                         Text(
-                          _formatTime(exitTime),
+                          spansMultipleDays
+                              ? _formatDateTime(exitTime)
+                              : _formatTime(exitTime),
                           style: TextStyle(
                             fontSize: 14.sp,
                             fontWeight: FontWeight.w600,
@@ -1492,15 +1497,55 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     return '$hour:$minute $period';
   }
 
+  bool _isSameCalendarDay(DateTime first, DateTime second) {
+    return first.year == second.year &&
+        first.month == second.month &&
+        first.day == second.day;
+  }
+
+  String _formatDateTime(DateTime time) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    return '${months[time.month - 1]} ${time.day}, ${_formatTime(time)}';
+  }
+
   // Duration formatting helper
   String _formatDuration(Duration duration) {
-    final hours = duration.inHours;
+    final days = duration.inDays;
+    final hours = duration.inHours.remainder(24);
     final minutes = duration.inMinutes.remainder(60);
+
+    if (days > 0) {
+      final parts = <String>['${days}d'];
+
+      if (hours > 0) {
+        parts.add('${hours}h');
+      }
+
+      if (minutes > 0 || hours == 0) {
+        parts.add('${minutes}m');
+      }
+
+      return parts.join(' ');
+    }
 
     if (hours > 0) {
       return '${hours}h ${minutes}m';
-    } else {
-      return '${minutes}m';
     }
+
+    return '${minutes}m';
   }
 }

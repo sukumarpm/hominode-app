@@ -35,6 +35,42 @@ void main() {
     );
   });
 
+  test(
+    'pending queue accepts pending and excludes terminal or arrived states',
+    () {
+      expect(
+        visitorBelongsInPendingQueue({
+          'status': 'pending',
+          'isApproved': false,
+          'actualArrival': null,
+          'departure': null,
+        }),
+        isTrue,
+      );
+
+      for (final status in [
+        'rejected',
+        'cancelled',
+        'canceled',
+        'arrived',
+        'inside',
+        'departed',
+        'completed',
+      ]) {
+        expect(
+          visitorBelongsInPendingQueue({
+            'status': status,
+            'isApproved': false,
+            'actualArrival': null,
+            'departure': null,
+          }),
+          isFalse,
+          reason: '$status must not reappear in Pending',
+        );
+      }
+    },
+  );
+
   test('canonical visitor status respects stored rejected status', () {
     expect(
       canonicalVisitorStatus({'status': 'rejected', 'isApproved': false}),
@@ -83,5 +119,52 @@ void main() {
 
     expect(visitor.id, 'visitor-doc-1');
     expect(visitor.status, 'rejected');
+  });
+
+  test('active queue includes only an approved visitor currently inside', () {
+    expect(
+      visitorBelongsInActiveQueue({
+        'status': 'inside',
+        'isApproved': true,
+        'actualArrival': Timestamp.fromDate(DateTime(2026, 10, 2, 10)),
+        'departure': null,
+      }),
+      isTrue,
+    );
+  });
+
+  test('completed visitor with departure is excluded from active queue', () {
+    final data = {
+      'status': 'completed',
+      'isApproved': true,
+      'actualArrival': Timestamp.fromDate(DateTime(2026, 9, 16, 11, 59)),
+      'departure': Timestamp.fromDate(DateTime(2026, 10, 2, 12, 48)),
+    };
+
+    expect(canonicalVisitorStatus(data), 'departed');
+    expect(visitorBelongsInActiveQueue(data), isFalse);
+    expect(visitorBelongsInHistoryQueue(data), isTrue);
+  });
+
+  test('terminal status cannot reappear active if departure is missing', () {
+    final data = {
+      'status': 'completed',
+      'isApproved': true,
+      'actualArrival': Timestamp.fromDate(DateTime(2026, 10, 2, 10)),
+      'departure': null,
+    };
+
+    expect(canonicalVisitorStatus(data), 'departed');
+    expect(visitorBelongsInActiveQueue(data), isFalse);
+    expect(visitorBelongsInHistoryQueue(data), isFalse);
+  });
+
+  test('visitor terminal status variants normalize consistently', () {
+    expect(canonicalVisitorStatus({'status': 'completed'}), 'departed');
+    expect(canonicalVisitorStatus({'status': 'departed'}), 'departed');
+    expect(canonicalVisitorStatus({'status': 'checked_out'}), 'departed');
+    expect(canonicalVisitorStatus({'status': 'checked-out'}), 'departed');
+    expect(canonicalVisitorStatus({'status': 'exited'}), 'departed');
+    expect(canonicalVisitorStatus({'status': 'canceled'}), 'cancelled');
   });
 }

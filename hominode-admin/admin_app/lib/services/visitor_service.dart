@@ -136,21 +136,23 @@ class VisitorService implements VisitorWorkflowService {
           isEqualTo: _adminService.requireCurrentCommunityId(),
         )
         .where('isApproved', isEqualTo: true)
-        .where('actualArrival', isNotEqualTo: null)
-        .where('departure', isEqualTo: null)
         .snapshots()
         .map((snapshot) {
+          final activeDocs = snapshot.docs
+              .where((doc) => visitorBelongsInActiveQueue(doc.data()))
+              .toList();
+
           print(
-            'VisitorService: Received ${snapshot.docs.length} active visitors',
+            'VisitorService: Received ${activeDocs.length} active visitors',
           );
 
           // Log each visitor's departure status
-          for (var doc in snapshot.docs) {
+          for (var doc in activeDocs) {
             final data = doc.data();
             print('  - Visitor ${doc.id}: departure = ${data['departure']}');
           }
 
-          final visitors = snapshot.docs.map((doc) {
+          final visitors = activeDocs.map((doc) {
             final data = doc.data();
             return VisitorModel.fromFirestore(doc.id, data);
           }).toList();
@@ -180,13 +182,17 @@ class VisitorService implements VisitorWorkflowService {
           'communityId',
           isEqualTo: _adminService.requireCurrentCommunityId(),
         )
-        .where('departure', isNotEqualTo: null)
         .snapshots()
         .map((snapshot) {
+          final historyDocs = snapshot.docs
+              .where((doc) => visitorBelongsInHistoryQueue(doc.data()))
+              .toList();
+
           print(
-            'VisitorService: Received ${snapshot.docs.length} history visitors',
+            'VisitorService: Received ${historyDocs.length} history visitors',
           );
-          final visitors = snapshot.docs.map((doc) {
+
+          final visitors = historyDocs.map((doc) {
             final data = doc.data();
             return VisitorModel.fromFirestore(doc.id, data);
           }).toList();
@@ -611,6 +617,18 @@ bool visitorBelongsInPendingQueue(Map<String, dynamic> data) {
       data['departure'] == null;
 }
 
+bool visitorBelongsInActiveQueue(Map<String, dynamic> data) {
+  return canonicalVisitorStatus(data) == 'inside' &&
+      data['isApproved'] == true &&
+      data['actualArrival'] != null &&
+      data['departure'] == null;
+}
+
+bool visitorBelongsInHistoryQueue(Map<String, dynamic> data) {
+  return canonicalVisitorStatus(data) == 'departed' &&
+      data['departure'] != null;
+}
+
 String canonicalVisitorStatus(Map<String, dynamic> data) {
   final rawStatus = _normalizedVisitorStatusValue(
     data['status'] ?? data['visitStatus'] ?? data['approvalStatus'],
@@ -622,8 +640,11 @@ String canonicalVisitorStatus(Map<String, dynamic> data) {
   if (rawStatus == 'rejected' || rawStatus == 'cancelled') {
     return rawStatus;
   }
-  if (hasDeparture) {
+  if (rawStatus == 'departed' || hasDeparture) {
     return 'departed';
+  }
+  if (rawStatus == 'inside') {
+    return 'inside';
   }
   if (hasArrival && isApproved) {
     return 'inside';
@@ -645,13 +666,18 @@ String _normalizedVisitorStatusValue(Object? value) {
   if (normalized == 'pendingapproval' || normalized == 'pending_approval') {
     return 'pending';
   }
+  if (normalized == 'canceled') {
+    return 'cancelled';
+  }
   if (normalized == 'checked_in' ||
       normalized == 'arrived' ||
       normalized == 'entered' ||
       normalized == 'inside') {
     return 'inside';
   }
-  if (normalized == 'checked_out' ||
+  if (normalized == 'completed' ||
+      normalized == 'departed' ||
+      normalized == 'checked_out' ||
       normalized == 'checked-out' ||
       normalized == 'exited') {
     return 'departed';
