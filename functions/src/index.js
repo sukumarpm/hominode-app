@@ -56,6 +56,14 @@ const {
 } = require("./payment_v2");
 
 const {
+  getBillingV2FinancialReportCore,
+} = require("./billing_v2_reports");
+
+const {
+  getResidentBillingV2StatementCore,
+} = require("./billing_v2_resident_statement");
+
+const {
   createAdminCore,
   updateAdminAssignmentsCore,
   setAdminActiveCore,
@@ -209,6 +217,14 @@ exports.preparePaymentProofV2 = appCheckedCallable(preparePaymentProofV2Core, 'V
 exports.verifyPaymentProofV2 = appCheckedCallable(verifyPaymentProofV2Core, 'V2 payment proof could not be verified.');
 exports.rejectPaymentProofV2 = appCheckedCallable(rejectPaymentProofV2Core, 'V2 payment proof could not be rejected.');
 exports.recordOfflinePaymentV2 = appCheckedCallable(recordOfflinePaymentV2Core, 'V2 offline payment could not be recorded.');
+exports.getBillingV2FinancialReport = appCheckedCallable(
+  getBillingV2FinancialReportCore,
+  'Billing V2 financial report could not be generated.'
+);
+exports.getResidentBillingV2Statement = appCheckedCallable(
+  getResidentBillingV2StatementCore,
+  'Resident Billing V2 statement could not be generated.'
+);
 
 const { triggerSosCore, transitionSosCore, getSosContextCore } = require('./sos');
 const { dispatchSosEventCore } = require('./sos_notifications');

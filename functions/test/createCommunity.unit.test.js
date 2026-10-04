@@ -52,7 +52,7 @@ test("create requires an explicit valid timezone", () => {
       name: "Green Valley",
       slug: "green-valley",
     }),
-  { code: "invalid-argument" });
+    { code: "invalid-argument" });
 
   assert.throws(() =>
     validateCommunityInput({
@@ -61,7 +61,7 @@ test("create requires an explicit valid timezone", () => {
       slug: "green-valley",
       timeZone: "Mars/Base",
     }),
-  { code: "invalid-argument" });
+    { code: "invalid-argument" });
 });
 
 test("community may be created without a configured location", () => {

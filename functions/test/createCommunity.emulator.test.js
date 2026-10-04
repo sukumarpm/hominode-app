@@ -14,7 +14,7 @@ test("community creation and retry are atomic and idempotent", {skip: !enabled},
   const communityId = `GV-${suffix}`;
   await db.collection("admins").doc(uid).set({uid, phoneNumber: "+919876543210", role: "superAdmin", isActive: true, authorizedCommunityIds: []});
   const slug = `green-valley-${suffix.toLowerCase()}`;
-  const request = {db, auth: {uid, token: {phone_number: "+919876543210", firebase: {sign_in_provider: "phone"}}}, data: {communityId, name: "Green Valley", slug}};
+  const request = {db, auth: {uid, token: {phone_number: "+919876543210", firebase: {sign_in_provider: "phone"}}}, data: {communityId, name: "Green Valley", slug, timeZone: "Asia/Kolkata"}};
   const first = await createCommunityCore(request);
   const retry = await createCommunityCore(request);
   assert.equal(first.idempotent, false);
@@ -33,5 +33,5 @@ test("conflicting existing community is rejected", {skip: !enabled}, async () =>
   const communityId = `GV-${suffix}`;
   await db.collection("admins").doc(uid).set({uid, role: "superAdmin", isActive: true, authorizedCommunityIds: []});
   await db.collection("communities").doc(communityId).set({name: "Existing", slug: "existing", isActive: true, createdBy: "another-admin"});
-  await assert.rejects(() => createCommunityCore({db, auth: {uid, token: {phone_number: "+919876543210", firebase: {sign_in_provider: "phone"}}}, data: {communityId, name: "Green Valley", slug: `green-valley-${suffix.toLowerCase()}`}}), {code: "already-exists"});
+  await assert.rejects(() => createCommunityCore({db, auth: {uid, token: {phone_number: "+919876543210", firebase: {sign_in_provider: "phone"}}}, data: {communityId, name: "Green Valley", slug: `green-valley-${suffix.toLowerCase()}`, timeZone: "Asia/Kolkata"}}), {code: "already-exists"});
 });

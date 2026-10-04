@@ -16,7 +16,7 @@ const {
 } = require("./tenant_management");
 
 const validateCommunityInput = (data) =>
-  validateTenantMetadata(data, {requireTimeZone: true});
+  validateTenantMetadata(data, { requireTimeZone: true });
 
 function locationsMatch(existing, expected) {
   const existingConfigured =

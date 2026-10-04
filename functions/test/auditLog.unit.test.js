@@ -29,7 +29,7 @@ const requiredActions = [
   "billing.reconciliation_resolve",
 ].sort();
 
-function auditDb({fail = false} = {}) {
+function auditDb({ fail = false } = {}) {
   const records = new Map();
   let sequence = 0;
   return {
@@ -61,7 +61,7 @@ function validFields(overrides = {}) {
     targetType: "resident",
     targetId: "resident-a",
     summary: "Resident registration approved.",
-    metadata: {previousStatus: "pending", newStatus: "approved"},
+    metadata: { previousStatus: "pending", newStatus: "approved" },
     ...overrides,
   };
 }
@@ -111,14 +111,14 @@ test("audit schema contains required trusted fields and only small metadata", ()
     newStatus: "approved",
   });
   assert.throws(
-    () => buildAuditLog(validFields({metadata: {document: {secret: true}}})),
+    () => buildAuditLog(validFields({ metadata: { document: { secret: true } } })),
     /metadata document is invalid/,
   );
 });
 
 test("best-effort writer appends an auto-ID audit record", async () => {
   const db = auditDb();
-  const result = await writeAuditLogBestEffort({db, ...validFields()});
+  const result = await writeAuditLogBestEffort({ db, ...validFields() });
   assert.equal(result.written, true);
   assert.equal(db.records.size, 1);
   assert.equal(db.records.get(result.id).targetId, "resident-a");
@@ -126,13 +126,13 @@ test("best-effort writer appends an auto-ID audit record", async () => {
 
 test("audit storage failure is reported but never rejects the caller", async () => {
   const messages = [];
-  const logger = {error: (...values) => messages.push(values)};
+  const logger = { error: (...values) => messages.push(values) };
   const result = await writeAuditLogBestEffort({
-    db: auditDb({fail: true}),
+    db: auditDb({ fail: true }),
     logger,
     ...validFields(),
   });
-  assert.deepEqual(result, {written: false});
+  assert.deepEqual(result, { written: false });
   assert.equal(messages.length, 1);
   assert.equal(messages[0][1].action, "resident.approve");
   assert.equal(messages[0][1].targetId, "resident-a");

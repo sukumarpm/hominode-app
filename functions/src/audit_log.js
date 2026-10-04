@@ -1,4 +1,4 @@
-const {FieldValue} = require("firebase-admin/firestore");
+const { FieldValue } = require("firebase-admin/firestore");
 
 const AUDIT_COLLECTION = "auditLogs";
 const PLATFORM_COMMUNITY_ID = "__platform__";
@@ -82,17 +82,17 @@ function buildAuditLog({
   return entry;
 }
 
-async function writeAuditLogBestEffort({db, logger = console, ...fields}) {
+async function writeAuditLogBestEffort({ db, logger = console, ...fields }) {
   try {
     const entry = buildAuditLog(fields);
     const ref = db.collection(AUDIT_COLLECTION).doc();
     // Lightweight unit-test stores may not implement auto-ID creates. The
     // production Admin SDK always does; skipping here keeps core tests focused.
     if (!ref?.id || typeof ref.create !== "function") {
-      return {written: false, skipped: true};
+      return { written: false, skipped: true };
     }
     await ref.create(entry);
-    return {written: true, id: ref.id};
+    return { written: true, id: ref.id };
   } catch (error) {
     logger.error("Critical audit log write failed.", {
       action: fields.action,
@@ -100,7 +100,7 @@ async function writeAuditLogBestEffort({db, logger = console, ...fields}) {
       targetId: fields.targetId,
       error: error?.message ?? String(error),
     });
-    return {written: false};
+    return { written: false };
   }
 }
 

@@ -1,6 +1,6 @@
 const { FieldValue } = require("firebase-admin/firestore");
 const { RegistrationError, verifiedPhoneAuth } = require("./register_resident");
-const {AUDIT_ACTIONS, writeAuditLogBestEffort} = require("./audit_log");
+const { AUDIT_ACTIONS, writeAuditLogBestEffort } = require("./audit_log");
 
 const normalizeSlug = (value) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 const RESERVED_SLUGS = new Set([
@@ -40,7 +40,7 @@ const optionalString = (value, max = 500) => {
   return result || null;
 };
 
-function normalizeIanaTimeZone(value, {required = true} = {}) {
+function normalizeIanaTimeZone(value, { required = true } = {}) {
   if (value == null) {
     if (!required) return undefined;
     throw new RegistrationError("invalid-argument", "A valid time zone is required.");
@@ -296,7 +296,7 @@ function validateTenantMetadata(data, options = {}) {
       optionalString(data?.logoUrl, 1000),
     primaryColor:
       optionalString(data?.primaryColor, 32),
-    ...(timeZone ? {timeZone} : {}),
+    ...(timeZone ? { timeZone } : {}),
     ...locationMetadata,
   };
 }
@@ -379,7 +379,7 @@ async function updateCommunityCore({ db, auth, data }) {
     targetType: "community",
     targetId: input.communityId,
     summary: "Critical community configuration updated.",
-    metadata: {changedFields},
+    metadata: { changedFields },
   });
   return result;
 }

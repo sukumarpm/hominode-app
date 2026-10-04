@@ -2,8 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {Timestamp} = require('firebase-admin/firestore');
-const {sosStore} = require('./helpers/sos_store');
+const { Timestamp } = require('firebase-admin/firestore');
+const { sosStore } = require('./helpers/sos_store');
 const {
   createBillingScheduleV2Core: createSchedule,
   reviseBillingScheduleV2Core: reviseSchedule,
@@ -13,49 +13,55 @@ const {
   stopBillingScheduleV2Core: stopSchedule,
   scheduleBatchIdempotencyKey,
 } = require('../src/billing_schedule');
-const {resolveBillingReconciliationV2Core: resolveReconciliation} = require('../src/billing_reconciliation');
-const {createMonthlyBillingBatchV2Core: createBatch, monthlyBillingBatchId} = require('../src/billing_batch');
-const {operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID} = require('../src/resident_identity');
+const { resolveBillingReconciliationV2Core: resolveReconciliation } = require('../src/billing_reconciliation');
+const { createMonthlyBillingBatchV2Core: createBatch, monthlyBillingBatchId } = require('../src/billing_batch');
+const { operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID } = require('../src/resident_identity');
 
-const auth = {uid: 'admin-1', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
+const auth = { uid: 'admin-1', token: { phone_number: '+639171234567', firebase: { sign_in_provider: 'phone' } } };
 const onHonolulu = value => Date.parse(`${value}-10:00`);
 const reserveNow = () => onHonolulu('2030-02-05T12:00:00');
 const executeAfterDue = () => onHonolulu('2030-03-01T12:00:00');
-const oldLines = [{lineId: 'maintenance', code: 'maintenance', amountMinor: 12345}];
-const newLines = [{lineId: 'water', code: 'water', amountMinor: 67890}];
+const oldLines = [{ lineId: 'maintenance', code: 'maintenance', amountMinor: 12345 }];
+const newLines = [{ lineId: 'water', code: 'water', amountMinor: 67890 }];
 
-function fixture({count = 1, scheduleTerms = {}} = {}) {
+function fixture({ count = 1, scheduleTerms = {} } = {}) {
   const db = sosStore();
   const set = (key, value) => db.values.set(key, value);
-  set('admins/admin-1', {uid: 'admin-1', role: 'admin', isActive: true, authorizedCommunityIds: ['C']});
-  set('communities/C', {isActive: true, timeZone: 'Pacific/Honolulu'});
-  set('communities/OTHER', {isActive: true, timeZone: 'UTC'});
-  set('buildings/b1', {communityId: 'C'});
+  set('admins/admin-1', { uid: 'admin-1', role: 'admin', isActive: true, authorizedCommunityIds: ['C'] });
+  set('communities/C', { isActive: true, timeZone: 'Pacific/Honolulu' });
+  set('communities/OTHER', { isActive: true, timeZone: 'UTC' });
+  set('buildings/b1', { communityId: 'C' });
   for (let n = 1; n <= count; n++) {
     const flatId = `f${n}`;
     const residentId = `r${n}`;
-    set(`flats/${flatId}`, {communityId: 'C', buildingId: 'b1', status: 'occupied', residentUserId: residentId,
-      flatLabel: `Unit ${n}`});
-    set(`users/${residentId}`, {uid: residentId, role: 'resident', isActive: true,
-      approvalStatus: 'approved', status: 'active', communityId: 'C', flatId, buildingId: 'b1', name: `Resident ${n}`});
+    set(`flats/${flatId}`, {
+      communityId: 'C', buildingId: 'b1', status: 'occupied', residentUserId: residentId,
+      flatLabel: `Unit ${n}`
+    });
+    set(`users/${residentId}`, {
+      uid: residentId, role: 'resident', isActive: true,
+      approvalStatus: 'approved', status: 'active', communityId: 'C', flatId, buildingId: 'b1', name: `Resident ${n}`
+    });
   }
   const data = {
     schemaVersion: 2, communityId: 'C', currency: 'INR', frequency: 'monthly', idempotencyKey: 'schedule-key',
     scope: 'community', generationDay: 5, dueDay: 20, startBillingPeriod: '2030-02',
     endBillingPeriod: null, chargeLines: oldLines, ...scheduleTerms,
   };
-  const create = (changes = {}) => createSchedule({db, auth, now: reserveNow, data: {...data, ...changes}});
+  const create = (changes = {}) => createSchedule({ db, auth, now: reserveNow, data: { ...data, ...changes } });
   const schedulePath = scheduleId => `billingSchedules/${scheduleId}`;
   const generationPath = (scheduleId, period) => `${schedulePath(scheduleId)}/generations/${period}`;
   const revisionPath = (scheduleId, revisionId) => `${schedulePath(scheduleId)}/revisions/${revisionId}`;
   const docs = collection => [...db.values.entries()].filter(([key]) =>
     key.startsWith(`${collection}/`) && key.split('/').length === 2);
-  const reserve = (scheduleId, billingPeriod, now = reserveNow, options = {}) => reservePeriod({db, auth, now,
-    data: {communityId: 'C', scheduleId, billingPeriod}, ...options});
-  const execute = (scheduleId, billingPeriod, now = executeAfterDue, options = {}) => executePeriod({
-    db, auth, now, data: {communityId: 'C', scheduleId, billingPeriod}, ...options,
+  const reserve = (scheduleId, billingPeriod, now = reserveNow, options = {}) => reservePeriod({
+    db, auth, now,
+    data: { communityId: 'C', scheduleId, billingPeriod }, ...options
   });
-  return {db, set, data, create, reserve, execute, schedulePath, generationPath, revisionPath, docs};
+  const execute = (scheduleId, billingPeriod, now = executeAfterDue, options = {}) => executePeriod({
+    db, auth, now, data: { communityId: 'C', scheduleId, billingPeriod }, ...options,
+  });
+  return { db, set, data, create, reserve, execute, schedulePath, generationPath, revisionPath, docs };
 }
 
 async function reserveFebruary(f, changes = {}) {
@@ -64,26 +70,30 @@ async function reserveFebruary(f, changes = {}) {
   return created.scheduleId;
 }
 
-async function reviseTerms(f, scheduleId, {now = reserveNow, changes = {}} = {}) {
-  return reviseSchedule({db: f.db, auth, now, data: {
-    communityId: 'C', scheduleId, expectedRevisionId: 'revision_1', idempotencyKey: 'revision-2',
-    scope: 'community', generationDay: 5, dueDay: 20, startBillingPeriod: '2030-02',
-    endBillingPeriod: null, chargeLines: newLines, ...changes,
-  }});
+async function reviseTerms(f, scheduleId, { now = reserveNow, changes = {} } = {}) {
+  return reviseSchedule({
+    db: f.db, auth, now, data: {
+      communityId: 'C', scheduleId, expectedRevisionId: 'revision_1', idempotencyKey: 'revision-2',
+      scope: 'community', generationDay: 5, dueDay: 20, startBillingPeriod: '2030-02',
+      endBillingPeriod: null, chargeLines: newLines, ...changes,
+    }
+  });
 }
 
 test('executes reserved period from pinned scope, charge lines, due date and deterministic source identity', async () => {
-  const f = fixture({scheduleTerms: {scope: 'unit', buildingId: 'b1', flatId: 'f1'}});
+  const f = fixture({ scheduleTerms: { scope: 'unit', buildingId: 'b1', flatId: 'f1' } });
   const scheduleId = await reserveFebruary(f);
   const reservationPath = f.generationPath(scheduleId, '2030-02');
   const reservation = f.db.values.get(reservationPath);
-  await reviseTerms(f, scheduleId, {now: reserveNow, changes: {
-    scope: 'community', generationDay: 7, dueDay: 18, chargeLines: newLines,
-  }});
+  await reviseTerms(f, scheduleId, {
+    now: reserveNow, changes: {
+      scope: 'community', generationDay: 7, dueDay: 18, chargeLines: newLines,
+    }
+  });
 
   let invocation;
   const result = await f.execute(scheduleId, '2030-02', executeAfterDue, {
-    createBatch: args => {invocation = args; return createBatch(args);},
+    createBatch: args => { invocation = args; return createBatch(args); },
   });
   const key = scheduleBatchIdempotencyKey(scheduleId, '2030-02');
   const batchId = monthlyBillingBatchId('C', key);
@@ -92,9 +102,9 @@ test('executes reserved period from pinned scope, charge lines, due date and det
   assert.equal(invocation.data.scope, 'unit');
   assert.equal(invocation.data.buildingId, 'b1');
   assert.equal(invocation.data.flatId, 'f1');
-  assert.deepEqual(invocation.data.chargeLines, oldLines.map(line => ({...line, label: 'Maintenance'})));
+  assert.deepEqual(invocation.data.chargeLines, oldLines.map(line => ({ ...line, label: 'Maintenance' })));
   assert.equal(invocation.data.dueDate, reservation.dueDateKey);
-  assert.deepEqual(invocation.source, {scheduleId, scheduleRevisionId: 'revision_1'});
+  assert.deepEqual(invocation.source, { scheduleId, scheduleRevisionId: 'revision_1' });
   assert.equal(invocation.dueDateValidationNowMs, reservation.createdAt.toMillis());
   assert.equal(result.status, 'completed');
   assert.equal(result.alreadyCompleted, false);
@@ -114,8 +124,10 @@ test('execution is allowed after pause or stop for an already reserved period', 
   for (const transition of [pauseSchedule, stopSchedule]) {
     const f = fixture();
     const scheduleId = await reserveFebruary(f);
-    await transition({db: f.db, auth, now: reserveNow,
-      data: {communityId: 'C', scheduleId}});
+    await transition({
+      db: f.db, auth, now: reserveNow,
+      data: { communityId: 'C', scheduleId }
+    });
     const result = await f.execute(scheduleId, '2030-02');
     assert.equal(result.status, 'completed');
     assert.equal(f.db.values.get(f.schedulePath(scheduleId)).generatedThroughBillingPeriod, '2030-02');
@@ -123,32 +135,34 @@ test('execution is allowed after pause or stop for an already reserved period', 
 });
 
 test('trusted system authority reserves and resumes execution through every batch transaction without user auth', async () => {
-  const f = fixture({count: 101});
-  const {scheduleId} = await f.create(); // Human setup remains the existing Admin flow.
+  const f = fixture({ count: 101 });
+  const { scheduleId } = await f.create(); // Human setup remains the existing Admin flow.
   let authorityCalls = 0;
   const requireSystem = (db, _auth, communityId, transaction) => {
     authorityCalls++;
     return operationalBillingSystemAuthority(db, _auth, communityId, transaction);
   };
 
-  await assert.rejects(reservePeriod({db: f.db, auth: undefined, now: reserveNow, requireAuthority: requireSystem,
-    data: {communityId: 'OTHER', scheduleId, billingPeriod: '2030-02'}}), {code: 'permission-denied'});
+  await assert.rejects(reservePeriod({
+    db: f.db, auth: undefined, now: reserveNow, requireAuthority: requireSystem,
+    data: { communityId: 'OTHER', scheduleId, billingPeriod: '2030-02' }
+  }), { code: 'permission-denied' });
   assert.equal(f.db.values.has(f.generationPath(scheduleId, '2030-02')), false);
 
-  await f.reserve(scheduleId, '2030-02', reserveNow, {auth: undefined, requireAuthority: requireSystem});
+  await f.reserve(scheduleId, '2030-02', reserveNow, { auth: undefined, requireAuthority: requireSystem });
   const generationPath = f.generationPath(scheduleId, '2030-02');
   assert.equal(f.db.values.get(generationPath).createdBy, SYSTEM_BILLING_ACTOR_ID);
   assert.equal(f.db.values.get(generationPath).updatedBy, SYSTEM_BILLING_ACTOR_ID);
 
   const first = await f.execute(scheduleId, '2030-02', executeAfterDue,
-    {auth: undefined, requireAuthority: requireSystem});
+    { auth: undefined, requireAuthority: requireSystem });
   assert.equal(first.resumeRequired, true);
   assert.equal(first.status, 'executing');
   assert.equal(f.db.values.get(generationPath).updatedBy, SYSTEM_BILLING_ACTOR_ID);
   assert.equal(f.db.values.get(f.schedulePath(scheduleId)).generatedThroughBillingPeriod, null);
 
   const second = await f.execute(scheduleId, '2030-02', executeAfterDue,
-    {auth: undefined, requireAuthority: requireSystem});
+    { auth: undefined, requireAuthority: requireSystem });
   assert.equal(second.status, 'completed');
   assert.equal(f.db.values.get(generationPath).createdBy, SYSTEM_BILLING_ACTOR_ID);
   assert.equal(f.db.values.get(generationPath).updatedBy, SYSTEM_BILLING_ACTOR_ID);
@@ -180,16 +194,18 @@ test('client cannot inject batch terms or execute an unreserved period', async (
   const f = fixture();
   const created = await f.create();
   for (const extra of [
-    {idempotencyKey: 'client'}, {chargeLines: newLines}, {scope: 'unit'}, {amountMinor: 1},
-    {dueDate: '2030-02-01'}, {scheduleRevisionId: 'revision_1'}, {systemMode: true},
-    {systemActor: 'system:billing-scheduler'}, {bypassAuth: true},
+    { idempotencyKey: 'client' }, { chargeLines: newLines }, { scope: 'unit' }, { amountMinor: 1 },
+    { dueDate: '2030-02-01' }, { scheduleRevisionId: 'revision_1' }, { systemMode: true },
+    { systemActor: 'system:billing-scheduler' }, { bypassAuth: true },
   ]) {
-    await assert.rejects(executePeriod({db: f.db, auth, now: executeAfterDue,
-      data: {communityId: 'C', scheduleId: created.scheduleId, billingPeriod: '2030-02', ...extra}}), {
+    await assert.rejects(executePeriod({
+      db: f.db, auth, now: executeAfterDue,
+      data: { communityId: 'C', scheduleId: created.scheduleId, billingPeriod: '2030-02', ...extra }
+    }), {
       code: 'invalid-argument',
     });
   }
-  await assert.rejects(f.execute(created.scheduleId, '2030-02'), {code: 'failed-precondition'});
+  await assert.rejects(f.execute(created.scheduleId, '2030-02'), { code: 'failed-precondition' });
   assert.deepEqual(f.docs('billingBatches'), []);
   assert.deepEqual(f.docs('bills'), []);
 });
@@ -219,7 +235,7 @@ test('batch invocation error preserves executing reservation and retry uses the 
 });
 
 test('resumeRequired persists executing progress and retains the fence until the same batch completes', async () => {
-  const f = fixture({count: 101});
+  const f = fixture({ count: 101 });
   const scheduleId = await reserveFebruary(f);
   const first = await f.execute(scheduleId, '2030-02');
   const generation = f.db.values.get(f.generationPath(scheduleId, '2030-02'));
@@ -245,8 +261,8 @@ test('unresolved batch failures cannot finalize or advance the schedule', async 
   const scheduleId = await reserveFebruary(f);
   const batchId = monthlyBillingBatchId('C', scheduleBatchIdempotencyKey(scheduleId, '2030-02'));
   await assert.rejects(f.execute(scheduleId, '2030-02', executeAfterDue, {
-    createBatch: async () => ({batchId, status: 'unresolved', resumeRequired: false, failed: 1}),
-  }), {code: 'failed-precondition'});
+    createBatch: async () => ({ batchId, status: 'unresolved', resumeRequired: false, failed: 1 }),
+  }), { code: 'failed-precondition' });
   const generation = f.db.values.get(f.generationPath(scheduleId, '2030-02'));
   assert.equal(generation.status, 'executing');
   assert.equal(f.db.values.get(f.schedulePath(scheduleId)).generatedThroughBillingPeriod, null);
@@ -256,8 +272,10 @@ test('unresolved batch failures cannot finalize or advance the schedule', async 
 test('reconciliation_required is terminal, advances sequencing, and remains stable on retry', async () => {
   const f = fixture();
   const scheduleId = await reserveFebruary(f);
-  f.set('bills/legacy-feb', {communityId: 'C', flatId: 'f1', billingPeriod: '2030-02',
-    billingKind: 'recurring', status: 'pending'});
+  f.set('bills/legacy-feb', {
+    communityId: 'C', flatId: 'f1', billingPeriod: '2030-02',
+    billingKind: 'recurring', status: 'pending'
+  });
   const result = await f.execute(scheduleId, '2030-02');
   const generation = f.db.values.get(f.generationPath(scheduleId, '2030-02'));
   assert.equal(result.status, 'reconciliation_required');
@@ -276,7 +294,7 @@ test('terminal retry survives a later revision and later period reservation with
   const f = fixture();
   const scheduleId = await reserveFebruary(f);
   const first = await f.execute(scheduleId, '2030-02');
-  await reviseTerms(f, scheduleId, {now: () => onHonolulu('2030-03-05T12:00:00')});
+  await reviseTerms(f, scheduleId, { now: () => onHonolulu('2030-03-05T12:00:00') });
   await f.reserve(scheduleId, '2030-03', () => onHonolulu('2030-03-05T12:00:00'));
   const retry = await f.execute(scheduleId, '2030-02', () => onHonolulu('2030-03-06T12:00:00'));
   assert.equal(retry.alreadyCompleted, true);
@@ -351,8 +369,10 @@ test('schedule-linked reconciliation resolution remains read-before-write safe a
 test('reconciliation resolution does not reactivate a stopped schedule', async () => {
   const f = fixture();
   const scheduleId = await reserveFebruary(f);
-  await stopSchedule({db: f.db, auth, now: reserveNow,
-    data: {communityId: 'C', scheduleId}});
+  await stopSchedule({
+    db: f.db, auth, now: reserveNow,
+    data: { communityId: 'C', scheduleId }
+  });
   f.set('bills/legacy-feb', {
     communityId: 'C',
     flatId: 'f1',
@@ -405,13 +425,13 @@ test('schedule-linked reconciliation rejects generation scheduleRevisionId misma
       expectedConflictingBillIds: ['legacy-feb'],
       resolutionType: 'existing_liability_confirmed',
     },
-  }), {code: 'failed-precondition'});
+  }), { code: 'failed-precondition' });
   assert.equal(f.db.values.get(`billingBatches/${executed.batchId}/targets/f1`).status, 'reconciliation_required');
   assert.equal(f.docs('auditLogs').length, 0);
 });
 
 test('two-target schedule-linked reconciliation stays partial then becomes fully completed', async () => {
-  const f = fixture({count: 2});
+  const f = fixture({ count: 2 });
   const scheduleId = await reserveFebruary(f);
   f.set('bills/legacy-feb-f1', {
     communityId: 'C',
@@ -527,7 +547,7 @@ test('schedule-linked idempotent retry leaves batch, generation, and target stat
 
 test('finalization re-reads persisted batch linkage and refuses altered community, period, or revision', async () => {
   for (const [field, value] of [['communityId', 'OTHER'], ['billingPeriod', '2030-03'],
-    ['scheduleRevisionId', 'different-revision']]) {
+  ['scheduleRevisionId', 'different-revision']]) {
     const f = fixture();
     const scheduleId = await reserveFebruary(f);
     const batchId = monthlyBillingBatchId('C', scheduleBatchIdempotencyKey(scheduleId, '2030-02'));
@@ -535,10 +555,10 @@ test('finalization re-reads persisted batch linkage and refuses altered communit
       createBatch: async args => {
         const result = await createBatch(args);
         const batchPath = `billingBatches/${result.batchId}`;
-        f.set(batchPath, {...f.db.values.get(batchPath), [field]: value});
+        f.set(batchPath, { ...f.db.values.get(batchPath), [field]: value });
         return result;
       },
-    }), {code: 'failed-precondition'});
+    }), { code: 'failed-precondition' });
     assert.equal(f.db.values.get(f.generationPath(scheduleId, '2030-02')).status, 'executing');
     assert.equal(f.db.values.get(f.schedulePath(scheduleId)).generatedThroughBillingPeriod, null);
     assert.equal(f.db.values.get(f.schedulePath(scheduleId)).generationInProgressBillingPeriod, '2030-02');
@@ -550,11 +570,11 @@ test('generation sequence mismatch fails before invoking the batch engine', asyn
   const f = fixture();
   const scheduleId = await reserveFebruary(f);
   const rootPath = f.schedulePath(scheduleId);
-  f.set(rootPath, {...f.db.values.get(rootPath), generatedThroughBillingPeriod: '2030-02'});
+  f.set(rootPath, { ...f.db.values.get(rootPath), generatedThroughBillingPeriod: '2030-02' });
   let invoked = false;
   await assert.rejects(f.execute(scheduleId, '2030-02', executeAfterDue, {
-    createBatch: async () => {invoked = true; return {};},
-  }), {code: 'failed-precondition'});
+    createBatch: async () => { invoked = true; return {}; },
+  }), { code: 'failed-precondition' });
   assert.equal(invoked, false);
   assert.equal(f.docs('billingBatches').length, 0);
 });
