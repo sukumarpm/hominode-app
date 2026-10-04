@@ -2,8 +2,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import 'models/tenant_config.dart';
-import 'services/tenant_registry_service.dart';
 import 'services/subscription_service.dart';
+import 'services/tenant_registry_service.dart';
 import 'widgets/super_admin_subscription_card.dart';
 
 class SuperAdminCommunitiesScreen extends StatefulWidget {

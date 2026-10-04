@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+
+import 'flat_details_modal.dart';
 import 'flat_occupancy_grid_modal.dart';
 import 'flat_occupancy_grid_stateful.dart';
-import 'flat_details_modal.dart';
 
 /// Example implementation showing how to handle flat status updates
 /// when residents are assigned
@@ -9,7 +10,8 @@ class FlatStatusUpdateExample extends StatefulWidget {
   const FlatStatusUpdateExample({super.key});
 
   @override
-  State<FlatStatusUpdateExample> createState() => _FlatStatusUpdateExampleState();
+  State<FlatStatusUpdateExample> createState() =>
+      _FlatStatusUpdateExampleState();
 }
 
 class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
@@ -128,11 +130,13 @@ class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
         for (var flat in floor.flats) {
           if (flat.id == flatId) {
             flat.updateStatus(newStatus);
-            
+
             // TODO: Call API to update status in backend
             // await api.updateFlatStatus(flatId, newStatus);
-            
-            print('✅ Flat $flatId status updated to: ${_getStatusName(newStatus)}');
+
+            print(
+              '✅ Flat $flatId status updated to: ${_getStatusName(newStatus)}',
+            );
             return;
           }
         }
@@ -163,11 +167,7 @@ class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.apartment,
-              size: 80,
-              color: Color(0xFF2563EB),
-            ),
+            const Icon(Icons.apartment, size: 80, color: Color(0xFF2563EB)),
             const SizedBox(height: 24),
             const Text(
               'Tower A',
@@ -180,10 +180,7 @@ class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
             const SizedBox(height: 12),
             Text(
               '${_getTotalFlats()} Flats | ${_getOccupiedCount()} Occupied | ${_getVacantCount()} Vacant',
-              style: const TextStyle(
-                fontSize: 16,
-                color: Color(0xFF6B7280),
-              ),
+              style: const TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
             ),
             const SizedBox(height: 32),
             ElevatedButton.icon(
@@ -196,7 +193,10 @@ class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF2563EB),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
                 textStyle: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -210,7 +210,10 @@ class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
               label: const Text('Refresh Data'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFF2563EB),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
                 textStyle: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -230,14 +233,17 @@ class _FlatStatusUpdateExampleState extends State<FlatStatusUpdateExample> {
   int _getOccupiedCount() {
     return _floorData.fold(
       0,
-      (sum, floor) => sum + floor.flats.where((f) => f.status == FlatStatus.occupied).length,
+      (sum, floor) =>
+          sum +
+          floor.flats.where((f) => f.status == FlatStatus.occupied).length,
     );
   }
 
   int _getVacantCount() {
     return _floorData.fold(
       0,
-      (sum, floor) => sum + floor.flats.where((f) => f.status == FlatStatus.vacant).length,
+      (sum, floor) =>
+          sum + floor.flats.where((f) => f.status == FlatStatus.vacant).length,
     );
   }
 

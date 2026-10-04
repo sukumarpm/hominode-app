@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -47,6 +48,80 @@ String offlinePaymentMethodValue(String label) => switch (label) {
     'Unsupported offline payment method',
   ),
 };
+
+const int _safePaymentMinorUnitMax = 9007199254740991;
+
+bool _isValidFirestoreDocumentId(String value) {
+  return value.isNotEmpty &&
+      value == value.trim() &&
+      !value.contains('/') &&
+      !RegExp(r'^__.*__$').hasMatch(value) &&
+      utf8.encode(value).length <= 1500;
+}
+
+/// Validates the complete callable result against the exact submitted amount.
+/// Invalid responses must remain unresolved so the persisted request can retry.
+Map<String, dynamic> validateOfflinePaymentResultV2(
+  Object? value, {
+  required int submittedAmountMinor,
+}) {
+  if (submittedAmountMinor <= 0 ||
+      submittedAmountMinor > _safePaymentMinorUnitMax) {
+    throw const FormatException('Invalid submitted offline payment amount.');
+  }
+  if (value is! Map) {
+    throw const FormatException('Invalid offline payment response.');
+  }
+
+  final record = Map<String, dynamic>.from(value);
+  final transactionId = record['transactionId'];
+  final rawAllocations = record['allocations'];
+  final excessCreditMinor = record['excessCreditMinor'];
+  final alreadyCompleted = record['alreadyCompleted'];
+  if (record['success'] != true ||
+      transactionId is! String ||
+      !_isValidFirestoreDocumentId(transactionId) ||
+      rawAllocations is! List ||
+      excessCreditMinor is! int ||
+      excessCreditMinor < 0 ||
+      excessCreditMinor > _safePaymentMinorUnitMax ||
+      alreadyCompleted is! bool) {
+    throw const FormatException('Invalid offline payment response.');
+  }
+
+  final allocations = <Map<String, dynamic>>[];
+  final seenBillIds = <String>{};
+  var totalMinor = BigInt.from(excessCreditMinor);
+  for (final rawAllocation in rawAllocations) {
+    if (rawAllocation is! Map) {
+      throw const FormatException('Invalid offline payment allocation.');
+    }
+    final allocation = Map<String, dynamic>.from(rawAllocation);
+    final billId = allocation['billId'];
+    final amountMinor = allocation['amountMinor'];
+    if (billId is! String ||
+        !_isValidFirestoreDocumentId(billId) ||
+        amountMinor is! int ||
+        amountMinor <= 0 ||
+        amountMinor > _safePaymentMinorUnitMax ||
+        !seenBillIds.add(billId)) {
+      throw const FormatException('Invalid offline payment allocation.');
+    }
+    totalMinor += BigInt.from(amountMinor);
+    allocations.add({'billId': billId, 'amountMinor': amountMinor});
+  }
+  if (totalMinor != BigInt.from(submittedAmountMinor)) {
+    throw const FormatException('Offline payment result amount mismatch.');
+  }
+
+  return {
+    'success': true,
+    'transactionId': transactionId,
+    'allocations': allocations,
+    'excessCreditMinor': excessCreditMinor,
+    'alreadyCompleted': alreadyCompleted,
+  };
+}
 
 String? formatSettlementAttribution(Object? paymentMethod) {
   final method = paymentMethod is String
@@ -291,7 +366,10 @@ class BillingService {
           // The UI owns attempt creation; retries must pass this same key.
           'idempotencyKey': idempotencyKey,
         });
-    return Map<String, dynamic>.from(response.data as Map);
+    return validateOfflinePaymentResultV2(
+      response.data,
+      submittedAmountMinor: amountMinor,
+    );
   }
 
   final FirebaseStorage _storage = FirebaseStorage.instance;

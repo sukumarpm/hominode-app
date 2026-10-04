@@ -416,6 +416,38 @@ void main() {
       },
     );
 
+    test(
+      'clears saved recovery state only after the service validates the result',
+      () {
+        final service = File(
+          'lib/services/billing_service.dart',
+        ).readAsStringSync();
+        final serviceStart = service.indexOf(
+          'Future<Map<String, dynamic>> recordOfflinePaymentV2',
+        );
+        final serviceEnd = service.indexOf('// Get all bills', serviceStart);
+        final serviceMethod = service.substring(serviceStart, serviceEnd);
+        expect(serviceMethod, contains('validateOfflinePaymentResultV2('));
+
+        final start = source.indexOf(
+          'Future<void> _submitOfflinePaymentAttempt(',
+        );
+        final end = source.indexOf(
+          'Future<void> _showOfflinePaymentResult(',
+          start,
+        );
+        final method = source.substring(start, end);
+        expect(
+          method.indexOf('_billingService.recordOfflinePaymentV2('),
+          lessThan(method.indexOf('preferences.remove(preferenceKey)')),
+        );
+        final catchStart = method.indexOf('} catch (error) {');
+        final catchBlock = method.substring(catchStart);
+        expect(catchBlock, isNot(contains('preferences.remove')));
+        expect(catchBlock, isNot(contains('preferences.clear')));
+      },
+    );
+
     test('successful and already-completed responses clear the saved attempt', () {
       final start = source.indexOf(
         'Future<void> _submitOfflinePaymentAttempt(',

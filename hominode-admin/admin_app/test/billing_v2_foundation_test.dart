@@ -4,6 +4,152 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:admin_app/services/billing_service.dart';
 
 void main() {
+  group('Admin Billing V2 offline payment result validation', () {
+    const submittedAmountMinor = 120050;
+    final valid = {
+      'success': true,
+      'transactionId': 'transaction-1',
+      'allocations': [
+        {'billId': 'bill-1', 'amountMinor': 120000},
+      ],
+      'excessCreditMinor': 50,
+      'alreadyCompleted': false,
+    };
+
+    test('normalizes a complete valid allocation result', () {
+      expect(
+        validateOfflinePaymentResultV2(
+          valid,
+          submittedAmountMinor: submittedAmountMinor,
+        ),
+        valid,
+      );
+    });
+
+    test('rejects responses without an explicit success envelope', () {
+      for (final response in [null, 'success', {...valid, 'success': false}]) {
+        expect(
+          () => validateOfflinePaymentResultV2(
+            response,
+            submittedAmountMinor: submittedAmountMinor,
+          ),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('accepts a fully allocated as resident credit result', () {
+      final result = validateOfflinePaymentResultV2({
+        ...valid,
+        'allocations': <Map<String, dynamic>>[],
+        'excessCreditMinor': submittedAmountMinor,
+      }, submittedAmountMinor: submittedAmountMinor);
+      expect(result['allocations'], isEmpty);
+      expect(result['excessCreditMinor'], submittedAmountMinor);
+    });
+
+    test('rejects missing, blank, or malformed transaction IDs', () {
+      for (final transactionId in [null, '', '  ', 'transaction/1']) {
+        expect(
+          () => validateOfflinePaymentResultV2({
+            ...valid,
+            'transactionId': transactionId,
+          }, submittedAmountMinor: submittedAmountMinor),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('rejects a missing or non-list allocations field', () {
+      for (final allocations in [null, 'not a list']) {
+        expect(
+          () => validateOfflinePaymentResultV2({
+            ...valid,
+            'allocations': allocations,
+          }, submittedAmountMinor: submittedAmountMinor),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('rejects every malformed, unsafe, or duplicate allocation', () {
+      final invalidAllocationLists = <List<Object?>>[
+        [null],
+        [
+          {'billId': '', 'amountMinor': 120000},
+        ],
+        [
+          {'billId': 'bill/1', 'amountMinor': 120000},
+        ],
+        [
+          {'billId': 'bill-1', 'amountMinor': 0},
+        ],
+        [
+          {'billId': 'bill-1', 'amountMinor': -1},
+        ],
+        [
+          {'billId': 'bill-1', 'amountMinor': 1.5},
+        ],
+        [
+          {'billId': 'bill-1', 'amountMinor': 9007199254740992},
+        ],
+        [
+          {'billId': 'bill-1', 'amountMinor': 60000},
+          {'billId': 'bill-1', 'amountMinor': 60000},
+        ],
+      ];
+      for (final allocations in invalidAllocationLists) {
+        expect(
+          () => validateOfflinePaymentResultV2({
+            ...valid,
+            'allocations': allocations,
+          }, submittedAmountMinor: submittedAmountMinor),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('rejects invalid excess credit and alreadyCompleted values', () {
+      for (final excess in [-1, 1.5, 9007199254740992]) {
+        expect(
+          () => validateOfflinePaymentResultV2({
+            ...valid,
+            'excessCreditMinor': excess,
+          }, submittedAmountMinor: submittedAmountMinor),
+          throwsFormatException,
+        );
+      }
+      for (final alreadyCompleted in [null, 'false', 0]) {
+        expect(
+          () => validateOfflinePaymentResultV2({
+            ...valid,
+            'alreadyCompleted': alreadyCompleted,
+          }, submittedAmountMinor: submittedAmountMinor),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('uses exact integer arithmetic and requires the submitted total', () {
+      expect(
+        () => validateOfflinePaymentResultV2({
+          ...valid,
+          'excessCreditMinor': 49,
+        }, submittedAmountMinor: submittedAmountMinor),
+        throwsFormatException,
+      );
+      expect(
+        () => validateOfflinePaymentResultV2({
+          ...valid,
+          'allocations': [
+            {'billId': 'bill-1', 'amountMinor': 9007199254740991},
+          ],
+        }, submittedAmountMinor: submittedAmountMinor),
+        throwsFormatException,
+      );
+    });
+  });
+
   group('BillModel V2 foundation', () {
     test('detects only exact schemaVersion 2 and retains V1 behavior', () {
       final v2 = BillModel.fromMap('v2', {

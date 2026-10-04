@@ -1,31 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'widgets/standard_header.dart';
-import 'services/pdf_export_service.dart';
 import 'services/reports_service.dart';
 import 'widgets/reports_charts.dart';
 
 class ReportsAnalyticsScreen extends StatefulWidget {
-  const ReportsAnalyticsScreen({super.key});
+  const ReportsAnalyticsScreen({super.key, ReportsService? reportsService})
+    : _reportsService = reportsService;
+
+  final ReportsService? _reportsService;
 
   @override
   State<ReportsAnalyticsScreen> createState() => _ReportsAnalyticsScreenState();
 }
 
 class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
-  final ReportsService _reportsService = ReportsService();
+  late final ReportsService _reportsService;
 
   DateTime selectedDate = DateTime.now();
   int selectedTabIndex = 0; // 0: Financial, 1: Occupancy, 2: Complaints
 
   // Data holders
   FinancialSummary? _financialSummary;
-  List<MonthlyRevenue> _revenueTrends = [];
   OccupancySummary? _occupancySummary;
   List<BuildingOccupancy> _buildingOccupancies = [];
   ComplaintsSummary? _complaintsSummary;
   List<MonthlyComplaints> _complaintsTrends = [];
-  int _deliveriesCount = 0;
+  int? _deliveriesCount;
+  String? _financialLoadError;
+  bool _occupancyLoading = true;
+  String? _occupancyLoadError;
+  bool _complaintsLoading = true;
+  String? _complaintsLoadError;
 
   bool _isLoading = true;
 
@@ -34,6 +40,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
   @override
   void initState() {
     super.initState();
+    _reportsService = widget._reportsService ?? ReportsService();
     _loadData();
   }
 
@@ -62,57 +69,151 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
   }
 
   Future<void> _loadFinancialData() async {
-    final summary = await _reportsService.getFinancialSummary(
-      year: selectedDate.year,
-      month: selectedDate.month,
-    );
-    final trends = await _reportsService.getMonthlyRevenueTrends();
+    try {
+      final summary = await _reportsService.getFinancialSummary(
+        year: selectedDate.year,
+        month: selectedDate.month,
+      );
 
-    if (mounted) {
-      setState(() {
-        _financialSummary = summary;
-        _revenueTrends = trends;
-      });
+      if (mounted) {
+        setState(() {
+          _financialSummary = summary;
+          _financialLoadError = null;
+        });
+      }
+    } on ReportsServiceException catch (error) {
+      if (mounted) {
+        setState(() {
+          _financialSummary = null;
+          _financialLoadError = error.userMessage;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _financialSummary = null;
+          _financialLoadError =
+              'Financial report is unavailable right now. Please try again shortly.';
+        });
+      }
+      print('ReportsAnalyticsScreen: Financial load error: $error');
     }
   }
 
   Future<void> _loadOccupancyData() async {
-    final summary = await _reportsService.getOccupancySummary();
-    final buildings = await _reportsService.getBuildingOccupancy();
-
     if (mounted) {
       setState(() {
-        _occupancySummary = summary;
-        _buildingOccupancies = buildings;
+        _occupancyLoading = true;
+        _occupancyLoadError = null;
       });
+    }
+
+    try {
+      final summary = await _reportsService.getOccupancySummary();
+      final buildings = await _reportsService.getBuildingOccupancy();
+
+      if (mounted) {
+        setState(() {
+          _occupancySummary = summary;
+          _buildingOccupancies = buildings;
+          _occupancyLoading = false;
+          _occupancyLoadError = null;
+        });
+      }
+    } on ReportsServiceException catch (error) {
+      if (mounted) {
+        setState(() {
+          _occupancySummary = null;
+          _buildingOccupancies = [];
+          _occupancyLoading = false;
+          _occupancyLoadError = error.userMessage;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _occupancySummary = null;
+          _buildingOccupancies = [];
+          _occupancyLoading = false;
+          _occupancyLoadError =
+              'Occupancy report is unavailable right now. Please try again shortly.';
+        });
+      }
+      print('ReportsAnalyticsScreen: Occupancy load error: $error');
     }
   }
 
   Future<void> _loadComplaintsData() async {
-    final summary = await _reportsService.getComplaintsSummary(
-      year: selectedDate.year,
-      month: selectedDate.month,
-    );
-    final trends = await _reportsService.getMonthlyComplaintsTrends();
-
     if (mounted) {
       setState(() {
-        _complaintsSummary = summary;
-        _complaintsTrends = trends;
+        _complaintsLoading = true;
+        _complaintsLoadError = null;
       });
+    }
+
+    try {
+      final summary = await _reportsService.getComplaintsSummary(
+        year: selectedDate.year,
+        month: selectedDate.month,
+      );
+      final trends = await _reportsService.getMonthlyComplaintsTrends();
+
+      if (mounted) {
+        setState(() {
+          _complaintsSummary = summary;
+          _complaintsTrends = trends;
+          _complaintsLoading = false;
+          _complaintsLoadError = null;
+        });
+      }
+    } on ReportsServiceException catch (error) {
+      if (mounted) {
+        setState(() {
+          _complaintsSummary = null;
+          _complaintsTrends = [];
+          _complaintsLoading = false;
+          _complaintsLoadError = error.userMessage;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _complaintsSummary = null;
+          _complaintsTrends = [];
+          _complaintsLoading = false;
+          _complaintsLoadError =
+              'Complaints report is unavailable right now. Please try again shortly.';
+        });
+      }
+      print('ReportsAnalyticsScreen: Complaints load error: $error');
     }
   }
 
   Future<void> _loadDeliveriesData() async {
-    final count = await _reportsService.getDeliveriesCount(
-      year: selectedDate.year,
-      month: selectedDate.month,
-    );
+    try {
+      final count = await _reportsService.getDeliveriesCount(
+        year: selectedDate.year,
+        month: selectedDate.month,
+      );
 
-    if (mounted) {
-      setState(() {
-        _deliveriesCount = count;
-      });
+      if (mounted) {
+        setState(() {
+          _deliveriesCount = count;
+        });
+      }
+    } on ReportsServiceException catch (_) {
+      if (mounted) {
+        setState(() {
+          _deliveriesCount = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _deliveriesCount = null;
+        });
+      }
+      print('ReportsAnalyticsScreen: Deliveries load error: $error');
     }
   }
 
@@ -220,7 +321,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                     ),
                     SizedBox(height: 2.h),
                     Text(
-                      'Track revenue, expenses & key metrics for $selectedMonth',
+                      'Track billing, collections & key metrics for $selectedMonth',
                       style: TextStyle(
                         fontSize: 14.sp,
                         fontWeight: FontWeight.w400,
@@ -320,23 +421,15 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
             ),
             child: InkWell(
               onTap: () async {
+                if (selectedTabIndex == 0) {
+                  await _showDesktopOnlyReportDialog('Financial report export');
+                  return;
+                }
+
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Row(
-                      children: [
-                        SizedBox(
-                          width: 20.w,
-                          height: 20.h,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        ),
-                        SizedBox(width: 12.w),
-                        Text('Generating PDF report for $selectedMonth...'),
-                      ],
+                    content: const Text(
+                      'Export is not available yet for this report.',
                     ),
                     backgroundColor: const Color(0xFF0E4778),
                     behavior: SnackBarBehavior.floating,
@@ -345,12 +438,6 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                     ),
                     duration: const Duration(seconds: 2),
                   ),
-                );
-
-                await PdfExportService.exportReportsAnalytics(
-                  selectedMonth: selectedMonth,
-                  selectedTabIndex: selectedTabIndex,
-                  context: context,
                 );
               },
               child: Row(
@@ -376,14 +463,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
   }
 
   Widget _buildKpiCards() {
-    // Calculate growth (comparing to previous month - simplified for now)
-    final revenueGrowth = _revenueTrends.length >= 2
-        ? ((_revenueTrends.last.revenue -
-                      _revenueTrends[_revenueTrends.length - 2].revenue) /
-                  _revenueTrends[_revenueTrends.length - 2].revenue *
-                  100)
-              .toStringAsFixed(1)
-        : '0.0';
+    if (selectedTabIndex != 0) return const SizedBox.shrink();
 
     return Padding(
       padding: EdgeInsets.all(20.w),
@@ -393,12 +473,13 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
             children: [
               Expanded(
                 child: AnalyticsKpiCard(
-                  title: 'Total Revenue',
-                  value: _financialSummary?.formattedRevenue ?? '₹0',
-                  growth: '$revenueGrowth%',
-                  isPositive:
-                      double.tryParse(revenueGrowth) != null &&
-                      double.parse(revenueGrowth) >= 0,
+                  key: const ValueKey('kpi-collections'),
+                  title: 'Collections Received',
+                  value: _financialSummary?.formattedCollectionsReceived ?? '—',
+                  isUnavailable: _financialSummary == null,
+                  growth: '+0%',
+                  isPositive: true,
+                  showGrowth: false,
                   color: const Color(0xFF0E4778),
                   icon: Icons.account_balance_wallet,
                 ),
@@ -406,8 +487,10 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
               SizedBox(width: 16.w),
               Expanded(
                 child: AnalyticsKpiCard(
+                  key: const ValueKey('kpi-occupancy'),
                   title: 'Occupancy Rate',
-                  value: _occupancySummary?.formattedOccupancyRate ?? '0%',
+                  value: _occupancySummary?.formattedOccupancyRate ?? '—',
+                  isUnavailable: _occupancySummary == null,
                   growth: '+0%',
                   isPositive: true,
                   color: const Color(0xFF10B981),
@@ -421,9 +504,13 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
             children: [
               Expanded(
                 child: AnalyticsKpiCard(
+                  key: const ValueKey('kpi-resolved-issues'),
                   title: 'Resolved Issues',
-                  value: '${_complaintsSummary?.resolvedComplaints ?? 0}',
-                  growth: _complaintsSummary?.formattedResolutionRate ?? '0%',
+                  value: _complaintsSummary == null
+                      ? '—'
+                      : '${_complaintsSummary!.resolvedComplaints}',
+                  isUnavailable: _complaintsSummary == null,
+                  growth: _complaintsSummary?.formattedResolutionRate ?? '',
                   isPositive: true,
                   color: const Color(0xFF8B5CF6),
                   icon: Icons.check_circle,
@@ -432,9 +519,11 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
               SizedBox(width: 16.w),
               Expanded(
                 child: AnalyticsKpiCard(
+                  key: const ValueKey('kpi-deliveries'),
                   title: 'Deliveries',
-                  value: '$_deliveriesCount',
-                  growth: '+0%',
+                  value: _deliveriesCount == null ? '—' : '$_deliveriesCount',
+                  isUnavailable: _deliveriesCount == null,
+                  growth: _deliveriesCount == null ? '' : '+0%',
                   isPositive: true,
                   color: const Color(0xFFF59E0B),
                   icon: Icons.local_shipping,
@@ -469,20 +558,299 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
         children: [
           if (selectedTabIndex == 0) ...[
             // Financial Tab
-            RevenueBarChart(revenueTrends: _revenueTrends),
+            if (_financialLoadError != null)
+              _buildFinancialErrorBanner(_financialLoadError!),
+            if (_financialLoadError != null) SizedBox(height: 12.h),
+            _buildFinancialSummaryCard(),
             SizedBox(height: 20.h),
-            ExpenseDonutChart(financialSummary: _financialSummary),
+            _buildDesktopOnlyFinancialReportsCard(),
           ] else if (selectedTabIndex == 1) ...[
             // Occupancy Tab
-            OccupancyChart(occupancySummary: _occupancySummary),
-            SizedBox(height: 20.h),
-            BuildingOccupancyChart(buildingOccupancies: _buildingOccupancies),
+            if (_occupancyLoading)
+              _buildReportLoadingState('Loading occupancy data...')
+            else if (_occupancyLoadError != null)
+              _buildReportErrorCard(
+                title: 'Occupancy data unavailable',
+                message: _occupancyLoadError!,
+              )
+            else if (_occupancySummary != null) ...[
+              OccupancyChart(occupancySummary: _occupancySummary!),
+              SizedBox(height: 20.h),
+              BuildingOccupancyChart(buildingOccupancies: _buildingOccupancies),
+            ],
           ] else if (selectedTabIndex == 2) ...[
             // Complaints Tab
-            ComplaintsChart(complaintsTrends: _complaintsTrends),
-            SizedBox(height: 20.h),
-            ComplaintCategoryChart(complaintsSummary: _complaintsSummary),
+            if (_complaintsLoading)
+              _buildReportLoadingState('Loading complaints data...')
+            else if (_complaintsLoadError != null)
+              _buildReportErrorCard(
+                title: 'Complaints data unavailable',
+                message: _complaintsLoadError!,
+              )
+            else if (_complaintsSummary != null) ...[
+              ComplaintsChart(
+                complaintsSummary: _complaintsSummary!,
+                complaintsTrends: _complaintsTrends,
+              ),
+              SizedBox(height: 20.h),
+              ComplaintCategoryChart(complaintsSummary: _complaintsSummary!),
+            ],
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportLoadingState(String message) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(24.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16.r),
+      ),
+      child: Column(
+        children: [
+          const CircularProgressIndicator(),
+          SizedBox(height: 12.h),
+          Text(message),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportErrorCard({
+    required String title,
+    required String message,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8F8),
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(color: const Color(0xFFF0D7D7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF8D3340),
+            ),
+          ),
+          SizedBox(height: 6.h),
+          Text(
+            message,
+            style: TextStyle(fontSize: 13.sp, color: const Color(0xFF784E54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFinancialErrorBanner(String message) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: const Color(0xFFFCA5A5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, color: Color(0xFFB91C1C)),
+          SizedBox(width: 10.w),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 13.sp,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF7F1D1D),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFinancialSummaryCard() {
+    final summary = _financialSummary;
+    String formatValue(String Function(FinancialSummary s) select) {
+      return summary == null ? 'Unavailable' : select(summary);
+    }
+
+    String formatCount(int? value) => value == null ? 'Unavailable' : '$value';
+
+    Widget row(String label, String value) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 6.h),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13.sp,
+                  color: const Color(0xFF4B5563),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 13.sp,
+                color: const Color(0xFF111827),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Billing V2 Summary',
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          SizedBox(height: 10.h),
+          row('Total billed', formatValue((s) => s.formattedTotalBilled)),
+          row(
+            'Collections received',
+            formatValue((s) => s.formattedCollectionsReceived),
+          ),
+          row('Outstanding', formatValue((s) => s.formattedOutstanding)),
+          row(
+            'Overdue outstanding',
+            formatValue((s) => s.formattedOverdueOutstanding),
+          ),
+          row(
+            'Available resident credit',
+            formatValue((s) => s.formattedAvailableCredit),
+          ),
+          SizedBox(height: 8.h),
+          const Divider(height: 1),
+          SizedBox(height: 8.h),
+          row('Bills - Pending', formatCount(summary?.pendingBills)),
+          row(
+            'Bills - Partially paid',
+            formatCount(summary?.partiallyPaidBills),
+          ),
+          row('Bills - Paid', formatCount(summary?.paidBills)),
+          row('Bills - Overdue', formatCount(summary?.overdueBills)),
+          SizedBox(height: 8.h),
+          const Divider(height: 1),
+          SizedBox(height: 8.h),
+          row(
+            'UPI collections',
+            summary == null
+                ? 'Unavailable'
+                : '${summary.upiCollection.formattedTotal} (${summary.upiCollection.count})',
+          ),
+          row(
+            'Cash collections',
+            summary == null
+                ? 'Unavailable'
+                : '${summary.cashCollection.formattedTotal} (${summary.cashCollection.count})',
+          ),
+          row(
+            'Bank transfer collections',
+            summary == null
+                ? 'Unavailable'
+                : '${summary.bankTransferCollection.formattedTotal} (${summary.bankTransferCollection.count})',
+          ),
+          row(
+            'Cheque collections',
+            summary == null
+                ? 'Unavailable'
+                : '${summary.chequeCollection.formattedTotal} (${summary.chequeCollection.count})',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDesktopOnlyFinancialReportsCard() {
+    final items = <String>[
+      'Detailed collections report',
+      'Outstanding / overdue report',
+      'Payment-method report',
+      'Resident credit report',
+      'Resident statement',
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Desktop-only financial reports',
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          SizedBox(height: 8.h),
+          for (final item in items)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(
+                item,
+                style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text('Open in Hominode Admin Web/Desktop'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () => _showDesktopOnlyReportDialog(item),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showDesktopOnlyReportDialog(String reportName) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(reportName),
+        content: const Text(
+          'This detailed financial report is currently available in Hominode Admin Web/Desktop. '
+          'Please open Admin Web/Desktop to view or export this report.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -495,6 +863,8 @@ class AnalyticsKpiCard extends StatelessWidget {
   final String value;
   final String growth;
   final bool isPositive;
+  final bool showGrowth;
+  final bool isUnavailable;
   final Color color;
   final IconData icon;
 
@@ -504,6 +874,8 @@ class AnalyticsKpiCard extends StatelessWidget {
     required this.value,
     required this.growth,
     required this.isPositive,
+    this.showGrowth = true,
+    this.isUnavailable = false,
     required this.color,
     required this.icon,
   });
@@ -511,7 +883,8 @@ class AnalyticsKpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.all(20.w),
+      height: 168.h,
+      padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18.r),
@@ -526,70 +899,117 @@ class AnalyticsKpiCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 44.w,
-                height: 44.h,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12.r),
+          SizedBox(
+            height: 40.h,
+            child: Row(
+              children: [
+                Container(
+                  width: 40.w,
+                  height: 40.h,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(11.r),
+                  ),
+                  child: Icon(icon, color: color, size: 21.w),
                 ),
-                child: Icon(icon, color: color, size: 22.w),
-              ),
-              const Spacer(),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
-                decoration: BoxDecoration(
-                  color: isPositive
-                      ? const Color(0xFF10B981).withOpacity(0.1)
-                      : const Color(0xFFDC2626).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8.r),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isPositive ? Icons.trending_up : Icons.trending_down,
-                      size: 14.w,
-                      color: isPositive
-                          ? const Color(0xFF10B981)
-                          : const Color(0xFFDC2626),
-                    ),
-                    SizedBox(width: 4.w),
-                    Text(
-                      growth,
-                      style: TextStyle(
-                        fontSize: 12.sp,
-                        fontWeight: FontWeight.w600,
-                        color: isPositive
-                            ? const Color(0xFF10B981)
-                            : const Color(0xFFDC2626),
+                const Spacer(),
+                if (showGrowth && !isUnavailable && growth.isNotEmpty)
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 7.w,
+                          vertical: 4.h,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isPositive
+                              ? const Color(0xFF10B981).withOpacity(0.1)
+                              : const Color(0xFFDC2626).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8.r),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isPositive
+                                  ? Icons.trending_up
+                                  : Icons.trending_down,
+                              size: 12.w,
+                              color: isPositive
+                                  ? const Color(0xFF10B981)
+                                  : const Color(0xFFDC2626),
+                            ),
+                            SizedBox(width: 3.w),
+                            Text(
+                              growth,
+                              style: TextStyle(
+                                fontSize: 10.sp,
+                                fontWeight: FontWeight.w600,
+                                color: isPositive
+                                    ? const Color(0xFF10B981)
+                                    : const Color(0xFFDC2626),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ],
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(height: 8.h),
+          SizedBox(
+            height: 30.h,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 25.sp,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF111827),
+                    height: 1.1,
+                  ),
                 ),
               ),
-            ],
-          ),
-          SizedBox(height: 16.h),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 28.sp,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF111827),
-              height: 1.1,
             ),
           ),
-          SizedBox(height: 6.h),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 14.sp,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF6B7280),
+          SizedBox(height: 4.h),
+          SizedBox(
+            height: 34.h,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13.sp,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF6B7280),
+                  height: 1.1,
+                ),
+              ),
             ),
+          ),
+          SizedBox(height: 2.h),
+          SizedBox(
+            height: 14.h,
+            child: isUnavailable
+                ? Text(
+                    'Unavailable',
+                    style: TextStyle(
+                      fontSize: 10.sp,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF8A94A3),
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),

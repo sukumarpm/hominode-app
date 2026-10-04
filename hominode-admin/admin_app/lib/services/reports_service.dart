@@ -1,9 +1,124 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'admin_service.dart';
 
+typedef BillingV2FinancialReportCallable =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> payload);
+
+class ReportsServiceException implements Exception {
+  final String userMessage;
+  final String technicalMessage;
+
+  ReportsServiceException(this.userMessage, this.technicalMessage);
+
+  @override
+  String toString() => 'ReportsServiceException($technicalMessage)';
+}
+
+String formatInrMinorUnitsForReports(int minorUnits) {
+  if (minorUnits < 0) return 'Unavailable';
+  final rupees = minorUnits ~/ 100;
+  final paise = minorUnits % 100;
+  final formattedRupees = _formatIndianDigitGroups(rupees);
+  return '₹$formattedRupees.${paise.toString().padLeft(2, '0')}';
+}
+
+String _formatIndianDigitGroups(int value) {
+  final digits = value.toString();
+  if (digits.length <= 3) return digits;
+  final head = digits.substring(0, digits.length - 3);
+  final tail = digits.substring(digits.length - 3);
+  final parts = <String>[];
+  int index = head.length;
+  while (index > 2) {
+    parts.insert(0, head.substring(index - 2, index));
+    index -= 2;
+  }
+  if (index > 0) {
+    parts.insert(0, head.substring(0, index));
+  }
+  return '${parts.join(',')},$tail';
+}
+
 class ReportsService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final AdminService _adminService = AdminService();
+  ReportsService({
+    FirebaseFirestore? firestore,
+    AdminService? adminService,
+    FirebaseFunctions? functions,
+    BillingV2FinancialReportCallable? financialReportCallable,
+    String? Function()? currentAdminIdProvider,
+    String Function()? currentCommunityIdProvider,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _adminService = adminService,
+       _functions = functions,
+       _financialReportCallable = financialReportCallable,
+       _currentAdminIdProvider = currentAdminIdProvider,
+       _currentCommunityIdProvider = currentCommunityIdProvider;
+
+  final FirebaseFirestore _firestore;
+  final AdminService? _adminService;
+  final FirebaseFunctions? _functions;
+  final BillingV2FinancialReportCallable? _financialReportCallable;
+  final String? Function()? _currentAdminIdProvider;
+  final String Function()? _currentCommunityIdProvider;
+
+  FirebaseFunctions get _regionalFunctions =>
+      _functions ?? FirebaseFunctions.instanceFor(region: 'asia-southeast1');
+
+  String? _currentAdminId() {
+    final provider = _currentAdminIdProvider;
+    if (provider != null) return provider();
+    final service = _adminService;
+    return service?.getCurrentAdminId() ?? AdminService().getCurrentAdminId();
+  }
+
+  String _requireCurrentCommunityId() {
+    final provider = _currentCommunityIdProvider;
+    if (provider != null) return provider();
+    final service = _adminService;
+    return service?.requireCurrentCommunityId() ??
+        AdminService().requireCurrentCommunityId();
+  }
+
+  String _toBillingPeriod(int year, int month) {
+    if (month < 1 || month > 12) {
+      throw ArgumentError.value(month, 'month', 'Month must be 1-12.');
+    }
+    final yyyy = year.toString().padLeft(4, '0');
+    final mm = month.toString().padLeft(2, '0');
+    return '$yyyy-$mm';
+  }
+
+  int _requiredNonNegativeInt(Object? value, String fieldName) {
+    if (value is! int || value < 0) {
+      throw FormatException('Invalid integer field: $fieldName');
+    }
+    return value;
+  }
+
+  Map<String, dynamic> _requiredMap(Object? value, String fieldName) {
+    if (value is! Map) {
+      throw FormatException('Invalid object field: $fieldName');
+    }
+    return Map<String, dynamic>.from(value);
+  }
+
+  Future<Map<String, dynamic>> _callBillingV2FinancialReport(
+    Map<String, dynamic> payload,
+  ) async {
+    final callable = _financialReportCallable;
+    if (callable != null) {
+      return callable(payload);
+    }
+    final response = await _regionalFunctions
+        .httpsCallable('getBillingV2FinancialReport')
+        .call(payload);
+    final data = response.data;
+    if (data is! Map) {
+      throw const FormatException('Financial report response is invalid.');
+    }
+    return Map<String, dynamic>.from(data);
+  }
 
   // ============================================================================
   // FINANCIAL REPORTS
@@ -14,118 +129,213 @@ class ReportsService {
     required int year,
     required int month,
   }) async {
+    final billingPeriod = _toBillingPeriod(year, month);
     try {
-      final adminId = _adminService.getCurrentAdminId();
+      final adminId = _currentAdminId();
       if (adminId == null) throw Exception('Admin not logged in');
 
       print('ReportsService: Fetching financial summary for $year-$month');
 
-      // Get start and end dates for the month
-      final startDate = DateTime(year, month, 1);
-      final endDate = DateTime(year, month + 1, 0, 23, 59, 59);
+      final report = await _callBillingV2FinancialReport({
+        'communityId': _requireCurrentCommunityId(),
+        'billingPeriod': billingPeriod,
+      });
 
-      // Fetch bills for the month
-      final billsSnapshot = await _firestore
-          .collection('bills')
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
-          .where(
-            'createdAt',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(startDate),
-          )
-          .where('createdAt', isLessThanOrEqualTo: Timestamp.fromDate(endDate))
-          .get();
-
-      double totalRevenue = 0;
-      double maintenanceRevenue = 0;
-      double utilitiesRevenue = 0;
-      double parkingRevenue = 0;
-      double otherRevenue = 0;
-      int totalBills = billsSnapshot.docs.length;
-      int paidBills = 0;
-      int pendingBills = 0;
-
-      for (var doc in billsSnapshot.docs) {
-        final data = doc.data();
-        final amount = (data['totalAmount'] ?? 0).toDouble();
-        final status = data['status'] ?? 'pending';
-        final billType = data['billType'] ?? 'Maintenance';
-
-        if (status == 'paid') {
-          totalRevenue += amount;
-          paidBills++;
-
-          // Categorize revenue
-          if (billType.toLowerCase().contains('maintenance')) {
-            maintenanceRevenue += amount;
-          } else if (billType.toLowerCase().contains('utility') ||
-              billType.toLowerCase().contains('water') ||
-              billType.toLowerCase().contains('electricity')) {
-            utilitiesRevenue += amount;
-          } else if (billType.toLowerCase().contains('parking')) {
-            parkingRevenue += amount;
-          } else {
-            otherRevenue += amount;
-          }
-        } else {
-          pendingBills++;
-        }
+      if (report['success'] != true) {
+        throw const FormatException(
+          'Financial report response is not successful.',
+        );
       }
 
+      final liabilitySummary = _requiredMap(
+        report['liabilitySummary'],
+        'liabilitySummary',
+      );
+      final collectionActivity = _requiredMap(
+        report['collectionActivity'],
+        'collectionActivity',
+      );
+      final creditPosition = _requiredMap(
+        report['creditPosition'],
+        'creditPosition',
+      );
+      final methodSummary = _requiredMap(
+        collectionActivity['methods'],
+        'collectionActivity.methods',
+      );
+      final upi = _requiredMap(methodSummary['upi'], 'methods.upi');
+      final cash = _requiredMap(methodSummary['cash'], 'methods.cash');
+      final bankTransfer = _requiredMap(
+        methodSummary['bank_transfer'],
+        'methods.bank_transfer',
+      );
+      final cheque = _requiredMap(methodSummary['cheque'], 'methods.cheque');
+      final statusCounts = _requiredMap(
+        liabilitySummary['statusCounts'],
+        'liabilitySummary.statusCounts',
+      );
+
+      final totalBilledMinor = _requiredNonNegativeInt(
+        liabilitySummary['billedMinor'],
+        'billedMinor',
+      );
+      final collectionsReceivedMinor = _requiredNonNegativeInt(
+        collectionActivity['totalReceivedMinor'],
+        'totalReceivedMinor',
+      );
+      final outstandingMinor = _requiredNonNegativeInt(
+        liabilitySummary['outstandingMinor'],
+        'outstandingMinor',
+      );
+      final overdueOutstandingMinor = _requiredNonNegativeInt(
+        liabilitySummary['overdueOutstandingMinor'],
+        'overdueOutstandingMinor',
+      );
+      final availableCreditMinor = _requiredNonNegativeInt(
+        creditPosition['totalAvailableCreditMinor'],
+        'totalAvailableCreditMinor',
+      );
+      final creditAppliedMinor = _requiredNonNegativeInt(
+        liabilitySummary['creditAppliedMinor'],
+        'creditAppliedMinor',
+      );
+
       print(
-        'ReportsService: Financial summary - Revenue: ₹$totalRevenue, Bills: $totalBills',
+        'ReportsService: Financial summary loaded for $billingPeriod '
+        '(billed=$totalBilledMinor, received=$collectionsReceivedMinor)',
       );
 
       return FinancialSummary(
-        totalRevenue: totalRevenue,
-        maintenanceRevenue: maintenanceRevenue,
-        utilitiesRevenue: utilitiesRevenue,
-        parkingRevenue: parkingRevenue,
-        otherRevenue: otherRevenue,
-        totalBills: totalBills,
-        paidBills: paidBills,
-        pendingBills: pendingBills,
+        totalRevenue: collectionsReceivedMinor / 100,
+        maintenanceRevenue: 0,
+        utilitiesRevenue: 0,
+        parkingRevenue: 0,
+        otherRevenue: 0,
+        totalBills: _requiredNonNegativeInt(
+          liabilitySummary['billsCount'],
+          'billsCount',
+        ),
+        paidBills: _requiredNonNegativeInt(
+          statusCounts['paid'],
+          'statusCounts.paid',
+        ),
+        pendingBills: _requiredNonNegativeInt(
+          statusCounts['pending'],
+          'statusCounts.pending',
+        ),
+        partiallyPaidBills: _requiredNonNegativeInt(
+          statusCounts['partially_paid'],
+          'statusCounts.partially_paid',
+        ),
+        overdueBills: _requiredNonNegativeInt(
+          statusCounts['overdue'],
+          'statusCounts.overdue',
+        ),
+        totalBilledMinor: totalBilledMinor,
+        collectionsReceivedMinor: collectionsReceivedMinor,
+        outstandingMinor: outstandingMinor,
+        overdueOutstandingMinor: overdueOutstandingMinor,
+        availableCreditMinor: availableCreditMinor,
+        creditAppliedMinor: creditAppliedMinor,
+        transactionCount: _requiredNonNegativeInt(
+          collectionActivity['transactionCount'],
+          'transactionCount',
+        ),
+        upiCollection: PaymentMethodSummary(
+          count: _requiredNonNegativeInt(upi['count'], 'methods.upi.count'),
+          totalMinor: _requiredNonNegativeInt(
+            upi['totalMinor'],
+            'methods.upi.totalMinor',
+          ),
+        ),
+        cashCollection: PaymentMethodSummary(
+          count: _requiredNonNegativeInt(cash['count'], 'methods.cash.count'),
+          totalMinor: _requiredNonNegativeInt(
+            cash['totalMinor'],
+            'methods.cash.totalMinor',
+          ),
+        ),
+        bankTransferCollection: PaymentMethodSummary(
+          count: _requiredNonNegativeInt(
+            bankTransfer['count'],
+            'methods.bank_transfer.count',
+          ),
+          totalMinor: _requiredNonNegativeInt(
+            bankTransfer['totalMinor'],
+            'methods.bank_transfer.totalMinor',
+          ),
+        ),
+        chequeCollection: PaymentMethodSummary(
+          count: _requiredNonNegativeInt(
+            cheque['count'],
+            'methods.cheque.count',
+          ),
+          totalMinor: _requiredNonNegativeInt(
+            cheque['totalMinor'],
+            'methods.cheque.totalMinor',
+          ),
+        ),
+        accountsCount: _requiredNonNegativeInt(
+          creditPosition['accountsCount'],
+          'accountsCount',
+        ),
+        residentsWithCreditCount: _requiredNonNegativeInt(
+          creditPosition['residentsWithCreditCount'],
+          'residentsWithCreditCount',
+        ),
         month: month,
         year: year,
       );
+    } on FirebaseFunctionsException catch (e) {
+      print(
+        'ReportsService ERROR: Financial report callable failed: ${e.code} ${e.message}',
+      );
+      throw ReportsServiceException(
+        'Financial report is unavailable right now. Please try again shortly.',
+        'functions_error:${e.code}:${e.message}',
+      );
+    } on FormatException catch (e) {
+      print('ReportsService ERROR: Invalid financial report payload: $e');
+      throw ReportsServiceException(
+        'Financial report data is temporarily unavailable. Please try again.',
+        'format_error:$e',
+      );
+    } on ReportsServiceException {
+      rethrow;
     } catch (e) {
       print('ReportsService ERROR: Failed to fetch financial summary: $e');
-      return FinancialSummary.empty(month: month, year: year);
+      throw ReportsServiceException(
+        'Financial report is unavailable right now. Please try again shortly.',
+        'unexpected_error:$e',
+      );
     }
   }
 
   /// Get monthly revenue trends (last 6 months)
   Future<List<MonthlyRevenue>> getMonthlyRevenueTrends() async {
-    try {
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null) throw Exception('Admin not logged in');
+    final adminId = _currentAdminId();
+    if (adminId == null) throw Exception('Admin not logged in');
 
-      final List<MonthlyRevenue> trends = [];
-      final now = DateTime.now();
+    final List<MonthlyRevenue> trends = [];
+    final now = DateTime.now();
 
-      for (int i = 5; i >= 0; i--) {
-        final targetDate = DateTime(now.year, now.month - i, 1);
-        final summary = await getFinancialSummary(
+    for (int i = 5; i >= 0; i--) {
+      final targetDate = DateTime(now.year, now.month - i, 1);
+      final summary = await getFinancialSummary(
+        year: targetDate.year,
+        month: targetDate.month,
+      );
+
+      trends.add(
+        MonthlyRevenue(
+          month: _getMonthName(targetDate.month),
           year: targetDate.year,
-          month: targetDate.month,
-        );
-
-        trends.add(
-          MonthlyRevenue(
-            month: _getMonthName(targetDate.month),
-            year: targetDate.year,
-            revenue: summary.totalRevenue,
-          ),
-        );
-      }
-
-      return trends;
-    } catch (e) {
-      print('ReportsService ERROR: Failed to fetch revenue trends: $e');
-      return [];
+          revenue: summary.totalRevenue,
+        ),
+      );
     }
+
+    return trends;
   }
 
   // ============================================================================
@@ -135,7 +345,7 @@ class ReportsService {
   /// Get occupancy summary
   Future<OccupancySummary> getOccupancySummary() async {
     try {
-      final adminId = _adminService.getCurrentAdminId();
+      final adminId = _currentAdminId();
       if (adminId == null) throw Exception('Admin not logged in');
 
       print('ReportsService: Fetching occupancy summary');
@@ -143,10 +353,7 @@ class ReportsService {
       // Get all flats
       final flatsSnapshot = await _firestore
           .collection('flats')
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
+          .where('communityId', isEqualTo: _requireCurrentCommunityId())
           .get();
 
       int totalFlats = flatsSnapshot.docs.length;
@@ -184,14 +391,17 @@ class ReportsService {
       );
     } catch (e) {
       print('ReportsService ERROR: Failed to fetch occupancy summary: $e');
-      return OccupancySummary.empty();
+      throw ReportsServiceException(
+        'Occupancy report is unavailable right now. Please try again shortly.',
+        'occupancy_summary_error:$e',
+      );
     }
   }
 
   /// Get building-wise occupancy
   Future<List<BuildingOccupancy>> getBuildingOccupancy() async {
     try {
-      final adminId = _adminService.getCurrentAdminId();
+      final adminId = _currentAdminId();
       if (adminId == null) throw Exception('Admin not logged in');
 
       print('ReportsService: Fetching building-wise occupancy');
@@ -199,10 +409,7 @@ class ReportsService {
       // Get all buildings
       final buildingsSnapshot = await _firestore
           .collection('buildings')
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
+          .where('communityId', isEqualTo: _requireCurrentCommunityId())
           .get();
 
       final List<BuildingOccupancy> buildingOccupancies = [];
@@ -215,10 +422,7 @@ class ReportsService {
         // Get flats for this building
         final flatsSnapshot = await _firestore
             .collection('flats')
-            .where(
-              'communityId',
-              isEqualTo: _adminService.requireCurrentCommunityId(),
-            )
+            .where('communityId', isEqualTo: _requireCurrentCommunityId())
             .where('buildingId', isEqualTo: buildingId)
             .get();
 
@@ -252,7 +456,10 @@ class ReportsService {
       return buildingOccupancies;
     } catch (e) {
       print('ReportsService ERROR: Failed to fetch building occupancy: $e');
-      return [];
+      throw ReportsServiceException(
+        'Building occupancy is unavailable right now. Please try again shortly.',
+        'building_occupancy_error:$e',
+      );
     }
   }
 
@@ -266,7 +473,7 @@ class ReportsService {
     required int month,
   }) async {
     try {
-      final adminId = _adminService.getCurrentAdminId();
+      final adminId = _currentAdminId();
       if (adminId == null) throw Exception('Admin not logged in');
 
       print('ReportsService: Fetching complaints summary for $year-$month');
@@ -278,10 +485,7 @@ class ReportsService {
       // Fetch complaints for the month
       final complaintsSnapshot = await _firestore
           .collection('complaints')
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
+          .where('communityId', isEqualTo: _requireCurrentCommunityId())
           .where(
             'createdAt',
             isGreaterThanOrEqualTo: Timestamp.fromDate(startDate),
@@ -335,14 +539,17 @@ class ReportsService {
       );
     } catch (e) {
       print('ReportsService ERROR: Failed to fetch complaints summary: $e');
-      return ComplaintsSummary.empty(month: month, year: year);
+      throw ReportsServiceException(
+        'Complaints report is unavailable right now. Please try again shortly.',
+        'complaints_summary_error:$e',
+      );
     }
   }
 
   /// Get monthly complaints trends (last 6 months)
   Future<List<MonthlyComplaints>> getMonthlyComplaintsTrends() async {
     try {
-      final adminId = _adminService.getCurrentAdminId();
+      final adminId = _currentAdminId();
       if (adminId == null) throw Exception('Admin not logged in');
 
       final List<MonthlyComplaints> trends = [];
@@ -368,7 +575,10 @@ class ReportsService {
       return trends;
     } catch (e) {
       print('ReportsService ERROR: Failed to fetch complaints trends: $e');
-      return [];
+      throw ReportsServiceException(
+        'Complaint trends are unavailable right now. Please try again shortly.',
+        'complaints_trends_error:$e',
+      );
     }
   }
 
@@ -382,7 +592,7 @@ class ReportsService {
     required int month,
   }) async {
     try {
-      final adminId = _adminService.getCurrentAdminId();
+      final adminId = _currentAdminId();
       if (adminId == null) throw Exception('Admin not logged in');
 
       // Get start and end dates for the month
@@ -392,10 +602,7 @@ class ReportsService {
       // Fetch parcels for the month
       final parcelsSnapshot = await _firestore
           .collection('parcels')
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
+          .where('communityId', isEqualTo: _requireCurrentCommunityId())
           .where(
             'receivedAt',
             isGreaterThanOrEqualTo: Timestamp.fromDate(startDate),
@@ -406,7 +613,10 @@ class ReportsService {
       return parcelsSnapshot.docs.length;
     } catch (e) {
       print('ReportsService ERROR: Failed to fetch deliveries count: $e');
-      return 0;
+      throw ReportsServiceException(
+        'Deliveries are unavailable right now. Please try again shortly.',
+        'deliveries_count_error:$e',
+      );
     }
   }
 
@@ -446,6 +656,21 @@ class FinancialSummary {
   final int totalBills;
   final int paidBills;
   final int pendingBills;
+  final int partiallyPaidBills;
+  final int overdueBills;
+  final int totalBilledMinor;
+  final int collectionsReceivedMinor;
+  final int creditAppliedMinor;
+  final int outstandingMinor;
+  final int overdueOutstandingMinor;
+  final int availableCreditMinor;
+  final int transactionCount;
+  final PaymentMethodSummary upiCollection;
+  final PaymentMethodSummary cashCollection;
+  final PaymentMethodSummary bankTransferCollection;
+  final PaymentMethodSummary chequeCollection;
+  final int accountsCount;
+  final int residentsWithCreditCount;
   final int month;
   final int year;
 
@@ -458,6 +683,21 @@ class FinancialSummary {
     required this.totalBills,
     required this.paidBills,
     required this.pendingBills,
+    required this.partiallyPaidBills,
+    required this.overdueBills,
+    required this.totalBilledMinor,
+    required this.collectionsReceivedMinor,
+    required this.creditAppliedMinor,
+    required this.outstandingMinor,
+    required this.overdueOutstandingMinor,
+    required this.availableCreditMinor,
+    required this.transactionCount,
+    required this.upiCollection,
+    required this.cashCollection,
+    required this.bankTransferCollection,
+    required this.chequeCollection,
+    required this.accountsCount,
+    required this.residentsWithCreditCount,
     required this.month,
     required this.year,
   });
@@ -472,6 +712,24 @@ class FinancialSummary {
       totalBills: 0,
       paidBills: 0,
       pendingBills: 0,
+      partiallyPaidBills: 0,
+      overdueBills: 0,
+      totalBilledMinor: 0,
+      collectionsReceivedMinor: 0,
+      creditAppliedMinor: 0,
+      outstandingMinor: 0,
+      overdueOutstandingMinor: 0,
+      availableCreditMinor: 0,
+      transactionCount: 0,
+      upiCollection: const PaymentMethodSummary(count: 0, totalMinor: 0),
+      cashCollection: const PaymentMethodSummary(count: 0, totalMinor: 0),
+      bankTransferCollection: const PaymentMethodSummary(
+        count: 0,
+        totalMinor: 0,
+      ),
+      chequeCollection: const PaymentMethodSummary(count: 0, totalMinor: 0),
+      accountsCount: 0,
+      residentsWithCreditCount: 0,
       month: month,
       year: year,
     );
@@ -486,6 +744,33 @@ class FinancialSummary {
       return '₹${totalRevenue.toStringAsFixed(0)}';
     }
   }
+
+  String get formattedTotalBilled =>
+      formatInrMinorUnitsForReports(totalBilledMinor);
+
+  String get formattedCollectionsReceived =>
+      formatInrMinorUnitsForReports(collectionsReceivedMinor);
+
+  String get formattedOutstanding =>
+      formatInrMinorUnitsForReports(outstandingMinor);
+
+  String get formattedOverdueOutstanding =>
+      formatInrMinorUnitsForReports(overdueOutstandingMinor);
+
+  String get formattedAvailableCredit =>
+      formatInrMinorUnitsForReports(availableCreditMinor);
+
+  String get formattedCreditApplied =>
+      formatInrMinorUnitsForReports(creditAppliedMinor);
+}
+
+class PaymentMethodSummary {
+  final int count;
+  final int totalMinor;
+
+  const PaymentMethodSummary({required this.count, required this.totalMinor});
+
+  String get formattedTotal => formatInrMinorUnitsForReports(totalMinor);
 }
 
 class MonthlyRevenue {

@@ -9,8 +9,8 @@ import 'models/community_invite.dart';
 import 'models/tenant_config.dart';
 import 'services/admin_tenant_context.dart';
 import 'services/community_invite_service.dart';
-import 'widgets/standard_header.dart';
 import 'widgets/community_payment_settings_card.dart';
+import 'widgets/standard_header.dart';
 
 class CommunitySettingsScreen extends StatefulWidget {
   const CommunitySettingsScreen({super.key});
