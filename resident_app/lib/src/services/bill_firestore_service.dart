@@ -193,6 +193,229 @@ class BillFirestoreService {
     }
   }
 
+  /// Derives display-only settlement metadata from the immutable V2 ledger.
+  ///
+  /// Only transactions with a positive net allocation to this bill contribute.
+  /// Allocation reversals therefore cannot leave stale payment method/date data
+  /// visible in the Resident UI.
+  static Map<String, dynamic> deriveV2SettlementDisplayFields({
+    required Map<String, dynamic> bill,
+    required String residentId,
+    required List<Map<String, dynamic>> allocationEvents,
+    required List<Map<String, dynamic>> transactions,
+  }) {
+    if (!isV2Bill(bill)) return bill;
+
+    final status = bill['status']?.toString();
+    if (status != 'paid' && status != 'settled') return bill;
+
+    final billId = bill['id']?.toString().trim() ?? '';
+    final communityId = bill['communityId']?.toString().trim() ?? '';
+    if (billId.isEmpty || communityId.isEmpty || residentId.trim().isEmpty) {
+      return bill;
+    }
+
+    final originals = <String, Map<String, dynamic>>{};
+    final netByTransaction = <String, int>{};
+
+    for (final event in allocationEvents) {
+      if (event['communityId'] != communityId ||
+          event['residentId'] != residentId ||
+          event['billId'] != billId ||
+          event['eventType'] != 'allocation') {
+        continue;
+      }
+
+      final id = event['id']?.toString().trim() ?? '';
+      final transactionId = event['transactionId']?.toString().trim() ?? '';
+      final amountMinor = event['amountMinor'];
+
+      if (id.isEmpty ||
+          transactionId.isEmpty ||
+          amountMinor is! int ||
+          amountMinor <= 0) {
+        continue;
+      }
+
+      originals[id] = event;
+      netByTransaction[transactionId] =
+          (netByTransaction[transactionId] ?? 0) + amountMinor;
+    }
+
+    for (final event in allocationEvents) {
+      if (event['communityId'] != communityId ||
+          event['residentId'] != residentId ||
+          event['billId'] != billId ||
+          event['eventType'] != 'reversal') {
+        continue;
+      }
+
+      final transactionId = event['transactionId']?.toString().trim() ?? '';
+      final originalId = event['originalAllocationId']?.toString().trim() ?? '';
+      final amountMinor = event['amountMinor'];
+      final original = originals[originalId];
+
+      if (transactionId.isEmpty ||
+          originalId.isEmpty ||
+          amountMinor is! int ||
+          amountMinor <= 0 ||
+          original == null ||
+          original['transactionId'] != transactionId) {
+        continue;
+      }
+
+      netByTransaction[transactionId] =
+          (netByTransaction[transactionId] ?? 0) - amountMinor;
+    }
+
+    final contributingTransactionIds = netByTransaction.entries
+        .where((entry) => entry.value > 0)
+        .map((entry) => entry.key)
+        .toSet();
+
+    final contributingTransactions = transactions.where((transaction) {
+      final id = transaction['id']?.toString().trim() ?? '';
+      return contributingTransactionIds.contains(id) &&
+          transaction['communityId'] == communityId &&
+          transaction['residentId'] == residentId;
+    }).toList();
+
+    final result = Map<String, dynamic>.from(bill);
+
+    // V2 display data must come from the immutable ledger, never stale
+    // single-payment fields copied onto a bill.
+    result.remove('paymentMethod');
+    result.remove('paidAt');
+    result.remove('paymentReference');
+    result.remove('transactionId');
+
+    if (contributingTransactions.isEmpty) return result;
+
+    int transactionTime(Map<String, dynamic> transaction) {
+      final value = transaction['receivedAt'] ?? transaction['createdAt'];
+      if (value is Timestamp) return value.millisecondsSinceEpoch;
+      if (value is DateTime) return value.millisecondsSinceEpoch;
+      if (value is num) return value.toInt();
+      return 0;
+    }
+
+    contributingTransactions.sort(
+      (a, b) => transactionTime(b).compareTo(transactionTime(a)),
+    );
+
+    final methods = contributingTransactions
+        .map((transaction) => transaction['method'])
+        .whereType<String>()
+        .map((method) => method.trim())
+        .where((method) => method.isNotEmpty)
+        .toSet();
+
+    if (methods.length == 1) {
+      result['paymentMethod'] = methods.first;
+    } else if (methods.length > 1) {
+      result['paymentMethod'] = 'multiple';
+    }
+
+    final latest = contributingTransactions.first;
+    final receivedAt = latest['receivedAt'] ?? latest['createdAt'];
+
+    if (receivedAt is Timestamp) {
+      result['paidAt'] = receivedAt;
+    } else if (receivedAt is DateTime) {
+      result['paidAt'] = Timestamp.fromDate(receivedAt);
+    } else if (receivedAt is num) {
+      result['paidAt'] = Timestamp.fromMillisecondsSinceEpoch(
+        receivedAt.toInt(),
+      );
+    }
+
+    if (contributingTransactions.length == 1) {
+      result['transactionId'] = latest['id'];
+
+      final reference = latest['reference'];
+      if (reference is String && reference.trim().isNotEmpty) {
+        result['paymentReference'] = reference.trim();
+      }
+    }
+
+    return result;
+  }
+
+  Future<Map<String, dynamic>> _withV2SettlementDisplayFields(
+    Map<String, dynamic> bill,
+  ) async {
+    if (!isV2Bill(bill)) return bill;
+
+    final status = bill['status']?.toString();
+    if (status != 'paid' && status != 'settled') return bill;
+
+    final billId = bill['id']?.toString().trim() ?? '';
+    final communityId = bill['communityId']?.toString().trim() ?? '';
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (billId.isEmpty || communityId.isEmpty || user == null) {
+      return bill;
+    }
+
+    try {
+      final allocationSnapshot = await firestore
+          .collection('paymentAllocations')
+          .where('communityId', isEqualTo: communityId)
+          .where('residentId', isEqualTo: user.uid)
+          .where('billId', isEqualTo: billId)
+          .get();
+
+      final allocationEvents = allocationSnapshot.docs
+          .map((doc) => <String, dynamic>{...doc.data(), 'id': doc.id})
+          .toList();
+
+      final transactionIds = allocationEvents
+          .map((event) => event['transactionId'])
+          .whereType<String>()
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+
+      if (transactionIds.isEmpty) {
+        return deriveV2SettlementDisplayFields(
+          bill: bill,
+          residentId: user.uid,
+          allocationEvents: allocationEvents,
+          transactions: const [],
+        );
+      }
+
+      final transactionSnapshots = await Future.wait(
+        transactionIds.map(
+          (id) => firestore.collection('paymentTransactions').doc(id).get(),
+        ),
+      );
+
+      final transactions = transactionSnapshots
+          .where((snapshot) => snapshot.exists && snapshot.data() != null)
+          .map(
+            (snapshot) => <String, dynamic>{
+              ...snapshot.data()!,
+              'id': snapshot.id,
+            },
+          )
+          .toList();
+
+      return deriveV2SettlementDisplayFields(
+        bill: bill,
+        residentId: user.uid,
+        allocationEvents: allocationEvents,
+        transactions: transactions,
+      );
+    } catch (error) {
+      print(
+        '⚠️ Unable to load V2 settlement display metadata '
+        'for bill $billId: $error',
+      );
+      return bill;
+    }
+  }
+
   /// Get all bills for current user by flatId with Firestore .where() filtering
   Future<List<Map<String, dynamic>>> getBills() async {
     try {
@@ -338,6 +561,10 @@ class BillFirestoreService {
         return normalizeBillDocument(doc.data(), doc.id);
       }).toList();
 
+      for (var index = 0; index < payments.length; index++) {
+        payments[index] = await _withV2SettlementDisplayFields(payments[index]);
+      }
+
       // Sort by paid date (newest first)
       payments.sort((a, b) {
         final aDate = (a['paidAt'] as Timestamp?)?.toDate() ?? DateTime.now();
@@ -387,10 +614,14 @@ class BillFirestoreService {
         .where('communityId', isEqualTo: scope.communityId)
         .where('flatId', isEqualTo: scope.flatId)
         .snapshots()
-        .map((snapshot) {
+        .asyncMap((snapshot) async {
           final bills = snapshot.docs.map((doc) {
             return normalizeBillDocument(doc.data(), doc.id);
           }).toList();
+
+          for (var index = 0; index < bills.length; index++) {
+            bills[index] = await _withV2SettlementDisplayFields(bills[index]);
+          }
 
           // Sort by due date (newest first)
           bills.sort((a, b) {

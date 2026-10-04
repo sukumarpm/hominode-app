@@ -108,43 +108,49 @@ class BillModel {
     final dueDate = _asDateTime(map['dueDate'], now);
 
     final rawBillingPeriod = map['billingPeriod'];
-    final billingPeriod = isV2 && rawBillingPeriod is String && _isCanonicalBillingPeriod(rawBillingPeriod)
-      ? rawBillingPeriod
-      : null;
+    final billingPeriod =
+        isV2 &&
+            rawBillingPeriod is String &&
+            _isCanonicalBillingPeriod(rawBillingPeriod)
+        ? rawBillingPeriod
+        : null;
 
     final parsedChargeLines = isV2 && map['chargeLines'] is List
-      ? (map['chargeLines'] as List)
-          .whereType<Map>()
-          .map((line) => BillChargeLineModel.fromMap(Map<String, dynamic>.from(line)))
-          .toList()
-      : const <BillChargeLineModel>[];
+        ? (map['chargeLines'] as List)
+              .whereType<Map>()
+              .map(
+                (line) => BillChargeLineModel.fromMap(
+                  Map<String, dynamic>.from(line),
+                ),
+              )
+              .toList()
+        : const <BillChargeLineModel>[];
 
     final amountMinor = isV2 ? _asStrictInt(map['amountMinor']) : null;
-    final amount = (map['amount'] as num?)?.toDouble() ??
-      (isV2 && amountMinor != null ? amountMinor / 100 : 0);
+    final amount =
+        (map['amount'] as num?)?.toDouble() ??
+        (isV2 && amountMinor != null ? amountMinor / 100 : 0);
 
     final rawType = map['type'];
-    final type = rawType is String
-      ? rawType
-      : (isV2 ? 'combined' : '');
+    final type = rawType is String ? rawType : (isV2 ? 'combined' : '');
 
     final billingPeriodStart = isV2
-      ? _asDateTime(
-        map['billingPeriodStart'],
-        _periodStartFromKeyUtc(billingPeriod) ?? now,
-        )
-      : _asDateTime(map['billingPeriodStart'], now);
+        ? _asDateTime(
+            map['billingPeriodStart'],
+            _periodStartFromKeyUtc(billingPeriod) ?? now,
+          )
+        : _asDateTime(map['billingPeriodStart'], now);
 
     final billingPeriodEnd = isV2
-      ? _asDateTime(
-        map['billingPeriodEnd'],
-        _periodEndFromKeyUtc(billingPeriod) ?? now,
-        )
-      : _asDateTime(map['billingPeriodEnd'], now);
+        ? _asDateTime(
+            map['billingPeriodEnd'],
+            _periodEndFromKeyUtc(billingPeriod) ?? now,
+          )
+        : _asDateTime(map['billingPeriodEnd'], now);
 
     final status = isV2
-      ? (map['status'] is String ? map['status'] as String : '')
-      : (map['status'] as String? ?? 'pending');
+        ? (map['status'] is String ? map['status'] as String : '')
+        : (map['status'] as String? ?? 'pending');
 
     return BillModel(
       id: documentId,
@@ -154,7 +160,9 @@ class BillModel {
       flatId: map['flatId'] ?? '',
       billingPeriod: billingPeriod,
       amountMinor: amountMinor,
-      outstandingAmountMinor: isV2 ? _asStrictInt(map['outstandingAmountMinor']) : null,
+      outstandingAmountMinor: isV2
+          ? _asStrictInt(map['outstandingAmountMinor'])
+          : null,
       chargeLines: parsedChargeLines,
       type: type,
       amount: amount,

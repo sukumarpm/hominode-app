@@ -5,6 +5,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/maintenance_billing_screen.dart';
 import 'package:resident_app/src/services/bill_firestore_service.dart';
+import 'package:resident_app/src/services/resident_billing_statement_service.dart';
 import 'package:resident_app/src/services/resident_direct_upi_service.dart';
 
 Map<String, dynamic> _v1({String status = 'pending', String id = 'v1'}) => {
@@ -73,6 +74,37 @@ class _Fixture {
   final v1BillIds = <String>[];
   final v2BillIds = <String>[];
   final prepareCalls = <Map<String, dynamic>>[];
+  final statementPeriods = <String>[];
+
+  late final statementService = ResidentBillingStatementService(
+    callable: (_, payload) async {
+      final period = payload['billingPeriod'] as String;
+      statementPeriods.add(period);
+      return {
+        'success': true,
+        'schemaVersion': 1,
+        'communityId': 'community',
+        'residentId': 'resident',
+        'billingPeriod': period,
+        'generatedAtMs': 1785542400000,
+        'summary': {
+          'billsCount': 0,
+          'billedMinor': 0,
+          'paidAllocationMinor': 0,
+          'creditAppliedMinor': 0,
+          'outstandingMinor': 0,
+          'availableCreditMinor': 0,
+          'statusCounts': {
+            'pending': 0,
+            'partially_paid': 0,
+            'paid': 0,
+            'overdue': 0,
+          },
+        },
+        'bills': <Object>[],
+      };
+    },
+  );
 
   late final billService = BillFirestoreService(
     billsStreamLoader: () => Stream.value(bills),
@@ -138,6 +170,7 @@ Widget _app(_Fixture fixture) => ScreenUtilInit(
     home: MaintenanceBillingScreen(
       billService: fixture.billService,
       directUpiService: fixture.upiService,
+      statementService: fixture.statementService,
       languageCodeOverride: 'en',
     ),
   ),
@@ -316,5 +349,46 @@ void main() {
     expect(find.text('Check receipt or resume upload'), findsNothing);
     expect(find.text('Resubmit Payment Proof'), findsNothing);
     expect(find.text('Pay via UPI'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Monthly Statement action is available without payment history and opens statement',
+    (tester) async {
+      _setViewport(tester);
+      final fixture = _Fixture();
+      await tester.pumpWidget(_app(fixture));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No Payment History'), findsOneWidget);
+      expect(find.text('Monthly Statement'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('open-monthly-statement')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No bills for this period.'), findsOneWidget);
+      expect(fixture.statementPeriods, hasLength(1));
+      expect(
+        fixture.statementPeriods.single,
+        matches(RegExp(r'^\d{4}-\d{2}$')),
+      );
+    },
+  );
+
+  testWidgets('Monthly Statement action preserves View All Payment History', (
+    tester,
+  ) async {
+    _setViewport(tester);
+    final fixture = _Fixture()
+      ..bills = [_v1(status: 'paid')..['year'] = '2026'];
+    await tester.pumpWidget(_app(fixture));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Monthly Statement'), findsOneWidget);
+    expect(find.text('Payment History'), findsOneWidget);
+    expect(find.text('View All'), findsOneWidget);
+    await tester.tap(find.text('View All'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Payment History'), findsOneWidget);
+    expect(find.text('January 2026'), findsOneWidget);
   });
 }

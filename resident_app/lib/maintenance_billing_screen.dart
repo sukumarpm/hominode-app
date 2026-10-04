@@ -5,12 +5,14 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import 'payment_history_screen.dart';
+import 'resident_billing_statement_screen.dart';
 import 'receipt_screen.dart';
 import 'src/components/standard_screen.dart';
 import 'src/providers/language_provider.dart';
 import 'src/screens/submit_payment_proof_screen.dart';
 import 'src/services/bill_firestore_service.dart';
 import 'src/services/resident_direct_upi_service.dart';
+import 'src/services/resident_billing_statement_service.dart';
 import 'src/utils/payment_method.dart';
 import 'src/widgets/cash_payment_info_card.dart';
 import 'src/widgets/direct_upi_payment_card.dart';
@@ -38,11 +40,13 @@ class MaintenanceBillingScreen extends StatefulWidget {
     super.key,
     this.billService,
     this.directUpiService,
+    this.statementService,
     this.languageCodeOverride,
   });
 
   final BillFirestoreService? billService;
   final ResidentDirectUpiService? directUpiService;
+  final ResidentBillingStatementService? statementService;
   final String? languageCodeOverride;
 
   @override
@@ -438,6 +442,8 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _buildMonthlyStatementAction(),
+              SizedBox(height: 16.h),
               // Current Bill Card
               if (currentBills.isEmpty)
                 _buildNoBillCard()
@@ -471,6 +477,24 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
       ),
     );
   }
+
+  Widget _buildMonthlyStatementAction() => SizedBox(
+    width: double.infinity,
+    child: OutlinedButton.icon(
+      key: const ValueKey('open-monthly-statement'),
+      onPressed: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ResidentBillingStatementScreen(
+              service: widget.statementService,
+            ),
+          ),
+        );
+      },
+      icon: const Icon(Icons.receipt_long_outlined),
+      label: const Text('Monthly Statement'),
+    ),
+  );
 
   bool _isCurrentBill(Map<String, dynamic> bill) {
     final status = bill['status'];

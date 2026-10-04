@@ -118,41 +118,47 @@ void main() {
     }
   });
 
-  test('BillModel keeps malformed V2 minor units malformed (no truncation)', () {
-    final bill = BillModel.fromMap({
-      'schemaVersion': 2,
-      'communityId': 'C',
-      'flatId': 'f1',
-      'billingPeriod': '2026-04',
-      'amountMinor': 100.5,
-      'outstandingAmountMinor': 90.25,
-      'chargeLines': [
-        {
-          'lineId': 'm',
-          'code': 'maintenance',
-          'label': 'Maintenance',
-          'amountMinor': 10.75,
-        },
-      ],
-    }, 'bill-v2-fractional');
+  test(
+    'BillModel keeps malformed V2 minor units malformed (no truncation)',
+    () {
+      final bill = BillModel.fromMap({
+        'schemaVersion': 2,
+        'communityId': 'C',
+        'flatId': 'f1',
+        'billingPeriod': '2026-04',
+        'amountMinor': 100.5,
+        'outstandingAmountMinor': 90.25,
+        'chargeLines': [
+          {
+            'lineId': 'm',
+            'code': 'maintenance',
+            'label': 'Maintenance',
+            'amountMinor': 10.75,
+          },
+        ],
+      }, 'bill-v2-fractional');
 
-    expect(bill.amountMinor, isNull);
-    expect(bill.outstandingAmountMinor, isNull);
-    expect(bill.chargeLines.single.amountMinor, isNull);
-    expect(bill.amount, 0);
-  });
+      expect(bill.amountMinor, isNull);
+      expect(bill.outstandingAmountMinor, isNull);
+      expect(bill.chargeLines.single.amountMinor, isNull);
+      expect(bill.amount, 0);
+    },
+  );
 
-  test('BillModel does not synthesize pending status for V2 when status missing', () {
-    final bill = BillModel.fromMap({
-      'schemaVersion': 2,
-      'communityId': 'C',
-      'flatId': 'f1',
-      'billingPeriod': '2026-05',
-      'amountMinor': 10000,
-    }, 'bill-v2-no-status');
+  test(
+    'BillModel does not synthesize pending status for V2 when status missing',
+    () {
+      final bill = BillModel.fromMap({
+        'schemaVersion': 2,
+        'communityId': 'C',
+        'flatId': 'f1',
+        'billingPeriod': '2026-05',
+        'amountMinor': 10000,
+      }, 'bill-v2-no-status');
 
-    expect(bill.status, '');
-  });
+      expect(bill.status, '');
+    },
+  );
 
   test('BillModel toMap/toJson preserves legacy write shape', () {
     final now = DateTime.utc(2026, 1, 1);
