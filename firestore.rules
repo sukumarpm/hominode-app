@@ -12,8 +12,13 @@ service cloud.firestore {
     }
 
     function phoneAuthenticated() {
-      return signedIn()
-        && request.auth.token.firebase.sign_in_provider == 'phone';
+      // Accessing auth.token also fails closed for unauthenticated requests.
+      return request.auth.token.firebase.sign_in_provider == 'phone';
+    }
+
+    function phoneMatchesProfile(profile) {
+      return request.auth.token.firebase.sign_in_provider == 'phone'
+        && request.auth.token.phone_number == profile.phoneNumber;
     }
 
     function userPath() {
@@ -57,25 +62,33 @@ service cloud.firestore {
     // ============================================================
 
     function validAdmin() {
-      return hasAdminProfile()
-        && adminProfile().uid == request.auth.uid
-        && adminProfile().role == 'admin'
-        && adminProfile().isActive == true
-        && adminProfile().authorizedCommunityIds is list
-        && adminProfile().authorizedCommunityIds.size() > 0;
+      let profile = adminProfile();
+      return phoneMatchesProfile(profile)
+        && profile.uid == request.auth.uid
+        && profile.role == 'admin'
+        && profile.isActive == true
+        && profile.authorizedCommunityIds is list
+        && profile.authorizedCommunityIds.size() > 0;
     }
     
     function validSuperAdmin() {
-      return hasAdminProfile()
-        && adminProfile().uid == request.auth.uid
-        && adminProfile().role == 'superAdmin'
-        && adminProfile().isActive == true;
+      let profile = adminProfile();
+      return phoneMatchesProfile(profile)
+        && profile.uid == request.auth.uid
+        && profile.role == 'superAdmin'
+        && profile.isActive == true;
     }
 
     function adminCanAccessCommunity(communityId) {
-      return validAdmin()
+      let profile = adminProfile();
+      return phoneMatchesProfile(profile)
+        && profile.uid == request.auth.uid
+        && profile.role == 'admin'
+        && profile.isActive == true
+        && profile.authorizedCommunityIds is list
+        && profile.authorizedCommunityIds.size() > 0
         && communityId is string
-        && communityId in adminProfile().authorizedCommunityIds
+        && communityId in profile.authorizedCommunityIds
         && activeCommunity(communityId);
     }
 
@@ -218,11 +231,14 @@ function residentIdentityEligibleFor(profile) {
      * and any identity verification required for that resident type.
      */
     function approvedResident() {
-  return hasUserProfile()
-    && approvedResidentProfile(userProfile());
+  let profile = userProfile();
+  return phoneMatchesProfile(profile)
+    && approvedResidentProfile(profile);
 }
 
 function approvedResidentProfile(profile) {
+  // Profile eligibility only; every caller is wrapped by approvedResident(),
+  // which enforces the authenticated actor's Phone Auth provider.
   return profile.role == 'resident'
     && profile.approvalStatus == 'approved'
     && profile.isActive == true
@@ -237,9 +253,11 @@ function approvedResidentProfile(profile) {
 }
 
     function residentCanAccessCommunity(communityId) {
-      return approvedResident()
+      let profile = userProfile();
+      return phoneMatchesProfile(profile)
+        && approvedResidentProfile(profile)
         && communityId is string
-        && userProfile().communityId == communityId;
+        && profile.communityId == communityId;
     }
     
     // ============================================================
@@ -259,21 +277,29 @@ function securityProfile() {
 }
 
 function validSecurity() {
-  return hasSecurityProfile()
-    && securityProfile().uid == request.auth.uid
-    && securityProfile().role == 'security'
-    && securityProfile().isActive == true
-    && securityProfile().communityId is string
-    && securityProfile().communityId.size() > 0
+  let profile = securityProfile();
+  return phoneMatchesProfile(profile)
+    && profile.uid == request.auth.uid
+    && profile.role == 'security'
+    && profile.isActive == true
+    && profile.communityId is string
+    && profile.communityId.size() > 0
     && activeCommunity(
-      securityProfile().communityId
+      profile.communityId
     );
 }
 
 function securityCanAccessCommunity(communityId) {
-  return validSecurity()
+  let profile = securityProfile();
+  return phoneMatchesProfile(profile)
+    && profile.uid == request.auth.uid
+    && profile.role == 'security'
+    && profile.isActive == true
+    && profile.communityId is string
+    && profile.communityId.size() > 0
+    && activeCommunity(profile.communityId)
     && communityId is string
-    && securityProfile().communityId == communityId;
+    && profile.communityId == communityId;
 }
 
     function canAccessCommunity(communityId) {
@@ -287,7 +313,9 @@ function securityCanAccessCommunity(communityId) {
     // ============================================================
 
     function residentOwns(data) {
-  return approvedResident()
+  let profile = userProfile();
+  return phoneMatchesProfile(profile)
+    && approvedResidentProfile(profile)
 
     // If the document carries a communityId,
     // it must be the resident's own community.
@@ -295,7 +323,7 @@ function securityCanAccessCommunity(communityId) {
       !('communityId' in data)
       || (
         data.communityId is string
-        && data.communityId == userProfile().communityId
+        && data.communityId == profile.communityId
       )
     )
 
@@ -324,45 +352,51 @@ function securityCanAccessCommunity(communityId) {
 }
 
     function residentSameFlat(data) {
-  return approvedResident()
+  let profile = userProfile();
+  return phoneMatchesProfile(profile)
+    && approvedResidentProfile(profile)
 
     && (
       !('communityId' in data)
       || (
         data.communityId is string
-        && data.communityId == userProfile().communityId
+        && data.communityId == profile.communityId
       )
     )
 
-    && ('flatId' in userProfile())
-    && userProfile().flatId is string
-    && userProfile().flatId.size() > 0
+    && ('flatId' in profile)
+    && profile.flatId is string
+    && profile.flatId.size() > 0
     && ('flatId' in data)
-    && data.flatId == userProfile().flatId;
+    && data.flatId == profile.flatId;
 }
 
     function residentSameBuilding(data) {
-  return approvedResident()
+  let profile = userProfile();
+  return phoneMatchesProfile(profile)
+    && approvedResidentProfile(profile)
 
     && (
       !('communityId' in data)
       || (
         data.communityId is string
-        && data.communityId == userProfile().communityId
+        && data.communityId == profile.communityId
       )
     )
 
-    && ('buildingId' in userProfile())
-    && userProfile().buildingId is string
-    && userProfile().buildingId.size() > 0
+    && ('buildingId' in profile)
+    && profile.buildingId is string
+    && profile.buildingId.size() > 0
     && ('buildingId' in data)
-    && data.buildingId == userProfile().buildingId;
+    && data.buildingId == profile.buildingId;
 }
 
     function residentSameCommunity(data) {
-      return approvedResident()
+      let profile = userProfile();
+      return phoneMatchesProfile(profile)
+        && approvedResidentProfile(profile)
         && ('communityId' in data)
-        && data.communityId == userProfile().communityId;
+        && data.communityId == profile.communityId;
     }
 
 
@@ -455,11 +489,10 @@ function securityCanAccessCommunity(communityId) {
 
       // Any signed-in admin may read their own profile.
       // Super Admin may read the platform admin registry.
-      allow get: if signedIn()
-        && (
+      allow get: if (
           request.auth.uid == adminId
-          || validSuperAdmin()
-        );
+          && phoneMatchesProfile(resource.data)
+        ) || validSuperAdmin();
 
       // Required for Super Admin -> Admins page
       // and platform dashboard admin counters.
@@ -573,7 +606,7 @@ function securityCanAccessCommunity(communityId) {
       allow create: if false;
 
       // Resident can always read own profile.
-      allow get: if signedIn()
+      allow get: if phoneMatchesProfile(resource.data)
         && request.auth.uid == userId;
 
       // Admin can read users in authorized community.
@@ -1268,8 +1301,8 @@ function securityCanAccessCommunity(communityId) {
       // Resident creates only their own visitor
       // within their own community and flat.
       (
-        approvedResident()
-        && ('communityId' in request.resource.data)
+        // residentSameFlat below also checks canonical phone and eligibility.
+        ('communityId' in request.resource.data)
         && request.resource.data.communityId
           == userProfile().communityId
         && ('hostUserId' in request.resource.data)
@@ -1391,7 +1424,7 @@ function securityCanAccessCommunity(communityId) {
     }
     
     match /securityStaff/{securityId} {
-      allow get: if signedIn()
+      allow get: if phoneMatchesProfile(resource.data)
         && request.auth.uid == securityId;
 
       allow get, list: if adminCanAccessCommunity(

@@ -26,10 +26,10 @@ async function fixture() {
   const buildingId = `b-${suffix}`; const unitId = `u-${suffix}`;
   const batch = db.batch();
   batch.set(db.collection('communities').doc(communityId), {isActive: true, name: 'Community'});
-  batch.set(db.collection('users').doc(residentUid), {uid: residentUid, role: 'resident', communityId, isActive: true, approvalStatus: 'approved',
+  batch.set(db.collection('users').doc(residentUid), {uid: residentUid, phoneNumber: '+14155558888', role: 'resident', communityId, isActive: true, approvalStatus: 'approved',
     status: 'active', residentType: 'owner', ownershipType: 'owner', buildingId, flatId: unitId, name: 'Test Resident'});
-  batch.set(db.collection('securityStaff').doc(staffUid), {uid: staffUid, role: 'security', communityId, isActive: true, name: 'Security'});
-  batch.set(db.collection('admins').doc(adminUid), {uid: adminUid, role: 'admin', isActive: true, authorizedCommunityIds: [communityId]});
+  batch.set(db.collection('securityStaff').doc(staffUid), {uid: staffUid, phoneNumber: '+14155558888', role: 'security', communityId, isActive: true, name: 'Security'});
+  batch.set(db.collection('admins').doc(adminUid), {uid: adminUid, phoneNumber: '+14155558888', role: 'admin', isActive: true, authorizedCommunityIds: [communityId]});
   batch.set(db.collection('buildings').doc(buildingId), {communityId, name: 'Villa Cluster', structureType: 'villa_cluster', adminId: adminUid});
   batch.set(db.collection('flats').doc(unitId), {communityId, buildingId, status: 'occupied', residentUserId: residentUid, flatLabel: 'Villa-03', unitType: 'villa'});
   await batch.commit();

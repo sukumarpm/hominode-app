@@ -176,7 +176,6 @@ import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -215,13 +214,25 @@ Future<void> main() async {
         : AndroidProvider.playIntegrity,
     appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
   );
+  try {
+    final token = await FirebaseAppCheck.instance.getToken();
+    if (token == null || token.isEmpty) {
+      throw StateError('App Check did not provide an attestation token.');
+    }
+  } catch (error) {
+    debugPrint('App Check token acquisition failed (${error.runtimeType}).');
+    if (!kDebugMode) {
+      rethrow;
+    }
+  }
   unawaited(
     HominodePushNotifications.instance
         .initialize(onAuthorizedTap: ResidentNotificationRouter.handle)
         .timeout(const Duration(seconds: 8))
-        .catchError((Object error, StackTrace stackTrace) {
-          debugPrint('Notification initialization failed: $error');
-          debugPrintStack(stackTrace: stackTrace);
+        .catchError((Object error, StackTrace _) {
+          debugPrint(
+            'Notification initialization failed (${error.runtimeType}).',
+          );
         }),
   );
 
@@ -422,28 +433,13 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
     if (!mounted) return;
 
-    debugPrint(
-      '🔐 STARTUP AUTH UID: ${FirebaseAuth.instance.currentUser?.uid}',
-    );
-    debugPrint(
-      '🔐 STARTUP AUTH PHONE: ${FirebaseAuth.instance.currentUser?.phoneNumber}',
-    );
-
     final result = await FirebaseAuthService().restoreResidentSession(
       context.read<TenantResolutionService>(),
-    );
-
-    debugPrint(
-      '🔐 RESTORE RESULT: '
-      'success=${result.success}, '
-      'state=${result.state}, '
-      'message=${result.message}',
     );
 
     if (!mounted) return;
 
     final route = ResidentAuthRouting.routeFor(result);
-    debugPrint('🔐 RESTORE ROUTE: $route');
 
     Navigator.of(
       context,

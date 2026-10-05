@@ -74,7 +74,7 @@ class SecurityUserModel {
     }
 
     return SecurityUserModel(
-      uid: readString(data['uid']) ?? doc.id,
+      uid: readString(data['uid']) ?? '',
       communityId: readString(data['communityId']) ?? '',
       role: readString(data['role']) ?? '',
       isActive: data['isActive'] == true,
@@ -98,9 +98,19 @@ class SecurityUserModel {
   bool get isValidSecurityProfile {
     return uid.isNotEmpty &&
         communityId.isNotEmpty &&
+        phoneNumber.trim().isNotEmpty &&
         role == 'security' &&
         isActive;
   }
+
+  bool matchesVerifiedPhone({
+    required String expectedUid,
+    required String phone,
+  }) =>
+      uid == expectedUid &&
+      phoneNumber.trim().isNotEmpty &&
+      phone.trim().isNotEmpty &&
+      phoneNumber.trim() == phone.trim();
 
   String get displayShift {
     return shiftTiming ?? shift ?? 'Not assigned';

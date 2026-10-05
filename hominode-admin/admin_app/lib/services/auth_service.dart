@@ -73,19 +73,13 @@ class AuthService {
 
   Future<AuthResult> _signInAndAuthorize(AuthCredential credential) async {
     try {
-      final credentialResult = await _auth.signInWithCredential(credential);
-
-      debugPrint(
-        '✅ ADMIN FIREBASE AUTH SUCCESS: ${credentialResult.user?.uid}',
-      );
-      debugPrint('   Phone: ${credentialResult.user?.phoneNumber}');
+      await _auth.signInWithCredential(credential);
 
       final result = await resolveAdminAuthorization();
 
       debugPrint('🔐 ADMIN AUTH RESULT');
       debugPrint('   success: ${result.success}');
       debugPrint('   status: ${result.status}');
-      debugPrint('   message: ${result.message}');
 
       if (!result.success) {
         debugPrint('❌ Admin authorization failed - signing out');
@@ -94,7 +88,7 @@ class AuthService {
 
       return result;
     } on FirebaseAuthException catch (e) {
-      debugPrint('❌ Firebase Auth error: ${e.code} / ${e.message}');
+      debugPrint('Admin Firebase Auth failed (${e.code}).');
 
       return AuthResult(
         success: false,
@@ -102,7 +96,7 @@ class AuthService {
         status: AdminAuthStatus.error,
       );
     } catch (e, stackTrace) {
-      debugPrint('❌ Admin login unexpected error: $e');
+      debugPrint('Admin login failed (${e.runtimeType}).');
       debugPrintStack(stackTrace: stackTrace);
 
       return const AuthResult(
@@ -122,10 +116,17 @@ class AuthService {
         status: AdminAuthStatus.unauthenticated,
       );
     }
-    if (user.phoneNumber == null ||
-        !user.providerData.any(
-          (p) => p.providerId == PhoneAuthProvider.PROVIDER_ID,
-        )) {
+    bool verifiedPhoneSession = false;
+    try {
+      final tokenResult = await user.getIdTokenResult();
+      verifiedPhoneSession = hasVerifiedPhoneAuth(
+        phoneNumber: user.phoneNumber,
+        signInProvider: tokenResult.signInProvider,
+      );
+    } catch (_) {
+      // Token verification failures must fail closed during restore as well.
+    }
+    if (!verifiedPhoneSession) {
       return AuthResult(
         success: false,
         message: 'This session was not authenticated by phone OTP.',
@@ -140,6 +141,14 @@ class AuthService {
           success: false,
           message: 'No admin profile is linked to this phone account.',
           status: AdminAuthStatus.profileMissing,
+          user: user,
+        );
+      }
+      if (doc.data()!['uid'] != user.uid) {
+        return AuthResult(
+          success: false,
+          message: 'The admin profile does not match this phone account.',
+          status: AdminAuthStatus.invalidProfile,
           user: user,
         );
       }
@@ -192,12 +201,12 @@ class AuthService {
         adminProfile: profile,
       );
     } catch (e, stackTrace) {
-      debugPrint('❌ ADMIN AUTHORIZATION ERROR: $e');
+      debugPrint('Admin authorization failed (${e.runtimeType}).');
       debugPrintStack(stackTrace: stackTrace);
 
       return AuthResult(
         success: false,
-        message: 'Admin authorization could not be verified: $e',
+        message: 'Admin authorization could not be verified.',
         status: AdminAuthStatus.error,
         user: user,
       );
@@ -211,12 +220,20 @@ class AuthService {
     return doc.data()?['buildingId'] as String?;
   }
 
+  @visibleForTesting
+  static bool hasVerifiedPhoneAuth({
+    required String? phoneNumber,
+    required String? signInProvider,
+  }) =>
+      phoneNumber?.trim().isNotEmpty == true &&
+      signInProvider == PhoneAuthProvider.PROVIDER_ID;
+
   Future<void> signOut() async {
     // 1. Notification cleanup MUST happen while Firebase user is still authenticated.
     try {
       await HominodePushNotifications.instance.deactivateForLogout();
     } catch (e, stackTrace) {
-      debugPrint('Notification device removal failed: $e');
+      debugPrint('Notification device removal failed (${e.runtimeType}).');
       debugPrintStack(stackTrace: stackTrace);
       // Notification cleanup failure must not block logout.
     }

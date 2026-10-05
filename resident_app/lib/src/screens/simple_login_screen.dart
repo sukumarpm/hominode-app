@@ -231,7 +231,7 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen>
     } catch (e, stackTrace) {
       callbackFinished = true;
 
-      debugPrint('SimpleLoginScreen _sendOtp error: $e');
+      debugPrint('Resident OTP send failed (${e.runtimeType}).');
       debugPrintStack(stackTrace: stackTrace);
 
       if (!mounted) return;

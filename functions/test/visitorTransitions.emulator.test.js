@@ -4,9 +4,10 @@ const fs = require('node:fs');
 const {initializeTestEnvironment, assertSucceeds, assertFails} = require('@firebase/rules-unit-testing');
 const {serverTimestamp} = require('firebase/firestore');
 const enabled = !!process.env.FIRESTORE_EMULATOR_HOST;
+const testPhoneNumber = '+639170000000';
 let env;
 const check = (name, fn) => test(name, {skip: !enabled}, fn);
-const client = uid => env.authenticatedContext(uid, {firebase: {sign_in_provider: 'phone'}}).firestore();
+const client = uid => env.authenticatedContext(uid, {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore();
 const ref = (uid, id = 'visit') => client(uid).doc(`visitors/${id}`);
 const initial = {communityId: 'a', hostUserId: 'ra', flatId: 'fa', buildingId: 'ba', status: 'expected',
   isApproved: false, approvedBy: null, approvedAt: null, actualArrival: null, departure: null};
@@ -35,10 +36,10 @@ test.beforeEach(async () => {
       batch.set(db.doc(`communities/${c}`), {isActive: true});
       batch.set(db.doc(`buildings/b${c}`), {communityId: c});
       batch.set(db.doc(`flats/f${c}`), {communityId: c, buildingId: `b${c}`, residentUserId: `r${c}`});
-      batch.set(db.doc(`users/r${c}`), {uid: `r${c}`, role: 'resident', residentType: 'owner', isActive: true,
+      batch.set(db.doc(`users/r${c}`), {uid: `r${c}`, phoneNumber: testPhoneNumber, role: 'resident', residentType: 'owner', isActive: true,
         approvalStatus: 'approved', communityId: c, buildingId: `b${c}`, flatId: `f${c}`});
-      batch.set(db.doc(`admins/a${c}`), {uid: `a${c}`, role: 'admin', isActive: true, authorizedCommunityIds: [c]});
-      batch.set(db.doc(`securityStaff/s${c}`), {uid: `s${c}`, role: 'security', isActive: true, communityId: c});
+      batch.set(db.doc(`admins/a${c}`), {uid: `a${c}`, phoneNumber: testPhoneNumber, role: 'admin', isActive: true, authorizedCommunityIds: [c]});
+      batch.set(db.doc(`securityStaff/s${c}`), {uid: `s${c}`, phoneNumber: testPhoneNumber, role: 'security', isActive: true, communityId: c});
     }
     batch.set(db.doc('visitors/visit'), initial);
     await batch.commit();

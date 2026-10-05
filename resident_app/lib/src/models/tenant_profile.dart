@@ -3,6 +3,7 @@ class TenantProfile {
   final String userId;
   final String communityId;
   final String role;
+  final String phoneNumber;
   final bool isActive;
   final String status;
   final String approvalStatus;
@@ -16,6 +17,7 @@ class TenantProfile {
     required this.userId,
     required this.communityId,
     required this.role,
+    this.phoneNumber = '',
     required this.isActive,
     this.status = 'active',
     this.approvalStatus = 'approved',
@@ -28,9 +30,12 @@ class TenantProfile {
 
   factory TenantProfile.fromMap(String userId, Map<String, dynamic> data) {
     return TenantProfile(
-      userId: userId,
+      userId: data['uid'] is String ? (data['uid'] as String).trim() : '',
       communityId: data['communityId'] as String? ?? '',
       role: data['role'] as String? ?? '',
+      phoneNumber: data['phoneNumber'] is String
+          ? (data['phoneNumber'] as String).trim()
+          : '',
       isActive: data['isActive'] == true,
       status: data['status'] is String
           ? (data['status'] as String).trim().toLowerCase()

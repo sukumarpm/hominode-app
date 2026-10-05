@@ -23,7 +23,7 @@ void main() {
     test('rejects inactive resident', () {
       expect(
         FirebaseAuthService.validateResidentProfile(profile(isActive: false)),
-        contains('inactive'),
+        contains('not active'),
       );
     });
 
@@ -37,7 +37,79 @@ void main() {
     test('rejects non-resident role', () {
       expect(
         FirebaseAuthService.validateResidentProfile(profile(role: 'admin')),
-        contains('resident accounts only'),
+        contains('not registered as a Resident'),
+      );
+    });
+
+    test('requires the current ID token to come from Phone Auth', () {
+      expect(
+        FirebaseAuthService.hasVerifiedPhoneAuth(
+          phoneNumber: '+639171234567',
+          signInProvider: 'phone',
+        ),
+        isTrue,
+      );
+      expect(
+        FirebaseAuthService.hasVerifiedPhoneAuth(
+          phoneNumber: '+639171234567',
+          signInProvider: 'password',
+        ),
+        isFalse,
+      );
+      expect(
+        FirebaseAuthService.hasVerifiedPhoneAuth(
+          phoneNumber: '+639171234567',
+          signInProvider: 'custom',
+        ),
+        isFalse,
+      );
+      expect(
+        FirebaseAuthService.hasVerifiedPhoneAuth(
+          phoneNumber: '+639171234567',
+          signInProvider: 'anonymous',
+        ),
+        isFalse,
+      );
+      expect(
+        FirebaseAuthService.hasVerifiedPhoneAuth(
+          phoneNumber: null,
+          signInProvider: 'phone',
+        ),
+        isFalse,
+      );
+    });
+
+    test('binds resident document identity and phone to verified auth', () {
+      final canonical = TenantProfile(
+        userId: 'uid-1',
+        phoneNumber: '+639171234567',
+        communityId: 'community-a',
+        role: 'resident',
+        isActive: true,
+      );
+      expect(
+        FirebaseAuthService.validateResidentIdentity(
+          canonical,
+          uid: 'uid-1',
+          phone: '+639171234567',
+        ),
+        isNull,
+      );
+      expect(
+        FirebaseAuthService.validateResidentIdentity(
+          canonical,
+          uid: 'different-uid',
+          phone: '+639171234567',
+        ),
+        isNotNull,
+      );
+      expect(
+        FirebaseAuthService.validateResidentIdentity(
+          canonical,
+          uid: 'uid-1',
+          phone: '+639179999999',
+        ),
+        isNotNull,
       );
     });
   });

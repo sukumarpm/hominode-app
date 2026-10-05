@@ -50,10 +50,12 @@ void main() {
     final gateway = _FakePhoneAuthGateway();
     await tester.pumpWidget(_app(gateway));
 
+    await tester.enterText(find.byType(TextField), '+639171234567');
     await tester.tap(find.text('Send OTP'));
     await tester.pumpAndSettle();
 
     expect(gateway.sendCount, 1);
     expect(find.text('OTP started'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 65));
   });
 }

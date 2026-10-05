@@ -33,11 +33,16 @@ const readOnlyCollections = ['paymentProofsV2', 'paymentTransactions', 'paymentA
 
 test.describe('Billing V2 read-only rules', {skip: !process.env.FIRESTORE_EMULATOR_HOST}, () => {
   let rules;
-  const client = uid => uid ? rules.authenticatedContext(uid, {firebase: {sign_in_provider: 'phone'}}).firestore()
+  const testPhoneNumber = '+639170000000';
+  const client = uid => uid ? rules.authenticatedContext(uid, {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore()
     : rules.unauthenticatedContext().firestore();
   const seed = async entries => rules.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
-    for (const [path, data] of Object.entries(entries)) await setDoc(doc(db, path), data);
+    for (const [path, data] of Object.entries(entries)) {
+      const collection = path.split('/')[0];
+      const profile = ['admins', 'users', 'securityStaff'].includes(collection);
+      await setDoc(doc(db, path), profile ? {phoneNumber: testPhoneNumber, ...data} : data);
+    }
   });
   test.before(async () => {
     const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');

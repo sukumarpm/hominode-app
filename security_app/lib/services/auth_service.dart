@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
 
 import '../models/security_community_model.dart';
@@ -147,84 +148,110 @@ class AuthService {
       );
     }
 
-    final doc = await _firestore
-        .collection('securityStaff')
-        .doc(user.uid)
-        .get();
-
-    if (!doc.exists) {
+    bool verifiedPhoneSession = false;
+    try {
+      final tokenResult = await user.getIdTokenResult();
+      verifiedPhoneSession = hasVerifiedPhoneAuth(
+        phoneNumber: user.phoneNumber,
+        signInProvider: tokenResult.signInProvider,
+      );
+    } catch (_) {
+      // A missing/unreadable token result cannot authorize an operational session.
+    }
+    if (!verifiedPhoneSession) {
       await _safeSignOut();
-
       throw const SecurityAuthException(
-        'profile-not-found',
-        'No Security account is linked to this phone number. Please contact your Community Admin.',
+        'phone-auth-required',
+        'Please sign in with a verified phone number.',
       );
     }
 
-    final profile = SecurityUserModel.fromFirestore(doc);
+    try {
+      final doc = await _firestore
+          .collection('securityStaff')
+          .doc(user.uid)
+          .get();
 
-    if (profile.uid != user.uid) {
+      if (!doc.exists) {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'profile-not-found',
+          'No Security account is linked to this phone number. Please contact your Community Admin.',
+        );
+      }
+
+      final profile = SecurityUserModel.fromFirestore(doc);
+
+      if (!profile.matchesVerifiedPhone(
+        expectedUid: user.uid,
+        phone: user.phoneNumber!,
+      )) {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'invalid-profile',
+          'Security account could not be verified.',
+        );
+      }
+
+      if (profile.role != 'security') {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'wrong-role',
+          'This phone number is not registered as a Security account.',
+        );
+      }
+
+      if (!profile.isActive) {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'account-disabled',
+          'Your Security account is not active. Please contact your Community Admin.',
+        );
+      }
+
+      if (profile.communityId.trim().isEmpty) {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'community-missing',
+          'No community is assigned to this Security account.',
+        );
+      }
+
+      final communityDoc = await _firestore
+          .collection('communities')
+          .doc(profile.communityId)
+          .get();
+
+      if (!communityDoc.exists) {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'community-not-found',
+          'Assigned community could not be found.',
+        );
+      }
+
+      final community = SecurityCommunityModel.fromFirestore(communityDoc);
+
+      if (!community.isActive) {
+        await _safeSignOut();
+
+        throw const SecurityAuthException(
+          'community-inactive',
+          'This community is currently unavailable.',
+        );
+      }
+
+      return profile;
+    } catch (_) {
       await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'invalid-profile',
-        'Security account could not be verified.',
-      );
+      rethrow;
     }
-
-    if (profile.role != 'security') {
-      await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'wrong-role',
-        'This phone number is not registered as a Security account.',
-      );
-    }
-
-    if (!profile.isActive) {
-      await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'account-disabled',
-        'Your Security account is not active. Please contact your Community Admin.',
-      );
-    }
-
-    if (profile.communityId.trim().isEmpty) {
-      await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'community-missing',
-        'No community is assigned to this Security account.',
-      );
-    }
-
-    final communityDoc = await _firestore
-        .collection('communities')
-        .doc(profile.communityId)
-        .get();
-
-    if (!communityDoc.exists) {
-      await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'community-not-found',
-        'Assigned community could not be found.',
-      );
-    }
-
-    final community = SecurityCommunityModel.fromFirestore(communityDoc);
-
-    if (!community.isActive) {
-      await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'community-inactive',
-        'This community is currently unavailable.',
-      );
-    }
-
-    return profile;
   }
 
   Future<void> logout() async {
@@ -235,9 +262,19 @@ class AuthService {
   Future<void> _safeSignOut() async {
     try {
       await HominodePushNotifications.instance.deactivateForLogout();
+    } catch (_) {}
+    try {
       await _auth.signOut();
     } catch (_) {}
   }
+
+  @visibleForTesting
+  static bool hasVerifiedPhoneAuth({
+    required String? phoneNumber,
+    required String? signInProvider,
+  }) =>
+      phoneNumber?.trim().isNotEmpty == true &&
+      signInProvider == PhoneAuthProvider.PROVIDER_ID;
 
   String _firebaseAuthMessage(FirebaseAuthException error) {
     switch (error.code) {

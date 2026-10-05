@@ -26,21 +26,24 @@ Future<void> main() async {
     appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
   );
   try {
-    final appCheckToken = await FirebaseAppCheck.instance.getToken(true);
-
-    debugPrint(
-      '🔐 SECURITY APP CHECK TOKEN AVAILABLE: '
-      '${appCheckToken?.isNotEmpty == true}',
-    );
-  } catch (e) {
-    debugPrint('❌ SECURITY APP CHECK TOKEN ERROR: $e');
+    final appCheckToken = await FirebaseAppCheck.instance.getToken();
+    if (appCheckToken == null || appCheckToken.isEmpty) {
+      throw StateError('App Check did not provide an attestation token.');
+    }
+  } catch (error, stackTrace) {
+    debugPrint('App Check token acquisition failed (${error.runtimeType}).');
+    if (kDebugMode) {
+      debugPrintStack(stackTrace: stackTrace);
+    } else {
+      rethrow;
+    }
   }
   try {
     await HominodePushNotifications.instance.initialize(
       onAuthorizedTap: SecurityNotificationRouter.handle,
     );
   } catch (error, stackTrace) {
-    debugPrint('Notification initialization failed: $error');
+    debugPrint('Notification initialization failed (${error.runtimeType}).');
     debugPrintStack(stackTrace: stackTrace);
   }
 

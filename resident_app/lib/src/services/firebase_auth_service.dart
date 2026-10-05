@@ -106,11 +106,6 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     // Clear credentials from any previous OTP attempt.
     _pendingAutoCredential = null;
 
-    if (kDebugMode) {
-      await FirebaseAuth.instance.setSettings(
-        appVerificationDisabledForTesting: true,
-      );
-    }
     await _auth.verifyPhoneNumber(
       phoneNumber: phoneNumber,
       timeout: const Duration(seconds: 60),
@@ -129,11 +124,7 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
       },
 
       verificationFailed: (error) {
-        debugPrint(
-          '[PhoneAuth] verificationFailed '
-          'code=${error.code} '
-          'message=${error.message}',
-        );
+        debugPrint('[PhoneAuth] verification failed (${error.code}).');
 
         onError(
           AuthResult.failure(
@@ -147,15 +138,13 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
         _verificationId = verificationId;
         _resendToken = resendToken;
 
-        debugPrint('[PhoneAuth] OTP sent. verificationId received.');
-
         onCodeSent(verificationId);
       },
 
       codeAutoRetrievalTimeout: (verificationId) {
         _verificationId = verificationId;
 
-        debugPrint('[PhoneAuth] Auto retrieval timeout.');
+        debugPrint('[PhoneAuth] Verification auto-retrieval timed out.');
       },
     );
   }
@@ -193,9 +182,8 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
 
       // THIS is now the only point where phone sign-in occurs.
       return await _completePhoneSignIn(credential, tenantResolver);
-    } catch (e, stackTrace) {
-      debugPrint('[PhoneAuth] verifyOtp error: $e');
-      debugPrintStack(stackTrace: stackTrace);
+    } catch (e) {
+      debugPrint('[PhoneAuth] Verification failed (${e.runtimeType}).');
 
       return AuthResult.failure(
         message: 'Unable to verify this phone number. Please try again.',
@@ -210,6 +198,13 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     if (user == null) {
       return AuthResult.failure(message: 'No authenticated session.');
     }
+    if (!await _isVerifiedPhoneSession(user)) {
+      await _rejectSession(tenantResolver);
+      return AuthResult.failure(
+        message: 'Please sign in with a verified phone number.',
+        errorCode: 'phone-auth-required',
+      );
+    }
     return _resolveResident(user, tenantResolver);
   }
 
@@ -219,7 +214,7 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
   ) async {
     try {
       final user = (await _auth.signInWithCredential(credential)).user;
-      if (user == null || user.phoneNumber == null) {
+      if (user == null || !await _isVerifiedPhoneSession(user)) {
         await _rejectSession(tenantResolver);
         return AuthResult.failure(message: 'Phone authentication failed.');
       }
@@ -243,6 +238,13 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     TenantResolutionService tenantResolver,
   ) async {
     try {
+      if (!await _isVerifiedPhoneSession(user)) {
+        await _rejectSession(tenantResolver);
+        return AuthResult.failure(
+          message: 'Please sign in with a verified phone number.',
+          errorCode: 'phone-auth-required',
+        );
+      }
       var profile = await tenantResolver.loadAuthenticatedProfile();
 
       if (profile == null) {
@@ -264,6 +266,19 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
             state: ResidentAuthState.registrationRequired,
           );
         }
+      }
+
+      if (validateResidentIdentity(
+            profile,
+            uid: user.uid,
+            phone: user.phoneNumber!,
+          ) !=
+          null) {
+        await _rejectSession(tenantResolver);
+        return AuthResult.failure(
+          message: 'The resident profile does not match this phone account.',
+          errorCode: 'resident-identity-mismatch',
+        );
       }
 
       // 2. Validate Role
@@ -407,7 +422,7 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
         state: ResidentAuthState.blocked,
       );
     } catch (e) {
-      debugPrint('[PhoneAuth] Unexpected error during resident resolution: $e');
+      debugPrint('[PhoneAuth] Resident resolution failed (${e.runtimeType}).');
 
       tenantResolver.clear();
       FlatAccessControlService.instance.clearCache();
@@ -433,10 +448,42 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     return null;
   }
 
-  Future<AuthResult> signOut([TenantResolutionService? tenantResolver]) async {
-    debugPrint('🚨 FirebaseAuthService.signOut CALLED');
-    debugPrintStack();
+  @visibleForTesting
+  static String? validateResidentIdentity(
+    TenantProfile profile, {
+    required String uid,
+    required String phone,
+  }) {
+    if (profile.userId.trim().isEmpty ||
+        profile.userId != uid ||
+        profile.phoneNumber.trim().isEmpty ||
+        profile.phoneNumber.trim() != phone.trim()) {
+      return 'The resident profile does not match this phone account.';
+    }
+    return null;
+  }
 
+  static Future<bool> _isVerifiedPhoneSession(User user) async {
+    try {
+      final tokenResult = await user.getIdTokenResult();
+      return hasVerifiedPhoneAuth(
+        phoneNumber: user.phoneNumber,
+        signInProvider: tokenResult.signInProvider,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @visibleForTesting
+  static bool hasVerifiedPhoneAuth({
+    required String? phoneNumber,
+    required String? signInProvider,
+  }) =>
+      phoneNumber?.trim().isNotEmpty == true &&
+      signInProvider == PhoneAuthProvider.PROVIDER_ID;
+
+  Future<AuthResult> signOut([TenantResolutionService? tenantResolver]) async {
     try {
       await HominodePushNotifications.instance.deactivateForLogout();
       await _auth.signOut();
@@ -452,13 +499,14 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
   }
 
   Future<void> _rejectSession(TenantResolutionService tenantResolver) async {
-    debugPrint('🚨 _rejectSession CALLED');
-    debugPrintStack();
-
     tenantResolver.clear();
     FlatAccessControlService.instance.clearCache();
 
-    await HominodePushNotifications.instance.deactivateForLogout();
+    try {
+      await HominodePushNotifications.instance.deactivateForLogout();
+    } catch (_) {
+      // Auth rejection must still clear the Firebase session.
+    }
     await _auth.signOut();
   }
 

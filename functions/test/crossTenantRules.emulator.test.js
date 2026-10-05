@@ -11,6 +11,7 @@ const {
 const {serverTimestamp} = require("firebase/firestore");
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 let environment;
+const testPhoneNumber = "+639170000000";
 
 test.before(async () => {
   if (!enabled) return;
@@ -25,7 +26,9 @@ test.before(async () => {
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const batch = db.batch();
-    const set = (collection, id, data) => batch.set(db.collection(collection).doc(id), data);
+    const set = (collection, id, data) => batch.set(db.collection(collection).doc(id),
+      ["admins", "users", "securityStaff"].includes(collection) ?
+        {phoneNumber: testPhoneNumber, ...data} : data);
     set("communities", "community-a", { name: "A", isActive: true });
     set("communities", "community-b", { name: "B", isActive: true });
     set("communities", "community-off", { name: "Off", isActive: false });
@@ -112,8 +115,56 @@ test.after(async () => {
 });
 
 function dbFor(uid) {
-  return environment.authenticatedContext(uid).firestore();
+  return dbForClaims(uid, {firebase: {sign_in_provider: "phone"}});
 }
+
+function dbForClaims(uid, claims) {
+  const withPhone = claims.firebase?.sign_in_provider === "phone" ?
+    {...claims, phone_number: claims.phone_number ?? testPhoneNumber} : claims;
+  return environment.authenticatedContext(uid, withPhone).firestore();
+}
+
+test("Phone Auth is required for Admin, Resident, and Security Firestore authority", { skip: !enabled }, async () => {
+  await assertSucceeds(dbFor("admin-a").doc("bills/bill-a").get());
+  await assertSucceeds(dbFor("resident-a").doc("bills/bill-a").get());
+  await assertSucceeds(dbFor("security-a").doc("gates/gate-a").get());
+
+  const passwordAuth = uid => dbForClaims(uid, {firebase: {sign_in_provider: "password"}});
+  await assertFails(passwordAuth("admin-a").doc("bills/bill-a").get());
+  await assertFails(passwordAuth("resident-a").doc("bills/bill-a").get());
+  await assertFails(passwordAuth("security-a").doc("gates/gate-a").get());
+  await assertFails(passwordAuth("super").doc("admins/super").get());
+});
+
+test("own Resident and Security profile reads require Phone Auth", { skip: !enabled }, async () => {
+  await assertSucceeds(dbFor("resident-a").doc("users/resident-a").get());
+  await assertSucceeds(dbFor("security-a").doc("securityStaff/security-a").get());
+
+  const passwordAuth = uid => dbForClaims(uid, {firebase: {sign_in_provider: "password"}});
+  await assertFails(passwordAuth("resident-a").doc("users/resident-a").get());
+  await assertFails(passwordAuth("security-a").doc("securityStaff/security-a").get());
+
+  const wrongPhoneAuth = uid => dbForClaims(uid, {
+    phone_number: "+639170000001",
+    firebase: {sign_in_provider: "phone"},
+  });
+  await assertFails(wrongPhoneAuth("admin-a").doc("bills/bill-a").get());
+  await assertFails(wrongPhoneAuth("resident-a").doc("users/resident-a").get());
+  await assertFails(wrongPhoneAuth("security-a").doc("securityStaff/security-a").get());
+});
+
+test("SuperAdmin reads another admin using the actor's canonical phone", { skip: !enabled }, async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc("admins/admin-other-phone").set({
+      uid: "admin-other-phone", phoneNumber: "+639170000002",
+      role: "admin", isActive: true, authorizedCommunityIds: ["community-a"],
+    });
+  });
+  await assertSucceeds(dbFor("super").doc("admins/admin-other-phone").get());
+  await assertFails(dbForClaims("super", {
+    phone_number: "+639170000002", firebase: {sign_in_provider: "phone"},
+  }).doc("admins/admin-other-phone").get());
+});
 
 test("ordinary admins remain confined to authorized active communities", { skip: !enabled }, async () => {
   await assertSucceeds(dbFor("admin-a").collection("bills").doc("bill-a").get());
@@ -556,7 +607,7 @@ test("amenity create and update require an existing building in the same communi
 
 test("amenity writes reject inactive and revoked Admins using their current profile", { skip: !enabled }, async () => {
   const uid = "amenity-admin-revoked";
-  const profile = { uid, role: "admin", isActive: true, authorizedCommunityIds: ["community-a"] };
+  const profile = { uid, phoneNumber: testPhoneNumber, role: "admin", isActive: true, authorizedCommunityIds: ["community-a"] };
   const setProfile = (data) => environment.withSecurityRulesDisabled(async (context) => {
     await context.firestore().collection("admins").doc(uid).set(data);
   });
@@ -925,7 +976,7 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
   const {deleteField, setLogLevel} = require('firebase/firestore');
   const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
   let env;
-  const db = uid => env.authenticatedContext(uid).firestore();
+  const db = uid => env.authenticatedContext(uid, {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore();
   const ref = (uid, collection, id = 'record') => db(uid).collection(collection).doc(id);
   const scoped = {communityId: 'a', buildingId: 'ba', flatId: 'fa'};
   const owned = {...scoped, authorId: 'ra', content: 'Original'};
@@ -947,7 +998,11 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
     await env.clearFirestore();
     await env.withSecurityRulesDisabled(async context => {
       const batch = context.firestore().batch();
-      const put = (p, value) => batch.set(context.firestore().doc(p), value);
+      const put = (p, value) => {
+        const collection = p.split('/')[0];
+        const profile = ['admins', 'users', 'securityStaff'].includes(collection);
+        batch.set(context.firestore().doc(p), profile ? {phoneNumber: testPhoneNumber, ...value} : value);
+      };
       for (const c of ['a', 'b']) {
         put(`communities/${c}`, {isActive: true});
         put(`buildings/b${c}`, {communityId: c});

@@ -11,10 +11,12 @@ const {verifyPaymentProofCore: verify, rejectPaymentProofCore: reject, recordMan
 const enabled = !!process.env.FIRESTORE_EMULATOR_HOST && !!process.env.FIREBASE_STORAGE_EMULATOR_HOST;
 const projectId = 'demo-hominode-finance';
 const bucketName = `${projectId}.appspot.com`;
+const testPhoneNumber = '+639170000000';
 let env, app, db, bucket;
 const run = (name, fn) => test(name, {skip: !enabled}, fn);
-const client = uid => env.authenticatedContext(uid, {firebase: {sign_in_provider: 'phone'}}).firestore();
-const storage = uid => env.authenticatedContext(uid, {firebase: {sign_in_provider: 'phone'}}).storage(`gs://${bucketName}`);
+const client = uid => env.authenticatedContext(uid, {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore();
+const storage = uid => env.authenticatedContext(uid, {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).storage(`gs://${bucketName}`);
+const passwordStorage = uid => env.authenticatedContext(uid, {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'password'}}).storage(`gs://${bucketName}`);
 const receiptPath = id => `payment_receipts/C/b/r/${id}.png`;
 const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6V8AAAAASUVORK5CYII=', 'base64');
 const metadata = id => ({contentType: 'image/png', customMetadata: {paymentId: id, billId: 'b', communityId: 'C', residentUid: 'r'}});
@@ -42,12 +44,12 @@ test.beforeEach(async () => {
   const batch = db.batch();
   for (const [path, data] of Object.entries({
     'communities/C': {isActive: true}, 'communities/OTHER': {isActive: true},
-    'admins/a': {uid: 'a', role: 'admin', isActive: true, authorizedCommunityIds: ['C']},
-    'admins/other': {uid: 'other', role: 'admin', isActive: true, authorizedCommunityIds: ['OTHER']},
-    'admins/super': {uid: 'super', role: 'superAdmin', isActive: true, authorizedCommunityIds: ['C']},
-    'users/r': {uid: 'r', role: 'resident', residentType: 'owner', isActive: true, approvalStatus: 'approved', communityId: 'C', flatId: 'f'},
-    'users/r2': {uid: 'r2', role: 'resident', residentType: 'owner', isActive: true, approvalStatus: 'approved', communityId: 'C', flatId: 'f'},
-    'users/foreign': {uid: 'foreign', role: 'resident', residentType: 'owner', isActive: true, approvalStatus: 'approved', communityId: 'OTHER', flatId: 'foreign'},
+    'admins/a': {uid: 'a', phoneNumber: testPhoneNumber, role: 'admin', isActive: true, authorizedCommunityIds: ['C']},
+    'admins/other': {uid: 'other', phoneNumber: testPhoneNumber, role: 'admin', isActive: true, authorizedCommunityIds: ['OTHER']},
+    'admins/super': {uid: 'super', phoneNumber: testPhoneNumber, role: 'superAdmin', isActive: true, authorizedCommunityIds: ['C']},
+    'users/r': {uid: 'r', phoneNumber: testPhoneNumber, role: 'resident', residentType: 'owner', isActive: true, approvalStatus: 'approved', communityId: 'C', flatId: 'f'},
+    'users/r2': {uid: 'r2', phoneNumber: testPhoneNumber, role: 'resident', residentType: 'owner', isActive: true, approvalStatus: 'approved', communityId: 'C', flatId: 'f'},
+    'users/foreign': {uid: 'foreign', phoneNumber: testPhoneNumber, role: 'resident', residentType: 'owner', isActive: true, approvalStatus: 'approved', communityId: 'OTHER', flatId: 'foreign'},
     'flats/f': {communityId: 'C', residentUserId: 'r'}, 'bills/b': bill,
   })) batch.set(db.doc(path), data);
   await batch.commit();
@@ -62,6 +64,7 @@ run('resident upload/submission -> Admin verification -> immutable linked financ
   for (const uid of ['r', 'a']) {
     await assertSucceeds(client(uid).doc('bills/b').get()); await assertSucceeds(client(uid).doc('payments/p').get());
     await assertSucceeds(getMetadata(storageRef(storage(uid), receiptPath('p'))));
+    await assertFails(getMetadata(storageRef(passwordStorage(uid), receiptPath('p'))));
     for (const path of ['bills/b', 'payments/p']) {
       await assertFails(client(uid).doc(path).delete()); await assertFails(client(uid).doc(path).update({amount: 1}));
     }
@@ -129,6 +132,10 @@ run('Storage rejects foreign resident writes, overwrites and deletion of submitt
   await assertFails(uploadBytes(storageRef(storage('r'), receiptPath('p')), bytes, metadata('p')));
   await assertFails(deleteObject(storageRef(storage('r'), receiptPath('p'))));
   await assertSucceeds(getMetadata(storageRef(storage('r'), receiptPath('p'))));
+  const wrongPhone = env.authenticatedContext('r', {
+    phone_number: '+639170000001', firebase: {sign_in_provider: 'phone'},
+  }).storage(`gs://${bucketName}`);
+  await assertFails(getMetadata(storageRef(wrongPhone, receiptPath('p'))));
 });
 run('cross-community bill/payment and unrelated bill owner cannot settle', async () => {
   await submit();

@@ -9,6 +9,7 @@ const {
 } = require('@firebase/rules-unit-testing');
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+const testPhoneNumber = '+639170000000';
 let env;
 
 function directUpiProof(paymentId, fields = {}) {
@@ -70,6 +71,7 @@ test.before(async () => {
       ownershipType: 'owner',
       identityVerified: false,
       identityVerificationStatus: 'not_required',
+      phoneNumber: testPhoneNumber,
     });
 
     await db.collection('flats').doc('flat-test').set({
@@ -98,7 +100,7 @@ test.after(async () => {
 const run = (name, callback) => test(name, {skip: !enabled}, callback);
 
 run('resident can create Direct UPI payment proof', async () => {
-  const db = env.authenticatedContext('resident-test').firestore();
+  const db = env.authenticatedContext('resident-test', {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore();
 
   const paymentId = 'payment-test';
 
@@ -108,7 +110,7 @@ run('resident can create Direct UPI payment proof', async () => {
 });
 
 run('required payment timestamps must exist and be Firestore timestamps', async () => {
-  const db = env.authenticatedContext('resident-test').firestore();
+  const db = env.authenticatedContext('resident-test', {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore();
 
   for (const field of ['paymentDate', 'createdAt', 'updatedAt']) {
     const missingId = `missing-${field}`;
@@ -129,7 +131,7 @@ run('required payment timestamps must exist and be Firestore timestamps', async 
 });
 
 run('transactionId remains optional, nullable, and capped at 200 characters', async () => {
-  const db = env.authenticatedContext('resident-test').firestore();
+  const db = env.authenticatedContext('resident-test', {phone_number: testPhoneNumber, firebase: {sign_in_provider: 'phone'}}).firestore();
 
   const omittedId = 'transaction-omitted';
   const withoutTransactionId = directUpiProof(omittedId);

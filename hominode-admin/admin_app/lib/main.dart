@@ -33,9 +33,11 @@ Future<void> main() async {
     await FirebaseAppCheck.instance.activate(
       // Keep the existing Android / Apple providers for now.
       // They are deprecated parameter names, but they remain functional.
+      // ignore: deprecated_member_use
       androidProvider: kDebugMode
           ? AndroidProvider.debug
           : AndroidProvider.playIntegrity,
+      // ignore: deprecated_member_use
       appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
 
       // Required for admin.hominode.com.
@@ -45,18 +47,17 @@ Future<void> main() async {
     );
 
     try {
-      final appCheckToken = await FirebaseAppCheck.instance.getToken(true);
-
-      debugPrint(
-        'APP CHECK TOKEN AVAILABLE: '
-        '${appCheckToken?.isNotEmpty == true}',
-      );
+      final appCheckToken = await FirebaseAppCheck.instance.getToken();
+      if (appCheckToken == null || appCheckToken.isEmpty) {
+        throw StateError('App Check did not provide an attestation token.');
+      }
     } catch (error, stackTrace) {
-      debugPrint('APP CHECK TOKEN ERROR: $error');
+      debugPrint('App Check token acquisition failed (${error.runtimeType}).');
 
       if (kDebugMode) {
         debugPrintStack(stackTrace: stackTrace);
       }
+      rethrow;
     }
 
     try {
@@ -64,7 +65,7 @@ Future<void> main() async {
         onAuthorizedTap: AdminNotificationRouter.handle,
       );
     } catch (error, stackTrace) {
-      debugPrint('Notification initialization failed: $error');
+      debugPrint('Notification initialization failed (${error.runtimeType}).');
 
       if (kDebugMode) {
         debugPrintStack(stackTrace: stackTrace);
@@ -77,7 +78,7 @@ Future<void> main() async {
   } catch (error, stackTrace) {
     debugPrint(
       'Firebase/App Check initialization failed: '
-      '${error.runtimeType}: $error',
+      '${error.runtimeType}',
     );
 
     if (kDebugMode) {

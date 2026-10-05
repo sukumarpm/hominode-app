@@ -7,6 +7,11 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function phoneMatchesProfile(profile) {
+      return request.auth.token.firebase.sign_in_provider == 'phone'
+        && request.auth.token.phone_number == profile.phoneNumber;
+    }
+
     function residentMayAccessReceipt(communityId, billId, uid) {
       let profilePath =
         /databases/(default)/documents/users/$(request.auth.uid);
@@ -14,11 +19,10 @@ service firebase.storage {
       let billPath =
         /databases/(default)/documents/bills/$(billId);
 
-      return signedIn()
-        && uid == request.auth.uid
-
+      return uid == request.auth.uid
         && firestore.exists(profilePath)
         && firestore.exists(billPath)
+        && phoneMatchesProfile(firestore.get(profilePath).data)
 
         && firestore.get(profilePath).data.role == 'resident'
         && firestore.get(profilePath).data.approvalStatus == 'approved'
@@ -41,8 +45,8 @@ service firebase.storage {
       let adminPath =
         /databases/(default)/documents/admins/$(request.auth.uid);
 
-      return signedIn()
-        && firestore.exists(adminPath)
+      return firestore.exists(adminPath)
+        && phoneMatchesProfile(firestore.get(adminPath).data)
 
         && firestore.get(adminPath).data.role == 'admin'
         && firestore.get(adminPath).data.isActive == true
@@ -56,8 +60,8 @@ service firebase.storage {
   let adminPath =
     /databases/(default)/documents/admins/$(request.auth.uid);
 
-  return signedIn()
-    && firestore.exists(adminPath)
+  return firestore.exists(adminPath)
+    && phoneMatchesProfile(firestore.get(adminPath).data)
     && firestore.get(adminPath).data.role == 'admin'
     && firestore.get(adminPath).data.isActive == true
     && firestore.get(adminPath).data.authorizedCommunityIds is list
@@ -69,8 +73,8 @@ function residentMayAccessCommunity(communityId) {
   let profilePath =
     /databases/(default)/documents/users/$(request.auth.uid);
 
-  return signedIn()
-    && firestore.exists(profilePath)
+  return firestore.exists(profilePath)
+    && phoneMatchesProfile(firestore.get(profilePath).data)
     && firestore.get(profilePath).data.role == 'resident'
     && firestore.get(profilePath).data.approvalStatus == 'approved'
     && firestore.get(profilePath).data.isActive == true

@@ -9,6 +9,7 @@ const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const { defineSecret } = require("firebase-functions/params");
+const { hasVerifiedPhoneAuth, hasCanonicalPhoneProfile } = require("./phone_auth");
 
 const {
   RegistrationError,
@@ -117,6 +118,7 @@ const {
   registerNotificationDeviceCore,
   unregisterNotificationDeviceCore,
   sendNotificationCore,
+  APP_CONTEXTS,
 } = require("./notifications");
 const { acceptCurrentLegalTermsCore } = require("./legal_acceptance");
 const { getResidentNoticeIdsCore } = require("./resident_notices");
@@ -147,26 +149,37 @@ const {
 const REGION = "asia-southeast1";
 const GOOGLE_GEOCODING_API_KEY = defineSecret("GOOGLE_GEOCODING_API_KEY");
 
-/*
- * Shared callable wrapper.
- *
- * Converts RegistrationError into Firebase HttpsError while preventing
- * unexpected server errors from leaking implementation details.
- */
-function callable(core, failureMessage) {
-  return onCall({ region: REGION }, callableHandler(core, failureMessage));
+function requireAdminAppContext(app) {
+  const context = APP_CONTEXTS[app?.appId];
+  if (!context || context.role !== "admin" || context.appId !== "admin") {
+    throw new HttpsError("failed-precondition", "This app cannot perform this operation.");
+  }
+  return context;
+}
+
+function requirePhoneAuth(auth) {
+  if (!hasVerifiedPhoneAuth(auth)) {
+    throw new HttpsError("unauthenticated", "Verified phone authentication is required.");
+  }
+  return auth.uid;
 }
 
 function appCheckedCallable(
   core,
   failureMessage,
-  { includeMessaging = false } = {}
+  {
+    includeMessaging = false,
+    allowUnauthenticated = false,
+    allowProfilelessPhoneAuth = false,
+  } = {}
 ) {
   return onCall(
     { region: REGION, enforceAppCheck: true },
     callableHandler(core, failureMessage, {
       includeAppContext: true,
       includeMessaging,
+      requirePhoneAuth: !allowUnauthenticated,
+      requireCanonicalPhoneProfile: !allowUnauthenticated && !allowProfilelessPhoneAuth,
     })
   );
 }
@@ -174,12 +187,23 @@ function appCheckedCallable(
 function callableHandler(
   core,
   failureMessage,
-  { includeAppContext = false, includeMessaging = false } = {}
+  {
+    includeAppContext = false,
+    includeMessaging = false,
+    requirePhoneAuth: requirePhone = false,
+    requireCanonicalPhoneProfile = false,
+  } = {}
 ) {
   return async (request) => {
     try {
+      if (requirePhone) requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (requireCanonicalPhoneProfile &&
+        !await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError("permission-denied", "A matching active Hominode profile is required.");
+      }
       const context = {
-        db: getFirestore(),
+        db,
         bucket: getStorage().bucket(),
         auth: request.auth,
         data: request.data,
@@ -190,11 +214,12 @@ function callableHandler(
       if (includeMessaging) context.messaging = getMessaging();
       return await core(context);
     } catch (error) {
+      if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) {
         throw new HttpsError(error.code, error.message);
       }
 
-      console.error(failureMessage, error);
+      console.error(failureMessage);
 
       throw new HttpsError(
         "internal",
@@ -240,16 +265,16 @@ exports.rejectPaymentProof = appCheckedCallable(
   rejectPaymentProofCore,
   "Payment proof could not be rejected."
 );
-exports.assignSecurityWork = callable(
+exports.assignSecurityWork = appCheckedCallable(
   assignSecurityWorkCore,
   "Security work could not be assigned."
 );
 
-exports.deleteSecurityPlace = callable(
+exports.deleteSecurityPlace = appCheckedCallable(
   deleteSecurityPlaceCore,
   "Security place could not be removed."
 );
-exports.removeSecurityAssignment = callable(
+exports.removeSecurityAssignment = appCheckedCallable(
   removeSecurityAssignmentCore,
   "Security assignment could not be removed."
 );
@@ -282,7 +307,8 @@ exports.getResidentNoticeIds = appCheckedCallable(
 
 exports.resolveResidentCommunity = appCheckedCallable(
   resolveResidentCommunityCore,
-  "Community hostname could not be resolved."
+  "Community hostname could not be resolved.",
+  { allowUnauthenticated: true }
 );
 
 exports.getAmenityAvailability = appCheckedCallable(
@@ -300,17 +326,17 @@ exports.cancelAmenityBooking = appCheckedCallable(
   "The facility booking could not be cancelled."
 );
 
-exports.refreshPublicPlatformStats = callable(
+exports.refreshPublicPlatformStats = appCheckedCallable(
   refreshPublicPlatformStatsCore,
   "Public platform statistics could not be refreshed."
 );
 
-exports.seedSubscriptionPlans = callable(
+exports.seedSubscriptionPlans = appCheckedCallable(
   seedSubscriptionPlansCore,
   "Subscription plans could not be seeded."
 );
 
-exports.getCommunitySubscription = callable(
+exports.getCommunitySubscription = appCheckedCallable(
   getCommunitySubscriptionCore,
   "Community subscription could not be loaded."
 );
@@ -320,22 +346,22 @@ exports.getCurrentCommunityEntitlement = appCheckedCallable(
   "Community entitlement could not be loaded."
 );
 
-exports.createCommunitySubscription = callable(
+exports.createCommunitySubscription = appCheckedCallable(
   createCommunitySubscriptionCore,
   "Community subscription could not be created."
 );
 
-exports.changeCommunitySubscriptionPlan = callable(
+exports.changeCommunitySubscriptionPlan = appCheckedCallable(
   changeCommunitySubscriptionPlanCore,
   "Community subscription plan could not be changed."
 );
 
-exports.extendCommunitySubscription = callable(
+exports.extendCommunitySubscription = appCheckedCallable(
   extendCommunitySubscriptionCore,
   "Community subscription could not be extended."
 );
 
-exports.setCommunitySubscriptionStatus = callable(
+exports.setCommunitySubscriptionStatus = appCheckedCallable(
   setCommunitySubscriptionStatusCore,
   "Community subscription status could not be changed."
 );
@@ -396,56 +422,57 @@ initializeApp();
 /*
  * Resident registration
  */
-exports.registerResident = callable(
+exports.registerResident = appCheckedCallable(
   registerResidentCore,
-  "Registration could not be completed."
+  "Registration could not be completed.",
+  { allowProfilelessPhoneAuth: true }
 );
 
-exports.validateResidentBulkImport = callable(
+exports.validateResidentBulkImport = appCheckedCallable(
   validateResidentBulkImportCore,
   "The resident import could not be validated."
 );
 
-exports.importResidentsBulk = callable(
+exports.importResidentsBulk = appCheckedCallable(
   importResidentsBulkCore,
   "The resident import could not be completed."
 );
 
-exports.approveResidentRegistration = callable(
+exports.approveResidentRegistration = appCheckedCallable(
   approveResidentRegistrationCore,
   "Resident approval could not be completed."
 );
-exports.rejectResidentRegistration = callable(
+exports.rejectResidentRegistration = appCheckedCallable(
   rejectResidentRegistrationCore,
   "Resident rejection could not be completed."
 );
-exports.deactivateResident = callable(
+exports.deactivateResident = appCheckedCallable(
   deactivateResidentCore,
   "Resident deactivation could not be completed."
 );
-exports.reactivateResident = callable(
+exports.reactivateResident = appCheckedCallable(
   reactivateResidentCore,
   "Resident reactivation could not be completed."
 );
-exports.reassignResident = callable(
+exports.reassignResident = appCheckedCallable(
   reassignResidentCore,
   "Resident reassignment could not be completed."
 );
-exports.createResidentOnboarding = callable(
+exports.createResidentOnboarding = appCheckedCallable(
   createResidentOnboardingCore,
   "Resident onboarding could not be created."
 );
 
-exports.auditResidentAction = callable(
+exports.auditResidentAction = appCheckedCallable(
   auditResidentAction,
   "Resident action could not be audited."
 );
 
-exports.assignResidentOnboardingToFlat = callable(
+exports.assignResidentOnboardingToFlat = appCheckedCallable(
   assignResidentOnboardingToFlatCore,
   "Resident onboarding could not be assigned to the unit.",
 );
-exports.cancelResidentOnboardingReservation = callable(
+exports.cancelResidentOnboardingReservation = appCheckedCallable(
   cancelResidentOnboardingReservationCore,
   "Resident onboarding reservation could not be cancelled.",
 );
@@ -463,23 +490,23 @@ exports.renameUnit = appCheckedCallable(
   "Unable to rename unit."
 );
 
-exports.listAssignableResidentOnboardings = callable(
+exports.listAssignableResidentOnboardings = appCheckedCallable(
   listAssignableResidentOnboardingsCore,
   "Assignable resident onboardings could not be loaded.",
 );
-exports.submitResidentIdentityProof = callable(
+exports.submitResidentIdentityProof = appCheckedCallable(
   submitResidentIdentityProofCore,
   "Identity proof could not be submitted."
 );
-exports.getResidentIdentityProofUrl = callable(
+exports.getResidentIdentityProofUrl = appCheckedCallable(
   getResidentIdentityProofUrlCore,
   "Identity proof could not be opened."
 );
-exports.reviewResidentIdentityProof = callable(
+exports.reviewResidentIdentityProof = appCheckedCallable(
   reviewResidentIdentityProofCore,
   "Identity proof review could not be completed."
 );
-exports.moveOutResident = callable(
+exports.moveOutResident = appCheckedCallable(
   moveOutResidentCore,
   "Resident move-out could not be completed."
 );
@@ -487,76 +514,103 @@ exports.moveOutResident = callable(
 /*
  * Community management
  */
-exports.createCommunity = callable(
+exports.createCommunity = appCheckedCallable(
   createCommunityCore,
   "Community could not be created."
 );
 
-exports.updateCommunity = callable(
+exports.updateCommunity = appCheckedCallable(
   updateCommunityCore,
   "Community could not be updated."
 );
 
-exports.setCommunityActive = callable(
+exports.setCommunityActive = appCheckedCallable(
   setCommunityActiveCore,
   "Community status could not be updated."
 );
 
 exports.searchCommunityLocations = onCall(
-  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY] },
+  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY], enforceAppCheck: true },
   async (request) => {
+    const appContext = requireAdminAppContext(request.app);
     try {
+      requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (!await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError("permission-denied", "A matching Hominode profile is required.");
+      }
       return await communityLocationSearchCore({
-        db: getFirestore(),
+        db,
         auth: request.auth,
         data: request.data,
+        app: request.app,
+        appContext,
         apiKey: GOOGLE_GEOCODING_API_KEY.value(),
       });
     } catch (error) {
+      if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) {
         throw new HttpsError(error.code, error.message);
       }
-      console.error("Community location search failed.", error);
+      console.error("Community location search failed.");
       throw new HttpsError("internal", "Location search is temporarily unavailable.");
     }
   },
 );
 
 exports.resolveCommunityLocationPlace = onCall(
-  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY] },
+  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY], enforceAppCheck: true },
   async (request) => {
+    const appContext = requireAdminAppContext(request.app);
     try {
+      requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (!await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError("permission-denied", "A matching Hominode profile is required.");
+      }
       return await resolveCommunityLocationPlaceCore({
-        db: getFirestore(),
+        db,
         auth: request.auth,
         data: request.data,
+        app: request.app,
+        appContext,
         apiKey: GOOGLE_GEOCODING_API_KEY.value(),
       });
     } catch (error) {
+      if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) {
         throw new HttpsError(error.code, error.message);
       }
-      console.error("Community place resolution failed.", error);
+      console.error("Community place resolution failed.");
       throw new HttpsError("internal", "The selected place could not be loaded.");
     }
   },
 );
 
 exports.reverseGeocodeCommunityLocation = onCall(
-  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY] },
+  { region: REGION, secrets: [GOOGLE_GEOCODING_API_KEY], enforceAppCheck: true },
   async (request) => {
+    const appContext = requireAdminAppContext(request.app);
     try {
+      requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (!await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError("permission-denied", "A matching Hominode profile is required.");
+      }
       return await reverseGeocodeCommunityLocationCore({
-        db: getFirestore(),
+        db,
         auth: request.auth,
         data: request.data,
+        app: request.app,
+        appContext,
         apiKey: GOOGLE_GEOCODING_API_KEY.value(),
       });
     } catch (error) {
+      if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) {
         throw new HttpsError(error.code, error.message);
       }
-      console.error("Community reverse geocoding failed.", error);
+      console.error("Community reverse geocoding failed.");
       throw new HttpsError(
         "internal",
         "The address could not be determined. Enter the property address manually.",
@@ -565,7 +619,7 @@ exports.reverseGeocodeCommunityLocation = onCall(
   },
 );
 
-exports.updateCommunityLocation = callable(
+exports.updateCommunityLocation = appCheckedCallable(
   updateCommunityLocationCore,
   "Community location could not be updated."
 );
@@ -577,7 +631,7 @@ exports.updateCommunityPaymentConfig = appCheckedCallable(
 /*
  * Admin management
  */
-exports.createAdmin = callable(
+exports.createAdmin = appCheckedCallable(
   (args) =>
     createAdminCore({
       ...args,
@@ -586,12 +640,12 @@ exports.createAdmin = callable(
   "Admin could not be created."
 );
 
-exports.updateAdminAssignments = callable(
+exports.updateAdminAssignments = appCheckedCallable(
   updateAdminAssignmentsCore,
   "Admin assignments could not be updated."
 );
 
-exports.setAdminActive = callable(
+exports.setAdminActive = appCheckedCallable(
   setAdminActiveCore,
   "Admin status could not be updated."
 );
@@ -599,7 +653,7 @@ exports.setAdminActive = callable(
 /*
  * Security staff management
  */
-exports.createSecurityStaff = callable(
+exports.createSecurityStaff = appCheckedCallable(
   (args) =>
     createSecurityStaffCore({
       ...args,
@@ -608,12 +662,12 @@ exports.createSecurityStaff = callable(
   "Security staff could not be created."
 );
 
-exports.securityCheckIn = callable(
+exports.securityCheckIn = appCheckedCallable(
   securityCheckInCore,
   "Security check-in could not be completed."
 );
 
-exports.securityCheckOut = callable(
+exports.securityCheckOut = appCheckedCallable(
   securityCheckOutCore,
   "Security check-out could not be completed."
 );
@@ -621,17 +675,17 @@ exports.securityCheckOut = callable(
 /*
  * Community invite management
  */
-exports.listCommunityInvites = callable(
+exports.listCommunityInvites = appCheckedCallable(
   listCommunityInvitesCore,
   "Invites could not be loaded."
 );
 
-exports.createCommunityInvite = callable(
+exports.createCommunityInvite = appCheckedCallable(
   createCommunityInviteCore,
   "Invite could not be created."
 );
 
-exports.revokeCommunityInvite = callable(
+exports.revokeCommunityInvite = appCheckedCallable(
   revokeCommunityInviteCore,
   "Invite could not be revoked."
 );

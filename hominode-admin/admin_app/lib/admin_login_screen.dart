@@ -219,7 +219,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         },
       );
     } catch (e, stackTrace) {
-      debugPrint('Admin OTP send failed: $e');
+      debugPrint('Admin OTP send failed (${e.runtimeType}).');
       debugPrintStack(stackTrace: stackTrace);
 
       if (!mounted) return;
@@ -286,7 +286,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
       await _finish(result);
     } catch (e, stackTrace) {
-      debugPrint('Admin OTP verification failed: $e');
+      debugPrint('Admin OTP verification failed (${e.runtimeType}).');
       debugPrintStack(stackTrace: stackTrace);
 
       if (!mounted) return;
