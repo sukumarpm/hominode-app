@@ -17,6 +17,11 @@ const APP_CONTEXTS = Object.freeze({
     platform: "ios",
     role: "resident",
   },
+  "1:551984029668:web:1a46284d081d68170db1f1": {
+    appId: "resident",
+    platform: "web",
+    role: "resident",
+  },
   "1:551984029668:android:322fd085a03f0ff70db1f1": {
     appId: "admin",
     platform: "android",

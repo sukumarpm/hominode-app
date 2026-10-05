@@ -7,6 +7,8 @@ const {
 
 const RESIDENT_APP_ID = "1:551984029668:android:ef652ea4d8e070ca0db1f1";
 
+const RESIDENT_WEB = "1:551984029668:web:1a46284d081d68170db1f1";
+
 function snapshot(id, data) {
   return {id, exists: data != null, data: () => data};
 }
@@ -50,37 +52,39 @@ test("notice visibility preserves global, flat, published, and expiry semantics"
   assert.equal(noticeVisibleToResident({status: "published", expiresAt: new Date(now - 1)}, "flat-a", now), false);
 });
 
-test("trusted resolver derives canonical tenant/flat and returns only authorized IDs", async () => {
-  const profile = {
-    uid: "resident-a",
-    role: "resident",
-    residentType: "owner",
-    approvalStatus: "approved",
-    isActive: true,
-    communityId: "community-a",
-    flatId: "flat-a",
-  };
-  const db = fakeDb({
-    profile,
-    community: {isActive: true, ownerIdentityVerificationRequired: false},
-    notices: [
-      {id: "global", data: {communityId: "community-a", status: "published"}},
-      {id: "flat-a", data: {communityId: "community-a", status: "published", targetFlats: ["flat-a"]}},
-      {id: "flat-b", data: {communityId: "community-a", status: "published", targetFlats: ["flat-b"]}},
-      {id: "draft", data: {communityId: "community-a", status: "draft", targetFlats: []}},
-      {id: "other-community", data: {communityId: "community-b", status: "published", targetFlats: []}},
-    ],
-  });
+for (const appId of [RESIDENT_APP_ID, RESIDENT_WEB]) {
+  test(`trusted resolver derives canonical tenant/flat and returns only authorized IDs: ${appId}`, async () => {
+    const profile = {
+      uid: "resident-a",
+      role: "resident",
+      residentType: "owner",
+      approvalStatus: "approved",
+      isActive: true,
+      communityId: "community-a",
+      flatId: "flat-a",
+    };
+    const db = fakeDb({
+      profile,
+      community: {isActive: true, ownerIdentityVerificationRequired: false},
+      notices: [
+        {id: "global", data: {communityId: "community-a", status: "published"}},
+        {id: "flat-a", data: {communityId: "community-a", status: "published", targetFlats: ["flat-a"]}},
+        {id: "flat-b", data: {communityId: "community-a", status: "published", targetFlats: ["flat-b"]}},
+        {id: "draft", data: {communityId: "community-a", status: "draft", targetFlats: []}},
+        {id: "other-community", data: {communityId: "community-b", status: "published", targetFlats: []}},
+      ],
+    });
 
-  const result = await getResidentNoticeIdsCore({
-    db,
-    auth: {uid: "resident-a"},
-    app: {appId: RESIDENT_APP_ID},
+    const result = await getResidentNoticeIdsCore({
+      db,
+      auth: {uid: "resident-a"},
+      app: {appId},
+    });
+    assert.equal(result.communityId, "community-a");
+    assert.equal(result.flatId, "flat-a");
+    assert.deepEqual(result.noticeIds, ["global", "flat-a"]);
   });
-  assert.equal(result.communityId, "community-a");
-  assert.equal(result.flatId, "flat-a");
-  assert.deepEqual(result.noticeIds, ["global", "flat-a"]);
-});
+}
 
 test("trusted resolver rejects forged app context and ineligible resident state", async () => {
   const db = fakeDb({
@@ -114,4 +118,32 @@ test("trusted resolver rejects forged app context and ineligible resident state"
     }),
     (error) => error.code === "permission-denied",
   );
+});
+
+
+test("notice resolution rejects Admin web and unknown or forged Resident web identities before reading data", async () => {
+  for (const appId of [
+    "1:551984029668:web:5845083359a375d90db1f1",
+    "1:551984029668:web:unknown", `${RESIDENT_WEB}-forged`,
+  ]) {
+    await assert.rejects(getResidentNoticeIdsCore({
+      db: {}, auth: {uid: "resident-a"}, app: {appId},
+    }), {code: "failed-precondition"});
+  }
+});
+
+test("Resident web notice resolution preserves canonical role and lifecycle restrictions", async () => {
+  const profile = {
+    uid: "resident-a", role: "resident", residentType: "owner",
+    approvalStatus: "approved", isActive: true, communityId: "community-a", flatId: "flat-a",
+  };
+  for (const overrides of [
+    {uid: "other"}, {role: "admin"}, {isActive: false}, {approvalStatus: "pending"},
+    {residentType: "tenant", identityVerified: false},
+  ]) {
+    await assert.rejects(getResidentNoticeIdsCore({
+      db: fakeDb({profile: {...profile, ...overrides}, community: {isActive: true}, notices: []}),
+      auth: {uid: "resident-a"}, app: {appId: RESIDENT_WEB},
+    }), {code: "permission-denied"});
+  }
 });

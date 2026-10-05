@@ -139,6 +139,7 @@ test("an app/profile role mismatch is rejected", async () => {
   );
 });
 
+const RESIDENT_WEB = "1:551984029668:web:1a46284d081d68170db1f1";
 const ADMIN_WEB = "1:551984029668:web:5845083359a375d90db1f1";
 
 test("trusted Admin web ID matches the configured Flutter web app", () => {
@@ -178,7 +179,7 @@ test("existing iOS Admin, Resident and Security apps retain legal acceptance acc
 
 test("unknown, malformed, missing and inherited-key app IDs fail before profile access", async () => {
   for (const app of [undefined, {}, {appId: null}, {appId: 123}, {appId: {}}, {appId: ""},
-    {appId: "1:551984029668:web:unknown"}, {appId: `${ADMIN_WEB}-forged`},
+    {appId: "1:551984029668:web:unknown"}, {appId: `${ADMIN_WEB}-forged`}, {appId: `${RESIDENT_WEB}-forged`},
     {appId: "__proto__"}, {appId: "constructor"}, {appId: "toString"}]) {
     await assert.rejects(acceptCurrentLegalTermsCore({db: {}, auth: {uid: "a"}, app, data: displayedVersions}), {
       code: "failed-precondition", message: "This Firebase application is not authorized for legal acceptance.",
@@ -202,4 +203,46 @@ test("Admin web rejects missing, inactive, mismatched UID and wrong-role canonic
     await assert.rejects(acceptCurrentLegalTermsCore({db, auth: {uid: "a"}, app: {appId: ADMIN_WEB}, data: displayedVersions}), {code: "permission-denied"});
     assert.equal(db.values.get("admins/a")?.legalAcceptance, undefined);
   }
+});
+
+
+test("Resident web legal acceptance updates only the authenticated canonical Resident profile", async () => {
+  const resident = {uid: "a", role: "resident", isActive: true, approvalStatus: "approved"};
+  const otherResident = {...resident, uid: "other", communityId: "other-community"};
+  const admin = {uid: "a", role: "admin", isActive: true};
+  const security = {uid: "a", role: "security", isActive: true};
+  const db = fakeDb({
+    "users/a": resident, "users/other": otherResident,
+    "admins/a": admin, "securityStaff/a": security,
+  });
+  const result = await acceptCurrentLegalTermsCore({
+    db, auth: {uid: "a"}, app: {appId: RESIDENT_WEB},
+    data: {...displayedVersions, uid: "other", role: "admin", communityId: "other-community"},
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(legalAcceptanceIsCurrent(db.values.get("users/a").legalAcceptance), true);
+  assert.deepEqual(db.values.get("users/other"), otherResident);
+  assert.deepEqual(db.values.get("admins/a"), admin);
+  assert.deepEqual(db.values.get("securityStaff/a"), security);
+  assert.equal(db.values.size, 4);
+});
+
+test("Resident web legal acceptance rejects missing, mismatched, inactive and wrong-role profiles", async () => {
+  const resident = {uid: "a", role: "resident", isActive: true, approvalStatus: "approved"};
+  for (const profile of [
+    null, {...resident, uid: "other"}, {...resident, isActive: false},
+    {...resident, role: "admin"}, {...resident, role: "security"},
+    {...resident, approvalStatus: "pending"}, {...resident, status: "blocked"},
+  ]) {
+    const db = fakeDb(profile ? {"users/a": profile} : {});
+    await assert.rejects(acceptCurrentLegalTermsCore({
+      db, auth: {uid: "a"}, app: {appId: RESIDENT_WEB}, data: displayedVersions,
+    }), {code: "permission-denied"});
+    assert.equal(db.values.get("users/a")?.legalAcceptance, undefined);
+  }
+  const db = fakeDb({"users/a": resident});
+  await assert.rejects(acceptCurrentLegalTermsCore({
+    db, auth: {uid: "a"}, app: {appId: ADMIN_WEB}, data: displayedVersions,
+  }), {code: "permission-denied"});
+  assert.equal(db.values.get("users/a").legalAcceptance, undefined);
 });

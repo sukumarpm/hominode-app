@@ -9,6 +9,7 @@ const {
 } = require("../src/notifications");
 
 const RESIDENT_ANDROID = "1:551984029668:android:ef652ea4d8e070ca0db1f1";
+const RESIDENT_WEB = "1:551984029668:web:1a46284d081d68170db1f1";
 const ADMIN_ANDROID = "1:551984029668:android:322fd085a03f0ff70db1f1";
 const phoneAuth = (uid) => ({
   uid,
@@ -93,12 +94,19 @@ const activeAdmin = {
 };
 
 test("all configured Firebase app IDs have a single trusted role and platform", () => {
-  assert.equal(Object.keys(APP_CONTEXTS).length, 7);
-  assert.deepEqual(APP_CONTEXTS[RESIDENT_ANDROID], {
-    appId: "resident",
-    platform: "android",
-    role: "resident",
-  });
+  assert.equal(Object.keys(APP_CONTEXTS).length, 8);
+  for (const [firebaseAppId, role, platform] of [
+    [RESIDENT_ANDROID, "resident", "android"],
+    ["1:551984029668:ios:cb57ef578d5066b50db1f1", "resident", "ios"],
+    [RESIDENT_WEB, "resident", "web"],
+    [ADMIN_ANDROID, "admin", "android"],
+    ["1:551984029668:ios:c385b8730137f2710db1f1", "admin", "ios"],
+    ["1:551984029668:web:5845083359a375d90db1f1", "admin", "web"],
+    ["1:551984029668:android:93f99854319c9f9a0db1f1", "security", "android"],
+    ["1:551984029668:ios:7063832b4b5d53fc0db1f1", "security", "ios"],
+  ]) {
+    assert.deepEqual(APP_CONTEXTS[firebaseAppId], {appId: role, platform, role});
+  }
 });
 
 test("unknown App Check app IDs are rejected", async () => {
@@ -378,10 +386,54 @@ test("Admin web notification registration preserves tenant and Super Admin role 
 });
 
 test("notification context rejects unknown web, missing, malformed and inherited-key app IDs", async () => {
-  for (const app of [undefined, {}, {appId: 123}, {appId: ""}, {appId: "1:551984029668:web:unknown"},
+  for (const app of [undefined, {}, {appId: 123}, {appId: ""}, {appId: "1:551984029668:web:unknown"}, {appId: `${RESIDENT_WEB}-forged`},
     {appId: "__proto__"}, {appId: "constructor"}, {appId: "toString"}]) {
     await assert.rejects(registerNotificationDeviceCore({db: {}, auth: phoneAuth("admin-a"), app, data: {}}), {
       code: "failed-precondition", message: "This Firebase application is not authorized for notifications.",
     });
   }
+});
+
+
+test("Resident web registration derives its resident audience and tenant from the canonical profile", async () => {
+  const db = fakeDb({
+    "users/resident-a": activeResident,
+    "communities/COMMUNITY_A": activeCommunity,
+  });
+  const args = {db, auth: phoneAuth("resident-a"), app: {appId: RESIDENT_WEB}, data: {
+    installationId: "installation_web_123456", token: "token_web_12345678901234567890",
+    selectedCommunityId: "COMMUNITY_B", role: "admin", appId: "admin",
+  }};
+  const result = await registerNotificationDeviceCore(args);
+  const stored = db.values.get(`notificationDevices/${result.deviceId}`);
+  assert.equal(result.platform, "web");
+  assert.equal(stored.firebaseAppId, RESIDENT_WEB);
+  assert.equal(stored.communityId, "COMMUNITY_A");
+  assert.equal(stored.appId, "resident");
+  assert.equal(stored.role, "resident");
+  assert.equal(stored.audienceKey, "resident|resident|COMMUNITY_A|resident-a");
+  assert.equal((await unregisterNotificationDeviceCore(args)).removed, true);
+});
+
+test("trusted web apps cannot register another role or grant Resident web Admin sender authority", async () => {
+  const db = fakeDb({
+    "users/resident-a": activeResident, "admins/admin-a": activeAdmin,
+    "communities/COMMUNITY_A": activeCommunity,
+  });
+  for (const [appId, uid] of [[RESIDENT_WEB, "admin-a"], [ADMIN_WEB, "resident-a"]]) {
+    await assert.rejects(registerNotificationDeviceCore({db, auth: phoneAuth(uid), app: {appId}, data: {
+      installationId: "installation_web_123456", token: "token_web_12345678901234567890",
+      selectedCommunityId: "COMMUNITY_A",
+    }}), {code: "permission-denied"});
+  }
+  await assert.rejects(sendNotificationCore({
+    db, auth: phoneAuth("admin-a"), app: {appId: RESIDENT_WEB},
+    messaging: {sendEachForMulticast: async () => assert.fail("must not send")},
+    data: {
+      communityId: "COMMUNITY_A", recipientUid: "resident-a",
+      title: "Visitor approved", message: "Your visitor was approved.",
+      category: "visitor", priority: "high", sourceEntityId: "visitor-1",
+    },
+  }), {code: "permission-denied"});
+  assert.equal([...db.values.keys()].some(key => key.startsWith("notificationDevices/")), false);
 });
