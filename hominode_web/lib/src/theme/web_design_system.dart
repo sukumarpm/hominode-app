@@ -18,34 +18,33 @@ class RolePalette {
   );
 
   static const superAdmin = RolePalette(
-    primary: Color(0xFF155ACB),
-    dark: Color(0xFF071D49),
-    soft: Color(0xFFEAF1FF),
+    primary: Color(0xFF0E4778),
+    dark: Color(0xFF061C4C),
+    soft: Color(0xFFE8EEF8),
   );
   static const admin = RolePalette(
-    primary: Color(0xFF176BFF),
-    dark: Color(0xFF0A2243),
-    soft: Color(0xFFECF4FF),
+    primary: Color(0xFF0E4778),
+    dark: Color(0xFF061C4C),
+    soft: Color(0xFFEAF1FF),
   );
   static const resident = RolePalette(
-    primary: Color(0xFF88572F),
-    dark: Color(0xFF292724),
-    soft: Color(0xFFFAF2E5),
+    primary: Color(0xFF0E4778),
+    dark: Color(0xFF061C4C),
+    soft: Color(0xFFEAF7FA),
   );
 
   bool get isResident => this == resident;
   bool get isCommunityRole => this == admin || isResident;
   Color get canvas =>
-      isResident ? const Color(0xFFF6F3ED) : const Color(0xFFEDF5FF);
-  Color get selection => isResident ? const Color(0xFFE7C58B) : primary;
-  Color get selectionText =>
-      isResident ? const Color(0xFF241E16) : Colors.white;
+      isResident ? const Color(0xFFF6F9FA) : const Color(0xFFEDF5FF);
+  Color get selection => isResident ? const Color(0xFF3AA6C8) : primary;
+  Color get selectionText => Colors.white;
   LinearGradient get sidebar => LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
     colors: isResident
-        ? const [Color(0xFF292929), Color(0xFF332B22)]
-        : const [Color(0xFF071D3D), Color(0xFF102E50)],
+        ? const [Color(0xFF061C4C), Color(0xFF0E4778)]
+        : const [Color(0xFF061C4C), Color(0xFF0E4778)],
   );
 }
 
@@ -73,9 +72,7 @@ ThemeData communityWebTheme(ThemeData base, RolePalette palette) {
     colorScheme: base.colorScheme.copyWith(
       primary: palette.primary,
       onPrimary: Colors.white,
-      secondary: palette.isResident
-          ? const Color(0xFF267760)
-          : const Color(0xFF00A6BF),
+      secondary: const Color(0xFF3AA6C8),
       surface: Colors.white,
       onSurface: WebDesign.text,
     ),
@@ -157,7 +154,7 @@ abstract final class WebDesign {
       borderRadius: BorderRadius.circular(18),
       border: Border.all(
         color: palette.isResident
-            ? const Color(0xFFF0EBE3)
+            ? const Color(0xFFDCE9F1)
             : const Color(0xFFE1EDFD),
       ),
       boxShadow: const [

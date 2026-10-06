@@ -301,7 +301,7 @@ class _HominodeWebAppState extends State<HominodeWebApp> {
   );
 
   ThemeData _theme() => ThemeData(
-    colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1558D6)),
+    colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0E4778)),
     scaffoldBackgroundColor: WebDesign.background,
     useMaterial3: true,
     fontFamily: 'Arial',

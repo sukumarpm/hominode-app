@@ -12,6 +12,7 @@ import 'screens/login_screen.dart';
 import 'screens/security_dashboard_screen.dart';
 import 'services/auth_service.dart';
 import 'services/security_notification_router.dart';
+import 'utils/app_colors.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,7 +61,7 @@ class SecurityApp extends StatelessWidget {
       title: 'Hominode Security',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0E4778)),
+        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryTeal),
         useMaterial3: true,
       ),
       home: const SecurityAuthGate(),

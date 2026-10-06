@@ -20,9 +20,9 @@ class AdminDesktopShellScope extends InheritedWidget {
 
 /// Presentation-only tokens for the Admin desktop workspace.
 abstract final class AdminDesktopDesign {
-  static const primary = Color(0xFF176BFF);
-  static const dark = Color(0xFF0A2243);
-  static const navy = Color(0xFF071D3D);
+  static const primary = Color(0xFF0E4778);
+  static const dark = Color(0xFF061C4C);
+  static const navy = Color(0xFF061C4C);
   static const soft = Color(0xFFECF4FF);
   static const background = Color(0xFFEDF5FF);
   static const border = Color(0xFFE1EAF6);
