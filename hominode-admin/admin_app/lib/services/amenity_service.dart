@@ -1502,20 +1502,70 @@ class AmenityBookingModel {
           '${dateTimestamp.year}-${dateTimestamp.month.toString().padLeft(2, '0')}-${dateTimestamp.day.toString().padLeft(2, '0')}';
     }
 
-    // Parse family members list
-    List<String>? familyMemberNames;
+    // Support both the canonical booking writer and older Admin records.
+    final familyNames = <String>{};
     List<Map<String, dynamic>>? familyMembers;
 
-    if (data['familyMemberNames'] != null) {
-      familyMemberNames = List<String>.from(data['familyMemberNames']);
+    final legacyFamilyNames = data['familyMemberNames'];
+    if (legacyFamilyNames is List) {
+      for (final item in legacyFamilyNames.whereType<String>()) {
+        final name = item.trim();
+        if (name.isNotEmpty) familyNames.add(name);
+      }
     }
 
-    if (data['familyMembers'] != null) {
-      familyMembers = List<Map<String, dynamic>>.from(
-        (data['familyMembers'] as List).map(
-          (item) => Map<String, dynamic>.from(item),
-        ),
-      );
+    final rawFamilyMembers = data['familyMembers'];
+    if (rawFamilyMembers is List) {
+      final details = <Map<String, dynamic>>[];
+
+      for (final item in rawFamilyMembers) {
+        if (item is String) {
+          final name = item.trim();
+          if (name.isNotEmpty) familyNames.add(name);
+        } else if (item is Map) {
+          final detail = Map<String, dynamic>.from(item);
+          details.add(detail);
+
+          final rawName = detail['name'];
+          if (rawName is String && rawName.trim().isNotEmpty) {
+            familyNames.add(rawName.trim());
+          }
+        }
+      }
+
+      if (details.isNotEmpty) {
+        familyMembers = details;
+      }
+    }
+
+    final familyMemberNames = familyNames.isEmpty
+        ? null
+        : familyNames.toList(growable: false);
+
+    String text(Object? value) => value is String ? value.trim() : '';
+
+    DateTime? timestampDate(Object? value) =>
+        value is Timestamp ? value.toDate() : null;
+
+    int integer(Object? value, int fallback) =>
+        value is num ? value.toInt() : fallback;
+
+    double number(Object? value) => value is num ? value.toDouble() : 0;
+
+    final timeSlot = text(data['timeSlot']);
+    var startTime = text(data['startTime']);
+    var endTime = text(data['endTime']);
+
+    if ((startTime.isEmpty || endTime.isEmpty) && timeSlot.contains(' - ')) {
+      final parts = timeSlot.split(' - ');
+      if (parts.length == 2) {
+        if (startTime.isEmpty) startTime = parts[0].trim();
+        if (endTime.isEmpty) endTime = parts[1].trim();
+      }
+    }
+
+    if (dateString.isEmpty) {
+      dateString = text(data['bookingDateKey']);
     }
 
     return AmenityBookingModel(
@@ -1533,20 +1583,27 @@ class AmenityBookingModel {
       email: data['email'] ?? data['userEmail'],
       bookingDate: dateString,
       bookingDateTimestamp: dateTimestamp,
-      timeSlot: data['timeSlot'] ?? '',
-      startTime: data['startTime'] ?? '',
-      endTime: data['endTime'] ?? '',
+      timeSlot: timeSlot,
+      startTime: startTime,
+      endTime: endTime,
       status: data['status'] ?? 'pending',
-      amount: (data['amount'] ?? 0).toDouble(),
+      amount: number(data['amount'] ?? data['price']),
       rejectionReason: data['rejectionReason'],
       adminId: data['adminId'] ?? '',
       // Package fields
       packageType: data['packageType'],
-      packageStartDate: (data['packageStartDate'] as Timestamp?)?.toDate(),
-      packageEndDate: (data['packageEndDate'] as Timestamp?)?.toDate(),
-      packageDurationDays: data['packageDurationDays'],
+      packageStartDate: timestampDate(
+        data['packageStartDate'] ?? data['subscriptionStartDate'],
+      ),
+      packageEndDate: timestampDate(
+        data['packageEndDate'] ?? data['subscriptionEndDate'],
+      ),
+      packageDurationDays:
+          data['packageDurationDays'] is num || data['validityDays'] is num
+          ? integer(data['packageDurationDays'] ?? data['validityDays'], 1)
+          : null,
       // Family/Group fields
-      totalMembers: data['totalMembers'] ?? 1,
+      totalMembers: integer(data['totalMembers'] ?? data['numberOfPeople'], 1),
       familyMemberNames: familyMemberNames,
       familyMembers: familyMembers,
       // Capacity fields
@@ -1563,7 +1620,9 @@ class AmenityBookingModel {
       bookedAt: (data['bookedAt'] as Timestamp?)?.toDate(),
       approvedAt: (data['approvedAt'] as Timestamp?)?.toDate(),
       rejectedAt: (data['rejectedAt'] as Timestamp?)?.toDate(),
-      cancelledAt: (data['cancelledAt'] as Timestamp?)?.toDate(),
+      cancelledAt: timestampDate(
+        data['cancelledAt'] ?? data['cancellationDate'],
+      ),
     );
   }
 
