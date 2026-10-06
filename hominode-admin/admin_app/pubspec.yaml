@@ -111,6 +111,7 @@ flutter:
   assets:
     - assets/
     - assets/Admin_New.png
+    - assets/Admin_Transparent.png
     - assets/images/admin_login_background.png
 
   # An image asset can refer to one or more resolution-specific "variants", see

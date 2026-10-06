@@ -409,7 +409,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
         resizeToAvoidBottomInset: true,
-        backgroundColor: const Color(0xFF041A21),
+        backgroundColor: const Color(0xFF061C4C),
         body: Stack(
           fit: StackFit.expand,
           children: [
@@ -427,9 +427,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Color(0xA8031720),
-                    Color(0xD0052025),
-                    Color(0xF004171B),
+                    Color(0xA8061C4C),
+                    Color(0xD0082A46),
+                    Color(0xF0061C4C),
                   ],
                 ),
               ),
@@ -441,7 +441,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               right: -80,
               child: _GlowOrb(
                 size: 220,
-                color: const Color(0xFF16C79A).withValues(alpha: 0.13),
+                color: const Color(0xFF3AA6C8).withValues(alpha: 0.13),
               ),
             ),
             Positioned(
@@ -449,7 +449,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               left: -80,
               child: _GlowOrb(
                 size: 190,
-                color: const Color(0xFF0E7490).withValues(alpha: 0.10),
+                color: const Color(0xFF0E4778).withValues(alpha: 0.10),
               ),
             ),
 
@@ -516,7 +516,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
           SizedBox(height: 2.h),
 
           Image.asset(
-            'assets/Admin_New.png',
+            'assets/Admin_Transparent.png',
             width: (constraints.maxWidth * 0.31).clamp(112.0, 185.0),
             fit: BoxFit.contain,
           ),
@@ -550,7 +550,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                 TextSpan(
                   text: 'place. Better lives.',
                   style: TextStyle(
-                    color: const Color(0xFF55E3BE),
+                    color: const Color(0xFF3AA6C8),
                     fontSize: 14.sp.clamp(12.0, 14.0),
                     fontWeight: FontWeight.w500,
                   ),
@@ -565,13 +565,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             padding: EdgeInsets.symmetric(horizontal: 11.w, vertical: 5.h),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
-              color: const Color(0x1A42E2B8),
-              border: Border.all(color: const Color(0x6655E3BE)),
+              color: const Color(0x1A3AA6C8),
+              border: Border.all(color: const Color(0x663AA6C8)),
             ),
             child: Text(
               'Admin Access',
               style: TextStyle(
-                color: const Color(0xFF91F2D8),
+                color: const Color(0xFFA8DCEB),
                 fontSize: 11.sp.clamp(11.0, 12.0),
                 fontWeight: FontWeight.w600,
               ),
@@ -587,12 +587,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       width: double.infinity,
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: const Color(0xD3062429),
+        color: const Color(0xD3082340),
         borderRadius: BorderRadius.circular(24.r),
-        border: Border.all(color: const Color(0xFF1D625D)),
+        border: Border.all(color: const Color(0xFF245F84)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF29D6A6).withValues(alpha: 0.20),
+            color: const Color(0xFF3AA6C8).withValues(alpha: 0.20),
             blurRadius: 28,
             offset: const Offset(0, 14),
           ),
@@ -621,7 +621,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         Text(
           'Use the mobile number registered with your Admin account.',
           style: TextStyle(
-            color: const Color(0xFFA5C9C2),
+            color: const Color(0xFFB8CEDB),
             fontSize: 12.sp.clamp(11.0, 13.0),
             height: 1.35,
           ),
@@ -709,7 +709,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               ? 'Enter the 6-digit verification code.'
               : 'Enter the code sent to $destination',
           style: TextStyle(
-            color: const Color(0xFFA5C9C2),
+            color: const Color(0xFFB8CEDB),
             fontSize: 12.sp.clamp(11.0, 13.0),
             height: 1.35,
           ),
@@ -768,21 +768,21 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                 child: Text(
                   'Change number',
                   style: TextStyle(
-                    color: const Color(0xFF90D8C8),
+                    color: const Color(0xFF9CCFE0),
                     fontSize: 12.sp.clamp(11.0, 13.0),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
             ),
-            Container(width: 1, height: 18, color: const Color(0xFF275D59)),
+            Container(width: 1, height: 18, color: const Color(0xFF245F84)),
             Expanded(
               child: TextButton(
                 onPressed: _busy ? null : _resendOtp,
                 child: Text(
                   'Resend OTP',
                   style: TextStyle(
-                    color: const Color(0xFF58E3BE),
+                    color: const Color(0xFF3AA6C8),
                     fontSize: 12.sp.clamp(11.0, 13.0),
                     fontWeight: FontWeight.w600,
                   ),
@@ -805,26 +805,26 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
   }) {
     return InputDecoration(
       hintText: hintText,
-      hintStyle: TextStyle(color: const Color(0xFF779B96), fontSize: 14.sp),
-      prefixIcon: Icon(prefixIcon, color: const Color(0xFF51DFB9)),
+      hintStyle: TextStyle(color: const Color(0xFF7F9DB1), fontSize: 14.sp),
+      prefixIcon: Icon(prefixIcon, color: const Color(0xFF3AA6C8)),
       filled: true,
-      fillColor: const Color(0xFF082C31),
+      fillColor: const Color(0xFF0A2A46),
       contentPadding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 14.h),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14.r),
-        borderSide: const BorderSide(color: Color(0xFF25645E)),
+        borderSide: const BorderSide(color: Color(0xFF245F84)),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14.r),
-        borderSide: const BorderSide(color: Color(0xFF25645E)),
+        borderSide: const BorderSide(color: Color(0xFF245F84)),
       ),
       disabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14.r),
-        borderSide: const BorderSide(color: Color(0xFF244B48)),
+        borderSide: const BorderSide(color: Color(0xFF294A60)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14.r),
-        borderSide: const BorderSide(color: Color(0xFF54E0BA), width: 1.4),
+        borderSide: const BorderSide(color: Color(0xFF3AA6C8), width: 1.4),
       ),
     );
   }
@@ -841,12 +841,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
           height: 52.h.clamp(48.0, 56.0),
           padding: EdgeInsets.symmetric(horizontal: 10.w),
           decoration: BoxDecoration(
-            color: const Color(0xFF0A3034),
+            color: const Color(0xFF0B2F4D),
             borderRadius: BorderRadius.circular(14.r),
             border: Border.all(
               color: disabled
-                  ? const Color(0xFF244B48)
-                  : const Color(0xFF28675F),
+                  ? const Color(0xFF294A60)
+                  : const Color(0xFF245F84),
             ),
           ),
           child: Row(
@@ -859,7 +859,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               Text(
                 _selectedCountry.dialCode,
                 style: TextStyle(
-                  color: disabled ? const Color(0xFF71948F) : Colors.white,
+                  color: disabled ? const Color(0xFF7892A3) : Colors.white,
                   fontSize: 14.sp.clamp(13.0, 15.0),
                   fontWeight: FontWeight.w600,
                 ),
@@ -870,8 +870,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               Icon(
                 Icons.keyboard_arrow_down_rounded,
                 color: disabled
-                    ? const Color(0xFF567772)
-                    : const Color(0xFF58E3BE),
+                    ? const Color(0xFF5F7D91)
+                    : const Color(0xFF3AA6C8),
                 size: 19,
               ),
             ],
@@ -912,12 +912,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               child: Container(
                 height: MediaQuery.sizeOf(context).height * 0.80,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF061F24),
+                  color: const Color(0xFF081F35),
                   borderRadius: BorderRadius.only(
                     topLeft: Radius.circular(24.r),
                     topRight: Radius.circular(24.r),
                   ),
-                  border: Border.all(color: const Color(0xFF28675F)),
+                  border: Border.all(color: const Color(0xFF245F84)),
                 ),
                 child: Column(
                   children: [
@@ -927,7 +927,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                       width: 44.w,
                       height: 4.h,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF41736D),
+                        color: const Color(0xFF456D86),
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
@@ -952,7 +952,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                             onPressed: () => Navigator.of(sheetContext).pop(),
                             icon: const Icon(
                               Icons.close,
-                              color: Color(0xFF75E5C9),
+                              color: Color(0xFF72C5DD),
                             ),
                           ),
                         ],
@@ -968,29 +968,29 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                         onChanged: applySearch,
                         decoration: InputDecoration(
                           hintText: 'Search country or code',
-                          hintStyle: const TextStyle(color: Color(0xFF769B95)),
+                          hintStyle: const TextStyle(color: Color(0xFF809DB0)),
                           prefixIcon: const Icon(
                             Icons.search,
-                            color: Color(0xFF56E0BC),
+                            color: Color(0xFF3AA6C8),
                           ),
                           filled: true,
-                          fillColor: const Color(0xFF092D32),
+                          fillColor: const Color(0xFF0A2A46),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(14.r),
                             borderSide: const BorderSide(
-                              color: Color(0xFF28675F),
+                              color: Color(0xFF245F84),
                             ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(14.r),
                             borderSide: const BorderSide(
-                              color: Color(0xFF28675F),
+                              color: Color(0xFF245F84),
                             ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(14.r),
                             borderSide: const BorderSide(
-                              color: Color(0xFF58E3BE),
+                              color: Color(0xFF3AA6C8),
                               width: 1.4,
                             ),
                           ),
@@ -1004,7 +1004,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                               child: Text(
                                 'No countries found',
                                 style: TextStyle(
-                                  color: const Color(0xFFA3C5C0),
+                                  color: const Color(0xFFB9CEDA),
                                   fontSize: 14.sp,
                                 ),
                               ),
@@ -1050,7 +1050,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                                   subtitle: Text(
                                     country.isoCode,
                                     style: TextStyle(
-                                      color: const Color(0xFF789D97),
+                                      color: const Color(0xFF829CAB),
                                       fontSize: 12.sp,
                                     ),
                                   ),
@@ -1060,7 +1060,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                                       Text(
                                         country.dialCode,
                                         style: TextStyle(
-                                          color: const Color(0xFF75E5C9),
+                                          color: const Color(0xFF72C5DD),
                                           fontSize: 14.sp,
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -1069,7 +1069,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                                         SizedBox(width: 8.w),
                                         const Icon(
                                           Icons.check_circle,
-                                          color: Color(0xFF58E3BE),
+                                          color: Color(0xFF3AA6C8),
                                           size: 20,
                                         ),
                                       ],
@@ -1118,17 +1118,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             borderRadius: BorderRadius.circular(18.r),
             gradient: enabled
                 ? const LinearGradient(
-                    colors: [Color(0xFF32D5AD), Color(0xFF087A74)],
+                    colors: [Color(0xFF3AA6C8), Color(0xFF0E4778)],
                     begin: Alignment.centerLeft,
                     end: Alignment.centerRight,
                   )
                 : const LinearGradient(
-                    colors: [Color(0xFF375A56), Color(0xFF294843)],
+                    colors: [Color(0xFF486B80), Color(0xFF2C4A60)],
                   ),
             boxShadow: enabled
                 ? [
                     BoxShadow(
-                      color: const Color(0xFF2AD5AA).withValues(alpha: 0.30),
+                      color: const Color(0xFF3AA6C8).withValues(alpha: 0.30),
                       blurRadius: 20,
                       offset: const Offset(0, 8),
                     ),
@@ -1220,7 +1220,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
   Widget _buildSecureAccessRow() {
     return Row(
       children: [
-        Expanded(child: Container(height: 1, color: const Color(0xFF28635D))),
+        Expanded(child: Container(height: 1, color: const Color(0xFF245F84))),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 10.w),
           child: Row(
@@ -1228,14 +1228,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             children: [
               const Icon(
                 Icons.admin_panel_settings_outlined,
-                color: Color(0xFF58E3BE),
+                color: Color(0xFF3AA6C8),
                 size: 17,
               ),
               SizedBox(width: 6.w),
               Text(
                 'SECURE ADMIN ACCESS',
                 style: TextStyle(
-                  color: const Color(0xFF70E7C8),
+                  color: const Color(0xFF72C5DD),
                   fontSize: 10.sp.clamp(9.5, 11.0),
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.7,
@@ -1244,7 +1244,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             ],
           ),
         ),
-        Expanded(child: Container(height: 1, color: const Color(0xFF28635D))),
+        Expanded(child: Container(height: 1, color: const Color(0xFF245F84))),
       ],
     );
   }
@@ -1254,14 +1254,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
       decoration: BoxDecoration(
-        color: const Color(0xB0062024),
+        color: const Color(0xB0082138),
         borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: const Color(0xFF285A55)),
+        border: Border.all(color: const Color(0xFF245F84)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.shield_outlined, color: Color(0xFF59E2BF), size: 21),
+          const Icon(Icons.shield_outlined, color: Color(0xFF3AA6C8), size: 21),
 
           SizedBox(width: 10.w),
 
@@ -1269,7 +1269,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             child: Text(
               'Access is restricted to authorized Hominode community administrators.',
               style: TextStyle(
-                color: const Color(0xFFE0F3EE),
+                color: const Color(0xFFDDEBF2),
                 height: 1.4,
                 fontSize: 12.sp.clamp(11.0, 12.0),
               ),

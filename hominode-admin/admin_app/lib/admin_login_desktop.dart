@@ -158,7 +158,7 @@ class _BrandPanel extends StatelessWidget {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(20),
                         child: Image.asset(
-                          'assets/Admin_New.png',
+                          'assets/Admin_Transparent.png',
                           width: 112,
                           height: 112,
                           fit: BoxFit.cover,

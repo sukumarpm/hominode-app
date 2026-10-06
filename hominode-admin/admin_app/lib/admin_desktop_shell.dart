@@ -179,7 +179,7 @@ class _DesktopSidebar extends StatelessWidget {
             child: Column(
               children: [
                 Image.asset(
-                  'assets/Admin_New.png',
+                  'assets/Admin_Transparent.png',
                   width: expanded ? 84 : 42,
                   height: expanded ? 84 : 42,
                   fit: BoxFit.contain,
