@@ -649,7 +649,9 @@ class _AddResidentModalState extends State<AddResidentModal> {
         onPressed: isEnabled ? _handleSubmit : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF0E4778),
-          disabledBackgroundColor: const Color(0x662563EB),
+          disabledBackgroundColor: Theme.of(
+            context,
+          ).colorScheme.primary.withValues(alpha: 0.4),
           foregroundColor: Colors.white,
           elevation: 0,
           shape: RoundedRectangleBorder(

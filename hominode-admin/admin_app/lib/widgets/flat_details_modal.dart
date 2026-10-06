@@ -722,7 +722,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           onPressed: _isLoading ? null : _handlePrimaryAction,
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF0E4778),
-            disabledBackgroundColor: const Color(0x662563EB), // 40% opacity
+            disabledBackgroundColor: Theme.of(
+              context,
+            ).colorScheme.primary.withValues(alpha: 0.4), // 40% opacity
             foregroundColor: Colors.white,
             elevation: 0,
             shape: RoundedRectangleBorder(

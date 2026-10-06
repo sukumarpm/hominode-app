@@ -1668,7 +1668,9 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
           onPressed: isEnabled ? _handleGenerate : null,
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF0E4778),
-            disabledBackgroundColor: const Color(0x662563EB), // 40% opacity
+            disabledBackgroundColor: Theme.of(
+              context,
+            ).colorScheme.primary.withValues(alpha: 0.4), // 40% opacity
             foregroundColor: Colors.white,
             elevation: 0,
             shape: RoundedRectangleBorder(

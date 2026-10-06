@@ -21,14 +21,17 @@ class CommunityImage extends StatelessWidget {
               fit: BoxFit.cover,
               excludeFromSemantics: true,
               errorBuilder: (_, _, _) =>
-                  const ColoredBox(color: Color(0xFF53634C)),
+                  ColoredBox(color: Theme.of(context).colorScheme.primary),
             ),
           ),
-          const Positioned.fill(
+          Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xB3292B22), Color(0x00292B22)],
+                  colors: [
+                    RolePalette.resident.dark.withValues(alpha: 0.7),
+                    RolePalette.resident.dark.withValues(alpha: 0),
+                  ],
                 ),
               ),
             ),

@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/country_dial_codes.dart';
 import '../services/auth_service.dart';
+import '../utils/app_colors.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -483,9 +484,9 @@ class _LoginScreenState extends State<LoginScreen>
                                 itemCount: filteredCountries.length,
                                 separatorBuilder: (_, __) => Divider(
                                   height: 1,
-                                  color: const Color(
-                                    0xFF1C3E65,
-                                  ).withValues(alpha: 0.7),
+                                  color: AppColors.primaryTeal.withValues(
+                                    alpha: 0.7,
+                                  ),
                                   indent: 16,
                                   endIndent: 16,
                                 ),
@@ -910,7 +911,7 @@ class _LoginScreenState extends State<LoginScreen>
                                                 ),
                                                 prefixIcon: const Icon(
                                                   Icons.phone,
-                                                  color: Color(0xFF2FD5FF),
+                                                  color: AppColors.accentTeal,
                                                 ),
                                                 border: OutlineInputBorder(
                                                   borderRadius:

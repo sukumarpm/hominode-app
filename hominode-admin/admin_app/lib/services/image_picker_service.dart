@@ -123,10 +123,14 @@ class ImagePickerService {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0xFF2563EB).withOpacity(0.1),
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, color: const Color(0xFF2563EB), size: 24),
+              child: Icon(
+                icon,
+                color: Theme.of(context).colorScheme.primary,
+                size: 24,
+              ),
             ),
             const SizedBox(width: 16),
             Expanded(

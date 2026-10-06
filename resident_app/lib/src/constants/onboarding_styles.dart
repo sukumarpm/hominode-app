@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'app_colors.dart';
+
 /// Centralized styles and constants for onboarding flow
 /// Matches the exact design specifications from reference images
 class OnboardingStyles {
   // Color palette
-  static const Color primaryBlue = Color(0xFF2563EB);
-  static const Color primaryBlueDark = Color(0xFF1E40AF);
+  static const Color primaryBlue = AppColors.primary;
+  static const Color primaryBlueDark = AppColors.primaryDark;
   static const Color backgroundColor = Color(0xFFF7F7F7);
   static const Color textPrimary = Color(0xFF111111);
   static const Color textSecondary = Color(0xFF666666);

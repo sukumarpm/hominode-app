@@ -7,6 +7,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hominode_sos/hominode_sos.dart';
 import 'package:provider/provider.dart';
 
+import 'src/constants/app_colors.dart';
 import 'community_wall_screen.dart';
 import 'complaints_screen.dart';
 import 'src/screens/amenities_booking_screen.dart';
@@ -33,7 +34,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   static const Color _navy = Color(0xFF082F73);
-  static const Color _blue = Color(0xFF1558D6);
+  static const Color _blue = AppColors.primary;
   static const Color _cyan = Color(0xFF2B95C8);
   static const Color _ink = Color(0xFF0E2247);
   static const Color _muted = Color(0xFF667792);

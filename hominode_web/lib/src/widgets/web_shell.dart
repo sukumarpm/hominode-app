@@ -538,11 +538,11 @@ class _Navigation extends StatelessWidget {
                   ),
                 ),
                 if (palette.isResident)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 5),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
                     child: Text(
                       'Smart living. Better lives.',
-                      style: TextStyle(color: Color(0xFFE7C58B), fontSize: 11),
+                      style: TextStyle(color: palette.soft, fontSize: 11),
                     ),
                   ),
               ],

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../services/subscription_entitlement_service.dart';
 import '../services/tenant_resolution_service.dart';
 
+import '../constants/app_colors.dart';
 import '../components/standard_screen.dart';
 import '../modals/booking_modal.dart';
 import '../models/amenity.dart';
@@ -222,7 +223,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
                   child: Icon(
                     Icons.apartment_rounded,
                     size: 28.w,
-                    color: const Color(0xFF1558D6),
+                    color: AppColors.primary,
                   ),
                 ),
                 SizedBox(height: 12.h),
@@ -345,7 +346,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
                   child: Icon(
                     Icons.calendar_month_outlined,
                     size: 24.w,
-                    color: const Color(0xFF1558D6),
+                    color: AppColors.primary,
                   ),
                 ),
                 SizedBox(width: 14.w),
@@ -738,7 +739,7 @@ class AmenityCard extends StatelessWidget {
                       width: double.infinity,
                       height: 44.h,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1558D6),
+                        color: AppColors.primary,
                         borderRadius: BorderRadius.circular(12.r),
                       ),
                       child: Row(

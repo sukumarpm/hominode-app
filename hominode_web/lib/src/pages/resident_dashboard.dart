@@ -321,7 +321,7 @@ class _CommunityBanner extends StatelessWidget {
     width: double.infinity,
     padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(
-      color: const Color(0xFF254F40),
+      color: RolePalette.resident.primary,
       borderRadius: BorderRadius.circular(WebDesign.radius),
       boxShadow: const [WebDesign.shadow],
     ),
