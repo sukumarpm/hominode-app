@@ -15,7 +15,8 @@
     "seed:demo:security": "node scripts/seed-demo-security.js",
     "seed:demo:visitors": "node scripts/seed-demo-visitors.js",
     "seed:demo:parcels": "node scripts/seed-demo-parcels.js",
-    "seed:demo:complaints": "node scripts/seed-demo-complaints.js"
+    "seed:demo:complaints": "node scripts/seed-demo-complaints.js",
+    "seed:demo:amenities": "node scripts/seed-demo-amenities.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",
