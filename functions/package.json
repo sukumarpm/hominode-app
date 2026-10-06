@@ -17,7 +17,8 @@
     "seed:demo:parcels": "node scripts/seed-demo-parcels.js",
     "seed:demo:complaints": "node scripts/seed-demo-complaints.js",
     "seed:demo:amenities": "node scripts/seed-demo-amenities.js",
-    "seed:demo:bookings": "node scripts/seed-demo-bookings.js"
+    "seed:demo:bookings": "node scripts/seed-demo-bookings.js",
+    "seed:demo:events": "node scripts/seed-demo-events-announcements.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",
