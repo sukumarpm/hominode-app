@@ -108,3 +108,6 @@ android/key.properties
 
 # Local web migration workspace
 /web-migration/
+
+# Flutter DevTools local configuration
+**/devtools_options.yaml
