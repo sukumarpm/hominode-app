@@ -157,17 +157,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       return digits.isEmpty ? '' : '+$digits';
     }
 
-    final dialDigits = _selectedCountry.dialCode.substring(1);
-
     var localDigits = raw.replaceAll(RegExp(r'\D'), '');
 
-    // Avoid:
-    // +63 + 63917...
-    if (localDigits.startsWith(dialDigits)) {
-      localDigits = localDigits.substring(dialDigits.length);
-    }
-
-    // Remove local trunk prefix.
+    // The country selector already supplies the dial code.
+    // Treat this field as the national/local number.
+    //
+    // If a user wants to paste a complete international number,
+    // they should include the leading '+', which is handled above.
+    //
+    // Do not strip digits merely because the local number happens
+    // to begin with the same digits as the country code. For example,
+    // an Indian number beginning with 91 is still a valid local number.
     localDigits = localDigits.replaceFirst(RegExp(r'^0+'), '');
 
     return '${_selectedCountry.dialCode}$localDigits';
