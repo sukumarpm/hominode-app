@@ -163,7 +163,11 @@ class _ParcelDeliveryTrackingScreenState
       if (!mounted || generation != _generation) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to mark parcel collected: $e')),
+        const SnackBar(
+          content: Text(
+            'Unable to mark this parcel collected. Please try again.',
+          ),
+        ),
       );
     } finally {
       if (mounted && generation == _generation) {
