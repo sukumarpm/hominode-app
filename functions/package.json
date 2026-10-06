@@ -12,7 +12,8 @@
     "seed:demo:buildings": "node scripts/seed-demo-buildings.js",
     "seed:demo:residents": "node scripts/seed-demo-residents.js",
     "seed:demo:households": "node scripts/seed-demo-households.js",
-    "seed:demo:security": "node scripts/seed-demo-security.js"
+    "seed:demo:security": "node scripts/seed-demo-security.js",
+    "seed:demo:visitors": "node scripts/seed-demo-visitors.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",
