@@ -737,9 +737,12 @@ class AmenityService {
       if (!bookingDoc.exists) throw Exception('Booking not found');
 
       final bookingData = bookingDoc.data();
-      final residentId = bookingData?['residentId'];
+      final residentId = bookingData?['residentId'] ?? bookingData?['userId'];
       final amenityName = bookingData?['amenityName'] ?? 'Amenity';
-      final bookingDate = bookingData?['bookingDate'] ?? 'Unknown date';
+      final bookingDate =
+          bookingData?['bookingDateKey'] ??
+          bookingData?['bookingDate'] ??
+          'Unknown date';
       print('✅ STEP 2 PASSED');
 
       // STEP 3: Approve Booking
@@ -803,7 +806,7 @@ class AmenityService {
       if (!bookingDoc.exists) throw Exception('Booking not found');
 
       final bookingData = bookingDoc.data();
-      final residentId = bookingData?['residentId'];
+      final residentId = bookingData?['residentId'] ?? bookingData?['userId'];
       final amenityName = bookingData?['amenityName'] ?? 'Amenity';
       print('✅ STEP 2 PASSED');
 
@@ -869,7 +872,7 @@ class AmenityService {
       if (!bookingDoc.exists) throw Exception('Booking not found');
 
       final bookingData = bookingDoc.data();
-      final residentId = bookingData?['residentId'];
+      final residentId = bookingData?['residentId'] ?? bookingData?['userId'];
       final amenityName = bookingData?['amenityName'] ?? 'Amenity';
       print('✅ STEP 2 PASSED');
 
@@ -877,7 +880,7 @@ class AmenityService {
       print('📝 STEP 3: Cancelling booking...');
       await _firestore.collection(_bookingsCollection).doc(bookingId).update({
         'status': 'cancelled',
-        'cancelledAt': FieldValue.serverTimestamp(),
+        'cancellationDate': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
       print('✅ STEP 3 PASSED');
@@ -909,41 +912,63 @@ class AmenityService {
     }
   }
 
-  // Check slot availability considering capacity
+  // Check slot availability using the canonical booking contract.
   Future<Map<String, dynamic>> checkSlotAvailability({
     required String amenityId,
     required String bookingDate,
     required String timeSlot,
   }) async {
     try {
-      // Get amenity details
+      final communityId = _adminService.requireCurrentCommunityId();
+
       final amenityDoc = await _firestore
           .collection(_amenitiesCollection)
           .doc(amenityId)
           .get();
+
       if (!amenityDoc.exists) {
         throw Exception('Amenity not found');
       }
 
       final amenityData = amenityDoc.data()!;
-      final maxCapacity = amenityData['maxCapacity'] ?? 1;
-      final allowMultiple = amenityData['allowMultipleBookings'] ?? false;
 
-      // If multiple bookings not allowed, check if any booking exists
+      if (amenityData['communityId'] != communityId) {
+        throw StateError('Facility is outside your selected community.');
+      }
+
+      final maxCapacity = amenityData['maxCapacity'] is num
+          ? (amenityData['maxCapacity'] as num).toInt()
+          : 1;
+
+      final allowMultiple = amenityData['allowMultipleBookings'] == true;
+
+      final snapshot = await _firestore
+          .collection(_bookingsCollection)
+          .where('communityId', isEqualTo: communityId)
+          .get();
+
+      const activeStatuses = {'pending', 'approved', 'confirmed'};
+
+      final matching = snapshot.docs.where((doc) {
+        final data = doc.data();
+
+        final dateKey = data['bookingDateKey'] ?? data['bookingDate'];
+
+        final status = (data['status'] ?? '').toString().trim().toLowerCase();
+
+        return data['amenityId'] == amenityId &&
+            dateKey == bookingDate &&
+            data['timeSlot'] == timeSlot &&
+            activeStatuses.contains(status);
+      }).toList();
+
       if (!allowMultiple) {
-        final existingBookings = await _firestore
-            .collection(_bookingsCollection)
-            .where('amenityId', isEqualTo: amenityId)
-            .where('bookingDate', isEqualTo: bookingDate)
-            .where('timeSlot', isEqualTo: timeSlot)
-            .where('status', whereIn: ['pending', 'approved', 'confirmed'])
-            .get();
-
-        if (existingBookings.docs.isNotEmpty) {
+        if (matching.isNotEmpty) {
           return {
             'available': false,
             'reason': 'This time slot is already booked',
-            'currentBookings': existingBookings.docs.length,
+            'currentBookings': matching.length,
+            'totalPersonsBooked': matching.length,
             'maxCapacity': maxCapacity,
           };
         }
@@ -951,35 +976,51 @@ class AmenityService {
         return {
           'available': true,
           'currentBookings': 0,
+          'totalPersonsBooked': 0,
           'maxCapacity': maxCapacity,
+          'spotsLeft': 1,
         };
       }
 
-      // If multiple bookings allowed, check capacity
-      final existingBookings = await _firestore
-          .collection(_bookingsCollection)
-          .where('amenityId', isEqualTo: amenityId)
-          .where('bookingDate', isEqualTo: bookingDate)
-          .where('timeSlot', isEqualTo: timeSlot)
-          .where('status', whereIn: ['pending', 'approved', 'confirmed'])
-          .get();
+      int peopleFor(Map<String, dynamic> data) {
+        final raw = data['numberOfPeople'] ?? data['totalMembers'] ?? 1;
 
-      final currentBookings = existingBookings.docs.length;
+        if (raw is num && raw.isFinite && raw > 0) {
+          return raw.toInt();
+        }
 
-      if (currentBookings >= maxCapacity) {
+        return 1;
+      }
+
+      final totalPersonsBooked = matching.fold<int>(
+        0,
+        (total, doc) => total + peopleFor(doc.data()),
+      );
+
+      final spotsLeft = (maxCapacity - totalPersonsBooked).clamp(
+        0,
+        maxCapacity,
+      );
+
+      if (totalPersonsBooked >= maxCapacity) {
         return {
           'available': false,
-          'reason': 'Maximum capacity reached ($maxCapacity/$maxCapacity)',
-          'currentBookings': currentBookings,
+          'reason':
+              'Maximum capacity reached '
+              '($totalPersonsBooked/$maxCapacity)',
+          'currentBookings': matching.length,
+          'totalPersonsBooked': totalPersonsBooked,
           'maxCapacity': maxCapacity,
+          'spotsLeft': 0,
         };
       }
 
       return {
         'available': true,
-        'currentBookings': currentBookings,
+        'currentBookings': matching.length,
+        'totalPersonsBooked': totalPersonsBooked,
         'maxCapacity': maxCapacity,
-        'spotsLeft': maxCapacity - currentBookings,
+        'spotsLeft': spotsLeft,
       };
     } catch (e) {
       print('AmenityService ERROR: Failed to check availability: $e');
@@ -987,60 +1028,111 @@ class AmenityService {
     }
   }
 
-  // Get bookings count for a specific slot
+  // Get booking-document count for one canonical facility slot.
   Future<int> getSlotBookingsCount({
     required String amenityId,
     required String bookingDate,
     required String timeSlot,
   }) async {
     try {
-      final bookings = await _firestore
+      final communityId = _adminService.requireCurrentCommunityId();
+
+      final snapshot = await _firestore
           .collection(_bookingsCollection)
-          .where('amenityId', isEqualTo: amenityId)
-          .where('bookingDate', isEqualTo: bookingDate)
-          .where('timeSlot', isEqualTo: timeSlot)
-          .where('status', whereIn: ['pending', 'approved', 'confirmed'])
+          .where('communityId', isEqualTo: communityId)
           .get();
 
-      return bookings.docs.length;
+      const activeStatuses = {'pending', 'approved', 'confirmed'};
+
+      return snapshot.docs.where((doc) {
+        final data = doc.data();
+
+        final dateKey = data['bookingDateKey'] ?? data['bookingDate'];
+
+        final status = (data['status'] ?? '').toString().trim().toLowerCase();
+
+        return data['amenityId'] == amenityId &&
+            dateKey == bookingDate &&
+            data['timeSlot'] == timeSlot &&
+            activeStatuses.contains(status);
+      }).length;
     } catch (e) {
-      print('AmenityService ERROR: Failed to get bookings count: $e');
+      print(
+        'AmenityService ERROR: '
+        'Failed to get bookings count: $e',
+      );
       return 0;
     }
   }
 
-  // Get bookings by date range for calendar view
+  // Community-scoped canonical booking stream with local date filtering.
   Stream<List<AmenityBookingModel>> getBookingsByDateRange({
     required DateTime startDate,
     required DateTime endDate,
   }) {
     final adminId = _adminService.getCurrentAdminId();
-    if (adminId == null) return Stream.value([]);
 
-    final startDateStr = _formatDate(startDate);
-    final endDateStr = _formatDate(endDate);
+    if (adminId == null) {
+      return Stream.value([]);
+    }
+
+    final communityId = _adminService.requireCurrentCommunityId();
+
+    final rangeStart = DateTime(startDate.year, startDate.month, startDate.day);
+
+    final rangeEndExclusive = DateTime(
+      endDate.year,
+      endDate.month,
+      endDate.day,
+    ).add(const Duration(days: 1));
 
     print(
-      'AmenityService: Fetching bookings from $startDateStr to $endDateStr',
+      'AmenityService: Fetching canonical bookings '
+      'from ${_formatDate(rangeStart)} '
+      'to ${_formatDate(endDate)}',
     );
 
     return _firestore
         .collection(_bookingsCollection)
-        .where(
-          'communityId',
-          isEqualTo: _adminService.requireCurrentCommunityId(),
-        )
-        .where('bookingDate', isGreaterThanOrEqualTo: startDateStr)
-        .where('bookingDate', isLessThanOrEqualTo: endDateStr)
+        .where('communityId', isEqualTo: communityId)
         .snapshots()
         .map((snapshot) {
-          print(
-            'AmenityService: Found ${snapshot.docs.length} bookings in date range',
-          );
-          return snapshot.docs.map((doc) {
-            final data = doc.data();
-            return AmenityBookingModel.fromFirestore(doc.id, data);
-          }).toList();
+          final bookings = snapshot.docs
+              .map(
+                (doc) => AmenityBookingModel.fromFirestore(doc.id, doc.data()),
+              )
+              .where((booking) {
+                final bookingDate =
+                    booking.bookingDateTimestamp ??
+                    DateTime.tryParse(booking.bookingDate);
+
+                if (bookingDate == null) {
+                  return false;
+                }
+
+                return !bookingDate.isBefore(rangeStart) &&
+                    bookingDate.isBefore(rangeEndExclusive);
+              })
+              .toList();
+
+          bookings.sort((a, b) {
+            final left =
+                a.bookingDateTimestamp ?? DateTime.tryParse(a.bookingDate);
+
+            final right =
+                b.bookingDateTimestamp ?? DateTime.tryParse(b.bookingDate);
+
+            if (left == null && right == null) {
+              return 0;
+            }
+
+            if (left == null) return 1;
+            if (right == null) return -1;
+
+            return right.compareTo(left);
+          });
+
+          return bookings;
         });
   }
 
