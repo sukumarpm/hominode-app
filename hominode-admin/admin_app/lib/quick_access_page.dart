@@ -4,6 +4,7 @@ import 'manage_buildings_page.dart';
 import 'visitor_management_screen.dart';
 import 'complaint_management_screen.dart';
 import 'billing_screen.dart';
+import 'parcel_delivery_tracking_screen.dart';
 import 'communication_center_screen.dart';
 import 'parking_management_screen.dart';
 import 'staff_vendor_management_screen.dart';
@@ -117,6 +118,20 @@ class QuickAccessPage extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const BillingScreen()),
+          );
+        },
+      ),
+      ModernQuickAccessTile(
+        icon: Icons.inventory_2_rounded,
+        label: 'Parcels',
+        color: const Color(0xFF2563EB),
+        bgColor: const Color(0xFFDBEAFE),
+        onTap: (context) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const ParcelDeliveryTrackingScreen(),
+            ),
           );
         },
       ),

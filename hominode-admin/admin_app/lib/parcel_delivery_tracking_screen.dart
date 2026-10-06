@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'models/parcel_entry.dart';
+import 'services/admin_tenant_context.dart';
+import 'services/parcel_firestore_service.dart';
 import 'widgets/pending_parcel_card.dart';
 import 'widgets/collected_parcel_card.dart';
 import 'widgets/log_parcel_modal.dart';
@@ -27,54 +31,84 @@ class _ParcelDeliveryTrackingScreenState
 
   String _searchQuery = '';
 
-  // Mock data for parcels
-  final List<ParcelEntry> _pendingParcels = [
-    ParcelEntry(
-      id: '1',
-      residentName: 'Priya Sharma',
-      unit: 'E-305',
-      courier: 'Flipkart',
-      trackingId: 'FLP987654321O',
-      receivedTime: DateTime(2025, 11, 2, 11, 45),
-      status: ParcelStatus.pending,
-      isResidentNotified: true,
-    ),
-    ParcelEntry(
-      id: '2',
-      residentName: 'Rajesh Kumar',
-      unit: 'A-204',
-      courier: 'Amazon',
-      trackingId: 'AMZ123456789O',
-      receivedTime: DateTime(2025, 11, 2, 14, 30),
-      status: ParcelStatus.pending,
-      isResidentNotified: true,
-    ),
-  ];
+  final _service = ParcelFirestoreService();
+  final _tenant = AdminTenantContext.instance;
+  StreamSubscription<List<ParcelEntry>>? _subscription;
+  List<ParcelEntry> _parcels = [];
+  final Set<String> _collecting = {};
+  bool _loading = true;
+  bool _hasCommunity = false;
+  String? _loadError;
+  int _generation = 0;
 
-  final List<ParcelEntry> _collectedParcels = [
-    ParcelEntry(
-      id: '3',
-      residentName: 'Amit Patel',
-      unit: 'C-102',
-      courier: 'Delivery',
-      trackingId: '',
-      receivedTime: DateTime(2025, 11, 1, 9, 15),
-      collectedTime: DateTime(2025, 11, 1, 18, 30),
-      status: ParcelStatus.collected,
-      isResidentNotified: false,
-    ),
-    ParcelEntry(
-      id: '4',
-      residentName: 'Sneha Reddy',
-      unit: 'D-401',
-      courier: 'Bluedart',
-      trackingId: '',
-      receivedTime: DateTime(2025, 11, 1, 9, 15),
-      collectedTime: DateTime(2025, 11, 1, 18, 30),
-      status: ParcelStatus.collected,
-      isResidentNotified: false,
-    ),
-  ];
+  List<ParcelEntry> get _pendingParcels => _parcels
+      .where((parcel) => parcel.status == ParcelStatus.pending)
+      .toList();
+  List<ParcelEntry> get _collectedParcels =>
+      _parcels
+          .where((parcel) => parcel.status == ParcelStatus.collected)
+          .toList()
+        ..sort(
+          (a, b) => (b.collectedTime ?? b.receivedTime).compareTo(
+            a.collectedTime ?? a.receivedTime,
+          ),
+        );
+
+  @override
+  void initState() {
+    super.initState();
+    _tenant.addListener(_watchParcels);
+    _watchParcels();
+  }
+
+  void _watchParcels() {
+    final generation = ++_generation;
+    _subscription?.cancel();
+    _subscription = null;
+    setState(() {
+      _parcels = [];
+      _collecting.clear();
+      _loading = true;
+      _hasCommunity = false;
+      _loadError = null;
+    });
+    try {
+      final stream = _service.watchParcels();
+      _hasCommunity = true;
+      _subscription = stream.listen(
+        (parcels) {
+          if (!mounted || generation != _generation) return;
+          setState(() {
+            _parcels = parcels;
+            _loading = false;
+            _loadError = null;
+          });
+        },
+        onError: (Object _) {
+          if (!mounted || generation != _generation) return;
+          setState(() {
+            _parcels = [];
+            _loading = false;
+            _loadError = 'Unable to load parcels. Please try again.';
+          });
+        },
+      );
+    } on StateError {
+      setState(() {
+        _loading = false;
+        _loadError = 'Select an authorized community to view parcels.';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _tenant.removeListener(_watchParcels);
+    _subscription?.cancel();
+    _searchController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   List<ParcelEntry> get _filteredPendingParcels {
     if (_searchQuery.isEmpty) return _pendingParcels;
@@ -93,67 +127,58 @@ class _ParcelDeliveryTrackingScreenState
       return parcel.residentName.toLowerCase().contains(
             _searchQuery.toLowerCase(),
           ) ||
-          parcel.unit.toLowerCase().contains(_searchQuery.toLowerCase());
+          parcel.unit.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          parcel.trackingId.toLowerCase().contains(_searchQuery.toLowerCase());
     }).toList();
   }
 
   void _onLogParcel() {
     HapticFeedback.mediumImpact();
-    LogNewParcelDialog.show(
-      context,
-      onParcelAdded: (parcel) {
-        setState(() {
-          _pendingParcels.insert(0, parcel);
-        });
-      },
-    );
+    // The Firestore stream is the source of truth after the dialog saves.
+    LogNewParcelDialog.show(context, onParcelAdded: (_) {});
   }
 
-  void _onMarkAsCollected(String parcelId) {
+  Future<void> _onMarkAsCollected(ParcelEntry parcel) async {
+    if (_collecting.contains(parcel.id)) return;
+    final generation = _generation;
+    setState(() => _collecting.add(parcel.id));
     HapticFeedback.lightImpact();
-
-    final parcel = _pendingParcels.firstWhere((p) => p.id == parcelId);
-    setState(() {
-      _pendingParcels.removeWhere((p) => p.id == parcelId);
-      parcel.status = ParcelStatus.collected;
-      parcel.collectedTime = DateTime.now();
-      _collectedParcels.insert(0, parcel);
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Text('${parcel.residentName} parcel marked as collected'),
-          ],
+    try {
+      await _service.markCollected(parcel);
+      if (!mounted || generation != _generation) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${parcel.residentName} parcel marked as collected'),
+          backgroundColor: const Color(0xFF16A34A),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
-        backgroundColor: const Color(0xFF16A34A),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
+      );
+    } catch (e, stackTrace) {
+      debugPrint('Parcel collection failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (!mounted || generation != _generation) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to mark parcel collected: $e')),
+      );
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _collecting.remove(parcel.id));
+      }
+    }
   }
 
-  void _onRemindResident(String parcelId) {
-    HapticFeedback.lightImpact();
-
-    final parcel = _pendingParcels.firstWhere((p) => p.id == parcelId);
-
-    // TODO: Send SMS / App notification to resident
+  void _onRemindResident() {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.notifications, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Text('Reminder sent to ${parcel.residentName}'),
-          ],
+      const SnackBar(
+        content: Text(
+          'Parcel notifications are not available yet. No reminder was sent.',
         ),
-        backgroundColor: const Color(0xFF0E4778),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -188,63 +213,32 @@ class _ParcelDeliveryTrackingScreenState
 
                 const SizedBox(height: 24),
 
-                // Pending Pickup Section
-                _buildPendingSection(),
-
-                const SizedBox(height: 24),
-
-                // Recently Collected Section
-                _buildCollectedSection(),
+                if (_loading)
+                  const Center(child: CircularProgressIndicator())
+                else if (_loadError != null)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        Text(_loadError!, textAlign: TextAlign.center),
+                        TextButton(
+                          onPressed: _watchParcels,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                else ...[
+                  _buildPendingSection(),
+                  const SizedBox(height: 24),
+                  _buildCollectedSection(),
+                ],
 
                 const SizedBox(height: 24),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(18),
-          bottomRight: Radius.circular(18),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-        child: Row(
-          children: [
-            InkWell(
-              onTap: () => Navigator.of(context).pop(),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                child: const Icon(
-                  Icons.arrow_back_ios,
-                  color: Colors.white,
-                  size: 18,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            const Text(
-              'Parcel Management',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -265,7 +259,7 @@ class _ParcelDeliveryTrackingScreenState
             ),
           ),
           ElevatedButton.icon(
-            onPressed: _onLogParcel,
+            onPressed: _hasCommunity ? _onLogParcel : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF0E4778),
               foregroundColor: Colors.white,
@@ -287,28 +281,55 @@ class _ParcelDeliveryTrackingScreenState
   }
 
   Widget _buildSummaryMetrics() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final weekStart = DateTime(
+      now.year,
+      now.month,
+      now.day - (now.weekday - 1),
+    );
+    int receivedSince(DateTime start) => _parcels
+        .where(
+          (parcel) =>
+              !parcel.receivedTime.isBefore(start) &&
+              !parcel.receivedTime.isAfter(now),
+        )
+        .length;
+    String count(int value) => _loading || _loadError != null ? '—' : '$value';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
           Expanded(
-            child: _buildMetricCard('8', 'Today', const Color(0xFF0E4778)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildMetricCard('5', 'Inside Now', const Color(0xFF16A34A)),
+            child: _buildMetricCard(
+              count(receivedSince(today)),
+              'Today',
+              const Color(0xFF0E4778),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: _buildMetricCard(
-              '${_pendingParcels.length}',
+              count(_collectedParcels.length),
+              'Collected',
+              const Color(0xFF16A34A),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildMetricCard(
+              count(_pendingParcels.length),
               'Pending',
               const Color(0xFFD97706),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: _buildMetricCard('42', 'This Week', const Color(0xFF7C3AED)),
+            child: _buildMetricCard(
+              count(receivedSince(weekStart)),
+              'This Week',
+              const Color(0xFF7C3AED),
+            ),
           ),
         ],
       ),
@@ -454,10 +475,16 @@ class _ParcelDeliveryTrackingScreenState
           ...filteredParcels.map(
             (parcel) => Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: PendingParcelCard(
-                parcel: parcel,
-                onMarkAsCollected: () => _onMarkAsCollected(parcel.id),
-                onRemind: () => _onRemindResident(parcel.id),
+              child: AbsorbPointer(
+                absorbing: _collecting.contains(parcel.id),
+                child: Opacity(
+                  opacity: _collecting.contains(parcel.id) ? 0.6 : 1,
+                  child: PendingParcelCard(
+                    parcel: parcel,
+                    onMarkAsCollected: () => _onMarkAsCollected(parcel),
+                    onRemind: _onRemindResident,
+                  ),
+                ),
               ),
             ),
           ),

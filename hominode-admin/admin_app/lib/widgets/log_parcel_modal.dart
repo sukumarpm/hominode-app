@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/parcel_entry.dart';
+import '../services/admin_tenant_context.dart';
+import '../services/parcel_firestore_service.dart';
 
 // ============================================================================
 // LOG NEW PARCEL DIALOG
@@ -42,15 +44,37 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
   late Animation<double> _scaleAnimation;
   late Animation<double> _fadeAnimation;
 
-  // Mock residents data - TODO: Load from API
-  final List<Map<String, String>> _residents = [
-    {'name': 'Priya Sharma', 'unit': 'E-305'},
-    {'name': 'Rajesh Kumar', 'unit': 'A-204'},
-    {'name': 'Amit Patel', 'unit': 'C-102'},
-    {'name': 'Sneha Reddy', 'unit': 'D-401'},
-    {'name': 'Rohit Gupta', 'unit': 'B-203'},
-    {'name': 'Sunita Mehta', 'unit': 'F-106'},
-  ];
+  final _service = ParcelFirestoreService();
+  final _tenant = AdminTenantContext.instance;
+  List<ParcelResident> _residents = [];
+  bool _loadingResidents = true;
+  String? _residentError;
+  int _residentGeneration = 0;
+
+  Future<void> _loadResidents() async {
+    final generation = ++_residentGeneration;
+    setState(() {
+      _residents = [];
+      _selectedResident = null;
+      _loadingResidents = true;
+      _residentError = null;
+    });
+    try {
+      final residents = await _service.loadEligibleResidents();
+      if (!mounted || generation != _residentGeneration) return;
+      setState(() {
+        _residents = residents;
+        _loadingResidents = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _residentGeneration) return;
+      setState(() {
+        _loadingResidents = false;
+        _residentError =
+            'Unable to load residents. Check the selected community and retry.';
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -66,10 +90,13 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
     _animationController.forward();
+    _tenant.addListener(_loadResidents);
+    _loadResidents();
   }
 
   @override
   void dispose() {
+    _tenant.removeListener(_loadResidents);
     _animationController.dispose();
     _courierController.dispose();
     _trackingIdController.dispose();
@@ -77,8 +104,10 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
     super.dispose();
   }
 
-  void _onSubmit() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _onSubmit() async {
+    if (_isLoading || _loadingResidents || !_formKey.currentState!.validate()) {
+      return;
+    }
     if (_selectedResident == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -88,49 +117,28 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
       );
       return;
     }
-
-    setState(() {
-      _isLoading = true;
-    });
-
+    final resident = _residents.firstWhere(
+      (resident) => resident.id == _selectedResident,
+    );
+    final generation = _residentGeneration;
+    setState(() => _isLoading = true);
     HapticFeedback.mediumImpact();
-
-    // Simulate API call
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    final selectedResidentData = _residents.firstWhere(
-      (resident) =>
-          '${resident['name']} - ${resident['unit']}' == _selectedResident,
-    );
-
-    final parcel = ParcelEntry(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      residentName: selectedResidentData['name']!,
-      unit: selectedResidentData['unit']!,
-      courier: _courierController.text.trim(),
-      trackingId: _trackingIdController.text.trim(),
-      receivedTime: DateTime.now(),
-      status: ParcelStatus.pending,
-      isResidentNotified: true, // Always notify when logging
-      notes: _notesController.text.trim().isEmpty
-          ? null
-          : _notesController.text.trim(),
-    );
-
-    widget.onParcelAdded(parcel);
-
-    if (mounted) {
+    try {
+      final parcel = await _service.addParcel(
+        resident: resident,
+        courier: _courierController.text,
+        trackingId: _trackingIdController.text,
+        notes: _notesController.text,
+      );
+      if (!mounted || generation != _residentGeneration) return;
+      final messenger = ScaffoldMessenger.of(context);
+      widget.onParcelAdded(parcel);
+      if (!mounted) return;
       Navigator.of(context).pop();
-
-      // TODO: Send SMS/App notification to resident
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle, color: Colors.white, size: 20),
-              const SizedBox(width: 8),
-              Text('Parcel logged & ${selectedResidentData['name']} notified'),
-            ],
+          content: Text(
+            'Parcel logged for ${parcel.residentName}. No notification sent.',
           ),
           backgroundColor: const Color(0xFF16A34A),
           behavior: SnackBarBehavior.floating,
@@ -139,12 +147,26 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
           ),
         ),
       );
+    } catch (_) {
+      if (!mounted || generation != _residentGeneration) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to save parcel. Check your connection and resident assignment, then retry.',
+          ),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+      // Refresh eligibility after a denied/stale assignment without losing entered details.
+      _loadResidents();
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _onClose() {
     _animationController.reverse().then((_) {
-      Navigator.of(context).pop();
+      if (mounted) Navigator.of(context).pop();
     });
   }
 
@@ -248,7 +270,13 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
-                            onPressed: _isLoading ? null : _onSubmit,
+                            onPressed:
+                                _isLoading ||
+                                    _loadingResidents ||
+                                    _residentError != null ||
+                                    _residents.isEmpty
+                                ? null
+                                : _onSubmit,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF0E4778),
                               foregroundColor: const Color(0xFFFFFFFF),
@@ -270,7 +298,7 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
                                     ),
                                   )
                                 : const Text(
-                                    'Log & Notify Resident',
+                                    'Log Parcel',
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w600,
@@ -304,9 +332,13 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
+          key: ValueKey(_residentGeneration),
           initialValue: _selectedResident,
+          isExpanded: true,
           decoration: InputDecoration(
-            hintText: 'Select resident',
+            hintText: _loadingResidents
+                ? 'Loading residents…'
+                : 'Select resident',
             hintStyle: const TextStyle(fontSize: 15, color: Color(0xFF9CA3AF)),
             suffixIcon: const Icon(
               Icons.keyboard_arrow_down,
@@ -331,21 +363,38 @@ class _LogNewParcelDialogState extends State<LogNewParcelDialog>
             ),
           ),
           items: _residents.map((resident) {
-            final displayText = '${resident['name']} - ${resident['unit']}';
+            final displayText = '${resident.name} - ${resident.flatLabel}';
             return DropdownMenuItem<String>(
-              value: displayText,
+              value: resident.id,
               child: Text(
                 displayText,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 15, color: Color(0xFF111827)),
               ),
             );
           }).toList(),
-          onChanged: (value) {
-            setState(() {
-              _selectedResident = value;
-            });
-          },
+          onChanged: _isLoading || _loadingResidents
+              ? null
+              : (value) {
+                  setState(() => _selectedResident = value);
+                },
         ),
+        if (_residentError != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _residentError!,
+            style: const TextStyle(color: Color(0xFFEF4444)),
+          ),
+          TextButton(
+            onPressed: _isLoading ? null : _loadResidents,
+            child: const Text('Retry'),
+          ),
+        ] else if (!_loadingResidents && _residents.isEmpty) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'No approved current residents with a unit are available.',
+          ),
+        ],
       ],
     );
   }
