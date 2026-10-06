@@ -20,7 +20,8 @@
     "seed:demo:bookings": "node scripts/seed-demo-bookings.js",
     "seed:demo:events": "node scripts/seed-demo-events-announcements.js",
     "seed:demo:billing-v2": "node scripts/seed-demo-billing-v2.js",
-    "seed:demo:payments-v2": "node scripts/seed-demo-payments-v2.js"
+    "seed:demo:payments-v2": "node scripts/seed-demo-payments-v2.js",
+    "seed:demo:reset": "node scripts/reset-demo-green-wave-v1.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",
