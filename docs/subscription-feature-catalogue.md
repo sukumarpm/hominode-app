@@ -114,7 +114,7 @@ Potential account purposes:
 | Facility booking administration | facilityBookingAdmin | No | Yes | Yes |
 | Events | events | No | Yes | Yes |
 | Polls / voting | polls | No | Yes | Yes |
-| Community wall | communityWall | No | Yes | Yes |
+| Community wall | communityWall | Yes | Yes | Yes |
 | Resident-management messaging | communityMessaging | No | Yes | Yes |
 | Domestic staff management | domesticStaff | No | Yes | Yes |
 | Resident marketplace | marketplace | No | Yes | Yes |
