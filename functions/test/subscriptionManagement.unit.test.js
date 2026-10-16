@@ -187,3 +187,38 @@ test('subscription resolution uses transaction reads and ignores stored feature 
   const resolved = await resolveCommunitySubscriptionCore({db, communityId: 'C', transaction});
   assert.equal(subscriptionCanUseFeature(resolved, 'facilityBooking'), false);
 });
+
+test("current entitlement resolves an approved resident's own community and canonical Plus permissions", async () => {
+  const {getCurrentCommunityEntitlementCore} = require("../src/subscription_management");
+  const accesses = [];
+  const docs = {
+    "users/RESIDENT_1": {uid: "RESIDENT_1", role: "resident", isActive: true, approvalStatus: "approved", communityId: "GREEN-WAVE"},
+    "subscriptions/GREEN-WAVE": {planId: "plus", status: "active", startsAt: null, endsAt: null, features: {facilityBooking: false}},
+  };
+  const db = {collection: name => ({doc: id => ({
+    get: async () => {
+      const path = `${name}/${id}`;
+      accesses.push(path);
+      return {exists: Object.hasOwn(docs, path), data: () => docs[path]};
+    },
+  })})};
+  const auth = {uid: "RESIDENT_1", token: {firebase: {sign_in_provider: "phone"}, phone_number: "+919876543210"}};
+  const result = await getCurrentCommunityEntitlementCore({db, auth, data: {}});
+  assert.equal(result.communityId, "GREEN-WAVE");
+  assert.equal(result.resolvedRole, "resident");
+  assert.equal(result.planId, "plus");
+  assert.equal(result.features.facilityBooking, true);
+  assert.deepEqual(accesses, ["users/RESIDENT_1", "subscriptions/GREEN-WAVE"]);
+});
+
+test("current entitlement fails closed when an approved community has no subscription", async () => {
+  const {getCurrentCommunityEntitlementCore} = require("../src/subscription_management");
+  const db = {collection: name => ({doc: id => ({get: async () =>
+    name === "users" ? {exists: true, data: () => ({uid: id, role: "resident", isActive: true, approvalStatus: "approved", communityId: "GREEN-WAVE"})} : {exists: false}
+  })})};
+  const auth = {uid: "RESIDENT_1", token: {firebase: {sign_in_provider: "phone"}, phone_number: "+919876543210"}};
+  await assert.rejects(
+    () => getCurrentCommunityEntitlementCore({db, auth, data: {}}),
+    /does not have a subscription/,
+  );
+});
