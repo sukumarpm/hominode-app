@@ -222,3 +222,26 @@ test("current entitlement fails closed when an approved community has no subscri
     /does not have a subscription/,
   );
 });
+
+test("current entitlement denies inactive and unapproved residents before subscription lookup", async () => {
+  const {getCurrentCommunityEntitlementCore} = require("../src/subscription_management");
+  for (const patch of [{isActive: false}, {approvalStatus: "pending"}, {role: "guest"}]) {
+    const reads = [];
+    const db = {collection: name => ({doc: id => ({
+      get: async () => {
+        reads.push(`${name}/${id}`);
+        if (name === "users") return {exists: true, data: () => ({
+          uid: "RESIDENT_1", role: "resident", isActive: true,
+          approvalStatus: "approved", communityId: "GREEN-WAVE", ...patch,
+        })};
+        return {exists: false, data: () => undefined};
+      },
+    })})};
+    const auth = {uid: "RESIDENT_1", token: {firebase: {sign_in_provider: "phone"}, phone_number: "+919876543210"}};
+    await assert.rejects(
+      () => getCurrentCommunityEntitlementCore({db, auth, data: {}}),
+      {code: "permission-denied"},
+    );
+    assert.equal(reads.includes("subscriptions/GREEN-WAVE"), false);
+  }
+});
