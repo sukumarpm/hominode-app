@@ -187,3 +187,13 @@ test('subscription resolution uses transaction reads and ignores stored feature 
   const resolved = await resolveCommunitySubscriptionCore({db, communityId: 'C', transaction});
   assert.equal(subscriptionCanUseFeature(resolved, 'facilityBooking'), false);
 });
+
+
+test("Community Wall is included in every plan while Events stay premium", () => {
+  for (const plan of ["essential", "plus", "pro"]) {
+    assert.equal(PLAN_DEFINITIONS[plan].features.communityWall, true);
+  }
+  assert.equal(PLAN_DEFINITIONS.essential.features.events, false);
+  assert.equal(PLAN_DEFINITIONS.essential.features.facilityBooking, false);
+  assert.equal(PLAN_DEFINITIONS.essential.features.marketplace, false);
+});
