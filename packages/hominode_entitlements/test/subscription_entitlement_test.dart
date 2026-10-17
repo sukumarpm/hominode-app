@@ -111,6 +111,15 @@ void main() {
   });
 
   group('features', () {
+    test('Basic announcement entitlement is independent of Events', () {
+      final basic = entitlement(
+        planId: 'essential',
+        features: {'noticesAnnouncements': true, 'events': false},
+      );
+      expect(basic.canUseFeature('noticesAnnouncements', now: now), isTrue);
+      expect(basic.canUseFeature('events', now: now), isFalse);
+    });
+
     test('enabled feature is allowed on usable subscription', () {
       expect(entitlement().canUseFeature('facilityBooking', now: now), isTrue);
     });

@@ -192,15 +192,29 @@ String newSosRequestId() {
 }
 
 String sosErrorMessage(Object error) {
-  if (error is FirebaseFunctionsException &&
-      const [
-        'permission-denied',
-        'failed-precondition',
-        'invalid-argument',
-      ].contains(error.code) &&
-      error.message?.isNotEmpty == true)
-    return error.message!;
-  return 'Unable to confirm this request. Check your connection and retry, or call Security for urgent assistance.';
+  if (error is FirebaseFunctionsException) {
+    switch (error.code) {
+      case 'unauthenticated':
+        return 'Your sign-in could not be verified. Sign in again, or call Security for urgent assistance.';
+      case 'permission-denied':
+      case 'failed-precondition':
+      case 'invalid-argument':
+        // These callable messages are deliberately authored by the backend
+        // for safe authorization and account-state recovery guidance.
+        return error.message?.isNotEmpty == true
+            ? error.message!
+            : 'Your Resident community access could not be verified. Retry connection, or call Security for urgent assistance.';
+      case 'unavailable':
+      case 'deadline-exceeded':
+        return 'The emergency service could not be reached. Check your connection and retry, or call Security for urgent assistance.';
+      case 'not-found':
+        return 'Emergency assistance is not available right now. Call Security for urgent assistance.';
+      case 'internal':
+      case 'unknown':
+        return 'The emergency service could not confirm its status. Retry connection, or call Security for urgent assistance.';
+    }
+  }
+  return 'The emergency service could not be reached. Check your connection and retry, or call Security for urgent assistance.';
 }
 
 // Notification IDs remain handled by the existing authorized notification router.

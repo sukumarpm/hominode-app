@@ -30,6 +30,68 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+    'SOS tabs have readable selected and unselected colors in both themes',
+    (tester) async {
+      final lightTheme = ThemeData.light().copyWith(
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF0E4778),
+          foregroundColor: Colors.white,
+        ),
+      );
+      final darkTheme = ThemeData.dark();
+
+      double contrastRatio(Color foreground, Color background) {
+        final blended = Color.alphaBlend(foreground, background);
+        final blendedLuminance = blended.computeLuminance();
+        final backgroundLuminance = background.computeLuminance();
+        final lighter = blendedLuminance > backgroundLuminance
+            ? blendedLuminance
+            : backgroundLuminance;
+        final darker = blendedLuminance > backgroundLuminance
+            ? backgroundLuminance
+            : blendedLuminance;
+        return (lighter + 0.05) / (darker + 0.05);
+      }
+
+      for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+        final client = TestSosClient();
+        addTearDown(client.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: lightTheme,
+            darkTheme: darkTheme,
+            themeMode: mode,
+            home: SosListPage(communityId: 'community-a', client: client),
+          ),
+        );
+        await tester.pump();
+
+        final resolvedTheme = Theme.of(
+          tester.element(find.byType(SosListPage)),
+        );
+        final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+        final foreground =
+            resolvedTheme.appBarTheme.foregroundColor ??
+            resolvedTheme.colorScheme.onSurface;
+        final background =
+            resolvedTheme.appBarTheme.backgroundColor ??
+            resolvedTheme.colorScheme.surface;
+        final labelColor = tabBar.labelColor!;
+        final unselectedColor = tabBar.unselectedLabelColor!;
+
+        expect(labelColor, foreground);
+        expect(tabBar.indicatorColor, foreground);
+        expect(contrastRatio(labelColor, background), greaterThan(4.5));
+        expect(contrastRatio(unselectedColor, background), greaterThan(4.5));
+        expect(
+          contrastRatio(tabBar.indicatorColor!, background),
+          greaterThan(3.0),
+        );
+      }
+    },
+  );
+
   testWidgets('exactly three taps trigger once, with no activation questions', (
     tester,
   ) async {
@@ -67,6 +129,58 @@ void main() {
     expect(find.text('Request SOS'), findsNothing);
     expect(find.text('CANCEL SOS'), findsOneWidget);
     semantics.dispose();
+  });
+
+  testWidgets(
+    'context authorization failure is clear, retryable, and sends no alert',
+    (tester) async {
+      final client = TestSosClient()
+        ..contextError = FirebaseFunctionsException(
+          code: 'permission-denied',
+          message: 'Your approved Resident access is required.',
+        );
+      addTearDown(client.dispose);
+
+      await resident(tester, client);
+
+      expect(
+        find.text('Your approved Resident access is required.'),
+        findsOneWidget,
+      );
+      expect(find.text('Retry connection'), findsOneWidget);
+      expect(client.contextCalls, 1);
+      expect(client.triggers, 0);
+
+      client.contextError = null;
+      await tester.tap(find.text('Retry connection'));
+      await tester.pumpAndSettle();
+
+      expect(client.contextCalls, 2);
+      expect(
+        find.text('Tap SOS 3 times to request emergency assistance.'),
+        findsOneWidget,
+      );
+      expect(client.triggers, 0);
+    },
+  );
+
+  testWidgets('unavailable context reports connection/service failure safely', (
+    tester,
+  ) async {
+    final client = TestSosClient()
+      ..contextError = FirebaseFunctionsException(
+        code: 'unavailable',
+        message: 'Temporarily unavailable.',
+      );
+    addTearDown(client.dispose);
+
+    await resident(tester, client);
+
+    expect(
+      find.textContaining('emergency service could not be reached'),
+      findsOneWidget,
+    );
+    expect(client.triggers, 0);
   });
 
   testWidgets(
@@ -131,7 +245,10 @@ void main() {
       addTearDown(client.dispose);
       await resident(tester, client);
       await send(tester);
-      expect(find.textContaining('Unable to confirm'), findsOneWidget);
+      expect(
+        find.textContaining('emergency service could not be reached'),
+        findsOneWidget,
+      );
       expect(find.textContaining('received by the server'), findsNothing);
       expect(find.textContaining('raw internals'), findsNothing);
       client.triggerError = null;

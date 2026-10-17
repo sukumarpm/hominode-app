@@ -12,6 +12,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 
+import 'retryable_initialization.dart';
+
 const hominodeNotificationChannelId = 'hominode_high_importance';
 const _installationPreferenceKey = 'hominode_notification_installation_id';
 
@@ -37,31 +39,60 @@ class HominodeNotificationPayload {
     required this.type,
     required this.entityId,
     required this.communityId,
+    this.eventType,
+    this.route,
   });
 
-  static const Set<String> _allowedKeys = {'type', 'entityId', 'communityId'};
+  static const Set<String> _allowedKeys = {
+    'type',
+    'entityId',
+    'communityId',
+    'eventType',
+    'route',
+  };
 
   final String type;
   final String entityId;
   final String communityId;
+  final String? eventType;
+  final String? route;
 
   static HominodeNotificationPayload? tryParse(Map<String, dynamic> data) {
     if (data.keys.any((key) => !_allowedKeys.contains(key))) return null;
     final type = data['type']?.toString().trim() ?? '';
     final entityId = data['entityId']?.toString().trim() ?? '';
     final communityId = data['communityId']?.toString().trim() ?? '';
+    final eventType = _optionalString(data, 'eventType', maxLength: 80);
+    final route = _optionalString(data, 'route', maxLength: 64);
     if (type != 'notification' ||
         entityId.isEmpty ||
         entityId.length > 200 ||
         communityId.isEmpty ||
-        communityId.length > 128) {
+        communityId.length > 128 ||
+        (data.containsKey('eventType') && eventType == null) ||
+        (data.containsKey('route') && route == null)) {
       return null;
     }
     return HominodeNotificationPayload(
       type: type,
       entityId: entityId,
       communityId: communityId,
+      eventType: eventType,
+      route: route,
     );
+  }
+
+  static String? _optionalString(
+    Map<String, dynamic> data,
+    String key, {
+    required int maxLength,
+  }) {
+    if (!data.containsKey(key)) return null;
+    final value = data[key];
+    if (value is! String || value.trim().isEmpty || value.length > maxLength) {
+      return null;
+    }
+    return value.trim();
   }
 
   static HominodeNotificationPayload? tryParseJson(String? value) {
@@ -79,6 +110,8 @@ class HominodeNotificationPayload {
     'type': type,
     'entityId': entityId,
     'communityId': communityId,
+    if (eventType != null) 'eventType': eventType!,
+    if (route != null) 'route': route!,
   };
 
   String get dedupeKey => '$type|$entityId|$communityId';
@@ -108,16 +141,20 @@ class HominodePushNotifications {
   String? _lastHandledTap;
   final Set<String> _shownForegroundMessages = <String>{};
   Future<void>? _activation;
-  bool _initialized = false;
+  final RetryableInitialization _initialization = RetryableInitialization();
   bool _active = false;
 
   Future<void> initialize({
     required HominodeNotificationTapHandler onAuthorizedTap,
   }) async {
     _tapHandler = onAuthorizedTap;
-    if (_initialized) return;
-    _initialized = true;
+    await _initialization.run(
+      _initialize,
+      onFailure: _cancelInitializationSubscriptions,
+    );
+  }
 
+  Future<void> _initialize() async {
     FirebaseMessaging.onBackgroundMessage(
       hominodeFirebaseMessagingBackgroundHandler,
     );
@@ -194,23 +231,39 @@ class HominodePushNotifications {
     }
   }
 
+  Future<void> _cancelInitializationSubscriptions() async {
+    await _foregroundSubscription?.cancel();
+    await _openedSubscription?.cancel();
+    await _tokenSubscription?.cancel();
+    await _authSubscription?.cancel();
+    _foregroundSubscription = null;
+    _openedSubscription = null;
+    _tokenSubscription = null;
+    _authSubscription = null;
+  }
+
   Future<void> activate({String? selectedCommunityId}) async {
     _active = true;
     _selectedCommunityId = selectedCommunityId?.trim();
     final running = _activation;
-    if (running != null) return running;
+    if (running != null) return;
     final next = _activateInternal();
     _activation = next;
-    try {
-      await next;
-    } finally {
-      _activation = null;
-    }
+    unawaited(
+      next.whenComplete(() {
+        if (identical(_activation, next)) _activation = null;
+      }),
+    );
   }
 
   Future<void> _activateInternal() async {
-    if (!_initialized || _auth.currentUser == null) return;
+    if (_auth.currentUser == null || _tapHandler == null) return;
     try {
+      await _initialization.run(
+        _initialize,
+        onFailure: _cancelInitializationSubscriptions,
+      );
+      if (_auth.currentUser == null) return;
       await _requestPermission();
       if (Platform.isIOS) {
         for (var attempt = 0; attempt < 8; attempt++) {
@@ -391,6 +444,6 @@ class HominodePushNotifications {
     await _openedSubscription?.cancel();
     await _tokenSubscription?.cancel();
     await _authSubscription?.cancel();
-    _initialized = false;
+    _initialization.reset();
   }
 }

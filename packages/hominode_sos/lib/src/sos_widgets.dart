@@ -534,15 +534,22 @@ class _SosListPageState extends State<SosListPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tabForeground =
+        theme.appBarTheme.foregroundColor ?? theme.colorScheme.onSurface;
+
     return DefaultTabController(
       length: 2,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('SOS Alerts'),
-          bottom: const TabBar(
+          bottom: TabBar(
+            labelColor: tabForeground,
+            unselectedLabelColor: tabForeground.withValues(alpha: 0.72),
+            indicatorColor: tabForeground,
             tabs: [
-              Tab(text: 'Active'),
-              Tab(text: 'History'),
+              const Tab(text: 'Active'),
+              const Tab(text: 'History'),
             ],
           ),
         ),
