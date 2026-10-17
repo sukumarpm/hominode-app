@@ -25,13 +25,64 @@ class PhoneOtpStartResult {
   const PhoneOtpStartResult({this.verificationId, required this.autoVerified});
 }
 
-class AuthService {
-  final FirebaseAuth _auth;
+abstract interface class SecurityProfileStore {
+  Future<SecurityUserModel?> getSecurityProfile(String uid);
+
+  Future<bool?> isCommunityActive(String communityId);
+}
+
+class _FirestoreSecurityProfileStore implements SecurityProfileStore {
+  _FirestoreSecurityProfileStore(this._firestore);
+
   final FirebaseFirestore _firestore;
 
-  AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
-    : _auth = auth ?? FirebaseAuth.instance,
-      _firestore = firestore ?? FirebaseFirestore.instance;
+  @override
+  Future<SecurityUserModel?> getSecurityProfile(String uid) async {
+    final document = await _firestore
+        .collection('securityStaff')
+        .doc(uid)
+        .get();
+    if (!document.exists) return null;
+    try {
+      return SecurityUserModel.fromFirestore(document);
+    } catch (_) {
+      throw const SecurityAuthException(
+        'invalid-profile',
+        'Security account could not be verified.',
+      );
+    }
+  }
+
+  @override
+  Future<bool?> isCommunityActive(String communityId) async {
+    final document = await _firestore
+        .collection('communities')
+        .doc(communityId)
+        .get();
+    if (!document.exists) return null;
+    return SecurityCommunityModel.fromFirestore(document).isActive;
+  }
+}
+
+class AuthService {
+  final FirebaseAuth _auth;
+  final SecurityProfileStore _profileStore;
+  final Future<void> Function() _deactivateNotifications;
+
+  AuthService({
+    FirebaseAuth? auth,
+    FirebaseFirestore? firestore,
+    SecurityProfileStore? profileStore,
+    Future<void> Function()? deactivateNotifications,
+  }) : _auth = auth ?? FirebaseAuth.instance,
+       _profileStore =
+           profileStore ??
+           _FirestoreSecurityProfileStore(
+             firestore ?? FirebaseFirestore.instance,
+           ),
+       _deactivateNotifications =
+           deactivateNotifications ??
+           HominodePushNotifications.instance.deactivateForLogout;
 
   User? get currentUser => _auth.currentUser;
 
@@ -56,8 +107,15 @@ class AuthService {
       timeout: const Duration(seconds: 60),
       verificationCompleted: (PhoneAuthCredential credential) async {
         try {
-          await _auth.signInWithCredential(credential);
-          await requireSecurityProfile();
+          final credentialResult = await _auth.signInWithCredential(credential);
+          final user = credentialResult.user;
+          if (user == null) {
+            throw const SecurityAuthException(
+              'unauthenticated',
+              'Please sign in to continue.',
+            );
+          }
+          await _requireSecurityProfileForUser(user);
 
           if (!completer.isCompleted) {
             completer.complete(const PhoneOtpStartResult(autoVerified: true));
@@ -119,152 +177,198 @@ class AuthService {
         smsCode: code,
       );
 
-      await _auth.signInWithCredential(credential);
-
-      return requireSecurityProfile();
+      final credentialResult = await _auth.signInWithCredential(credential);
+      final user = credentialResult.user;
+      if (user == null) {
+        throw const SecurityAuthException(
+          'unauthenticated',
+          'Please sign in to continue.',
+        );
+      }
+      return _requireSecurityProfileForUser(user);
     } on SecurityAuthException {
       rethrow;
     } on FirebaseAuthException catch (e) {
-      await _safeSignOut();
-
       throw SecurityAuthException(e.code, _firebaseAuthMessage(e));
-    } catch (_) {
-      await _safeSignOut();
-
-      throw const SecurityAuthException(
-        'verification-failed',
-        'OTP verification failed. Please try again.',
-      );
     }
   }
 
-  Future<SecurityUserModel> requireSecurityProfile() async {
+  Future<SecurityUserModel> requireSecurityProfile({
+    bool Function()? isSessionCurrent,
+  }) {
     final user = _auth.currentUser;
-
     if (user == null) {
-      throw const SecurityAuthException(
-        'unauthenticated',
-        'Please sign in to continue.',
+      return Future.error(
+        const SecurityAuthException(
+          'unauthenticated',
+          'Please sign in to continue.',
+        ),
       );
     }
+    return _requireSecurityProfileForUser(
+      user,
+      isSessionCurrent: isSessionCurrent,
+    );
+  }
 
-    bool verifiedPhoneSession = false;
-    try {
-      final tokenResult = await user.getIdTokenResult();
-      verifiedPhoneSession = hasVerifiedPhoneAuth(
-        phoneNumber: user.phoneNumber,
-        signInProvider: tokenResult.signInProvider,
-      );
-    } catch (_) {
-      // A missing/unreadable token result cannot authorize an operational session.
-    }
-    if (!verifiedPhoneSession) {
-      await _safeSignOut();
-      throw const SecurityAuthException(
-        'phone-auth-required',
-        'Please sign in with a verified phone number.',
-      );
-    }
+  Future<SecurityUserModel> _requireSecurityProfileForUser(
+    User user, {
+    bool Function()? isSessionCurrent,
+  }) async {
+    bool isCurrentSession() =>
+        _auth.currentUser?.uid == user.uid &&
+        (isSessionCurrent?.call() ?? true);
 
-    try {
-      final doc = await _firestore
-          .collection('securityStaff')
-          .doc(user.uid)
-          .get();
-
-      if (!doc.exists) {
-        await _safeSignOut();
-
+    void ensureCurrentSession() {
+      if (!isCurrentSession()) {
         throw const SecurityAuthException(
+          'session-changed',
+          'Authentication changed. Please retry verification.',
+        );
+      }
+    }
+
+    ensureCurrentSession();
+    final tokenResult = await user.getIdTokenResult();
+    ensureCurrentSession();
+    final verifiedPhoneSession = hasVerifiedPhoneAuth(
+      phoneNumber: user.phoneNumber,
+      signInProvider: tokenResult.signInProvider,
+    );
+    if (!verifiedPhoneSession) {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
+          'phone-auth-required',
+          'Please sign in with a verified phone number.',
+        ),
+      );
+    }
+
+    final profile = await _profileStore.getSecurityProfile(user.uid);
+    ensureCurrentSession();
+
+    if (profile == null) {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
           'profile-not-found',
           'No Security account is linked to this phone number. Please contact your Community Admin.',
-        );
-      }
+        ),
+      );
+    }
 
-      final profile = SecurityUserModel.fromFirestore(doc);
-
-      if (!profile.matchesVerifiedPhone(
-        expectedUid: user.uid,
-        phone: user.phoneNumber!,
-      )) {
-        await _safeSignOut();
-
-        throw const SecurityAuthException(
+    if (!profile.matchesVerifiedPhone(
+      expectedUid: user.uid,
+      phone: user.phoneNumber!,
+    )) {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
           'invalid-profile',
           'Security account could not be verified.',
-        );
-      }
+        ),
+      );
+    }
 
-      if (profile.role != 'security') {
-        await _safeSignOut();
-
-        throw const SecurityAuthException(
+    if (profile.role != 'security') {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
           'wrong-role',
           'This phone number is not registered as a Security account.',
-        );
-      }
+        ),
+      );
+    }
 
-      if (!profile.isActive) {
-        await _safeSignOut();
-
-        throw const SecurityAuthException(
+    if (!profile.isActive) {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
           'account-disabled',
           'Your Security account is not active. Please contact your Community Admin.',
-        );
-      }
+        ),
+      );
+    }
 
-      if (profile.communityId.trim().isEmpty) {
-        await _safeSignOut();
-
-        throw const SecurityAuthException(
+    if (profile.communityId.trim().isEmpty) {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
           'community-missing',
           'No community is assigned to this Security account.',
-        );
-      }
+        ),
+      );
+    }
 
-      final communityDoc = await _firestore
-          .collection('communities')
-          .doc(profile.communityId)
-          .get();
+    final communityIsActive = await _profileStore.isCommunityActive(
+      profile.communityId,
+    );
+    ensureCurrentSession();
 
-      if (!communityDoc.exists) {
-        await _safeSignOut();
-
-        throw const SecurityAuthException(
+    if (communityIsActive == null) {
+      await _denySession(
+        user,
+        isCurrentSession,
+        const SecurityAuthException(
           'community-not-found',
           'Assigned community could not be found.',
-        );
-      }
+        ),
+      );
+    }
 
-      final community = SecurityCommunityModel.fromFirestore(communityDoc);
-
-      if (!community.isActive) {
-        await _safeSignOut();
-
-        throw const SecurityAuthException(
+    if (!communityIsActive) {
+      await _denySession(
+        user,
+        isSessionCurrent,
+        const SecurityAuthException(
           'community-inactive',
           'This community is currently unavailable.',
-        );
-      }
-
-      return profile;
-    } catch (_) {
-      await _safeSignOut();
-      rethrow;
+        ),
+      );
     }
+
+    ensureCurrentSession();
+    return profile;
+  }
+
+  Future<Never> _denySession(
+    User user,
+    bool Function()? isSessionCurrent,
+    SecurityAuthException error,
+  ) async {
+    await _safeSignOut(
+      expectedUid: user.uid,
+      isSessionCurrent: isSessionCurrent,
+    );
+    throw error;
   }
 
   Future<void> logout() async {
-    await HominodePushNotifications.instance.deactivateForLogout();
+    await _deactivateNotifications();
     await _auth.signOut();
   }
 
-  Future<void> _safeSignOut() async {
-    try {
-      await HominodePushNotifications.instance.deactivateForLogout();
-    } catch (_) {}
+  Future<void> _safeSignOut({
+    required String expectedUid,
+    bool Function()? isSessionCurrent,
+  }) async {
+    bool shouldSignOut() =>
+        _auth.currentUser?.uid == expectedUid &&
+        (isSessionCurrent?.call() ?? true);
+
+    if (!shouldSignOut()) return;
     try {
       await _auth.signOut();
+    } catch (_) {}
+    try {
+      await _deactivateNotifications();
     } catch (_) {}
   }
 

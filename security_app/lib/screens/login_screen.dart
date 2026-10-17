@@ -881,6 +881,10 @@ class _LoginScreenState extends State<LoginScreen>
                                             child: TextField(
                                               controller: _phoneController,
                                               focusNode: _phoneFocusNode,
+                                              onTapOutside: (_) =>
+                                                  FocusScope.of(
+                                                    context,
+                                                  ).unfocus(),
                                               readOnly: _loading,
                                               keyboardType: TextInputType.phone,
                                               textInputAction:
@@ -984,6 +988,8 @@ class _LoginScreenState extends State<LoginScreen>
                                       TextField(
                                         controller: _otpController,
                                         focusNode: _otpFocusNode,
+                                        onTapOutside: (_) =>
+                                            FocusScope.of(context).unfocus(),
                                         enabled: !_loading,
                                         keyboardType: TextInputType.number,
                                         textAlign: TextAlign.center,

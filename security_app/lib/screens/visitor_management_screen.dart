@@ -1,8 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../models/visitor_model.dart';
 import '../services/visitor_service.dart';
@@ -12,8 +11,13 @@ import 'qr_scanner_screen.dart';
 
 class VisitorManagementScreen extends StatefulWidget {
   final int initialTab;
+  final VisitorWorkflow? visitorWorkflow;
 
-  const VisitorManagementScreen({super.key, this.initialTab = 0});
+  const VisitorManagementScreen({
+    super.key,
+    this.initialTab = 0,
+    this.visitorWorkflow,
+  });
 
   @override
   State<VisitorManagementScreen> createState() =>
@@ -28,7 +32,8 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  final VisitorService _visitorService = VisitorService();
+  late final VisitorWorkflow _visitorService =
+      widget.visitorWorkflow ?? VisitorService();
 
   // ---------------------------------------------------------------------------
   // Cached visitor lists.
@@ -36,23 +41,29 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Each VisitorService stream is listened to exactly ONCE.
   // Metrics and tab content both read from these cached lists.
   // ---------------------------------------------------------------------------
-  List<VisitorModel> _pendingVisitors = [];
   List<VisitorModel> _activeVisitors = [];
   List<VisitorModel> _historyVisitors = [];
+  List<VisitorModel> _expectedVisitors = [];
 
-  bool _pendingLoading = true;
   bool _activeLoading = true;
   bool _historyLoading = true;
+  bool _expectedLoading = true;
+  bool _isRefreshing = false;
+  bool _selectionMode = false;
+  bool _isCheckoutDialogOpen = false;
+  bool _isCheckoutSubmitting = false;
+  String? _checkoutError;
+  final Set<String> _selectedActiveVisitorIds = {};
+  String? _pendingCheckoutOperationId;
+  List<String>? _pendingCheckoutIds;
 
-  Object? _pendingError;
   Object? _activeError;
   Object? _historyError;
-
-  StreamSubscription<List<VisitorModel>>? _pendingSubscription;
-  StreamSubscription<List<VisitorModel>>? _activeSubscription;
-  StreamSubscription<List<VisitorModel>>? _historySubscription;
+  Object? _expectedError;
 
   bool _isChangingTab = false;
+
+  bool get _isCheckoutBusy => _isCheckoutDialogOpen || _isCheckoutSubmitting;
 
   @override
   void initState() {
@@ -61,77 +72,55 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     _currentTab = widget.initialTab;
     _pageController = PageController(initialPage: _currentTab);
 
-    _startVisitorSubscriptions();
+    _refreshVisitors();
 
     _searchController.addListener(_onSearchChanged);
   }
 
-  void _startVisitorSubscriptions() {
-    _pendingSubscription = _visitorService.getPendingVisitors().listen(
-      (visitors) {
-        if (!mounted) return;
+  Future<void> _refreshVisitors() async {
+    if (_isRefreshing) return;
+    setState(() {
+      _isRefreshing = true;
+      _expectedLoading = _expectedVisitors.isEmpty;
+      _activeLoading = _activeVisitors.isEmpty;
+      _historyLoading = _historyVisitors.isEmpty;
+    });
 
-        setState(() {
-          _pendingVisitors = visitors;
-          _pendingLoading = false;
-          _pendingError = null;
-        });
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('Pending visitor stream error: $error');
+    final results = await Future.wait([
+      _loadVisitorCategory('expected'),
+      _loadVisitorCategory('inside'),
+      _loadVisitorCategory('completed'),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _expectedVisitors = results[0].visitors;
+      _expectedError = results[0].error;
+      _expectedLoading = false;
+      _activeVisitors = results[1].visitors;
+      _activeError = results[1].error;
+      _activeLoading = false;
+      _historyVisitors = results[2].visitors;
+      _historyError = results[2].error;
+      _historyLoading = false;
+      _isRefreshing = false;
+      _selectedActiveVisitorIds.removeWhere(
+        (id) => !_activeVisitors.any((visitor) => visitor.id == id),
+      );
+      if (_selectedActiveVisitorIds.isEmpty) _selectionMode = false;
+    });
+  }
 
-        if (!mounted) return;
-
-        setState(() {
-          _pendingLoading = false;
-          _pendingError = error;
-        });
-      },
-    );
-
-    _activeSubscription = _visitorService.getActiveVisitors().listen(
-      (visitors) {
-        if (!mounted) return;
-
-        setState(() {
-          _activeVisitors = visitors;
-          _activeLoading = false;
-          _activeError = null;
-        });
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('Active visitor stream error: $error');
-
-        if (!mounted) return;
-
-        setState(() {
-          _activeLoading = false;
-          _activeError = error;
-        });
-      },
-    );
-
-    _historySubscription = _visitorService.getHistoryVisitors().listen(
-      (visitors) {
-        if (!mounted) return;
-
-        setState(() {
-          _historyVisitors = visitors;
-          _historyLoading = false;
-          _historyError = null;
-        });
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('History visitor stream error: $error');
-
-        if (!mounted) return;
-
-        setState(() {
-          _historyLoading = false;
-          _historyError = error;
-        });
-      },
-    );
+  Future<({List<VisitorModel> visitors, Object? error})> _loadVisitorCategory(
+    String category,
+  ) async {
+    try {
+      return (
+        visitors: await _visitorService.getVisitors(category),
+        error: null,
+      );
+    } catch (error) {
+      return (visitors: <VisitorModel>[], error: error);
+    }
   }
 
   void _onSearchChanged() {
@@ -144,10 +133,6 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   @override
   void dispose() {
-    _pendingSubscription?.cancel();
-    _activeSubscription?.cancel();
-    _historySubscription?.cancel();
-
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _pageController.dispose();
@@ -160,7 +145,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // ---------------------------------------------------------------------------
 
   Future<void> _onTabChanged(int index) async {
-    if (index == _currentTab || _isChangingTab) {
+    if (index == _currentTab || _isChangingTab || _isCheckoutBusy) {
       return;
     }
 
@@ -183,79 +168,430 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // VISITOR ACTIONS
   // ---------------------------------------------------------------------------
 
-  Future<void> _onApproveVisitor(String visitorId, String visitorName) async {
-    HapticFeedback.mediumImpact();
-
-    try {
-      await _visitorService.approveVisitor(visitorId);
-      await _visitorService.checkInVisitor(visitorId);
-
-      if (!mounted) return;
-
-      _showSnackBar(
-        '$visitorName approved and checked in',
-        AppColors.successGreen,
-        Icons.check_circle,
-      );
-    } catch (e) {
-      debugPrint('Approve visitor error: $e');
-
-      if (!mounted) return;
-
-      _showSnackBar(
-        'Failed to approve visitor',
-        AppColors.errorRed,
-        Icons.error,
-      );
-    }
-  }
-
-  Future<void> _onRejectVisitor(String visitorId, String visitorName) async {
-    HapticFeedback.mediumImpact();
-
-    try {
-      await _visitorService.rejectVisitor(visitorId);
-
-      if (!mounted) return;
-
-      _showSnackBar(
-        '$visitorName request rejected',
-        AppColors.errorRed,
-        Icons.cancel,
-      );
-    } catch (e) {
-      debugPrint('Reject visitor error: $e');
-
-      if (!mounted) return;
-
-      _showSnackBar(
-        'Failed to reject visitor',
-        AppColors.errorRed,
-        Icons.error,
-      );
-    }
-  }
-
   Future<void> _onMarkExit(String visitorId, String visitorName) async {
+    if (_isCheckoutBusy) return;
+    final matches = _activeVisitors.where((item) => item.id == visitorId);
+    if (matches.isEmpty) return;
+    final visitor = matches.first;
+    await _confirmCheckout(
+      [visitor],
+      title: 'Mark Visitor Out?',
+      description: 'Confirm that $visitorName has left the property.',
+    );
+  }
+
+  Future<void> _confirmCheckout(
+    List<VisitorModel> visitors, {
+    String? title,
+    String? description,
+  }) async {
+    if (visitors.isEmpty || _isCheckoutBusy || !mounted) return;
     HapticFeedback.mediumImpact();
+    final names = visitors.map((visitor) => visitor.visitorName).join(', ');
+    final ids = visitors.map((visitor) => visitor.id).toList();
+    setState(() {
+      _isCheckoutDialogOpen = true;
+      _checkoutError = null;
+    });
+
+    Map<String, dynamic>? response;
+    try {
+      response = await showDialog<Map<String, dynamic>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => PopScope(
+            canPop: !_isCheckoutSubmitting,
+            child: AlertDialog(
+              title: Text(title ?? 'Mark ${visitors.length} Visitors Out?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    description ?? 'Confirm these visitors have left: $names',
+                  ),
+                  if (_checkoutError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _checkoutError!,
+                      style: const TextStyle(color: AppColors.errorRed),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: _isCheckoutSubmitting
+                      ? null
+                      : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: _isCheckoutSubmitting
+                      ? null
+                      : () async {
+                          setState(() {
+                            _isCheckoutSubmitting = true;
+                            _checkoutError = null;
+                          });
+                          setDialogState(() {});
+                          final operationId = _checkoutOperationFor(ids);
+                          final result = await _submitCheckout(
+                            ids,
+                            operationId,
+                          );
+                          if (!mounted || !dialogContext.mounted) return;
+                          setDialogState(() {});
+                          if (result != null) {
+                            Navigator.of(dialogContext).pop(result);
+                          }
+                        },
+                  child: _isCheckoutSubmitting
+                      ? const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 8),
+                            Text('Checking Out…'),
+                          ],
+                        )
+                      : Text(
+                          _checkoutError == null
+                              ? 'Mark Out'
+                              : 'Retry Checkout',
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckoutDialogOpen = false;
+          _isCheckoutSubmitting = false;
+          _checkoutError = null;
+        });
+      }
+    }
+    if (response == null || !mounted) return;
+
+    final succeeded = (response['succeeded'] as num?)?.toInt() ?? 0;
+    final failed =
+        (response['failed'] as num?)?.toInt() ?? ids.length - succeeded;
+    await _showCheckoutResults(response, succeeded, failed);
+    if (mounted) await _refreshVisitors();
+  }
+
+  bool _sameIds(List<String> left, List<String> right) =>
+      left.length == right.length && left.toSet().containsAll(right);
+
+  String _checkoutOperationFor(List<String> ids) {
+    if (_pendingCheckoutIds == null || !_sameIds(_pendingCheckoutIds!, ids)) {
+      _pendingCheckoutIds = List<String>.from(ids);
+      _pendingCheckoutOperationId = _visitorService.newOperationId();
+    }
+    return _pendingCheckoutOperationId!;
+  }
+
+  Future<Map<String, dynamic>?> _submitCheckout(
+    List<String> visitorIds,
+    String operationId,
+  ) async {
+    try {
+      final response = await _visitorService.checkoutVisitors(
+        visitorIds: visitorIds,
+        operationId: operationId,
+      );
+      if (!mounted) return null;
+      _pendingCheckoutIds = null;
+      _pendingCheckoutOperationId = null;
+      setState(() {
+        _isCheckoutSubmitting = false;
+        _selectedActiveVisitorIds.clear();
+        _selectionMode = false;
+      });
+      return response;
+    } catch (error) {
+      debugPrint('Visitor checkout failed (${error.runtimeType}).');
+      if (!mounted) return null;
+      setState(() {
+        _isCheckoutSubmitting = false;
+        _checkoutError = 'Checkout could not be confirmed. Please retry.';
+      });
+      return null;
+    }
+  }
+
+  Future<void> _showCheckoutResults(
+    Map<String, dynamic> response,
+    int succeeded,
+    int failed,
+  ) async {
+    final rawResults = response['results'];
+    final results = rawResults is List
+        ? rawResults.whereType<Map>().toList()
+        : const <Map>[];
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(failed == 0 ? 'Checkout Complete' : 'Checkout Results'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$succeeded marked out; $failed failed.'),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: results.map((result) {
+                    final id = result['visitorId']?.toString() ?? '';
+                    final matches = _activeVisitors.where(
+                      (item) => item.id == id,
+                    );
+                    final name = matches.isEmpty
+                        ? id
+                        : matches.first.visitorName;
+                    final success = result['success'] == true;
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(
+                        success ? Icons.check_circle : Icons.error_outline,
+                        color: success
+                            ? AppColors.successGreen
+                            : AppColors.errorRed,
+                      ),
+                      title: Text(name),
+                      subtitle: success
+                          ? const Text('Marked out')
+                          : Text(
+                              result['message']?.toString() ??
+                                  'Checkout failed',
+                            ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _onDenyEntry(VisitorModel visitor) async {
+    var denialReason = '';
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Deny Visitor Entry'),
+        content: TextField(
+          autofocus: true,
+          maxLength: 500,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Operational reason',
+            hintText: 'Enter the reason for denying entry',
+          ),
+          onChanged: (value) => denialReason = value,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = denialReason.trim();
+              if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || reason == null || reason.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm Denial'),
+        content: Text(
+          'Deny entry for ${visitor.visitorName}? This invitation cannot be used to enter afterward.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Deny Entry'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
 
     try {
-      await _visitorService.checkOutVisitor(visitorId);
-
-      if (!mounted) return;
-
-      _showSnackBar(
-        '$visitorName marked as exited',
-        AppColors.successGreen,
-        Icons.logout,
+      await _visitorService.denyVisitorEntry(
+        visitorId: visitor.id,
+        reason: reason,
+        operationId: _visitorService.newOperationId(),
       );
-    } catch (e) {
-      debugPrint('Mark visitor exit error: $e');
-
       if (!mounted) return;
-
-      _showSnackBar('Failed to mark exit', AppColors.errorRed, Icons.error);
+      _showSnackBar(
+        'Entry denied for ${visitor.visitorName}',
+        AppColors.warningOrange,
+        Icons.block,
+      );
+      await _refreshVisitors();
+    } on FirebaseFunctionsException catch (error) {
+      debugPrint('Visitor entry denial failed: ${error.code}');
+      if (!mounted) return;
+      _showSnackBar(
+        'Unable to deny entry. Refresh and retry.',
+        AppColors.errorRed,
+        Icons.error,
+      );
+      await _refreshVisitors();
+    } catch (error) {
+      debugPrint('Visitor entry denial failed (${error.runtimeType}).');
+      if (!mounted) return;
+      _showSnackBar(
+        'Unable to deny entry. Refresh and retry.',
+        AppColors.errorRed,
+        Icons.error,
+      );
     }
+  }
+
+  Future<void> _showManualCodeDialog() async {
+    var manualCode = '';
+    var operationId = '';
+    var isSubmitting = false;
+    String? errorMessage;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> submit() async {
+            final code = manualCode.trim();
+            if (code.isEmpty || isSubmitting) return;
+            operationId = operationId.isEmpty
+                ? _visitorService.newOperationId()
+                : operationId;
+            setDialogState(() {
+              isSubmitting = true;
+              errorMessage = null;
+            });
+            try {
+              final verified = await _visitorService.verifyVisitorCredential(
+                manualCode: code,
+                operationId: operationId,
+              );
+              if (dialogContext.mounted) Navigator.pop(dialogContext, verified);
+            } on FirebaseFunctionsException catch (error) {
+              debugPrint('Manual visitor verification failed: ${error.code}');
+              if (dialogContext.mounted) {
+                setDialogState(() {
+                  isSubmitting = false;
+                  errorMessage =
+                      'Code could not be verified. Check it and retry.';
+                });
+              }
+            } catch (error) {
+              debugPrint(
+                'Manual visitor verification failed (${error.runtimeType}).',
+              );
+              if (dialogContext.mounted) {
+                setDialogState(() {
+                  isSubmitting = false;
+                  errorMessage =
+                      'Verification could not be confirmed. Retry safely.';
+                });
+              }
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Verify Manual Visitor Code'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.characters,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(labelText: 'Visitor code'),
+                  onChanged: (value) {
+                    setDialogState(() {
+                      manualCode = value;
+                      operationId = '';
+                      errorMessage = null;
+                    });
+                  },
+                  onSubmitted: (_) {
+                    if (!isSubmitting && manualCode.trim().isNotEmpty) {
+                      submit();
+                    }
+                  },
+                ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(color: AppColors.errorRed),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSubmitting
+                    ? null
+                    : () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: isSubmitting ? null : submit,
+                child: isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(errorMessage == null ? 'Verify' : 'Retry'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (!mounted || result == null) return;
+    _showSnackBar(
+      'Entry verified for ${result['visitorName'] ?? 'visitor'}',
+      AppColors.successGreen,
+      Icons.check_circle,
+    );
+    await _refreshVisitors();
   }
 
   void _showSnackBar(String message, Color color, IconData icon) {
@@ -278,10 +614,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   void _onQRScannerTap() {
     HapticFeedback.mediumImpact();
 
-    Navigator.push(
+    Navigator.push<void>(
       context,
       MaterialPageRoute(builder: (context) => const QRScannerScreen()),
-    );
+    ).then((_) => _refreshVisitors());
   }
 
   // ---------------------------------------------------------------------------
@@ -308,20 +644,6 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
-
-  int get _todayPendingRequests {
-    final now = DateTime.now();
-
-    return _pendingVisitors.where((visitor) {
-      final createdAt = visitor.createdAt;
-
-      if (createdAt == null) {
-        return false;
-      }
-
-      return _isSameDay(createdAt, now);
-    }).length;
   }
 
   int get _todayEnteredVisitors {
@@ -444,10 +766,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   String _getSubtitleForTab() {
     switch (_currentTab) {
       case 0:
-        return 'Approve pending visitor requests';
+        return 'Verify a visitor QR or manual code to record gate entry';
 
       case 1:
-        return 'Track active visitors inside';
+        return 'View visitors checked in at the gate';
 
       case 2:
         return 'View completed visitor records';
@@ -519,7 +841,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _onQRScannerTap,
+        onPressed: _isCheckoutBusy ? null : _onQRScannerTap,
         backgroundColor: AppColors.primaryTeal,
         elevation: 4,
         icon: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 20),
@@ -584,20 +906,25 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
               ],
             ),
           ),
-          GestureDetector(
-            onTap: _onQRScannerTap,
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: AppColors.primaryTeal.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.qr_code_scanner,
-                color: AppColors.primaryTeal,
-                size: 20,
-              ),
+          IconButton(
+            tooltip: 'Refresh visitor lists',
+            onPressed: _isRefreshing || _isCheckoutBusy
+                ? null
+                : _refreshVisitors,
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh, color: AppColors.primaryTeal),
+          ),
+          IconButton(
+            tooltip: 'Scan visitor pass',
+            onPressed: _isCheckoutBusy ? null : _onQRScannerTap,
+            icon: const Icon(
+              Icons.qr_code_scanner,
+              color: AppColors.primaryTeal,
             ),
           ),
         ],
@@ -617,15 +944,15 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
             icon: Icons.pending_actions,
             iconColor: AppColors.warningOrange,
             iconBgColor: AppColors.softGoldBackground,
-            value: _pendingVisitors.length.toString(),
-            label: 'Pending',
-            subtitle: 'Awaiting approval',
+            value: 'QR',
+            label: 'Expected',
+            subtitle: 'Credential verification',
           ),
           second: _MetricCard(
             icon: Icons.today,
             iconColor: AppColors.primaryTeal,
             iconBgColor: const Color(0xFFE6F5F2),
-            value: _todayPendingRequests.toString(),
+            value: '—',
             label: 'Today\'s Total',
             subtitle: 'Requests received',
           ),
@@ -646,8 +973,8 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
             iconColor: AppColors.successGreen,
             iconBgColor: const Color(0xFFD1FAE5),
             value: _activeVisitors.length.toString(),
-            label: 'Active',
-            subtitle: 'Currently inside',
+            label: 'Checked In',
+            subtitle: 'Currently checked in',
           ),
           second: _MetricCard(
             icon: Icons.today,
@@ -781,14 +1108,14 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           children: [
             Expanded(
               child: _TabButton(
-                label: 'Pending',
+                label: 'Expected',
                 isSelected: _currentTab == 0,
                 onTap: () => _onTabChanged(0),
               ),
             ),
             Expanded(
               child: _TabButton(
-                label: 'Active',
+                label: 'Checked In',
                 isSelected: _currentTab == 1,
                 onTap: () => _onTabChanged(1),
               ),
@@ -811,42 +1138,89 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // ---------------------------------------------------------------------------
 
   Widget _buildPendingTab() {
-    if (_pendingLoading) {
+    if (_expectedLoading) {
       return const Center(
         child: CircularProgressIndicator(color: AppColors.primaryTeal),
       );
     }
-
-    if (_pendingError != null) {
-      return _buildErrorState('Unable to load pending visitors');
+    if (_expectedError != null) {
+      return _buildRetryState('Unable to load expected visitors');
     }
-
-    final visitors = _filterVisitors(_pendingVisitors);
-
+    final visitors = _filterVisitors(_expectedVisitors);
     if (visitors.isEmpty) {
-      return _buildEmptyState(
-        _searchQuery.isEmpty ? 'No pending visitors' : 'No visitors found',
-        _searchQuery.isEmpty
-            ? 'Pending requests will appear here'
-            : 'Try adjusting your search',
-        Icons.pending_actions,
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.people_outline,
+                size: 48,
+                color: AppColors.primaryTeal,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _searchQuery.isEmpty
+                    ? 'No expected visitors'
+                    : 'No visitors found',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.textGray, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Scan a visitor pass or enter its manual code to verify entry.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textGray, fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _isCheckoutBusy ? null : _onQRScannerTap,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('Scan QR'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _isCheckoutBusy ? null : _showManualCodeDialog,
+                    icon: const Icon(Icons.keyboard),
+                    label: const Text('Enter Code'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       );
     }
-
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: visitors.length,
+      itemCount: visitors.length + 1,
       itemBuilder: (context, index) {
-        final visitor = visitors[index];
-
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: _showManualCodeDialog,
+                icon: const Icon(Icons.keyboard),
+                label: const Text('Enter Manual Code'),
+              ),
+            ),
+          );
+        }
+        final visitor = visitors[index - 1];
         return Padding(
-          padding: EdgeInsets.only(
-            bottom: index < visitors.length - 1 ? 12 : 0,
-          ),
-          child: _PendingVisitorCard(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _ExpectedVisitorCard(
             visitor: visitor,
-            onApprove: () => _onApproveVisitor(visitor.id, visitor.visitorName),
-            onReject: () => _onRejectVisitor(visitor.id, visitor.visitorName),
+            onDeny: visitor.gateAccessStatus == 'denied'
+                ? null
+                : () => _onDenyEntry(visitor),
           ),
         );
       },
@@ -865,37 +1239,112 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     }
 
     if (_activeError != null) {
-      return _buildErrorState('Unable to load active visitors');
+      return _buildRetryState('Unable to load active visitors');
     }
 
     final visitors = _filterVisitors(_activeVisitors);
 
     if (visitors.isEmpty) {
       return _buildEmptyState(
-        _searchQuery.isEmpty ? 'No active visitors' : 'No visitors found',
+        _searchQuery.isEmpty ? 'No checked-in visitors' : 'No visitors found',
         _searchQuery.isEmpty
-            ? 'No visitors are currently inside'
+            ? 'No visitors are currently checked in'
             : 'Try adjusting your search',
         Icons.person_pin_circle,
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: visitors.length,
-      itemBuilder: (context, index) {
-        final visitor = visitors[index];
-
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: index < visitors.length - 1 ? 12 : 0,
+    final selectedVisitors = visitors
+        .where((visitor) => _selectedActiveVisitorIds.contains(visitor.id))
+        .toList();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Row(
+            children: [
+              TextButton(
+                onPressed: _isCheckoutBusy
+                    ? null
+                    : () {
+                        setState(() {
+                          if (_selectionMode &&
+                              selectedVisitors.length == visitors.length) {
+                            _selectedActiveVisitorIds.clear();
+                          } else {
+                            _selectionMode = true;
+                            _selectedActiveVisitorIds
+                              ..clear()
+                              ..addAll(visitors.map((visitor) => visitor.id));
+                          }
+                          if (_selectedActiveVisitorIds.isEmpty) {
+                            _selectionMode = false;
+                          }
+                        });
+                      },
+                child: Text(
+                  selectedVisitors.length == visitors.length
+                      ? 'Clear Selection'
+                      : 'Select All',
+                ),
+              ),
+              const Spacer(),
+              if (_selectionMode) ...[
+                Text('${selectedVisitors.length} selected'),
+                const SizedBox(width: 8),
+                FilledButton.tonal(
+                  onPressed: selectedVisitors.isEmpty || _isCheckoutBusy
+                      ? null
+                      : () => _confirmCheckout(selectedVisitors),
+                  child: const Text('Mark Out'),
+                ),
+              ] else
+                TextButton(
+                  onPressed: _isCheckoutBusy
+                      ? null
+                      : () => setState(() => _selectionMode = true),
+                  child: const Text('Select'),
+                ),
+            ],
           ),
-          child: _ActiveVisitorCard(
-            visitor: visitor,
-            onMarkExit: () => _onMarkExit(visitor.id, visitor.visitorName),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: visitors.length,
+            itemBuilder: (context, index) {
+              final visitor = visitors[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index < visitors.length - 1 ? 12 : 0,
+                ),
+                child: _ActiveVisitorCard(
+                  visitor: visitor,
+                  selectionMode: _selectionMode,
+                  checkoutInProgress: _isCheckoutBusy,
+                  selected: _selectedActiveVisitorIds.contains(visitor.id),
+                  onSelected: (selected) {
+                    if (_isCheckoutBusy) return;
+                    setState(() {
+                      if (selected) {
+                        _selectedActiveVisitorIds.add(visitor.id);
+                        _selectionMode = true;
+                      } else {
+                        _selectedActiveVisitorIds.remove(visitor.id);
+                        if (_selectedActiveVisitorIds.isEmpty) {
+                          _selectionMode = false;
+                        }
+                      }
+                    });
+                  },
+                  onMarkExit: () =>
+                      _onMarkExit(visitor.id, visitor.visitorName),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 
@@ -911,7 +1360,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     }
 
     if (_historyError != null) {
-      return _buildErrorState('Unable to load visit history');
+      return _buildRetryState('Unable to load visit history');
     }
 
     final visitors = _filterVisitors(_historyVisitors);
@@ -976,27 +1425,23 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     );
   }
 
-  Widget _buildErrorState(String message) {
+  Widget _buildRetryState(String message) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.error_outline,
-              size: 64,
-              color: AppColors.errorRed,
-            ),
-            const SizedBox(height: 16),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[600],
-              ),
+              style: const TextStyle(color: AppColors.textGray, fontSize: 15),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _isRefreshing ? null : _refreshVisitors,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
             ),
           ],
         ),
@@ -1128,165 +1573,88 @@ class _TabButton extends StatelessWidget {
 
 // Visitor Card Widgets
 
-class _PendingVisitorCard extends StatelessWidget {
+class _ExpectedVisitorCard extends StatelessWidget {
+  const _ExpectedVisitorCard({required this.visitor, required this.onDeny});
+
   final VisitorModel visitor;
-  final VoidCallback onApprove;
-  final VoidCallback onReject;
-
-  const _PendingVisitorCard({
-    required this.visitor,
-    required this.onApprove,
-    required this.onReject,
-  });
-
-  String _formatTime(DateTime? dateTime) {
-    if (dateTime == null) return '-';
-    return DateFormat('h:mm a').format(dateTime);
-  }
+  final VoidCallback? onDeny;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    final denied = visitor.gateAccessStatus == 'denied';
+    final arrival = visitor.expectedTime == null
+        ? '—'
+        : DateFormat('MMM d, h:mm a').format(visitor.expectedTime!);
+    return Card(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.borderGray),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        side: BorderSide(color: AppColors.borderGray),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: AppColors.softGoldBackground,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: const Icon(
-                  Icons.person,
-                  color: AppColors.warningOrange,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      visitor.visitorName,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textDark,
-                      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.person_outline, color: AppColors.primaryTeal),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    visitor.visitorName,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      visitor.phone,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w400,
-                        color: AppColors.textGray,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.softGoldBackground,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text(
-                  'Pending',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.warningOrange,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // Requested time
-          Text(
-            'Requested: ${_formatTime(visitor.createdAt)}',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w400,
-              color: AppColors.textGray,
+                Chip(
+                  label: Text(
+                    denied
+                        ? 'Entry Denied'
+                        : visitor.isApproved
+                        ? 'Admin Approved'
+                        : 'Expected',
+                  ),
+                  backgroundColor: denied
+                      ? Colors.red.shade50
+                      : Colors.teal.shade50,
+                  labelStyle: TextStyle(
+                    color: denied ? AppColors.errorRed : AppColors.primaryTeal,
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 12),
-          // Details
-          _DetailRow(label: 'Visiting:', value: visitor.residentName),
-          const SizedBox(height: 8),
-          _DetailRow(label: 'Unit:', value: visitor.flatLabel),
-          const SizedBox(height: 8),
-          _DetailRow(label: 'Purpose:', value: visitor.purpose),
-          const SizedBox(height: 16),
-          // Action Buttons
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: onReject,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.errorRed,
-                    side: const BorderSide(
-                      color: AppColors.errorRed,
-                      width: 1.5,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text(
-                    'Reject',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                ),
+            const SizedBox(height: 8),
+            _DetailRow(label: 'Unit:', value: visitor.flatLabel),
+            const SizedBox(height: 6),
+            _DetailRow(label: 'Host:', value: visitor.residentName),
+            const SizedBox(height: 6),
+            _DetailRow(label: 'Purpose:', value: visitor.purpose),
+            const SizedBox(height: 6),
+            _DetailRow(label: 'Expected:', value: arrival),
+            if (denied &&
+                (visitor.gateEntryDenialReason?.isNotEmpty ?? false)) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Reason: ${visitor.gateEntryDenialReason}',
+                style: const TextStyle(color: AppColors.errorRed),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: onApprove,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.successGreen,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text(
-                    'Approve',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
+            ],
+            if (!denied) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onDeny,
+                  icon: const Icon(Icons.block),
+                  label: const Text('Deny Entry'),
                 ),
               ),
             ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1295,8 +1663,19 @@ class _PendingVisitorCard extends StatelessWidget {
 class _ActiveVisitorCard extends StatelessWidget {
   final VisitorModel visitor;
   final VoidCallback onMarkExit;
+  final bool selectionMode;
+  final bool checkoutInProgress;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
 
-  const _ActiveVisitorCard({required this.visitor, required this.onMarkExit});
+  const _ActiveVisitorCard({
+    required this.visitor,
+    required this.onMarkExit,
+    required this.selectionMode,
+    required this.checkoutInProgress,
+    required this.selected,
+    required this.onSelected,
+  });
 
   String _formatTime(DateTime? dateTime) {
     if (dateTime == null) return '-';
@@ -1363,30 +1742,38 @@ class _ActiveVisitorCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFD1FAE5),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text(
-                  'Inside',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.successGreen,
+              if (selectionMode)
+                Checkbox(
+                  value: selected,
+                  onChanged: checkoutInProgress
+                      ? null
+                      : (value) => onSelected(value == true),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD1FAE5),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'Checked In',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.successGreen,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 12),
           // Entered time
           Text(
-            'Entered: ${_formatTime(visitor.actualArrival)}',
+            'Checked in: ${_formatTime(visitor.actualArrival)}',
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -1401,26 +1788,30 @@ class _ActiveVisitorCard extends StatelessWidget {
           const SizedBox(height: 8),
           _DetailRow(label: 'Purpose:', value: visitor.purpose),
           const SizedBox(height: 16),
-          // Mark Exit Button
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onMarkExit,
-              icon: const Icon(Icons.logout, size: 18),
-              label: const Text(
-                'Mark Exit',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.textDark,
-                side: const BorderSide(color: AppColors.borderGray, width: 1.5),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+          // Mark Out Button
+          if (!selectionMode)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: checkoutInProgress ? null : onMarkExit,
+                icon: const Icon(Icons.logout, size: 18),
+                label: const Text(
+                  'Mark Out',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textDark,
+                  side: const BorderSide(
+                    color: AppColors.borderGray,
+                    width: 1.5,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -1437,20 +1828,9 @@ class _HistoryVisitorCard extends StatelessWidget {
     return DateFormat('h:mm a').format(dateTime);
   }
 
-  String _calculateDuration() {
-    if (visitor.actualArrival == null || visitor.departure == null) {
-      return '-';
-    }
-
-    final duration = visitor.departure!.difference(visitor.actualArrival!);
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-
-    if (hours > 0) {
-      return '${hours}h ${minutes}m';
-    } else {
-      return '${minutes}m';
-    }
+  String _formatDenialTime(DateTime? dateTime) {
+    if (dateTime == null) return '-';
+    return DateFormat('MMM d, h:mm a').format(dateTime);
   }
 
   @override
@@ -1523,7 +1903,9 @@ class _HistoryVisitorCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  _calculateDuration(),
+                  visitor.gateAccessStatus == 'denied'
+                      ? 'Entry Denied'
+                      : 'Checked Out',
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
@@ -1534,59 +1916,71 @@ class _HistoryVisitorCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          // Entry and Exit times
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Entry',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w400,
-                        color: AppColors.textGray,
+          // Denials have no physical entry/exit times. Show their own
+          // server-recorded event timestamp; completed visits retain times.
+          if (visitor.gateAccessStatus == 'denied')
+            _DetailRow(
+              label: 'Denied:',
+              value: _formatDenialTime(visitor.gateEntryDeniedAt),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Entry',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: AppColors.textGray,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatTime(visitor.actualArrival),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.successGreen,
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatTime(visitor.actualArrival),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.successGreen,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Exit',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w400,
-                        color: AppColors.textGray,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Exit',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: AppColors.textGray,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatTime(visitor.departure),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.errorRed,
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatTime(visitor.departure),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.errorRed,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          if (visitor.gateAccessStatus == 'denied' &&
+              (visitor.gateEntryDenialReason?.isNotEmpty ?? false)) ...[
+            const SizedBox(height: 8),
+            _DetailRow(label: 'Reason:', value: visitor.gateEntryDenialReason!),
+          ],
           const SizedBox(height: 12),
           // Details
           _DetailRow(label: 'Visiting:', value: visitor.residentName),

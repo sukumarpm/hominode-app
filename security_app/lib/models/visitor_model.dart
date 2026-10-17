@@ -17,12 +17,15 @@ class VisitorModel {
   final DateTime? checkInTime;
   final DateTime? checkOutTime;
   final DateTime? updatedAt;
-  
+
   // Additional fields from Firestore structure
   final bool isApproved;
   final DateTime? actualArrival;
   final DateTime? departure;
   final String? approvedBy;
+  final String gateAccessStatus;
+  final String? gateEntryDenialReason;
+  final DateTime? gateEntryDeniedAt;
 
   VisitorModel({
     required this.id,
@@ -45,26 +48,74 @@ class VisitorModel {
     this.actualArrival,
     this.departure,
     this.approvedBy,
+    this.gateAccessStatus = 'eligible',
+    this.gateEntryDenialReason,
+    this.gateEntryDeniedAt,
   });
+
+  factory VisitorModel.fromSanitizedMap(Map<String, dynamic> data) {
+    DateTime? date(String key) {
+      final value = data[key];
+      if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is num) {
+        return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+      }
+      return null;
+    }
+
+    return VisitorModel(
+      id: data['visitorId']?.toString() ?? '',
+      visitorName: data['visitorName']?.toString() ?? 'Visitor',
+      phone: data['phoneNumber']?.toString() ?? '',
+      residentId: '',
+      residentName: data['hostName']?.toString() ?? 'Resident',
+      flatId: data['flatId']?.toString() ?? '',
+      flatLabel: data['flatLabel']?.toString() ?? '',
+      purpose: data['purpose']?.toString() ?? '',
+      expectedTime: date('expectedArrival'),
+      status: data['status']?.toString() ?? '',
+      isApproved: data['adminApproved'] == true,
+      actualArrival: date('actualArrival'),
+      departure: date('departure'),
+      gateAccessStatus: data['gateAccessStatus']?.toString() ?? 'eligible',
+      gateEntryDenialReason: data['gateEntryDenialReason']?.toString(),
+      gateEntryDeniedAt: date('gateEntryDeniedAt'),
+    );
+  }
 
   factory VisitorModel.fromFirestore(String id, Map<String, dynamic> data) {
     // Map Firestore fields to the model
     final isApproved = data['isApproved'] ?? false;
     final actualArrival = (data['actualArrival'] as Timestamp?)?.toDate();
     final departure = (data['departure'] as Timestamp?)?.toDate();
-    
-    // Determine status based on fields
-    String status;
-    if (departure != null) {
-      status = 'checked-out';
-    } else if (actualArrival != null && isApproved) {
-      status = 'active';
-    } else if (isApproved) {
-      status = 'approved';
-    } else {
-      status = 'pending';
-    }
-    
+
+    // Preserve the canonical physical status when available. Legacy records
+    // without it derive gate state from timestamps, independent of approval.
+    final storedStatus = data['status'];
+    final terminalStates = {
+      'completed',
+      'checked-out',
+      'checked_out',
+      'departed',
+      'exited',
+      'rejected',
+      'cancelled',
+      'canceled',
+      'denied',
+    };
+    final String status = departure != null
+        ? 'checked-out'
+        : storedStatus is String && terminalStates.contains(storedStatus)
+        ? storedStatus
+        : actualArrival != null
+        ? 'inside'
+        : storedStatus is String && storedStatus.isNotEmpty
+        ? storedStatus
+        : isApproved
+        ? 'approved'
+        : 'expected';
+
     return VisitorModel(
       id: id,
       visitorName: data['visitorName'] ?? data['hostName'] ?? '',
@@ -74,18 +125,25 @@ class VisitorModel {
       flatId: data['flatId'] ?? '',
       flatLabel: data['flatLabel'] ?? '',
       purpose: data['purpose'] ?? '',
-      expectedTime: (data['expectedTime'] ?? data['expectedArrival'] as Timestamp?)?.toDate(),
+      expectedTime:
+          (data['expectedTime'] ?? data['expectedArrival'] as Timestamp?)
+              ?.toDate(),
       status: status,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       approvedAt: (data['approvedAt'] as Timestamp?)?.toDate(),
       rejectedAt: (data['rejectedAt'] as Timestamp?)?.toDate(),
-      checkInTime: (data['checkInTime'] ?? data['actualArrival'] as Timestamp?)?.toDate(),
-      checkOutTime: (data['checkOutTime'] ?? data['departure'] as Timestamp?)?.toDate(),
+      checkInTime: (data['checkInTime'] ?? data['actualArrival'] as Timestamp?)
+          ?.toDate(),
+      checkOutTime: (data['checkOutTime'] ?? data['departure'] as Timestamp?)
+          ?.toDate(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
       isApproved: isApproved,
       actualArrival: actualArrival,
       departure: departure,
       approvedBy: data['approvedBy'],
+      gateAccessStatus: data['gateAccessStatus']?.toString() ?? 'eligible',
+      gateEntryDenialReason: data['gateEntryDenialReason']?.toString(),
+      gateEntryDeniedAt: (data['gateEntryDeniedAt'] as Timestamp?)?.toDate(),
     );
   }
 
@@ -98,10 +156,14 @@ class VisitorModel {
       'flatId': flatId,
       'flatLabel': flatLabel,
       'purpose': purpose,
-      'expectedTime': expectedTime != null ? Timestamp.fromDate(expectedTime!) : null,
+      'expectedTime': expectedTime != null
+          ? Timestamp.fromDate(expectedTime!)
+          : null,
       'status': status,
       'isApproved': isApproved,
-      'actualArrival': actualArrival != null ? Timestamp.fromDate(actualArrival!) : null,
+      'actualArrival': actualArrival != null
+          ? Timestamp.fromDate(actualArrival!)
+          : null,
       'departure': departure != null ? Timestamp.fromDate(departure!) : null,
     };
   }
