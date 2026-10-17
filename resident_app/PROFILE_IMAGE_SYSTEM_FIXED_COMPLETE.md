@@ -126,7 +126,7 @@
 
 **Cloud Name:** `de8yccofb`
 **API Key:** `866472317169594`
-**API Secret:** `bURO931bdHNXrqly6XPKaFK8eMA`
+**API Secret:** `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 **Upload Preset:** `resident_app_upload`
 **Upload URL:** `https://api.cloudinary.com/v1_1/de8yccofb/image/upload`
 **Folder:** `profile_pictures` (ALWAYS USED)

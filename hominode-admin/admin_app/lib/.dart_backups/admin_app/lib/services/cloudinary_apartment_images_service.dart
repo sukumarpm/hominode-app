@@ -12,7 +12,7 @@ class CloudinaryApartmentImagesService {
   // Cloudinary configuration
   static const String CLOUDINARY_CLOUD_NAME = 'de8yccofb';
   static const String CLOUDINARY_UPLOAD_PRESET = 'lyvo_upload';
-  static const String CLOUDINARY_API_KEY = 'bURO931bdHNXrqly6XPKaFK8eMA';
+  static const String CLOUDINARY_API_KEY = 'REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL';
   static const String CLOUDINARY_API_URL = 'https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload';
 
   // ==================== FLOW FUNCTION: Upload Image ====================

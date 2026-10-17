@@ -54,7 +54,7 @@ if (_attachedImage != null) {
 **Credentials** (Already Configured):
 - Cloud Name: `de8yccofb`
 - API Key: `866472317169594`
-- API Secret: `bURO931bdHNXrqly6XPKaFK8eMA`
+- API Secret: `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 
 **Process**:
 ```

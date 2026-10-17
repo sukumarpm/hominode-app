@@ -180,7 +180,7 @@ ImageUploadWidget(
 ### Cloudinary
 - Cloud: `de8yccofb`
 - API Key: `866472317169594`
-- API Secret: `bURO931bdHNXrqly6XPKaFK8eMA`
+- API Secret: `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 
 ### Dependencies
 - `cloudinary_flutter: ^1.0.0`

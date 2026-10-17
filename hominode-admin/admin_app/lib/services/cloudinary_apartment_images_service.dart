@@ -5,14 +5,19 @@ import 'dart:convert';
 import 'admin_service.dart';
 
 class CloudinaryApartmentImagesService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final AdminService _adminService = AdminService();
+  final FirebaseFirestore _firestore;
+  final AdminService _adminService;
   final String _imagesCollection = 'apartmentImages';
+
+  CloudinaryApartmentImagesService({
+    FirebaseFirestore? firestore,
+    AdminService? adminService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _adminService = adminService ?? AdminService();
 
   // Cloudinary configuration
   static const String CLOUDINARY_CLOUD_NAME = 'de8yccofb';
   static const String CLOUDINARY_UPLOAD_PRESET = 'lyvo_upload';
-  static const String CLOUDINARY_API_KEY = 'bURO931bdHNXrqly6XPKaFK8eMA';
   static const String CLOUDINARY_API_URL =
       'https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload';
 

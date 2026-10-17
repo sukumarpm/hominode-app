@@ -4,7 +4,7 @@
 
 **What Was Fixed**:
 - ✅ Cloud Name: Updated from `dailyccofb` → `de8yccofb`
-- ✅ API Key: Updated to `bURO931bdHNXrqly6XPKaFK8eMA`
+- ✅ API Key: Updated to `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 - ✅ Upload Preset: `lyvo_upload` (already created)
 - ✅ Code compiled successfully
 
@@ -23,7 +23,7 @@ static const String CLOUDINARY_API_KEY = '866472317169594';
 
 // NEW
 static const String CLOUDINARY_CLOUD_NAME = 'de8yccofb';
-static const String CLOUDINARY_API_KEY = 'bURO931bdHNXrqly6XPKaFK8eMA';
+static const String CLOUDINARY_API_KEY = 'REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL';
 ```
 
 ### 2. CloudinaryConfig
@@ -37,7 +37,7 @@ static const String apiKey = '866472317169594';
 
 // NEW
 static const String cloudName = 'de8yccofb';
-static const String apiKey = 'bURO931bdHNXrqly6XPKaFK8eMA';
+static const String apiKey = 'REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL';
 ```
 
 ---
@@ -83,7 +83,7 @@ static const String apiKey = 'bURO931bdHNXrqly6XPKaFK8eMA';
 
 ### Credentials Verified
 - ✅ Cloud Name: `de8yccofb`
-- ✅ API Key: `bURO931bdHNXrqly6XPKaFK8eMA`
+- ✅ API Key: `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 - ✅ Upload Preset: `lyvo_upload`
 - ✅ Unsigned Mode: ON
 
@@ -128,7 +128,7 @@ flutter run
 
 **Error: "Unknown API key"**
 - Verify cloud name: `de8yccofb` ✅
-- Verify API key: `bURO931bdHNXrqly6XPKaFK8eMA` ✅
+- Verify API key: `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL` ✅
 - Verify upload preset exists
 - Verify Unsigned mode is ON
 

@@ -8,7 +8,7 @@ This guide explains how to integrate Cloudinary image uploads with Firestore in 
 ### Cloudinary Credentials (Already Set)
 - Cloud Name: `de8yccofb`
 - API Key: `866472317169594`
-- API Secret: `bURO931bdHNXrqly6XPKaFK8eMA`
+- API Secret: `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 
 These are configured in `lib/src/services/cloudinary_service.dart`
 

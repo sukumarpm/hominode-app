@@ -2,8 +2,8 @@
 class CloudinaryConfig {
   // Your Cloudinary credentials
   static const String cloudName = 'de8yccofb';
-  static const String apiKey = 'bURO931bdHNXrqly6XPKaFK8eMA';
-  static const String apiSecret = 'bURO931bdHNXrqly6XPKaFK8eMA';
+  static const String apiKey = 'REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL';
+  static const String apiSecret = 'REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL';
   
   // Upload preset - Use the existing working preset
   static const String uploadPreset = 'lyvo_upload'; // Using existing preset that works

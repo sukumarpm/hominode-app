@@ -29,7 +29,7 @@ grep -r "password" lib/src/services/ | grep -i firestore
 ```dart
 // ❌ INSECURE
 static const String apiKey = '866472317169594';
-static const String apiSecret = 'bURO931bdHNXrqly6XPKaFK8eMA';
+static const String apiSecret = 'REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL';
 ```
 
 **Action**:

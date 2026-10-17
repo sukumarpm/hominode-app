@@ -162,7 +162,7 @@ Image automatically displays in complaint detail modal. No extra code needed!
 Already configured in `cloudinary_service.dart`:
 - Cloud Name: `de8yccofb`
 - API Key: `866472317169594`
-- API Secret: `bURO931bdHNXrqly6XPKaFK8eMA`
+- API Secret: `REDACTED_CLOUDINARY_PRIVATE_CREDENTIAL`
 
 ## Documentation
 
