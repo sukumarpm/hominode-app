@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 import 'admin_service.dart';
 
 class EventAnnouncementService {
@@ -161,43 +162,106 @@ class EventAnnouncementService {
   // ==================== ANNOUNCEMENTS ====================
 
   /// Get all announcements (real-time stream) filtered by adminId
-  Stream<List<AnnouncementModel>> getAnnouncements() {
+  Stream<List<AnnouncementModel>> getAnnouncements() async* {
     final adminId = _adminService.getCurrentAdminId();
-    if (adminId == null) return Stream.value([]);
+    if (adminId == null) {
+      yield [];
+      return;
+    }
 
     print(
       'AnnouncementService: Fetching announcements from Firestore for admin: $adminId',
     );
-    return _firestore
-        .collection(_announcementsCollection)
-        .where(
-          'communityId',
-          isEqualTo: _adminService.requireCurrentCommunityId(),
-        )
-        .where('type', isEqualTo: 'announcement')
-        .snapshots()
-        .map((snapshot) {
-          print(
-            'AnnouncementService: Received ${snapshot.docs.length} announcements',
+    final communityId = _adminService.requireCurrentCommunityId();
+    final controller = StreamController<List<AnnouncementModel>>();
+    final sources = <String, List<AnnouncementModel>>{
+      'events_announcements': [],
+      'notices': [],
+      'announcements': [],
+    };
+    void publish() {
+      final all = [...sources.values.expand((items) => items)];
+      final seen = <String>{};
+      final unique =
+          all.where((item) {
+            final signature =
+                '${item.title.trim().toLowerCase()}\u0000'
+                '${item.description.trim().toLowerCase()}\u0000'
+                '${item.createdAt?.year ?? 0}-${item.createdAt?.month ?? 0}-${item.createdAt?.day ?? 0}';
+            return seen.add(signature);
+          }).toList()..sort(
+            (a, b) => (b.createdAt ?? DateTime(0)).compareTo(
+              a.createdAt ?? DateTime(0),
+            ),
           );
-          final announcements = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return AnnouncementModel.fromFirestore(doc.id, data);
-          }).toList();
+      controller.add(unique);
+    }
 
-          // Sort in memory instead of using orderBy to avoid composite index
-          announcements.sort((a, b) {
-            final dateA = a.createdAt ?? DateTime.now();
-            final dateB = b.createdAt ?? DateTime.now();
-            return dateB.compareTo(dateA); // descending
-          });
-
-          return announcements;
-        })
-        .handleError((error) {
-          print('AnnouncementService ERROR: $error');
-          throw Exception('Failed to fetch announcements: $error');
-        });
+    final subscriptions = <StreamSubscription<dynamic>>[
+      _firestore
+          .collection(_announcementsCollection)
+          .where('communityId', isEqualTo: communityId)
+          .where('type', isEqualTo: 'announcement')
+          .snapshots()
+          .listen((snapshot) {
+            sources['events_announcements'] = snapshot.docs
+                .map(
+                  (doc) => AnnouncementModel.fromFirestore(
+                    doc.id,
+                    doc.data(),
+                    sourceCollection: 'events_announcements',
+                  ),
+                )
+                .toList();
+            publish();
+          }, onError: controller.addError),
+      _firestore
+          .collection('notices')
+          .where('communityId', isEqualTo: communityId)
+          .snapshots()
+          .listen((snapshot) {
+            sources['notices'] = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return AnnouncementModel.fromFirestore(doc.id, {
+                ...data,
+                'description': data['content'] ?? data['description'] ?? '',
+                'status': data['status'] == 'draft'
+                    ? 'inactive'
+                    : data['status'] == 'archived'
+                    ? 'archived'
+                    : 'active',
+              }, sourceCollection: 'notices');
+            }).toList();
+            publish();
+          }, onError: controller.addError),
+      _firestore
+          .collection('announcements')
+          .where('communityId', isEqualTo: communityId)
+          .snapshots()
+          .listen((snapshot) {
+            sources['announcements'] = snapshot.docs
+                .where(
+                  (doc) =>
+                      doc.data()['status'] == 'active' ||
+                      doc.data()['status'] == 'published',
+                )
+                .map(
+                  (doc) => AnnouncementModel.fromFirestore(
+                    doc.id,
+                    doc.data(),
+                    sourceCollection: 'announcements',
+                  ),
+                )
+                .toList();
+            publish();
+          }, onError: controller.addError),
+    ];
+    controller.onCancel = () async {
+      for (final subscription in subscriptions) {
+        await subscription.cancel();
+      }
+    };
+    yield* controller.stream;
   }
 
   /// Create new announcement
@@ -248,6 +312,7 @@ class EventAnnouncementService {
     String? priority,
     String? description,
     String? status,
+    String sourceCollection = 'events_announcements',
   }) async {
     try {
       final updates = <String, dynamic>{
@@ -261,9 +326,23 @@ class EventAnnouncementService {
       if (status != null) updates['status'] = status;
 
       await _firestore
-          .collection(_announcementsCollection)
+          .collection(sourceCollection)
           .doc(announcementId)
-          .update(updates);
+          .update(
+            sourceCollection != 'events_announcements'
+                ? {
+                    'title': title,
+                    'content': description,
+                    if (category != null) 'category': category,
+                    if (priority != null) 'priority': priority,
+                    if (status != null) ...{
+                      'status': status == 'inactive' ? 'archived' : 'published',
+                      'isActive': status != 'inactive',
+                    },
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  }
+                : updates,
+          );
       print('AnnouncementService: Announcement updated - $announcementId');
     } catch (e) {
       print('AnnouncementService ERROR: Failed to update announcement: $e');
@@ -272,10 +351,13 @@ class EventAnnouncementService {
   }
 
   /// Delete announcement
-  Future<void> deleteAnnouncement(String announcementId) async {
+  Future<void> deleteAnnouncement(
+    String announcementId, {
+    String sourceCollection = 'events_announcements',
+  }) async {
     try {
       await _firestore
-          .collection(_announcementsCollection)
+          .collection(sourceCollection)
           .doc(announcementId)
           .delete();
       print('AnnouncementService: Announcement deleted - $announcementId');
@@ -286,7 +368,10 @@ class EventAnnouncementService {
   }
 
   /// Send reminder for announcement (placeholder - implement notification logic)
-  Future<void> sendReminder(String announcementId) async {
+  Future<void> sendReminder(
+    String announcementId, {
+    String sourceCollection = 'events_announcements',
+  }) async {
     try {
       // TODO: Implement actual notification/reminder logic
       // This could involve:
@@ -300,10 +385,9 @@ class EventAnnouncementService {
       );
 
       // For now, just log the action
-      await _firestore
-          .collection(_announcementsCollection)
-          .doc(announcementId)
-          .update({'lastReminderSent': FieldValue.serverTimestamp()});
+      await _firestore.collection(sourceCollection).doc(announcementId).update({
+        'lastReminderSent': FieldValue.serverTimestamp(),
+      });
 
       print('AnnouncementService: Reminder sent successfully');
     } catch (e) {
@@ -401,6 +485,8 @@ class AnnouncementModel {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final DateTime? lastReminderSent;
+  final String sourceCollection;
+  final List<String> attachments;
 
   AnnouncementModel({
     required this.id,
@@ -412,22 +498,35 @@ class AnnouncementModel {
     this.createdAt,
     this.updatedAt,
     this.lastReminderSent,
+    this.sourceCollection = 'events_announcements',
+    this.attachments = const [],
   });
 
   factory AnnouncementModel.fromFirestore(
     String id,
-    Map<String, dynamic> data,
-  ) {
+    Map<String, dynamic> data, {
+    String sourceCollection = 'events_announcements',
+  }) {
     return AnnouncementModel(
       id: id,
       title: data['title'] ?? '',
       category: data['category'] ?? 'General',
       priority: data['priority'] ?? 'medium',
-      description: data['description'] ?? '',
+      description: data['description'] ?? data['content'] ?? '',
       status: data['status'] ?? 'active',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
       lastReminderSent: (data['lastReminderSent'] as Timestamp?)?.toDate(),
+      sourceCollection: sourceCollection,
+      attachments:
+          List<String>.from(
+            data['attachments'] ?? data['imageUrls'] ?? const [],
+          )..addAll(
+            data['imageUrl'] is String &&
+                    (data['imageUrl'] as String).isNotEmpty
+                ? [data['imageUrl'] as String]
+                : const [],
+          ),
     );
   }
 

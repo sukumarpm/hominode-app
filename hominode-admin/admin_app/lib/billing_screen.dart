@@ -23,6 +23,7 @@ import 'services/admin_tenant_context.dart';
 import 'services/billing_service.dart';
 import 'services/invoice_generator_service.dart';
 import 'widgets/create_monthly_bill_modal.dart';
+import 'widgets/create_billing_schedule_v2_dialog.dart';
 import 'widgets/standard_bottom_nav.dart';
 import 'widgets/standard_header.dart';
 
@@ -52,6 +53,33 @@ int? parseInrRupeesToMinorUnits(String input) {
   final minorUnits = wholeRupees * 100 + (int.tryParse(paiseText) ?? 0);
   if (minorUnits <= 0 || minorUnits > _maxSafeMinorAmount) return null;
   return minorUnits;
+}
+
+String paymentVerificationErrorMessage(Object error) {
+  final message = error.toString().toLowerCase();
+  if (message.contains('duplicate_payment_reference') ||
+      message.contains('reference is already recorded')) {
+    return 'This payment reference is already recorded for the resident account. Check the bank record before retrying.';
+  }
+  if (message.contains('revision changed') ||
+      message.contains('no longer an eligible liability') ||
+      message.contains('outstanding liability')) {
+    return 'The bill balance changed after this proof was submitted. Refresh billing and review the current balance before verifying.';
+  }
+  if (message.contains('only pending') ||
+      message.contains('proof was not found')) {
+    return 'This proof is no longer pending. Refresh the payment list.';
+  }
+  if (message.contains('receipt object does not exist') ||
+      message.contains('receipt evidence')) {
+    return 'Receipt evidence is missing or unavailable. Ask the resident to resubmit it.';
+  }
+  if (message.contains('idempotency_conflict') ||
+      message.contains('immutable_financial_conflict') ||
+      message.contains('settlement response could not be confirmed')) {
+    return 'This proof may already have been reviewed with a different amount. Refresh its status and retry only with the same confirmed amount.';
+  }
+  return 'Payment verification failed. Check the proof and current bill balance, then retry.';
 }
 
 String createOfflinePaymentIdempotencyKey({DateTime? now, Random? random}) {
@@ -140,6 +168,116 @@ class OfflinePaymentAttempt {
   };
 }
 
+class FlexiblePaymentProofReviewDialog extends StatefulWidget {
+  const FlexiblePaymentProofReviewDialog({
+    required this.claimedAmountMinor,
+    this.previousConfirmedAmountMinor,
+    super.key,
+  });
+
+  final int claimedAmountMinor;
+  final int? previousConfirmedAmountMinor;
+
+  @override
+  State<FlexiblePaymentProofReviewDialog> createState() =>
+      _FlexiblePaymentProofReviewDialogState();
+}
+
+class _FlexiblePaymentProofReviewDialogState
+    extends State<FlexiblePaymentProofReviewDialog> {
+  late final TextEditingController _amountController = TextEditingController(
+    text: widget.previousConfirmedAmountMinor == null
+        ? ''
+        : '${widget.previousConfirmedAmountMinor! ~/ 100}.${(widget.previousConfirmedAmountMinor! % 100).toString().padLeft(2, '0')}',
+  );
+  bool _independentlyConfirmed = false;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final receivedMinor = parseInrRupeesToMinorUnits(_amountController.text);
+    final mismatch =
+        receivedMinor != null && receivedMinor != widget.claimedAmountMinor;
+    return AlertDialog(
+      title: const Text('Confirm Amount Received'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Resident claim: ${formatInrMinorUnits(widget.claimedAmountMinor)}',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amountController,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Amount received (INR)',
+                hintText: 'Enter the amount shown in bank records',
+                helperText: widget.previousConfirmedAmountMinor == null
+                    ? 'Enter the amount independently received by the community.'
+                    : 'Previous confirmation attempt. Review or correct it before retrying.',
+              ),
+              onChanged: (_) => setState(() => _independentlyConfirmed = false),
+            ),
+            if (_amountController.text.isNotEmpty && receivedMinor == null)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Enter a valid INR amount with up to two decimal places.',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            if (receivedMinor != null) ...[
+              const SizedBox(height: 12),
+              Text('Amount received: ${formatInrMinorUnits(receivedMinor)}'),
+              if (mismatch)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'This differs from the resident claim. The confirmed amount will determine settlement.',
+                    style: TextStyle(color: Color(0xFFB45309)),
+                  ),
+                ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _independentlyConfirmed,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text(
+                  'I independently confirmed this amount against community bank records.',
+                ),
+                onChanged: (value) =>
+                    setState(() => _independentlyConfirmed = value == true),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: receivedMinor == null || !_independentlyConfirmed
+              ? null
+              : () => Navigator.of(context).pop(receivedMinor),
+          child: const Text('Confirm Received Amount'),
+        ),
+      ],
+    );
+  }
+}
+
 class _OfflinePaymentInput {
   final int amountMinor;
   final String paymentMethod;
@@ -167,6 +305,8 @@ class _BillingScreenState extends State<BillingScreen> {
   final BillingService _billingService = BillingService();
   int _selectedTab = 0;
   final Set<String> _viewedPaymentReceiptIds = {};
+  final Set<String> _paymentVerificationBusyIds = {};
+  final Map<String, int> _confirmedAmountRetryValues = {};
   final TextEditingController _billingSearchController =
       TextEditingController();
   final TextEditingController _paymentReferenceController =
@@ -332,14 +472,14 @@ class _BillingScreenState extends State<BillingScreen> {
                                 }
                               },
                               icon: const Icon(Icons.calendar_today),
-                              label: FittedBox(
-                                child: Text(
-                                  _exportFromDate == null
-                                      ? 'From'
-                                      : DateFormat(
-                                          'dd MMM yyyy',
-                                        ).format(_exportFromDate!),
-                                ),
+                              label: Text(
+                                _exportFromDate == null
+                                    ? 'From'
+                                    : DateFormat(
+                                        'dd MMM yyyy',
+                                      ).format(_exportFromDate!),
+                                softWrap: true,
+                                textAlign: TextAlign.center,
                               ),
                             ),
                           ),
@@ -365,14 +505,14 @@ class _BillingScreenState extends State<BillingScreen> {
                                 }
                               },
                               icon: const Icon(Icons.calendar_today),
-                              label: FittedBox(
-                                child: Text(
-                                  _exportToDate == null
-                                      ? 'To'
-                                      : DateFormat(
-                                          'dd MMM yyyy',
-                                        ).format(_exportToDate!),
-                                ),
+                              label: Text(
+                                _exportToDate == null
+                                    ? 'To'
+                                    : DateFormat(
+                                        'dd MMM yyyy',
+                                      ).format(_exportToDate!),
+                                softWrap: true,
+                                textAlign: TextAlign.center,
                               ),
                             ),
                           ),
@@ -999,12 +1139,10 @@ class _BillingScreenState extends State<BillingScreen> {
     return OutlinedButton.icon(
       onPressed: onTap,
       icon: const Icon(Icons.calendar_month_outlined),
-      label: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          value == null ? label : DateFormat('dd MMM yyyy').format(value),
-          maxLines: 1,
-        ),
+      label: Text(
+        value == null ? label : DateFormat('dd MMM yyyy').format(value),
+        softWrap: true,
+        textAlign: TextAlign.center,
       ),
     );
   }
@@ -1369,6 +1507,13 @@ class _BillingScreenState extends State<BillingScreen> {
     final viewedReceiptKey = '${bill.isV2 ? 'v2' : 'v1'}:$paymentId';
     final receiptViewed = _viewedPaymentReceiptIds.contains(viewedReceiptKey);
     final submittedAmountMinor = payment['submittedAmountMinor'];
+    final flexibleAmountProof =
+        bill.isV2 && payment['amountContractVersion'] == 2;
+    final validAmountContract =
+        !bill.isV2 ||
+        payment['amountContractVersion'] == null ||
+        payment['amountContractVersion'] == 2;
+    final verificationBusy = _paymentVerificationBusyIds.contains(paymentId);
     final provider = payment['provider']?.toString().trim().toLowerCase();
     final methodLabel = bill.isV2
         ? '${provider == 'direct_upi' ? 'Direct UPI' : formatPaymentMethod(provider)} / '
@@ -1378,6 +1523,7 @@ class _BillingScreenState extends State<BillingScreen> {
     final submittedAmountAvailable =
         !bill.isV2 ||
         (payment['currency'] == 'INR' &&
+            validAmountContract &&
             submittedAmountMinor is int &&
             submittedAmountMinor > 0 &&
             submittedAmountMinor <= 9007199254740991);
@@ -1423,15 +1569,47 @@ class _BillingScreenState extends State<BillingScreen> {
           if (bill.isV2) ...[
             SizedBox(height: 8.h),
             Text(
-              'Submitted amount: ${submittedAmountAvailable ? formatInrMinorUnits(submittedAmountMinor as int) : 'Unavailable'}',
+              'Bill: ${bill.month} ${bill.year} · ${bill.flatLabel}',
+              style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
+            ),
+            if (bill.hasValidInrV2Financials) ...[
+              SizedBox(height: 4.h),
+              Text(
+                'Current outstanding: ${bill.formatV2MinorAmount(bill.outstandingAmountMinor)}',
+                style: TextStyle(
+                  fontSize: 13.sp,
+                  color: const Color(0xFF374151),
+                ),
+              ),
+            ],
+            SizedBox(height: 4.h),
+            Text(
+              'Resident-claimed amount: ${submittedAmountAvailable ? formatInrMinorUnits(submittedAmountMinor as int) : 'Unavailable'}',
+              style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
+            ),
+            if (flexibleAmountProof) ...[
+              SizedBox(height: 4.h),
+              Text(
+                'Flexible amount proof: Admin must confirm the amount received.',
+                style: TextStyle(
+                  fontSize: 12.sp,
+                  color: const Color(0xFF92400E),
+                ),
+              ),
+            ],
+          ],
+
+          if (bill.isV2 || reference.isNotEmpty) ...[
+            SizedBox(height: 8.h),
+            Text(
+              'Reference: ${reference.isEmpty ? 'Not provided' : reference}',
               style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
             ),
           ],
-
-          if (reference.isNotEmpty) ...[
-            SizedBox(height: 8.h),
+          if (bill.isV2) ...[
+            SizedBox(height: 4.h),
             Text(
-              'Reference: $reference',
+              'Evidence: Uploaded receipt',
               style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
             ),
           ],
@@ -1449,44 +1627,73 @@ class _BillingScreenState extends State<BillingScreen> {
 
           SizedBox(height: 8.h),
 
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: paymentId.isEmpty
-                      ? null
-                      : () => _onRejectPaymentProof(bill, payment),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFDC2626),
-                  ),
-                  child: const Text('Reject'),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked =
+                  constraints.maxWidth < 380 ||
+                  MediaQuery.textScalerOf(context).scale(1) > 1.3;
+              final reject = OutlinedButton(
+                onPressed: paymentId.isEmpty || verificationBusy
+                    ? null
+                    : () => _onRejectPaymentProof(bill, payment),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFDC2626),
+                  minimumSize: Size(0, 48.h),
                 ),
-              ),
-              SizedBox(width: 8.w),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed:
-                      paymentId.isEmpty ||
-                          !receiptViewed ||
-                          !submittedAmountAvailable
-                      ? null
-                      : () => _onVerifyPaymentProof(bill, payment),
-                  icon: const Icon(Icons.verified_outlined),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      receiptViewed ? 'Verify' : 'View Receipt First',
-                      maxLines: 1,
-                      softWrap: false,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10B981),
-                    foregroundColor: Colors.white,
-                  ),
+                child: const Text('Reject', textAlign: TextAlign.center),
+              );
+              final verify = ElevatedButton.icon(
+                onPressed:
+                    paymentId.isEmpty ||
+                        verificationBusy ||
+                        !receiptViewed ||
+                        !submittedAmountAvailable
+                    ? null
+                    : () => _onVerifyPaymentProof(bill, payment),
+                icon: verificationBusy
+                    ? SizedBox(
+                        width: 16.w,
+                        height: 16.w,
+                        child: const CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.verified_outlined),
+                label: Text(
+                  verificationBusy
+                      ? 'Verifying…'
+                      : receiptViewed
+                      ? 'Verify'
+                      : 'View Receipt First',
+                  textAlign: TextAlign.center,
+                  softWrap: true,
                 ),
-              ),
-            ],
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  minimumSize: Size(0, 48.h),
+                ),
+              );
+
+              if (stacked) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    reject,
+                    SizedBox(height: 8.h),
+                    verify,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: reject),
+                  SizedBox(width: 8.w),
+                  Expanded(child: verify),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -1516,45 +1723,61 @@ class _BillingScreenState extends State<BillingScreen> {
         (payment['currency'] != 'INR' ||
             submittedAmountMinor is! int ||
             submittedAmountMinor <= 0 ||
-            submittedAmountMinor > 9007199254740991)) {
+            submittedAmountMinor > 9007199254740991 ||
+            (payment['amountContractVersion'] != null &&
+                payment['amountContractVersion'] != 2))) {
       return;
     }
 
-    final confirmation = bill.isV2
-        ? 'Verify this submitted payment of '
-              '${formatInrMinorUnits(submittedAmountMinor as int)} '
-              'for ${bill.residentName}?'
-        : 'Confirm payment of ₹${bill.amount.toStringAsFixed(2)} '
-              'for ${bill.residentName}?';
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Verify Payment'),
-          content: Text(confirmation),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF10B981),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Verify'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true) return;
+    if (_paymentVerificationBusyIds.contains(paymentId)) return;
+    setState(() => _paymentVerificationBusyIds.add(paymentId));
 
     try {
+      int? confirmedAmountMinor;
+      if (bill.isV2 && payment['amountContractVersion'] == 2) {
+        confirmedAmountMinor = await showDialog<int>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => FlexiblePaymentProofReviewDialog(
+            claimedAmountMinor: submittedAmountMinor as int,
+            previousConfirmedAmountMinor:
+                _confirmedAmountRetryValues[paymentId],
+          ),
+        );
+        if (confirmedAmountMinor == null) return;
+        _confirmedAmountRetryValues[paymentId] = confirmedAmountMinor;
+      } else {
+        final confirmation = bill.isV2
+            ? 'Verify this submitted payment of '
+                  '${formatInrMinorUnits(submittedAmountMinor as int)} '
+                  'for ${bill.residentName}?'
+            : 'Confirm payment of ₹${bill.amount.toStringAsFixed(2)} '
+                  'for ${bill.residentName}?';
+        final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Text('Verify Payment'),
+            content: Text(confirmation),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Verify'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1566,10 +1789,14 @@ class _BillingScreenState extends State<BillingScreen> {
       }
 
       if (bill.isV2) {
-        await _billingService.verifyPaymentProofV2(paymentId);
+        await _billingService.verifyPaymentProofV2(
+          paymentId,
+          confirmedAmountMinor: confirmedAmountMinor,
+        );
       } else {
         await _billingService.verifyPaymentProof(paymentId);
       }
+      _confirmedAmountRetryValues.remove(paymentId);
 
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
@@ -1585,17 +1812,23 @@ class _BillingScreenState extends State<BillingScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to verify payment: $e'),
+            content: Text(paymentVerificationErrorMessage(e)),
             backgroundColor: const Color(0xFFEF4444),
             duration: const Duration(seconds: 4),
           ),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _paymentVerificationBusyIds.remove(paymentId));
+      } else {
+        _paymentVerificationBusyIds.remove(paymentId);
+      }
     }
   }
+
   // ============================================================================
   // ACTION HANDLERS
   // ============================================================================
@@ -1664,6 +1897,38 @@ class _BillingScreenState extends State<BillingScreen> {
           }
         }
       },
+    );
+  }
+
+  Future<void> _onCreateRecurringScheduleV2() async {
+    final adminId = _adminId.trim();
+    if (adminId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sign in as an administrator to create a recurring schedule.',
+          ),
+        ),
+      );
+      return;
+    }
+    String communityId;
+    try {
+      communityId = AdminTenantContext.instance.requireCommunityId();
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select an authorized community first.')),
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => CreateBillingScheduleV2Dialog(
+        adminUid: adminId,
+        communityId: communityId,
+        gateway: _billingService,
+        onCreated: () {},
+      ),
     );
   }
 
@@ -3518,6 +3783,11 @@ class _BillingScreenState extends State<BillingScreen> {
         subtitle: 'Review bills, payment history, and collection performance.',
         actions: [
           AdminDesktopPrimaryAction(
+            label: 'Recurring Billing',
+            icon: Icons.repeat,
+            onPressed: _onCreateRecurringScheduleV2,
+          ),
+          AdminDesktopPrimaryAction(
             label: 'Add Bill',
             icon: Icons.post_add_outlined,
             onPressed: _onAddBill,
@@ -3648,14 +3918,15 @@ class _BillingScreenState extends State<BillingScreen> {
     Widget cell(
       String value, {
       int flex = 1,
-      int maxLines = 1,
+      int? maxLines,
       FontWeight? weight,
     }) => Expanded(
       flex: flex,
       child: Text(
         value,
         maxLines: maxLines,
-        overflow: TextOverflow.ellipsis,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        softWrap: true,
         style: TextStyle(
           color: const Color(0xFF334E68),
           fontSize: 12,
@@ -3702,7 +3973,7 @@ class _BillingScreenState extends State<BillingScreen> {
                     bill.isV2
                         ? _v2TableAmountLabel(bill)
                         : '₹${bill.amount.toStringAsFixed(0)}',
-                    maxLines: bill.isV2 ? 4 : 1,
+                    maxLines: bill.isV2 ? 4 : null,
                   ),
                   cell(bill.status),
                   SizedBox(width: 250, child: _buildActionButtons(bill)),
@@ -3731,8 +4002,8 @@ class _BillingScreenState extends State<BillingScreen> {
   Widget _buildSectionHeader() {
     return Padding(
       padding: EdgeInsets.fromLTRB(16.w, 16.h, 16.w, 0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Maintenance & Billing',
@@ -3742,34 +4013,81 @@ class _BillingScreenState extends State<BillingScreen> {
               color: Color(0xFF111111),
             ),
           ),
-          Semantics(
-            label: 'Create new bill',
-            button: true,
-            child: InkWell(
-              onTap: _onAddBill,
-              borderRadius: BorderRadius.circular(18.r),
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 8.h),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0E4778),
-                  borderRadius: BorderRadius.circular(18.r),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.add, color: Colors.white, size: 16.w),
-                    SizedBox(width: 4.w),
-                    Text(
-                      'Create Bill',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w600,
+          SizedBox(height: 8.h),
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: Wrap(
+              spacing: 8.w,
+              runSpacing: 6.h,
+              alignment: WrapAlignment.end,
+              children: [
+                Semantics(
+                  label: 'Create recurring billing schedule',
+                  button: true,
+                  child: InkWell(
+                    onTap: _onCreateRecurringScheduleV2,
+                    borderRadius: BorderRadius.circular(18.r),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 14.w,
+                        vertical: 8.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E4778),
+                        borderRadius: BorderRadius.circular(18.r),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.repeat, color: Colors.white, size: 16.w),
+                          SizedBox(width: 4.w),
+                          Text(
+                            'Recurring Billing',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.sp,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+                Semantics(
+                  label: 'Create new bill',
+                  button: true,
+                  child: InkWell(
+                    onTap: _onAddBill,
+                    borderRadius: BorderRadius.circular(18.r),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 14.w,
+                        vertical: 8.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E4778),
+                        borderRadius: BorderRadius.circular(18.r),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add, color: Colors.white, size: 16.w),
+                          SizedBox(width: 4.w),
+                          Text(
+                            'Create Bill',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.sp,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -3833,7 +4151,7 @@ class _BillingScreenState extends State<BillingScreen> {
     required Color valueColor,
   }) {
     return Container(
-      height: 85.h,
+      constraints: BoxConstraints(minHeight: 85.h),
       padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -3848,7 +4166,7 @@ class _BillingScreenState extends State<BillingScreen> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             label,
@@ -3858,20 +4176,24 @@ class _BillingScreenState extends State<BillingScreen> {
               color: Color(0xFF9CA3AF),
               height: 1.2,
             ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
           ),
+          SizedBox(height: 8.h),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(Icons.currency_rupee, size: 20.w, color: valueColor),
-              Text(
-                value.replaceFirst('₹', ''),
-                style: TextStyle(
-                  fontSize: 24.sp,
-                  fontWeight: FontWeight.w700,
-                  color: valueColor,
-                  height: 1.0,
+              SizedBox(width: 4.w),
+              Expanded(
+                child: Text(
+                  value.replaceFirst('₹', ''),
+                  softWrap: true,
+                  style: TextStyle(
+                    fontSize: 24.sp,
+                    fontWeight: FontWeight.w700,
+                    color: valueColor,
+                    height: 1.0,
+                  ),
                 ),
               ),
             ],
@@ -4287,7 +4609,7 @@ class _BillingScreenState extends State<BillingScreen> {
       return const Text('Payment and proof review unavailable');
     }
     if (bill.isV2 && bill.isSettledV2) {
-      return const Text('Settled V2 bill');
+      return const Text('Settled bill');
     }
     if (bill.isV2 && !bill.isCurrentV2Liability) {
       return const Text('Payment and proof review unavailable');

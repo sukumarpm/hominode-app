@@ -523,15 +523,12 @@ class _QrGateScannerScreenState extends State<QrGateScannerScreen>
       final bool isCheckIn = visitor.actualArrival == null;
 
       if (isCheckIn) {
-        // Check-in: Set actualArrival timestamp
-        await _visitorService.checkInVisitor(visitorId);
-        print('QR Scanner: Visitor checked in - $visitorId');
-
-        // Fetch updated visitor data
-        final updatedVisitor = await _visitorService.getVisitorById(visitorId);
-        if (updatedVisitor != null) {
-          _showSuccessDialog(updatedVisitor, true);
-        }
+        _showErrorDialog(
+          'Security Check-In Required',
+          'Admin can approve visitor requests, but only Security can check in a visitor after verifying the QR code in the Security app.',
+          Icons.security,
+          const Color(0xFFF59E0B),
+        );
       } else {
         // Check-out: Set departure timestamp
         await _visitorService.checkOutVisitor(visitorId);

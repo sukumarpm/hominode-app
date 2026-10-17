@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -5,6 +6,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 enum ResidentStatus { available, assigned, inactive, pendingRegistration }
 
 enum ResidentSource { registered, onboarding }
+
+String _ownershipTypeLabel(String type) => switch (type) {
+  'Owner' => 'resident_owner'.tr(),
+  'Tenant' => 'resident_tenant'.tr(),
+  'Lease' => 'resident_lease'.tr(),
+  _ => type,
+};
 
 class ResidentSummary {
   final String id;
@@ -29,16 +37,18 @@ class ResidentSummary {
   String get statusLabel {
     switch (status) {
       case ResidentStatus.available:
-        return 'Available';
+        return 'resident_available'.tr();
 
       case ResidentStatus.assigned:
-        return flatLabel != null ? 'Assigned to $flatLabel' : 'Assigned';
+        return flatLabel != null
+            ? 'resident_assigned_to_unit'.tr(namedArgs: {'unit': flatLabel!})
+            : 'resident_assigned'.tr();
 
       case ResidentStatus.inactive:
-        return 'Inactive';
+        return 'resident_status_inactive'.tr();
 
       case ResidentStatus.pendingRegistration:
-        return 'Pending registration';
+        return 'resident_pending_registration'.tr();
     }
   }
 
@@ -134,7 +144,7 @@ class AssignResidentModal extends StatefulWidget {
     return showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close assign resident modal',
+      barrierLabel: 'resident_close_assign_modal'.tr(),
       barrierColor: const Color(0x59000000), // rgba(0, 0, 0, 0.35)
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
@@ -270,7 +280,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       print('Stack trace: $stackTrace');
       setState(() {
         _isLoadingResidents = false;
-        _errorMessage = 'Failed to load residents. Please try again.';
+        _errorMessage = 'resident_load_failed_retry'.tr();
       });
     }
   }
@@ -316,7 +326,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
   Future<void> _handleAssign() async {
     if (!_isFormValid) {
       setState(() {
-        _errorMessage = 'Please select a resident.';
+        _errorMessage = 'resident_select_required'.tr();
       });
       return;
     }
@@ -334,9 +344,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       final ownershipType = selectedResident.residentType?.trim();
 
       if (ownershipType == null || ownershipType.isEmpty) {
-        throw StateError(
-          'The selected resident does not have a valid ownership type.',
-        );
+        throw StateError('resident_invalid_ownership_type'.tr());
       }
 
       final request = AssignResidentRequest(
@@ -347,7 +355,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       );
 
       if (widget.onAssign == null) {
-        throw StateError('Resident assignment service is unavailable.');
+        throw StateError('resident_assignment_unavailable'.tr());
       }
 
       await widget.onAssign!(request);
@@ -357,8 +365,8 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       Navigator.of(context).pop(true);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Resident assigned successfully'),
+        SnackBar(
+          content: Text('resident_assigned_successfully'.tr()),
           backgroundColor: Color(0xFF10B981),
           duration: Duration(seconds: 2),
         ),
@@ -368,7 +376,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
 
       setState(() {
         _isSubmitting = false;
-        _errorMessage = 'Failed to assign resident. Please try again.';
+        _errorMessage = 'resident_assignment_failed_retry'.tr();
       });
     }
   }
@@ -436,11 +444,13 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       child: Stack(
         children: [
           Padding(
-            padding: EdgeInsets.only(right: 44.w),
+            padding: EdgeInsetsDirectional.only(end: 44.w),
             child: Column(
               children: [
                 Text(
-                  'Assign Resident to ${widget.flatLabel}',
+                  'resident_assign_to_unit_title'.tr(
+                    namedArgs: {'unit': widget.flatLabel},
+                  ),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 24.sp,
@@ -450,7 +460,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Select an available resident to assign to this unit.',
+                  'resident_select_available_for_unit'.tr(),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15.sp,
@@ -462,11 +472,11 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               ],
             ),
           ),
-          Positioned(
+          PositionedDirectional(
             top: -8,
-            right: -8,
+            end: -8,
             child: Semantics(
-              label: 'Close assign resident modal',
+              label: 'resident_close_assign_modal'.tr(),
               button: true,
               child: InkWell(
                 onTap: () => Navigator.of(context).pop(),
@@ -500,14 +510,14 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
         children: [
           Expanded(
             child: _buildSegmentButton(
-              label: 'Select Existing',
+              label: 'resident_select_existing'.tr(),
               isActive: _mode == AssignMode.selectExisting,
               onTap: () => setState(() => _mode = AssignMode.selectExisting),
             ),
           ),
           Expanded(
             child: _buildSegmentButton(
-              label: 'Add New',
+              label: 'resident_add_new'.tr(),
               isActive: _mode == AssignMode.addNew,
               onTap: () {
                 setState(() {
@@ -594,7 +604,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
         _buildResidentCardList(),
         SizedBox(height: 6.h),
         Text(
-          'Choose an available resident or pending onboarding resident',
+          'resident_choose_available_or_pending'.tr(),
           style: TextStyle(
             fontSize: 13.sp,
             fontWeight: FontWeight.w400,
@@ -615,7 +625,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       },
       style: TextStyle(fontSize: 15.sp, color: Color(0xFF111827)),
       decoration: InputDecoration(
-        hintText: 'Search by name, ID, or flat...',
+        hintText: 'resident_search_by_name_id_unit'.tr(),
         hintStyle: TextStyle(fontSize: 15.sp, color: Color(0xFF9CA3AF)),
         prefixIcon: Icon(Icons.search, color: Color(0xFF9CA3AF), size: 22.w),
         suffixIcon: _searchQuery.isNotEmpty
@@ -701,7 +711,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               ),
               SizedBox(height: 12.h),
               Text(
-                'No registered residents found',
+                'resident_no_registered_found'.tr(),
                 style: TextStyle(
                   fontSize: 15.sp,
                   fontWeight: FontWeight.w500,
@@ -732,7 +742,9 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               Icon(Icons.search_off, size: 48.w, color: Color(0xFF9CA3AF)),
               SizedBox(height: 12.h),
               Text(
-                'No residents match "$_searchQuery"',
+                'resident_no_search_match'.tr(
+                  namedArgs: {'query': _searchQuery},
+                ),
                 style: TextStyle(
                   fontSize: 15.sp,
                   fontWeight: FontWeight.w500,
@@ -835,7 +847,9 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                   Row(
                     children: [
                       Text(
-                        'ID: ${resident.uniqueId}',
+                        'resident_id_format'.tr(
+                          namedArgs: {'id': resident.uniqueId},
+                        ),
                         style: TextStyle(
                           fontSize: 13.sp,
                           color: Color(0xFF6B7280),
@@ -923,7 +937,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
 
   Widget _buildOwnershipDropdown() {
     // TODO: Add more ownership types (Tenant, Company, etc.)
-    final ownershipTypes = ['Owner', 'Tenant', 'Lease'];
+    const ownershipTypes = ['Owner', 'Tenant', 'Lease'];
 
     return Container(
       height: 52.h,
@@ -937,7 +951,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
           value: _ownershipType,
           isExpanded: true,
           icon: Padding(
-            padding: EdgeInsets.only(right: 16.w),
+            padding: EdgeInsetsDirectional.only(end: 16.w),
             child: Icon(
               Icons.keyboard_arrow_down,
               color: Color(0xFF9CA3AF),
@@ -951,7 +965,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16.w),
                 child: Text(
-                  type,
+                  _ownershipTypeLabel(type),
                   style: TextStyle(fontSize: 15.sp, color: Color(0xFF111827)),
                 ),
               ),
@@ -975,11 +989,11 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Resident Name *
-        _buildLabelWithAsterisk('Resident Name'),
+        _buildLabelWithAsterisk('full_name'.tr()),
         SizedBox(height: 8.h),
         _buildTextField(
           controller: _nameController,
-          hintText: 'Enter full name',
+          hintText: 'enter_full_name'.tr(),
           keyboardType: TextInputType.name,
         ),
         SizedBox(height: 18.h),
@@ -992,7 +1006,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildLabelWithAsterisk('Phone Number'),
+                  _buildLabelWithAsterisk('phone_number'.tr()),
                   SizedBox(height: 8.h),
                   _buildTextField(
                     controller: _phoneController,
@@ -1007,7 +1021,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildLabel('Family Members'),
+                  _buildLabel('family_members'.tr()),
                   SizedBox(height: 8.h),
                   _buildTextField(
                     controller: _familyMembersController,
@@ -1022,11 +1036,11 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
         SizedBox(height: 18.h),
 
         // Email Address
-        _buildLabel('Email Address'),
+        _buildLabel('email'.tr()),
         SizedBox(height: 8.h),
         _buildTextField(
           controller: _emailController,
-          hintText: 'resident@email.com',
+          hintText: 'resident_email_hint'.tr(),
           keyboardType: TextInputType.emailAddress,
         ),
         SizedBox(height: 18.h),
@@ -1114,7 +1128,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
               ),
               SizedBox(width: 10.w),
               Text(
-                'OTP registration',
+                'resident_otp_registration'.tr(),
                 style: TextStyle(
                   fontSize: 16.sp,
                   fontWeight: FontWeight.w700,
@@ -1125,9 +1139,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
           ),
           SizedBox(height: 12.h),
           Text(
-            '• Resident registers using the phone number entered above\n'
-            '• No password or Auth account is created by Admin\n'
-            '• This flat will be assigned only after OTP registration and Admin approval',
+            'resident_assignment_otp_instructions'.tr(),
             style: TextStyle(
               fontSize: 14.sp,
               height: 1.5,
@@ -1169,7 +1181,9 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
     final isEnabled = _isFormValid && !_isSubmitting;
 
     return Semantics(
-      label: 'Assign resident to flat ${widget.flatLabel}',
+      label: 'resident_assign_to_unit_title'.tr(
+        namedArgs: {'unit': widget.flatLabel},
+      ),
       button: true,
       child: SizedBox(
         width: double.infinity,
@@ -1196,8 +1210,8 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
                 )
               : Text(
                   _mode == AssignMode.selectExisting
-                      ? 'Assign Resident'
-                      : 'Create Onboarding',
+                      ? 'resident_assign_action'.tr()
+                      : 'resident_create_onboarding_action'.tr(),
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w600,
@@ -1210,7 +1224,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
 
   Widget _buildCancelButton() {
     return Semantics(
-      label: 'Cancel assign resident',
+      label: 'resident_cancel_assign'.tr(),
       button: true,
       child: SizedBox(
         width: double.infinity,
@@ -1227,7 +1241,7 @@ class _AssignResidentModalState extends State<AssignResidentModal> {
             ),
           ),
           child: Text(
-            'Cancel',
+            'cancel'.tr(),
             style: TextStyle(fontSize: 17.sp, fontWeight: FontWeight.w600),
           ),
         ),

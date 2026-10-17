@@ -86,7 +86,7 @@ class _StandardBottomNavState extends State<StandardBottomNav>
       ),
       child: SafeArea(
         child: Container(
-          constraints: BoxConstraints(minHeight: 60.h, maxHeight: 80.h),
+          constraints: BoxConstraints(minHeight: 60.h),
           padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 4.h),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -257,8 +257,8 @@ class _StandardBottomNavState extends State<StandardBottomNav>
                             child: Text(
                               label,
                               textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                              softWrap: true,
                             ),
                           ),
                         ),

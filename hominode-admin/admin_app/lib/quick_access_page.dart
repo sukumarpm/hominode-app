@@ -8,7 +8,6 @@ import 'communication_center_screen.dart';
 import 'parking_management_screen.dart';
 import 'staff_vendor_management_screen.dart';
 import 'reports_analytics_screen.dart';
-import 'notices_management_screen.dart';
 import 'staff_attendance_screen.dart';
 import 'staff_vendors_screen.dart';
 import 'admin_residents_page_firestore.dart';
@@ -31,14 +30,29 @@ class QuickAccessPage extends StatelessWidget {
           const StandardHeader(title: 'Quick Access'),
           SliverPadding(
             padding: EdgeInsets.all(12.w),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                childAspectRatio: 0.9,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-              ),
-              delegate: SliverChildListDelegate(_buildAllGridItems()),
+            sliver: SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final textScale = MediaQuery.textScalerOf(context).scale(1);
+                final columns = textScale > 1.3 ? 2 : 3;
+                final spacing = 12.0;
+                final tileWidth =
+                    (constraints.crossAxisExtent - spacing * (columns - 1)) /
+                    columns;
+                final neededHeight = 106 + (textScale - 1).clamp(0.0, 1.0) * 50;
+                final aspectRatio = tileWidth >= neededHeight
+                    ? 1.0
+                    : tileWidth / neededHeight;
+
+                return SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    childAspectRatio: aspectRatio,
+                    crossAxisSpacing: spacing,
+                    mainAxisSpacing: spacing,
+                  ),
+                  delegate: SliverChildListDelegate(_buildAllGridItems()),
+                );
+              },
             ),
           ),
           SliverToBoxAdapter(child: SizedBox(height: 80.h)),
@@ -136,14 +150,15 @@ class QuickAccessPage extends StatelessWidget {
       ),
       ModernQuickAccessTile(
         icon: Icons.notifications_active_rounded,
-        label: 'Notices',
+        label: 'Announcements',
         color: const Color(0xFF10B981),
         bgColor: const Color(0xFFD1FAE5),
         onTap: (context) {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const NoticesManagementScreen(),
+              builder: (context) =>
+                  const EventsAnnouncementsScreen(announcementsOnly: true),
             ),
           );
         },
@@ -157,7 +172,8 @@ class QuickAccessPage extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const EventsAnnouncementsScreen(),
+              builder: (context) =>
+                  const EventsAnnouncementsScreen(eventsOnly: true),
             ),
           );
         },
@@ -381,8 +397,7 @@ class _ModernQuickAccessTileState extends State<ModernQuickAccessTile>
                     Text(
                       widget.label,
                       textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      softWrap: true,
                       style: TextStyle(
                         fontSize: 11.sp,
                         fontWeight: FontWeight.w600,

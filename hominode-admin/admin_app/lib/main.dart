@@ -1,5 +1,6 @@
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -90,7 +91,21 @@ Future<void> main() async {
     rethrow;
   }
 
-  runApp(const MyApp());
+  await EasyLocalization.ensureInitialized();
+  runApp(
+    EasyLocalization(
+      supportedLocales: const [
+        Locale('en'),
+        Locale('ta'),
+        Locale('hi'),
+        Locale('es'),
+        Locale('ar'),
+      ],
+      path: 'assets/translations',
+      fallbackLocale: const Locale('en'),
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -105,8 +120,11 @@ class MyApp extends StatelessWidget {
       builder: (context, child) {
         return MaterialApp(
           navigatorKey: adminNotificationNavigatorKey,
-          title: 'Hominode Admin',
+          title: 'hominode_admin'.tr(),
           debugShowCheckedModeBanner: false,
+          localizationsDelegates: context.localizationDelegates,
+          supportedLocales: context.supportedLocales,
+          locale: context.locale,
           theme: HominodeTheme.light,
           home: const AuthWrapper(),
           routes: {
@@ -126,6 +144,8 @@ class MyApp extends StatelessWidget {
                 const AuthWrapper(requestedModule: AdminModuleId.complaints),
             adminEventsRoute: (context) =>
                 const AuthWrapper(requestedModule: AdminModuleId.events),
+            adminAnnouncementsRoute: (context) =>
+                const AuthWrapper(requestedModule: AdminModuleId.announcements),
             adminParkingRoute: (context) =>
                 const AuthWrapper(requestedModule: AdminModuleId.parking),
             adminResidentVehiclesRoute: (context) => const AuthWrapper(

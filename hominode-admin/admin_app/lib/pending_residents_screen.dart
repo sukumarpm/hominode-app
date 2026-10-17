@@ -1,12 +1,26 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:intl/intl.dart';
 
 import 'models/pending_resident.dart';
 import 'services/building_service.dart';
 import 'services/flat_service.dart';
 import 'services/resident_service.dart';
 import 'widgets/standard_header.dart';
+
+String _residentTypeLabel(String value) => switch (value.trim().toLowerCase()) {
+  'owner' => 'resident_owner'.tr(),
+  'tenant' => 'resident_tenant'.tr(),
+  _ => value,
+};
+
+String _flatStatusLabel(String value) => switch (value.trim().toLowerCase()) {
+  'vacant' => 'unit_status_vacant'.tr(),
+  'occupied' => 'unit_status_occupied'.tr(),
+  'maintenance' => 'unit_status_maintenance'.tr(),
+  'reserved' => 'unit_status_reserved'.tr(),
+  _ => value,
+};
 
 class PendingResidentsScreen extends StatelessWidget {
   PendingResidentsScreen({super.key});
@@ -17,14 +31,14 @@ class PendingResidentsScreen extends StatelessWidget {
     backgroundColor: const Color(0xFFF7F7F7),
     body: CustomScrollView(
       slivers: [
-        const StandardHeader(title: 'Pending Residents'),
+        StandardHeader(title: 'resident_pending_title'.tr()),
         SliverPadding(
           padding: EdgeInsets.all(16.w),
           sliver: StreamBuilder<List<PendingResident>>(
             stream: _residents.watchPendingResidents(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const SliverFillRemaining(
+                return SliverFillRemaining(
                   child: Center(child: CircularProgressIndicator()),
                 );
               }
@@ -32,17 +46,17 @@ class PendingResidentsScreen extends StatelessWidget {
                 return SliverFillRemaining(
                   child: Center(
                     child: Text(
-                      'Unable to load pending residents: ${snapshot.error}',
+                      'resident_pending_load_failed'.tr(
+                        namedArgs: {'error': '${snapshot.error}'},
+                      ),
                     ),
                   ),
                 );
               }
               final residents = snapshot.data ?? const [];
               if (residents.isEmpty) {
-                return const SliverFillRemaining(
-                  child: Center(
-                    child: Text('No pending resident registrations'),
-                  ),
+                return SliverFillRemaining(
+                  child: Center(child: Text('resident_no_pending'.tr())),
                 );
               }
               return SliverList.builder(
@@ -74,7 +88,7 @@ class _ResidentCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            resident.name.isEmpty ? 'Unnamed resident' : resident.name,
+            resident.name.isEmpty ? 'resident_unnamed'.tr() : resident.name,
             style: TextStyle(fontSize: 17.sp, fontWeight: FontWeight.w700),
           ),
           SizedBox(height: 10.h),
@@ -83,30 +97,48 @@ class _ResidentCard extends StatelessWidget {
             _row(Icons.email_outlined, resident.email!),
           _row(
             Icons.apartment_outlined,
-            'Submitted building: ${resident.buildingReference.isEmpty ? "Not provided" : resident.buildingReference}',
+            'resident_submitted_building'.tr(
+              namedArgs: {
+                'building': resident.buildingReference.isEmpty
+                    ? 'not_provided'.tr()
+                    : resident.buildingReference,
+              },
+            ),
           ),
           _row(
             Icons.home_outlined,
-            'Submitted unit: ${resident.unitReference.isEmpty ? "Not provided" : resident.unitReference}',
+            'resident_submitted_unit'.tr(
+              namedArgs: {
+                'unit': resident.unitReference.isEmpty
+                    ? 'not_provided'.tr()
+                    : resident.unitReference,
+              },
+            ),
           ),
           if (resident.residentType?.trim().isNotEmpty == true)
             _row(
               Icons.person_outline,
-              'Resident type: ${resident.residentType}',
+              'resident_type_summary'.tr(
+                namedArgs: {'type': _residentTypeLabel(resident.residentType!)},
+              ),
             ),
           if (resident.creationSource?.trim().isNotEmpty == true)
             _row(
               Icons.how_to_reg_outlined,
-              'Registration source: ${resident.creationSource}',
+              'resident_registration_source'.tr(
+                namedArgs: {'source': resident.creationSource!},
+              ),
             ),
           _row(
             Icons.verified_user_outlined,
-            'Identity: ${resident.identityVerificationStatus}',
+            'resident_identity_status'.tr(
+              namedArgs: {'status': resident.identityVerificationStatus},
+            ),
           ),
           _row(
             Icons.schedule,
             resident.registeredAt == null
-                ? 'Registration date unavailable'
+                ? 'resident_registration_date_unavailable'.tr()
                 : DateFormat.yMMMd().add_jm().format(resident.registeredAt!),
           ),
           SizedBox(height: 14.h),
@@ -119,25 +151,25 @@ class _ResidentCard extends StatelessWidget {
                   builder: (_) =>
                       _ApprovalDialog(resident: resident, residents: residents),
                 ),
-                child: const Text('Review & approve'),
+                child: Text('resident_review_approve'.tr()),
               ),
               OutlinedButton(
                 onPressed: () => _reasonAction(
                   context,
-                  'Reject registration',
+                  'resident_reject_registration_title'.tr(),
                   (reason) => residents.rejectResident(
                     userId: resident.uid,
                     reason: reason,
                   ),
                 ),
-                child: const Text('Reject'),
+                child: Text('resident_reject_action'.tr()),
               ),
               if (resident.hasIdentityProof &&
                   resident.identityVerificationStatus == 'pending')
                 OutlinedButton.icon(
                   onPressed: () => _reviewIdentityProof(context),
                   icon: const Icon(Icons.badge_outlined),
-                  label: const Text('Review identity proof'),
+                  label: Text('resident_review_identity_proof'.tr()),
                 ),
             ],
           ),
@@ -169,16 +201,18 @@ class _ResidentCard extends StatelessWidget {
         title: Text(title),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(labelText: 'Reason (optional)'),
+          decoration: InputDecoration(
+            labelText: 'resident_reason_optional'.tr(),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text('cancel'.tr()),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Confirm'),
+            child: Text('confirm'.tr()),
           ),
         ],
       ),
@@ -190,9 +224,13 @@ class _ResidentCard extends StatelessWidget {
     try {
       await action(controller.text);
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$title completed')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'resident_action_completed'.tr(namedArgs: {'action': title}),
+            ),
+          ),
+        );
       }
     } catch (error) {
       if (context.mounted) {
@@ -226,8 +264,8 @@ class _ResidentCard extends StatelessWidget {
           SnackBar(
             content: Text(
               decision
-                  ? 'Identity proof verified.'
-                  : 'Identity proof rejected.',
+                  ? 'resident_identity_proof_verified'.tr()
+                  : 'resident_identity_proof_rejected'.tr(),
             ),
           ),
         );
@@ -313,19 +351,19 @@ class _IdentityProofReviewDialogState extends State<IdentityProofReviewDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Review identity proof'),
+    title: Text('resident_review_identity_proof'.tr()),
     content: SizedBox(
       width: 420.w,
       child: _previewFailed
-          ? const Text(
-              'The proof preview could not be loaded. Do not verify it.',
+          ? Text(
+              'resident_proof_preview_unavailable'.tr(),
               style: TextStyle(color: Colors.red),
             )
           : Image(
               image: widget.proofImage,
               fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => const Text(
-                'The proof preview could not be loaded. Do not verify it.',
+              errorBuilder: (_, __, ___) => Text(
+                'resident_proof_preview_unavailable'.tr(),
                 style: TextStyle(color: Colors.red),
               ),
             ),
@@ -333,11 +371,11 @@ class _IdentityProofReviewDialogState extends State<IdentityProofReviewDialog> {
     actions: [
       TextButton(
         onPressed: isSubmitting ? null : () => Navigator.pop(context),
-        child: const Text('Cancel'),
+        child: Text('cancel'.tr()),
       ),
       OutlinedButton(
         onPressed: isSubmitting ? null : () => Navigator.pop(context, false),
-        child: const Text('Reject'),
+        child: Text('resident_reject_action'.tr()),
       ),
       FilledButton(
         onPressed: (!_previewLoaded || isSubmitting)
@@ -354,7 +392,7 @@ class _IdentityProofReviewDialogState extends State<IdentityProofReviewDialog> {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Text('Verify'),
+            : Text('resident_verify_identity_action'.tr()),
       ),
     ],
   );
@@ -446,7 +484,7 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Canonical resident assignment'),
+    title: Text('resident_canonical_assignment_title'.tr()),
     content: SizedBox(
       width: 420.w,
       child: StreamBuilder<List<BuildingModel>>(
@@ -457,7 +495,9 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
           }
           if (buildingsSnapshot.hasError) {
             return Text(
-              'Unable to load buildings: ${buildingsSnapshot.error}',
+              'resident_building_load_failed'.tr(
+                namedArgs: {'error': '${buildingsSnapshot.error}'},
+              ),
               style: const TextStyle(color: Colors.red),
             );
           }
@@ -471,9 +511,9 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
           _preselectBuilding(buildings);
           if (buildings.isEmpty) {
             return Text(
-              'No canonical buildings exist for community '
-              '${widget.resident.communityId}. Create or migrate a building '
-              'with this communityId before approving this resident.',
+              'resident_no_canonical_buildings'.tr(
+                namedArgs: {'community': widget.resident.communityId},
+              ),
               style: const TextStyle(color: Colors.red),
             );
           }
@@ -482,10 +522,18 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
             children: [
               DropdownButtonFormField<String>(
                 initialValue: residentType,
-                decoration: const InputDecoration(labelText: 'Resident type'),
-                items: const [
-                  DropdownMenuItem(value: 'owner', child: Text('Owner')),
-                  DropdownMenuItem(value: 'tenant', child: Text('Tenant')),
+                decoration: InputDecoration(
+                  labelText: 'resident_type_label'.tr(),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: 'owner',
+                    child: Text('resident_owner'.tr()),
+                  ),
+                  DropdownMenuItem(
+                    value: 'tenant',
+                    child: Text('resident_tenant'.tr()),
+                  ),
                 ],
                 onChanged:
                     busy ||
@@ -497,18 +545,18 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
               ),
               if (residentType == 'tenant' &&
                   widget.resident.identityVerificationStatus != 'verified')
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(top: 8),
                   child: Text(
-                    'Verify the tenant identity proof before approval.',
+                    'resident_verify_tenant_identity_first'.tr(),
                     style: TextStyle(color: Colors.red),
                   ),
                 ),
               SizedBox(height: 16.h),
               DropdownButtonFormField<String>(
                 initialValue: buildingId,
-                decoration: const InputDecoration(
-                  labelText: 'Building / tower',
+                decoration: InputDecoration(
+                  labelText: 'resident_building_tower'.tr(),
                 ),
                 items: buildings
                     .map(
@@ -526,9 +574,7 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
               ),
               SizedBox(height: 16.h),
               if (buildingId == null)
-                const Text(
-                  'Select a canonical building. Submitted references are informational only.',
-                )
+                Text('resident_select_canonical_building'.tr())
               else
                 StreamBuilder<List<FlatModel>>(
                   stream: _flats.getFlatsForBuilding(buildingId!),
@@ -539,7 +585,9 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
                     }
                     if (flatsSnapshot.hasError) {
                       return Text(
-                        'Unable to load units: ${flatsSnapshot.error}',
+                        'resident_units_load_failed'.tr(
+                          namedArgs: {'error': '${flatsSnapshot.error}'},
+                        ),
                         style: const TextStyle(color: Colors.red),
                       );
                     }
@@ -554,21 +602,23 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
                     }
                     _preselectFlat(flats);
                     if (flats.isEmpty) {
-                      return const Text(
-                        'No available canonical units exist in this building.',
+                      return Text(
+                        'resident_no_available_units'.tr(),
                         style: TextStyle(color: Colors.red),
                       );
                     }
                     return DropdownButtonFormField<String>(
                       initialValue: unitId,
-                      decoration: const InputDecoration(
-                        labelText: 'Unit / flat',
+                      decoration: InputDecoration(
+                        labelText: 'resident_unit_flat'.tr(),
                       ),
                       items: flats
                           .map(
                             (f) => DropdownMenuItem(
                               value: f.id,
-                              child: Text('${f.flatId} — ${f.status}'),
+                              child: Text(
+                                '${f.flatId} — ${_flatStatusLabel(f.status)}',
+                              ),
                             ),
                           )
                           .toList(),
@@ -586,7 +636,7 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
     actions: [
       TextButton(
         onPressed: busy ? null : () => Navigator.pop(context),
-        child: const Text('Cancel'),
+        child: Text('cancel'.tr()),
       ),
       FilledButton(
         onPressed: _canApprove ? _approve : null,
@@ -596,7 +646,7 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
                 height: 18.h,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Text('Approve'),
+            : Text('resident_approve_action'.tr()),
       ),
     ],
   );
@@ -615,7 +665,11 @@ class _ApprovalDialogState extends State<_ApprovalDialog> {
         Navigator.pop(context);
         messenger.showSnackBar(
           SnackBar(
-            content: Text('${widget.resident.name} approved successfully'),
+            content: Text(
+              'resident_approved_successfully'.tr(
+                namedArgs: {'name': widget.resident.name},
+              ),
+            ),
           ),
         );
       }

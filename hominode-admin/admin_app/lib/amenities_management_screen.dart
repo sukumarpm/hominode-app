@@ -7,13 +7,23 @@ import 'services/amenity_service.dart';
 import 'services/admin_service.dart';
 import 'services/subscription_service.dart';
 import 'widgets/add_amenity_modal.dart';
+import 'widgets/admin_content_status.dart';
 import 'widgets/custom_segmented_control.dart';
 import 'widgets/edit_amenity_modal.dart';
 import 'widgets/standard_header.dart';
 import 'widgets/view_all_bookings_modal.dart';
 
 class AmenitiesManagementScreen extends StatefulWidget {
-  const AmenitiesManagementScreen({super.key});
+  const AmenitiesManagementScreen({
+    super.key,
+    this.amenityService,
+    this.adminService,
+    this.subscriptionService,
+  });
+
+  final AmenityService? amenityService;
+  final AdminService? adminService;
+  final SubscriptionService? subscriptionService;
 
   @override
   State<AmenitiesManagementScreen> createState() =>
@@ -21,13 +31,17 @@ class AmenitiesManagementScreen extends StatefulWidget {
 }
 
 class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
-  final AmenityService _amenityService = AmenityService();
-  final AdminService _adminService = AdminService();
-  final SubscriptionService _subscriptionService = SubscriptionService();
+  late final AmenityService _amenityService =
+      widget.amenityService ?? AmenityService();
+  late final AdminService _adminService = widget.adminService ?? AdminService();
+  late final SubscriptionService _subscriptionService =
+      widget.subscriptionService ?? SubscriptionService();
 
   int selectedTab = 0; // 0 = Amenities, 1 = Bookings
   bool _isEntitlementLoading = true;
   bool _facilityBookingAllowed = false;
+  bool _entitlementFailed = false;
+  Stream<List<AmenityModel>>? _amenitiesStream;
 
   @override
   void initState() {
@@ -36,15 +50,23 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
   }
 
   Future<void> _loadEntitlement() async {
+    setState(() {
+      _isEntitlementLoading = true;
+      _entitlementFailed = false;
+      _facilityBookingAllowed = false;
+      selectedTab = 0;
+    });
     var allowed = false;
+    var failed = false;
 
     try {
       final communityId = _adminService.requireCurrentCommunityId();
-      final entitlement = await _subscriptionService.getEntitlement(
-        communityId,
-      );
+      final entitlement = await _subscriptionService
+          .getEntitlement(communityId)
+          .timeout(const Duration(seconds: 20));
       allowed = entitlement?.canUseFeature('facilityBooking') == true;
     } catch (error) {
+      failed = true;
       debugPrint('Facility booking entitlement resolution failed: $error');
     }
 
@@ -52,6 +74,7 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
 
     setState(() {
       _facilityBookingAllowed = allowed;
+      _entitlementFailed = failed;
 
       if (!_facilityBookingAllowed && selectedTab == 1) {
         selectedTab = 0;
@@ -62,6 +85,7 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
   }
 
   Future<void> _selectTab(int index) async {
+    if (_isEntitlementLoading) return;
     if (index == 1 && !_facilityBookingAllowed) {
       await _showBookingUnavailable();
       return;
@@ -94,9 +118,6 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isEntitlementLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
     if (AdminDesktopPresentationScope.isActive(context)) {
       return AdminDesktopPageFrame(
         title: 'Amenities',
@@ -121,11 +142,7 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
               },
             ),
             SizedBox(height: 16.h),
-            Expanded(
-              child: selectedTab == 0
-                  ? _buildAmenitiesTab()
-                  : _buildBookingsTab(),
-            ),
+            Expanded(child: _buildContent()),
           ],
         ),
       );
@@ -188,39 +205,48 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
           SizedBox(height: 20.h),
 
           // Content (Expanded to fill remaining space)
-          Expanded(
-            child: selectedTab == 0
-                ? _buildAmenitiesTab()
-                : _buildBookingsTab(),
-          ),
+          Expanded(child: _buildContent()),
         ],
       ),
     );
   }
 
+  Widget _buildContent() {
+    if (_isEntitlementLoading) {
+      return const AdminContentStatus(message: 'Loading amenities…');
+    }
+    return Column(
+      children: [
+        if (_entitlementFailed)
+          AdminContentStatus(
+            message:
+                'Unable to verify facility booking access. You can still view amenities.',
+            onRetry: _loadEntitlement,
+          ),
+        Expanded(
+          child: selectedTab == 0 ? _buildAmenitiesTab() : _buildBookingsTab(),
+        ),
+      ],
+    );
+  }
+
+  Stream<List<AmenityModel>> _watchAmenities() async* {
+    yield* _amenityService.getAmenities();
+  }
+
   // Amenities Tab
   Widget _buildAmenitiesTab() {
     return StreamBuilder<List<AmenityModel>>(
-      stream: _amenityService.getAmenities(),
+      stream: _amenitiesStream ??= _watchAmenities(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
 
         if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error_outline, size: 48.w, color: Color(0xFFEF4444)),
-                SizedBox(height: 16.h),
-                Text(
-                  'Error loading amenities: ${snapshot.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFF6B7280)),
-                ),
-              ],
-            ),
+          return AdminContentStatus(
+            message: 'Unable to load amenities.',
+            onRetry: () => setState(() => _amenitiesStream = null),
           );
         }
 
@@ -380,13 +406,12 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
             SizedBox(height: 12.h),
             Text(
               amenity.description!,
+              softWrap: true,
               style: TextStyle(
                 fontSize: 14.sp,
                 color: Color(0xFF6B7280),
                 height: 1.4,
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
 
@@ -449,12 +474,11 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
                       Expanded(
                         child: Text(
                           amenity.bookingDurations.join(', '),
+                          softWrap: true,
                           style: TextStyle(
                             fontSize: 12.sp,
                             color: Color(0xFF6B7280),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -836,11 +860,11 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
                       Expanded(
                         child: Text(
                           booking.email!,
+                          softWrap: true,
                           style: TextStyle(
                             fontSize: 13.sp,
                             color: Color(0xFF6B7280),
                           ),
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -1127,6 +1151,7 @@ class _AmenitiesManagementScreenState extends State<AmenitiesManagementScreen> {
   }
 
   void _showAddAmenityModal() {
+    if (_isEntitlementLoading) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1396,6 +1421,7 @@ class _BookingsCalendarViewState extends State<_BookingsCalendarView> {
   DateTime? _selectedDay;
   Map<DateTime, List<AmenityBookingModel>> _bookingsByDate = {};
   bool _isLoading = true;
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -1407,21 +1433,29 @@ class _BookingsCalendarViewState extends State<_BookingsCalendarView> {
   Future<void> _loadBookings() async {
     setState(() {
       _isLoading = true;
+      _loadFailed = false;
     });
 
     // Load bookings for the current month
     final firstDay = DateTime(_focusedDay.year, _focusedDay.month, 1);
     final lastDay = DateTime(_focusedDay.year, _focusedDay.month + 1, 0);
 
-    final bookings = await widget.amenityService.getBookingsGroupedByDate(
-      startDate: firstDay,
-      endDate: lastDay,
-    );
-
-    setState(() {
-      _bookingsByDate = bookings;
-      _isLoading = false;
-    });
+    try {
+      final bookings = await widget.amenityService
+          .getBookingsGroupedByDate(startDate: firstDay, endDate: lastDay)
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      setState(() {
+        _bookingsByDate = bookings;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadFailed = true;
+        _isLoading = false;
+      });
+    }
   }
 
   List<AmenityBookingModel> _getBookingsForDay(DateTime day) {
@@ -1552,6 +1586,11 @@ class _BookingsCalendarViewState extends State<_BookingsCalendarView> {
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
+              : _loadFailed
+              ? AdminContentStatus(
+                  message: 'Unable to load bookings.',
+                  onRetry: _loadBookings,
+                )
               : _buildBookingsList(),
         ),
       ],

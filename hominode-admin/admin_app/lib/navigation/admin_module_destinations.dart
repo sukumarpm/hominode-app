@@ -14,6 +14,7 @@ enum AdminModuleId {
   parking,
   residentVehicles,
   amenities,
+  announcements,
   profile,
   settings,
 }
@@ -70,6 +71,12 @@ final List<AdminModuleDestination> adminModuleDestinations =
         label: 'Complaints',
         icon: Icons.report_problem_outlined,
         builder: (_) => const ComplaintsDesktopContent(),
+      ),
+      AdminModuleDestination(
+        id: AdminModuleId.announcements,
+        label: 'Announcements',
+        icon: Icons.campaign_outlined,
+        builder: (_) => const AnnouncementsDesktopContent(),
       ),
       AdminModuleDestination(
         id: AdminModuleId.events,

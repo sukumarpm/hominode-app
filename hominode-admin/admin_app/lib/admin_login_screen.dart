@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -183,7 +184,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     FocusScope.of(context).unfocus();
 
     if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
-      _showInlineError('Enter a valid phone number.');
+      _showInlineError('login_invalid_phone'.tr());
       return;
     }
 
@@ -267,7 +268,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     final code = _otp.text.trim();
 
     if (_verificationId == null || !RegExp(r'^\d{6}$').hasMatch(code)) {
-      _showInlineError('Enter the 6-digit OTP.');
+      _showInlineError('login_otp_required'.tr());
       return;
     }
 
@@ -436,17 +437,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             ),
 
             // Small role-colored atmospheric accents.
-            Positioned(
+            PositionedDirectional(
               top: -80,
-              right: -80,
+              end: -80,
               child: _GlowOrb(
                 size: 220,
                 color: const Color(0xFF16C79A).withValues(alpha: 0.13),
               ),
             ),
-            Positioned(
+            PositionedDirectional(
               bottom: 20,
-              left: -80,
+              start: -80,
               child: _GlowOrb(
                 size: 190,
                 color: const Color(0xFF0E7490).withValues(alpha: 0.10),
@@ -535,27 +536,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
           SizedBox(height: 4.h),
 
-          RichText(
+          Text(
+            'brand_tagline'.tr(),
             textAlign: TextAlign.center,
-            text: TextSpan(
-              children: [
-                TextSpan(
-                  text: 'Smart ',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14.sp.clamp(12.0, 14.0),
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                TextSpan(
-                  text: 'place. Better lives.',
-                  style: TextStyle(
-                    color: const Color(0xFF55E3BE),
-                    fontSize: 14.sp.clamp(12.0, 14.0),
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+            style: TextStyle(
+              color: const Color(0xFF55E3BE),
+              fontSize: 14.sp.clamp(12.0, 14.0),
+              fontWeight: FontWeight.w500,
             ),
           ),
 
@@ -569,7 +556,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               border: Border.all(color: const Color(0x6655E3BE)),
             ),
             child: Text(
-              'Admin Access',
+              'admin_access'.tr(),
               style: TextStyle(
                 color: const Color(0xFF91F2D8),
                 fontSize: 11.sp.clamp(11.0, 12.0),
@@ -608,7 +595,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Phone Number',
+          'phone_number'.tr(),
           style: TextStyle(
             color: Colors.white,
             fontSize: 17.sp.clamp(15.0, 17.0),
@@ -619,7 +606,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         SizedBox(height: 5.h),
 
         Text(
-          'Use the mobile number registered with your Admin account.',
+          'admin_phone_description'.tr(),
           style: TextStyle(
             color: const Color(0xFFA5C9C2),
             fontSize: 12.sp.clamp(11.0, 13.0),
@@ -640,6 +627,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               child: TextField(
                 controller: _mobilePhone,
                 focusNode: _mobilePhoneFocusNode,
+                onTapOutside: (_) => FocusScope.of(context).unfocus(),
                 enabled: !_busy,
                 keyboardType: TextInputType.phone,
                 textInputAction: TextInputAction.done,
@@ -675,7 +663,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         SizedBox(height: 15.h),
 
         _buildPrimaryButton(
-          label: 'Send OTP',
+          label: 'send_otp'.tr(),
           onTap: _busy ? null : _sendOtpMobile,
         ),
 
@@ -694,7 +682,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Verify OTP',
+          'verify_otp'.tr(),
           style: TextStyle(
             color: Colors.white,
             fontSize: 18.sp.clamp(16.0, 18.0),
@@ -706,8 +694,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
         Text(
           destination.isEmpty
-              ? 'Enter the 6-digit verification code.'
-              : 'Enter the code sent to $destination',
+              ? 'enter_verification_code'.tr()
+              : 'code_sent_to_phone'.tr(namedArgs: {'phone': destination}),
           style: TextStyle(
             color: const Color(0xFFA5C9C2),
             fontSize: 12.sp.clamp(11.0, 13.0),
@@ -720,6 +708,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         TextField(
           controller: _otp,
           focusNode: _otpFocusNode,
+          onTapOutside: (_) => FocusScope.of(context).unfocus(),
           enabled: !_busy,
           keyboardType: TextInputType.number,
           textInputAction: TextInputAction.done,
@@ -756,7 +745,10 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
         SizedBox(height: 15.h),
 
-        _buildPrimaryButton(label: 'Verify OTP', onTap: _busy ? null : _verify),
+        _buildPrimaryButton(
+          label: 'verify_otp'.tr(),
+          onTap: _busy ? null : _verify,
+        ),
 
         SizedBox(height: 8.h),
 
@@ -766,7 +758,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               child: TextButton(
                 onPressed: _busy ? null : _changeNumber,
                 child: Text(
-                  'Change number',
+                  'change_number'.tr(),
                   style: TextStyle(
                     color: const Color(0xFF90D8C8),
                     fontSize: 12.sp.clamp(11.0, 13.0),
@@ -780,7 +772,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
               child: TextButton(
                 onPressed: _busy ? null : _resendOtp,
                 child: Text(
-                  'Resend OTP',
+                  'resend_otp'.tr(),
                   style: TextStyle(
                     color: const Color(0xFF58E3BE),
                     fontSize: 12.sp.clamp(11.0, 13.0),
@@ -940,7 +932,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                         children: [
                           Expanded(
                             child: Text(
-                              'Select country code',
+                              'select_country_code'.tr(),
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 17.sp.clamp(16.0, 18.0),
@@ -967,7 +959,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                         style: const TextStyle(color: Colors.white),
                         onChanged: applySearch,
                         decoration: InputDecoration(
-                          hintText: 'Search country or code',
+                          hintText: 'search_country_or_code'.tr(),
                           hintStyle: const TextStyle(color: Color(0xFF769B95)),
                           prefixIcon: const Icon(
                             Icons.search,
@@ -1002,7 +994,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                       child: filtered.isEmpty
                           ? Center(
                               child: Text(
-                                'No countries found',
+                                'no_countries_found'.tr(),
                                 style: TextStyle(
                                   color: const Color(0xFFA3C5C0),
                                   fontSize: 14.sp,
@@ -1119,8 +1111,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
             gradient: enabled
                 ? const LinearGradient(
                     colors: [Color(0xFF32D5AD), Color(0xFF087A74)],
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
+                    begin: AlignmentDirectional.centerStart,
+                    end: AlignmentDirectional.centerEnd,
                   )
                 : const LinearGradient(
                     colors: [Color(0xFF375A56), Color(0xFF294843)],

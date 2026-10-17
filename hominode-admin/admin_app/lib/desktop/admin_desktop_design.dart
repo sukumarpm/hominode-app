@@ -217,8 +217,7 @@ class AdminDesktopActionTile extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: AdminDesktopDesign.text,

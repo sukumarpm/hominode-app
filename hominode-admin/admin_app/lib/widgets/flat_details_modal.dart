@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -48,7 +49,7 @@ class FlatDetailsModal extends StatefulWidget {
     return showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close unit details',
+      barrierLabel: 'unit_close_details'.tr(),
       barrierColor: const Color(0x59000000), // rgba(0, 0, 0, 0.35)
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
@@ -165,7 +166,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
                   const Icon(Icons.cancel_outlined),
                   SizedBox(width: 8.w),
                   Text(
-                    'Cancel Reservation',
+                    'unit_cancel_reservation'.tr(),
                     style: TextStyle(
                       fontSize: 17.sp,
                       fontWeight: FontWeight.w600,
@@ -182,10 +183,8 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
 
     if (onboardingId == null || onboardingId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Reservation information is incomplete. Cancellation was not performed.',
-          ),
+        SnackBar(
+          content: Text('unit_reservation_incomplete'.tr()),
           backgroundColor: Color(0xFFEF4444),
         ),
       );
@@ -201,15 +200,16 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
       barrierDismissible: false,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Cancel Reservation?'),
+          title: Text('unit_cancel_reservation_question'.tr()),
           content: Text(
-            '$residentName\'s reservation for ${widget.unit.id} will be cancelled. '
-            'The unit will become vacant and the resident will remain available for reassignment.',
+            'unit_cancel_reservation_confirmation'.tr(
+              namedArgs: {'name': residentName, 'unit': widget.unit.id},
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Keep Reservation'),
+              child: Text('unit_keep_reservation'.tr()),
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
@@ -217,7 +217,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
                 backgroundColor: const Color(0xFFB91C1C),
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Cancel Reservation'),
+              child: Text('unit_cancel_reservation'.tr()),
             ),
           ],
         );
@@ -236,10 +236,8 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         widget.buildingId == null ||
         widget.buildingId!.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Reservation service is unavailable. No changes were made.',
-          ),
+        SnackBar(
+          content: Text('unit_reservation_unavailable'.tr()),
           backgroundColor: Color(0xFFEF4444),
         ),
       );
@@ -272,7 +270,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Reservation for ${widget.unit.id} cancelled successfully.',
+            'unit_reservation_cancelled'.tr(
+              namedArgs: {'unit': widget.unit.id},
+            ),
           ),
           backgroundColor: const Color(0xFF10B981),
         ),
@@ -288,7 +288,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to cancel reservation: $e'),
+          content: Text(
+            'unit_cancel_reservation_failed'.tr(namedArgs: {'error': '$e'}),
+          ),
           backgroundColor: const Color(0xFFEF4444),
         ),
       );
@@ -308,25 +310,25 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Edit Unit Name'),
+          title: Text('unit_edit_name_title'.tr()),
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(
-              labelText: 'Unit Name',
-              hintText: 'Example: A-101, Villa-03',
+            decoration: InputDecoration(
+              labelText: 'unit_name'.tr(),
+              hintText: 'unit_name_example'.tr(),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
+              child: Text('cancel'.tr()),
             ),
             ElevatedButton(
               onPressed: () {
                 Navigator.of(dialogContext).pop(controller.text.trim());
               },
-              child: const Text('Save'),
+              child: Text('save'.tr()),
             ),
           ],
         );
@@ -352,7 +354,11 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Unit renamed to ${newLabel.trim()} successfully.'),
+          content: Text(
+            'unit_renamed_successfully'.tr(
+              namedArgs: {'unit': newLabel.trim()},
+            ),
+          ),
           backgroundColor: const Color(0xFF10B981),
         ),
       );
@@ -390,7 +396,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Reservation Details',
+            'unit_reservation_details'.tr(),
             style: TextStyle(
               fontSize: 16.sp,
               fontWeight: FontWeight.w700,
@@ -400,14 +406,14 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           SizedBox(height: 14.h),
 
           _buildReservationRow(
-            'Reserved For',
-            name?.isNotEmpty == true ? name! : 'Pending resident',
+            'unit_reserved_for'.tr(),
+            name?.isNotEmpty == true ? name! : 'resident_pending'.tr(),
           ),
 
           if (residentType?.isNotEmpty == true) ...[
             SizedBox(height: 10.h),
             _buildReservationRow(
-              'Resident Type',
+              'resident_type_label'.tr(),
               _formatResidentType(residentType!),
             ),
           ],
@@ -457,7 +463,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
       child: Stack(
         children: [
           Padding(
-            padding: EdgeInsets.only(right: 44.w),
+            padding: EdgeInsetsDirectional.only(end: 44.w),
             child: Column(
               children: [
                 Row(
@@ -477,7 +483,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
                     ),
                     SizedBox(width: 8.w),
                     IconButton(
-                      tooltip: 'Edit unit name',
+                      tooltip: 'unit_edit_name_title'.tr(),
                       onPressed: _isLoading ? null : _editUnitName,
                       icon: const Icon(
                         Icons.edit_outlined,
@@ -488,7 +494,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'View and manage unit details, resident information, and status.',
+                  'unit_details_accessibility_hint'.tr(),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15.sp,
@@ -500,11 +506,11 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
               ],
             ),
           ),
-          Positioned(
+          PositionedDirectional(
             top: -8,
-            right: -8,
+            end: -8,
             child: Semantics(
-              label: 'Close unit details',
+              label: 'unit_close_details'.tr(),
               button: true,
               child: InkWell(
                 onTap: () => Navigator.of(context).pop(),
@@ -535,11 +541,11 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           children: [
             Expanded(
               child: _buildLabel(
-                widget.unit.usesFloors ? 'Floor' : 'Unit Type',
+                widget.unit.usesFloors ? 'unit_floor'.tr() : 'unit_type'.tr(),
               ),
             ),
             SizedBox(width: 16.w),
-            Expanded(child: _buildLabel('Configuration')),
+            Expanded(child: _buildLabel('unit_configuration'.tr())),
           ],
         ),
         SizedBox(height: 16.h),
@@ -549,7 +555,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             Expanded(
               child: _buildValue(
                 widget.unit.usesFloors
-                    ? 'Floor ${widget.unit.floor}'
+                    ? 'unit_floor_label'.tr(
+                        namedArgs: {'floor': '${widget.unit.floor}'},
+                      )
                     : widget.unit.unitType.label,
               ),
             ),
@@ -561,9 +569,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
         // Row 3: Labels
         Row(
           children: [
-            Expanded(child: _buildLabel('Area')),
+            Expanded(child: _buildLabel('unit_area'.tr())),
             SizedBox(width: 16.w),
-            Expanded(child: _buildLabel('Status')),
+            Expanded(child: _buildLabel('status'.tr())),
           ],
         ),
         SizedBox(height: 16.h),
@@ -609,7 +617,7 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
     final textColor = _getStatusTextColor(widget.unit.status);
 
     return Align(
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       child: Container(
         padding: EdgeInsets.symmetric(horizontal: 18.w, vertical: 10.h),
         decoration: BoxDecoration(
@@ -631,13 +639,13 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
   String _getStatusText(FlatStatus status) {
     switch (status) {
       case FlatStatus.vacant:
-        return 'Vacant';
+        return 'unit_status_vacant'.tr();
       case FlatStatus.occupied:
-        return 'Occupied';
+        return 'unit_status_occupied'.tr();
       case FlatStatus.maintenance:
-        return 'Maintenance';
+        return 'unit_status_maintenance'.tr();
       case FlatStatus.reserved:
-        return 'Reserved';
+        return 'unit_status_reserved'.tr();
     }
   }
 
@@ -693,19 +701,21 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
   String _getBannerText(FlatStatus status) {
     switch (status) {
       case FlatStatus.vacant:
-        return 'This unit is currently vacant. You can assign a resident or change its status.';
+        return 'unit_vacant_description'.tr();
       case FlatStatus.occupied:
-        return 'This unit is currently occupied. View resident details or update information.';
+        return 'unit_occupied_description'.tr();
       case FlatStatus.maintenance:
-        return 'This unit is under maintenance. Update status when work is complete.';
+        return 'unit_maintenance_description'.tr();
       case FlatStatus.reserved:
         final residentName = widget.unit.reservedForName?.trim();
 
         if (residentName != null && residentName.isNotEmpty) {
-          return 'This unit is reserved for $residentName. The resident onboarding is still pending.';
+          return 'unit_reserved_resident_description'.tr(
+            namedArgs: {'name': residentName},
+          );
         }
 
-        return 'This unit is reserved for a pending resident onboarding.';
+        return 'unit_reserved_pending_description'.tr();
     }
   }
 
@@ -753,21 +763,19 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
   String _getButtonLabel(FlatStatus status) {
     switch (status) {
       case FlatStatus.vacant:
-        return 'Assign Resident';
+        return 'resident_assign_action'.tr();
       case FlatStatus.maintenance:
-        return 'Update Status';
+        return 'unit_update_status'.tr();
       case FlatStatus.occupied:
-        return 'View Details';
+        return 'view_details'.tr();
       case FlatStatus.reserved:
-        return 'Reserved';
+        return 'unit_status_reserved'.tr();
     }
   }
 
   Future<void> _handlePrimaryAction() async {
     if (widget.unit.status == FlatStatus.reserved) {
-      throw StateError(
-        'Reserved units cannot be assigned or manually changed.',
-      );
+      throw StateError('unit_reserved_no_manual_change'.tr());
     }
     if (widget.unit.status == FlatStatus.vacant) {
       // ONLY vacant flats can assign residents
@@ -829,16 +837,11 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
           print('\n🟢 onAssign callback triggered');
 
           if (widget.userService == null) {
-            throw StateError(
-              'Resident assignment service is unavailable. '
-              'No unit status was changed.',
-            );
+            throw StateError('unit_assignment_service_unavailable'.tr());
           }
 
           if (widget.buildingId == null || widget.buildingId!.trim().isEmpty) {
-            throw StateError(
-              'Building is unavailable for resident assignment.',
-            );
+            throw StateError('unit_building_unavailable'.tr());
           }
 
           try {
@@ -885,7 +888,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Failed to assign resident: $e'),
+                  content: Text(
+                    'unit_assign_failed'.tr(namedArgs: {'error': '$e'}),
+                  ),
                   backgroundColor: const Color(0xFFEF4444),
                   duration: const Duration(seconds: 3),
                 ),
@@ -942,7 +947,9 @@ class _FlatDetailsModalState extends State<FlatDetailsModal> {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Failed to create resident onboarding: $e'),
+                  content: Text(
+                    'resident_onboarding_failed'.tr(namedArgs: {'error': '$e'}),
+                  ),
                   backgroundColor: const Color(0xFFEF4444),
                   duration: const Duration(seconds: 3),
                 ),

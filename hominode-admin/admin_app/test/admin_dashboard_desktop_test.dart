@@ -1,4 +1,5 @@
 import 'package:admin_app/admin_dashboard_desktop_content.dart';
+import 'package:admin_app/desktop/admin_desktop_design.dart';
 import 'package:admin_app/navigation/admin_module_destinations.dart';
 import 'package:admin_app/services/dashboard_service.dart';
 import 'package:flutter/material.dart';
@@ -91,6 +92,7 @@ void main() {
         ),
       );
       await tester.pump();
+      expect(tester.takeException(), isNull);
       await tester.scrollUntilVisible(
         find.text('Quick Actions'),
         250,
@@ -102,4 +104,113 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('dashboard wraps long community names at enlarged text scale', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const community = 'Green Wave Residences with a long community name';
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.8)),
+          child: child!,
+        ),
+        home: AdminDashboardDesktopContent(
+          statsStream: Stream.value(
+            DashboardStats(
+              totalResidents: 248,
+              totalFlats: 164,
+              pendingVisitors: 7,
+              pendingComplaints: 3,
+              monthlyCollection: 125000,
+            ),
+          ),
+          communityName: community,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final communityText = tester.widget<Text>(find.text(community));
+    expect(communityText.maxLines, isNull);
+    expect(communityText.softWrap, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('admin quick action keeps its full label on a narrow card', (
+    tester,
+  ) async {
+    const label = 'Resident Registration and Apartment Management';
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.8)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 148,
+              child: AdminDesktopActionTile(
+                label: label,
+                icon: Icons.people_outline,
+                onTap: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final actionLabel = tester.widget<Text>(find.text(label));
+    expect(actionLabel.maxLines, isNull);
+    expect(actionLabel.softWrap, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'desktop dashboard stays readable at narrow width and large text',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.8)),
+            child: child!,
+          ),
+          home: AdminDashboardDesktopContent(
+            statsStream: Stream.value(
+              DashboardStats(
+                totalResidents: 248,
+                totalFlats: 164,
+                pendingVisitors: 7,
+                pendingComplaints: 3,
+                monthlyCollection: 125000,
+              ),
+            ),
+            communityName: 'Green Wave Residences with a long community name',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('admin-desktop-dashboard')), findsOneWidget);
+    },
+  );
 }

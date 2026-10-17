@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import 'theme/hominode_theme.dart';
@@ -254,7 +255,7 @@ class _LoginForm extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          isOtpSent ? 'Verify your number' : 'Welcome back',
+          isOtpSent ? 'verify_your_number'.tr() : 'welcome_back'.tr(),
           style: const TextStyle(
             color: Color(0xFF102A43),
             fontSize: 28,
@@ -265,8 +266,8 @@ class _LoginForm extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           isOtpSent
-              ? 'Enter the 6-digit code sent to your phone.'
-              : 'Sign in to the Admin workspace with phone OTP.',
+              ? 'enter_6_digit_code_sent_phone'.tr()
+              : 'sign_in_admin_workspace_phone_otp'.tr(),
           style: const TextStyle(
             color: Color(0xFF66788A),
             fontSize: 14,
@@ -274,8 +275,8 @@ class _LoginForm extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 28),
-        const Text(
-          'Phone number',
+        Text(
+          'phone_number'.tr(),
           style: TextStyle(
             color: Color(0xFF243B53),
             fontSize: 13,
@@ -292,7 +293,7 @@ class _LoginForm extends StatelessWidget {
               child: DropdownButtonFormField<String>(
                 initialValue: countryCode,
                 isExpanded: true,
-                decoration: _decoration(label: 'Country'),
+                decoration: _decoration(label: 'country'.tr()),
                 items: AdminLoginDesktop.countryCodes
                     .map(
                       (code) =>
@@ -312,10 +313,14 @@ class _LoginForm extends StatelessWidget {
                 height: 54,
                 child: TextField(
                   controller: phoneController,
+                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
                   readOnly: isOtpSent,
                   keyboardType: TextInputType.phone,
-                  decoration: _decoration(label: 'Number', hint: '9876543210')
-                      .copyWith(
+                  decoration:
+                      _decoration(
+                        label: 'number'.tr(),
+                        hint: '9876543210',
+                      ).copyWith(
                         prefixText: phoneHasInternationalPrefix
                             ? null
                             : '$countryCode ',
@@ -327,8 +332,8 @@ class _LoginForm extends StatelessWidget {
         ),
         if (isOtpSent) ...[
           const SizedBox(height: 20),
-          const Text(
-            'One-time password',
+          Text(
+            'one_time_password'.tr(),
             style: TextStyle(
               color: Color(0xFF243B53),
               fontSize: 13,
@@ -340,11 +345,12 @@ class _LoginForm extends StatelessWidget {
             height: 54,
             child: TextField(
               controller: otpController,
+              onTapOutside: (_) => FocusScope.of(context).unfocus(),
               keyboardType: TextInputType.number,
               maxLength: 6,
               decoration: _decoration(
-                label: '6-digit OTP',
-                hint: 'Enter code',
+                label: 'six_digit_otp'.tr(),
+                hint: 'enter_code'.tr(),
               ).copyWith(counterText: ''),
             ),
           ),
@@ -369,7 +375,7 @@ class _LoginForm extends StatelessWidget {
                       color: Colors.white,
                     ),
                   )
-                : Text(isOtpSent ? 'Verify OTP' : 'Send OTP'),
+                : Text(isOtpSent ? 'verify_otp'.tr() : 'send_otp'.tr()),
           ),
         ),
         if (isOtpSent) ...[
@@ -379,11 +385,11 @@ class _LoginForm extends StatelessWidget {
             children: [
               TextButton(
                 onPressed: isBusy ? null : onChangeNumber,
-                child: const Text('Change number'),
+                child: Text('change_number'.tr()),
               ),
               TextButton(
                 onPressed: isBusy ? null : onResendOtp,
-                child: const Text('Resend OTP'),
+                child: Text('resend_otp'.tr()),
               ),
             ],
           ),

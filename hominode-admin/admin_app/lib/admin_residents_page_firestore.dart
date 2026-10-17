@@ -13,6 +13,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'desktop/admin_desktop_page_frame.dart';
 
 import 'edit_resident_screen.dart';
@@ -88,11 +89,11 @@ class _AdminResidentsPageFirestoreState
   Widget build(BuildContext context) {
     if (AdminDesktopPresentationScope.isActive(context)) {
       return AdminDesktopPageFrame(
-        title: 'Residents',
-        subtitle: 'Search, filter, and manage community residents.',
+        title: 'resident_list_title'.tr(),
+        subtitle: 'resident_list_subtitle'.tr(),
         actions: [
           IconButton.outlined(
-            tooltip: 'Bulk resident import',
+            tooltip: 'bulk_resident_import_title'.tr(),
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -102,7 +103,7 @@ class _AdminResidentsPageFirestoreState
             icon: const Icon(Icons.upload_file_outlined),
           ),
           IconButton.outlined(
-            tooltip: 'Pending registrations',
+            tooltip: 'resident_pending_title'.tr(),
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
@@ -110,7 +111,7 @@ class _AdminResidentsPageFirestoreState
             icon: const Icon(Icons.how_to_reg_outlined),
           ),
           AdminDesktopPrimaryAction(
-            label: 'Add Resident',
+            label: 'add_resident'.tr(),
             icon: Icons.person_add_outlined,
             onPressed: _showAddResidentDialog,
           ),
@@ -136,7 +137,7 @@ class _AdminResidentsPageFirestoreState
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          const StandardHeader(title: 'Resident Management'),
+          StandardHeader(title: 'resident_management_title'.tr()),
           SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,7 +166,7 @@ class _AdminResidentsPageFirestoreState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Resident Management',
+            'resident_management_title'.tr(),
             style: TextStyle(
               fontSize: 18.sp,
               fontWeight: FontWeight.w700,
@@ -176,7 +177,7 @@ class _AdminResidentsPageFirestoreState
           Row(
             children: [
               IconButton(
-                tooltip: 'Bulk resident import',
+                tooltip: 'bulk_resident_import_title'.tr(),
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -189,7 +190,7 @@ class _AdminResidentsPageFirestoreState
                 ),
               ),
               IconButton(
-                tooltip: 'Pending registrations',
+                tooltip: 'resident_pending_title'.tr(),
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
@@ -203,7 +204,7 @@ class _AdminResidentsPageFirestoreState
               ElevatedButton.icon(
                 onPressed: _showAddResidentDialog,
                 icon: Icon(Icons.add, size: 18.w),
-                label: const Text('Add'),
+                label: Text('add'.tr()),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF0E4778),
                   foregroundColor: Colors.white,
@@ -232,7 +233,7 @@ class _AdminResidentsPageFirestoreState
         onChanged: (value) => setState(() => _searchQuery = value),
         style: TextStyle(fontSize: 14.sp, color: Color(0xFF111111)),
         decoration: InputDecoration(
-          hintText: 'Search by name, flat, or resident ID...',
+          hintText: 'resident_search_hint'.tr(),
           hintStyle: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
           prefixIcon: Icon(Icons.search, color: Color(0xFF9CA3AF), size: 20.w),
           filled: true,
@@ -265,12 +266,12 @@ class _AdminResidentsPageFirestoreState
               builder: (context, snapshot) {
                 final buildings = snapshot.data ?? [];
                 return _buildFilterDropdown(
-                  label: 'Building',
+                  label: 'building'.tr(),
                   value: _selectedBuilding,
                   items: [
-                    const DropdownMenuItem(
+                    DropdownMenuItem(
                       value: 'all',
-                      child: Text('All Buildings'),
+                      child: Text('all_buildings'.tr()),
                     ),
                     ...buildings.map(
                       (b) => DropdownMenuItem(
@@ -288,12 +289,18 @@ class _AdminResidentsPageFirestoreState
           SizedBox(width: 12.w),
           Expanded(
             child: _buildFilterDropdown(
-              label: 'Status',
+              label: 'status'.tr(),
               value: _selectedStatus,
-              items: const [
-                DropdownMenuItem(value: 'all', child: Text('All Status')),
-                DropdownMenuItem(value: 'active', child: Text('Active')),
-                DropdownMenuItem(value: 'inactive', child: Text('Inactive')),
+              items: [
+                DropdownMenuItem(value: 'all', child: Text('all_status'.tr())),
+                DropdownMenuItem(
+                  value: 'active',
+                  child: Text('resident_status_active'.tr()),
+                ),
+                DropdownMenuItem(
+                  value: 'inactive',
+                  child: Text('resident_status_inactive'.tr()),
+                ),
               ],
               onChanged: (value) => setState(() => _selectedStatus = value),
             ),
@@ -355,7 +362,9 @@ class _AdminResidentsPageFirestoreState
                   ),
                   SizedBox(height: 16.h),
                   Text(
-                    'Error loading residents: ${snapshot.error}',
+                    'resident_list_load_failed'.tr(
+                      namedArgs: {'error': '${snapshot.error}'},
+                    ),
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF6B7280), fontSize: 14.sp),
                   ),
@@ -384,8 +393,8 @@ class _AdminResidentsPageFirestoreState
                     _searchQuery.isNotEmpty ||
                             _selectedBuilding != null ||
                             _selectedStatus != null
-                        ? 'No residents found'
-                        : 'No residents yet',
+                        ? 'resident_search_empty'.tr()
+                        : 'resident_list_empty'.tr(),
                     style: TextStyle(fontSize: 15.sp, color: Colors.grey[600]),
                   ),
                 ],
@@ -466,24 +475,31 @@ class _AdminResidentsPageFirestoreState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Text(
-                              resident.name,
-                              style: TextStyle(
-                                fontSize: 17.sp,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF111111),
-                              ),
+                          Text(
+                            resident.name,
+                            softWrap: true,
+                            style: TextStyle(
+                              fontSize: 17.sp,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF111111),
                             ),
                           ),
+                          SizedBox(height: 4.h),
                           _buildStatusBadge(resident.status),
                         ],
                       ),
                       SizedBox(height: 4.h),
                       Text(
-                        '${resident.flatLabel ?? "No flat"} • ${resident.familyMembers} members',
+                        'resident_unit_and_member_count'.tr(
+                          namedArgs: {
+                            'unit':
+                                resident.flatLabel ?? 'resident_no_unit'.tr(),
+                            'count': '${resident.familyMembers}',
+                          },
+                        ),
                         style: TextStyle(
                           fontSize: 14.sp,
                           color: Color(0xFF6B7280),
@@ -491,7 +507,9 @@ class _AdminResidentsPageFirestoreState
                       ),
                       SizedBox(height: 2.h),
                       Text(
-                        'ID: ${resident.residentId}',
+                        'resident_id_format'.tr(
+                          namedArgs: {'id': resident.residentId},
+                        ),
                         style: TextStyle(
                           fontSize: 13.sp,
                           color: Color(0xFF9CA3AF),
@@ -515,13 +533,13 @@ class _AdminResidentsPageFirestoreState
                       icon: Icon(Icons.visibility_outlined, size: 20.w),
                       color: const Color(0xFF6B7280),
                       onPressed: () => _showResidentProfile(resident),
-                      tooltip: 'View Profile',
+                      tooltip: 'resident_view_profile'.tr(),
                     ),
                     IconButton(
                       icon: Icon(Icons.edit_outlined, size: 20.w),
                       color: const Color(0xFF6B7280),
                       onPressed: () => _showEditResidentDialog(resident),
-                      tooltip: 'Edit',
+                      tooltip: 'edit'.tr(),
                     ),
                     PopupMenuButton<String>(
                       icon: Icon(
@@ -556,7 +574,7 @@ class _AdminResidentsPageFirestoreState
                                   color: const Color(0xFF10B981),
                                 ),
                                 SizedBox(width: 8.w),
-                                const Text('Reactivate'),
+                                Text('resident_reactivate'.tr()),
                               ],
                             ),
                           ),
@@ -572,7 +590,7 @@ class _AdminResidentsPageFirestoreState
                                   color: const Color(0xFFF4A100),
                                 ),
                                 SizedBox(width: 8.w),
-                                const Text('Deactivate'),
+                                Text('resident_deactivate'.tr()),
                               ],
                             ),
                           ),
@@ -588,7 +606,7 @@ class _AdminResidentsPageFirestoreState
                                   color: const Color(0xFFEF4444),
                                 ),
                                 SizedBox(width: 8.w),
-                                const Text('Move Out'),
+                                Text('resident_move_out'.tr()),
                               ],
                             ),
                           ),
@@ -613,7 +631,9 @@ class _AdminResidentsPageFirestoreState
         borderRadius: BorderRadius.circular(12.r),
       ),
       child: Text(
-        isActive ? 'Active' : 'Inactive',
+        isActive
+            ? 'resident_status_active'.tr()
+            : 'resident_status_inactive'.tr(),
         style: TextStyle(
           fontSize: 11.sp,
           fontWeight: FontWeight.w600,
@@ -644,7 +664,7 @@ class _AdminResidentsPageFirestoreState
                       ),
                     ),
                     SizedBox(width: 12.w),
-                    Text('Creating resident...'),
+                    Text('resident_creating'.tr()),
                   ],
                 ),
                 backgroundColor: Color(0xFF0E4778),
@@ -686,7 +706,7 @@ class _AdminResidentsPageFirestoreState
                     SizedBox(width: 12.w),
                     Expanded(
                       child: Text(
-                        'Resident Onboarding Created',
+                        'resident_onboarding_created'.tr(),
                         style: TextStyle(
                           fontSize: 18.sp,
                           fontWeight: FontWeight.w600,
@@ -700,7 +720,9 @@ class _AdminResidentsPageFirestoreState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${residentData.fullName} can now register using the verified phone number below.',
+                      'resident_onboarding_phone_message'.tr(
+                        namedArgs: {'name': residentData.fullName},
+                      ),
                       style: TextStyle(fontSize: 15.sp),
                     ),
                     SizedBox(height: 20.h),
@@ -723,7 +745,7 @@ class _AdminResidentsPageFirestoreState
                               ),
                               SizedBox(width: 8.w),
                               Text(
-                                'OTP Registration',
+                                'resident_otp_registration'.tr(),
                                 style: TextStyle(
                                   fontSize: 15.sp,
                                   fontWeight: FontWeight.w600,
@@ -733,7 +755,7 @@ class _AdminResidentsPageFirestoreState
                             ],
                           ),
                           SizedBox(height: 12.h),
-                          _buildCredentialRow('Phone', residentData.phone),
+                          _buildCredentialRow('phone'.tr(), residentData.phone),
                           SizedBox(height: 12.h),
                           Row(
                             children: [
@@ -745,7 +767,7 @@ class _AdminResidentsPageFirestoreState
                               SizedBox(width: 6.w),
                               Expanded(
                                 child: Text(
-                                  'Use Register in the Resident app. No password or Auth user was created by Admin.',
+                                  'resident_onboarding_instructions'.tr(),
                                   style: TextStyle(
                                     fontSize: 12.sp,
                                     color: Color(0xFF0E4778),
@@ -765,20 +787,21 @@ class _AdminResidentsPageFirestoreState
                     onPressed: () {
                       Clipboard.setData(
                         ClipboardData(
-                          text:
-                              'Register in the Hominode Resident app with ${residentData.phone}',
+                          text: 'resident_register_with_phone'.tr(
+                            namedArgs: {'phone': residentData.phone},
+                          ),
                         ),
                       );
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Registration instructions copied'),
+                        SnackBar(
+                          content: Text('resident_instructions_copied'.tr()),
                           backgroundColor: Color(0xFF10B981),
                           duration: Duration(seconds: 2),
                         ),
                       );
                     },
                     icon: Icon(Icons.copy, size: 18.w),
-                    label: const Text('Copy'),
+                    label: Text('copy'.tr()),
                   ),
                   ElevatedButton(
                     onPressed: () => Navigator.pop(context),
@@ -791,7 +814,7 @@ class _AdminResidentsPageFirestoreState
                         vertical: 12.h,
                       ),
                     ),
-                    child: const Text('Done'),
+                    child: Text('done'.tr()),
                   ),
                 ],
               ),
@@ -810,7 +833,7 @@ class _AdminResidentsPageFirestoreState
                 backgroundColor: const Color(0xFFEF4444),
                 duration: const Duration(seconds: 5),
                 action: SnackBarAction(
-                  label: 'Dismiss',
+                  label: 'dismiss'.tr(),
                   textColor: Colors.white,
                   onPressed: () {
                     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -914,18 +937,20 @@ class _AdminResidentsPageFirestoreState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Move Out Resident'),
+        title: Text('resident_move_out_title'.tr()),
         content: Text(
-          'Move out ${resident.name}? Their operational access and current unit assignment will be removed.',
+          'resident_move_out_confirmation'.tr(
+            namedArgs: {'name': resident.name},
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('cancel'.tr()),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Move Out'),
+            child: Text('resident_move_out'.tr()),
           ),
         ],
       ),
@@ -941,7 +966,13 @@ class _AdminResidentsPageFirestoreState
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${resident.name} moved out successfully')),
+          SnackBar(
+            content: Text(
+              'resident_move_out_success'.tr(
+                namedArgs: {'name': resident.name},
+              ),
+            ),
+          ),
         );
       }
     } catch (error) {
@@ -963,21 +994,21 @@ class _AdminResidentsPageFirestoreState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Resident'),
+        title: Text('resident_delete_title'.tr()),
         content: Text(
-          'Are you sure you want to delete ${resident.name}? This action cannot be undone.',
+          'resident_delete_confirmation'.tr(namedArgs: {'name': resident.name}),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('cancel'.tr()),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(
               foregroundColor: const Color(0xFFEF4444),
             ),
-            child: const Text('Delete'),
+            child: Text('delete'.tr()),
           ),
         ],
       ),
@@ -989,7 +1020,11 @@ class _AdminResidentsPageFirestoreState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${resident.name} deleted successfully'),
+              content: Text(
+                'resident_delete_success'.tr(
+                  namedArgs: {'name': resident.name},
+                ),
+              ),
               backgroundColor: const Color(0xFF10B981),
             ),
           );
@@ -998,7 +1033,9 @@ class _AdminResidentsPageFirestoreState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to delete resident: $e'),
+              content: Text(
+                'resident_delete_failed'.tr(namedArgs: {'error': '$e'}),
+              ),
               backgroundColor: const Color(0xFFEF4444),
             ),
           );
@@ -1026,7 +1063,7 @@ class ResidentProfilePage extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
-          'Resident Details',
+          'resident_details_title'.tr(),
           style: TextStyle(
             fontSize: 18.sp,
             fontWeight: FontWeight.w600,
@@ -1076,7 +1113,9 @@ class ResidentProfilePage extends StatelessWidget {
 
                   // Resident ID
                   Text(
-                    'ID: ${resident.residentId}',
+                    'resident_id_format'.tr(
+                      namedArgs: {'id': resident.residentId},
+                    ),
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.w500,
@@ -1099,7 +1138,9 @@ class ResidentProfilePage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12.r),
                     ),
                     child: Text(
-                      resident.status == 'active' ? 'Active' : 'Inactive',
+                      resident.status == 'active'
+                          ? 'resident_status_active'.tr()
+                          : 'resident_status_inactive'.tr(),
                       style: TextStyle(
                         fontSize: 13.sp,
                         fontWeight: FontWeight.w600,
@@ -1118,26 +1159,26 @@ class ResidentProfilePage extends StatelessWidget {
             // Personal Information
             _buildSection(
               context,
-              title: 'Personal Information',
+              title: 'personal_information'.tr(),
               child: Column(
                 children: [
                   _buildInfoRow(
                     icon: Icons.phone_outlined,
-                    label: 'Phone',
+                    label: 'phone'.tr(),
                     value: resident.phone,
                   ),
                   if (resident.email != null && resident.email!.isNotEmpty) ...[
                     const Divider(height: 24),
                     _buildInfoRow(
                       icon: Icons.email_outlined,
-                      label: 'Email',
+                      label: 'email'.tr(),
                       value: resident.email!,
                     ),
                   ],
                   const Divider(height: 24),
                   _buildInfoRow(
                     icon: Icons.people_outline,
-                    label: 'Family Members',
+                    label: 'family_members'.tr(),
                     value: '${resident.familyMembers}',
                   ),
                 ],
@@ -1149,7 +1190,7 @@ class ResidentProfilePage extends StatelessWidget {
             // Login Credentials
             _buildSection(
               context,
-              title: 'Login Credentials',
+              title: 'login_credentials'.tr(),
               badge: Container(
                 padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
                 decoration: BoxDecoration(
@@ -1162,7 +1203,7 @@ class ResidentProfilePage extends StatelessWidget {
                     Icon(Icons.lock, size: 12.w, color: Color(0xFFF59E0B)),
                     SizedBox(width: 4.w),
                     Text(
-                      'Confidential',
+                      'confidential'.tr(),
                       style: TextStyle(
                         fontSize: 11.sp,
                         fontWeight: FontWeight.w600,
@@ -1177,7 +1218,7 @@ class ResidentProfilePage extends StatelessWidget {
                   _buildCopyableInfoRow(
                     context,
                     icon: Icons.fingerprint,
-                    label: 'User ID',
+                    label: 'user_id'.tr(),
                     value: resident.id, // Firebase Auth UID
                   ),
                   if (resident.password != null &&
@@ -1186,7 +1227,7 @@ class ResidentProfilePage extends StatelessWidget {
                     _buildCopyableInfoRow(
                       context,
                       icon: Icons.lock_outline,
-                      label: 'Password',
+                      label: 'password'.tr(),
                       value: resident.password!,
                     ),
                   ],
@@ -1199,19 +1240,19 @@ class ResidentProfilePage extends StatelessWidget {
             // Flat Information
             _buildSection(
               context,
-              title: 'Flat Information',
+              title: 'unit_information'.tr(),
               child: Column(
                 children: [
                   _buildInfoRow(
                     icon: Icons.home_outlined,
-                    label: 'Flat',
-                    value: resident.flatLabel ?? 'Not assigned',
+                    label: 'unit'.tr(),
+                    value: resident.flatLabel ?? 'unit_not_assigned'.tr(),
                   ),
                   if (resident.ownershipType != null) ...[
                     const Divider(height: 24),
                     _buildInfoRow(
                       icon: Icons.key_outlined,
-                      label: 'Ownership',
+                      label: 'ownership'.tr(),
                       value: resident.ownershipType!,
                     ),
                   ],
@@ -1219,7 +1260,7 @@ class ResidentProfilePage extends StatelessWidget {
                     const Divider(height: 24),
                     _buildInfoRow(
                       icon: Icons.tag,
-                      label: 'Flat ID',
+                      label: 'unit_id'.tr(),
                       value: resident.flatId!,
                     ),
                   ],
@@ -1395,7 +1436,11 @@ class ResidentProfilePage extends StatelessWidget {
             Clipboard.setData(ClipboardData(text: value));
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('$label copied to clipboard'),
+                content: Text(
+                  'resident_copied_to_clipboard'.tr(
+                    namedArgs: {'label': label},
+                  ),
+                ),
                 backgroundColor: const Color(0xFF10B981),
                 duration: const Duration(seconds: 2),
               ),

@@ -1,19 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:io';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'desktop/admin_desktop_page_frame.dart';
 import 'widgets/create_event_modal.dart';
 import 'widgets/edit_announcement_modal.dart';
 import 'widgets/create_announcement_modal.dart';
 import 'widgets/standard_header.dart';
+import 'widgets/admin_content_status.dart';
 import 'widgets/custom_segmented_control.dart';
 import 'services/event_announcement_service.dart';
 import 'services/admin_service.dart';
 import 'services/subscription_service.dart';
 
 class EventsAnnouncementsScreen extends StatefulWidget {
-  const EventsAnnouncementsScreen({super.key});
+  const EventsAnnouncementsScreen({
+    super.key,
+    this.eventsOnly = false,
+    this.announcementsOnly = false,
+    this.service,
+    this.adminService,
+    this.subscriptionService,
+  });
+
+  final EventAnnouncementService? service;
+  final AdminService? adminService;
+  final SubscriptionService? subscriptionService;
+  final bool eventsOnly;
+  final bool announcementsOnly;
 
   @override
   State<EventsAnnouncementsScreen> createState() =>
@@ -22,13 +35,18 @@ class EventsAnnouncementsScreen extends StatefulWidget {
 
 class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   int selectedTab = 0; // 0 = Events, 1 = Announcements
-  final EventAnnouncementService _service = EventAnnouncementService();
-  final AdminService _adminService = AdminService();
-  final SubscriptionService _subscriptionService = SubscriptionService();
+  late final EventAnnouncementService _service =
+      widget.service ?? EventAnnouncementService();
+  late final AdminService _adminService = widget.adminService ?? AdminService();
+  late final SubscriptionService _subscriptionService =
+      widget.subscriptionService ?? SubscriptionService();
 
   bool _isInitialized = false;
   bool _eventsAllowed = false;
-  String? _adminId;
+  String? _initializationError;
+  bool _entitlementFailed = false;
+  Stream<List<EventModel>>? _eventsStream;
+  Stream<List<AnnouncementModel>>? _announcementsStream;
 
   @override
   void initState() {
@@ -37,75 +55,54 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   }
 
   Future<void> _initializeScreen() async {
+    setState(() {
+      _isInitialized = false;
+      _initializationError = null;
+      _eventsAllowed = false;
+      _entitlementFailed = false;
+    });
     try {
-      print('🔵 EVENTS SCREEN: Starting initialization...');
-
-      // STEP 1: Validate Admin Authentication
-      print('🔐 STEP 1: Validating admin authentication...');
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        throw Exception('User not authenticated');
+      if (_adminService.getCurrentAdminId() == null) {
+        throw StateError('User not authenticated');
       }
-      _adminId = user.uid;
-      print('✅ STEP 1 PASSED: Admin authenticated - $_adminId');
+      final adminProfile = await _adminService.getAdminProfile().timeout(
+        const Duration(seconds: 20),
+      );
+      if (adminProfile == null) throw StateError('Admin profile not found');
 
-      // STEP 2: Validate Admin Access
-      print('📋 STEP 2: Validating admin access...');
-      final adminProfile = await _adminService.getAdminProfile();
-      if (adminProfile == null) {
-        throw Exception('Admin profile not found');
-      }
-      print('✅ STEP 2 PASSED: Admin access validated');
-
-      // Subscription entitlement: fail closed for Events while keeping
-      // Announcements available.
       var eventsAllowed = false;
+      var entitlementFailed = false;
       try {
         final communityId = _adminService.requireCurrentCommunityId();
-        final entitlement = await _subscriptionService.getEntitlement(
-          communityId,
-        );
+        final entitlement = await _subscriptionService
+            .getEntitlement(communityId)
+            .timeout(const Duration(seconds: 20));
         eventsAllowed = entitlement?.canUseFeature('events') == true;
       } catch (error) {
+        entitlementFailed = true;
         debugPrint('Events entitlement resolution failed: $error');
       }
-
-      // STEP 3: Initialize Data Streams
-      print('🔄 STEP 3: Initializing data streams...');
-      // Streams are initialized in build method via StreamBuilder
-      print('✅ STEP 3 PASSED: Data streams ready');
-
-      // STEP 4: Update UI State
-      print('🔔 STEP 4: Updating UI state...');
-      if (mounted) {
-        setState(() {
-          _eventsAllowed = eventsAllowed;
-
-          // Essential communities land on Announcements instead of exposing
-          // the premium Events list.
-          if (!_eventsAllowed) {
-            selectedTab = 1;
-          }
-
-          _isInitialized = true;
-        });
-      }
-      print('✅ STEP 4 PASSED: UI state updated');
-      print('✅ EVENTS SCREEN: Initialization COMPLETE');
-    } catch (e) {
-      print('❌ ERROR: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error initializing events: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _eventsAllowed = eventsAllowed;
+        _entitlementFailed = entitlementFailed;
+        // Announcements remain available to Essential communities.
+        if (!_eventsAllowed) selectedTab = 1;
+        if (widget.eventsOnly) selectedTab = 0;
+        if (widget.announcementsOnly) selectedTab = 1;
+        _isInitialized = true;
+      });
+    } catch (error) {
+      debugPrint('Events initialization failed: $error');
+      if (!mounted) return;
+      setState(
+        () => _initializationError = 'Unable to load community communications.',
+      );
     }
   }
 
   Future<void> _selectTab(int index) async {
+    if (!_isInitialized) return;
     if (index == 0 && !_eventsAllowed) {
       await showDialog<void>(
         context: context,
@@ -134,45 +131,34 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized) {
-      if (AdminDesktopPresentationScope.isActive(context)) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      return Scaffold(
-        backgroundColor: const Color(0xFFF7F8FA),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
     if (AdminDesktopPresentationScope.isActive(context)) {
       return AdminDesktopPageFrame(
-        title: 'Events & Announcements',
+        title: widget.announcementsOnly ? 'Announcements' : 'Events',
         subtitle: 'Create and manage community communications.',
-        actions: [
-          AdminDesktopPrimaryAction(
-            label: selectedTab == 0 ? 'Create Event' : 'Create Announcement',
-            icon: selectedTab == 0
-                ? Icons.event_available_outlined
-                : Icons.campaign_outlined,
-            onPressed: _createSelectedItem,
-          ),
-        ],
+        actions: !_isInitialized || (widget.eventsOnly && !_eventsAllowed)
+            ? []
+            : [
+                AdminDesktopPrimaryAction(
+                  label: selectedTab == 0
+                      ? 'Create Event'
+                      : 'Create Announcement',
+                  icon: selectedTab == 0
+                      ? Icons.event_available_outlined
+                      : Icons.campaign_outlined,
+                  onPressed: _createSelectedItem,
+                ),
+              ],
         child: Column(
           children: [
-            SegmentedControlExamples.eventsSegmentedControl(
-              selectedIndex: selectedTab,
-              onChanged: (index) {
-                _selectTab(index);
-              },
-            ),
-            SizedBox(height: 16.h),
-            Expanded(
-              child: SingleChildScrollView(
-                child: selectedTab == 0
-                    ? _buildEventsList()
-                    : _buildAnnouncementsList(),
+            if (!widget.eventsOnly && !widget.announcementsOnly)
+              SegmentedControlExamples.eventsSegmentedControl(
+                selectedIndex: selectedTab,
+                onChanged: (index) {
+                  _selectTab(index);
+                },
               ),
-            ),
+            SizedBox(height: 16.h),
+            Expanded(child: SingleChildScrollView(child: _buildContent())),
           ],
         ),
       );
@@ -183,7 +169,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          const StandardHeader(title: 'Events & Announcements'),
+          StandardHeader(
+            title: widget.announcementsOnly ? 'Announcements' : 'Events',
+          ),
           SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -191,50 +179,53 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                 SizedBox(height: 20.h),
 
                 // Section Header
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20.0.w),
-                  child: Text(
-                    'Manage community activities',
-                    style: TextStyle(
-                      fontSize: 18.sp,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF111827),
+                if (!widget.eventsOnly && !widget.announcementsOnly)
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20.0.w),
+                    child: Text(
+                      'Manage community activities',
+                      style: TextStyle(
+                        fontSize: 18.sp,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF111827),
+                      ),
                     ),
                   ),
-                ),
 
                 SizedBox(height: 20.h),
 
                 // Tab Switcher
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20.0.w),
-                  child: SegmentedControlExamples.eventsSegmentedControl(
-                    selectedIndex: selectedTab,
-                    onChanged: (index) {
-                      _selectTab(index);
-                    },
+                if (!widget.eventsOnly && !widget.announcementsOnly)
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20.0.w),
+                    child: SegmentedControlExamples.eventsSegmentedControl(
+                      selectedIndex: selectedTab,
+                      onChanged: (index) {
+                        _selectTab(index);
+                      },
+                    ),
                   ),
-                ),
 
                 SizedBox(height: 20.h),
 
                 // Create Button (Dynamic based on selected tab)
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20.0.w),
-                  child: PrimaryButton(
-                    text: selectedTab == 0
-                        ? 'Create Event'
-                        : 'Create Announcements',
-                    onPressed: _createSelectedItem,
+                if (_isInitialized && (!widget.eventsOnly || _eventsAllowed))
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20.0.w),
+                    child: PrimaryButton(
+                      text:
+                          widget.eventsOnly ||
+                              (!widget.announcementsOnly && selectedTab == 0)
+                          ? 'Create Event'
+                          : 'Create Announcements',
+                      onPressed: _createSelectedItem,
+                    ),
                   ),
-                ),
 
                 SizedBox(height: 20.h),
 
                 // Event Cards List
-                selectedTab == 0
-                    ? _buildEventsList()
-                    : _buildAnnouncementsList(),
+                _buildContent(),
 
                 SizedBox(height: 80.h), // Bottom padding for navigation
               ],
@@ -245,7 +236,34 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
     );
   }
 
+  Widget _buildContent() {
+    if (_initializationError != null) {
+      return AdminContentStatus(
+        message: _initializationError!,
+        onRetry: _initializeScreen,
+      );
+    }
+    if (!_isInitialized) {
+      return const AdminContentStatus(
+        message: 'Loading community communications…',
+      );
+    }
+    final showEvents =
+        widget.eventsOnly || (!widget.announcementsOnly && selectedTab == 0);
+    if (showEvents) {
+      if (_entitlementFailed) {
+        return AdminContentStatus(
+          message: 'Unable to verify Events access.',
+          onRetry: _initializeScreen,
+        );
+      }
+      return _eventsAllowed ? _buildEventsList() : _buildEventsUnavailable();
+    }
+    return _buildAnnouncementsList();
+  }
+
   Future<void> _createSelectedItem() async {
+    if (!_isInitialized) return;
     try {
       if (selectedTab == 0 && !_eventsAllowed) {
         await _selectTab(0);
@@ -303,9 +321,24 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
     }
   }
 
+  Widget _buildEventsUnavailable() => Padding(
+    padding: EdgeInsets.all(32.w),
+    child: const Center(
+      child: Text('Events are available with Hominode Plus and Pro.'),
+    ),
+  );
+
+  Stream<List<EventModel>> _watchEvents() async* {
+    yield* _service.getEvents();
+  }
+
+  Stream<List<AnnouncementModel>> _watchAnnouncements() async* {
+    yield* _service.getAnnouncements();
+  }
+
   Widget _buildEventsList() {
     return StreamBuilder<List<EventModel>>(
-      stream: _service.getEvents(),
+      stream: _eventsStream ??= _watchEvents(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Padding(
@@ -315,25 +348,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
         }
 
         if (snapshot.hasError) {
-          return Padding(
-            padding: EdgeInsets.all(32.0.w),
-            child: Center(
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 48.w,
-                    color: Color(0xFFEF4444),
-                  ),
-                  SizedBox(height: 16.h),
-                  Text(
-                    'Error loading events: ${snapshot.error}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFF6B7280)),
-                  ),
-                ],
-              ),
-            ),
+          return AdminContentStatus(
+            message: 'Unable to load events.',
+            onRetry: () => setState(() => _eventsStream = null),
           );
         }
 
@@ -453,7 +470,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
 
   Widget _buildAnnouncementsList() {
     return StreamBuilder<List<AnnouncementModel>>(
-      stream: _service.getAnnouncements(),
+      stream: _announcementsStream ??= _watchAnnouncements(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Padding(
@@ -463,25 +480,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
         }
 
         if (snapshot.hasError) {
-          return Padding(
-            padding: EdgeInsets.all(32.0.w),
-            child: Center(
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 48.w,
-                    color: Color(0xFFEF4444),
-                  ),
-                  SizedBox(height: 16.h),
-                  Text(
-                    'Error loading announcements: ${snapshot.error}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFF6B7280)),
-                  ),
-                ],
-              ),
-            ),
+          return AdminContentStatus(
+            message: 'Unable to load announcements.',
+            onRetry: () => setState(() => _announcementsStream = null),
           );
         }
 
@@ -523,62 +524,38 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                     right: 20.0.w,
                     bottom: 16.0.h,
                   ),
-                  child: AnnouncementCardWidget(
-                    announcement: AnnouncementData(
-                      title: announcement.title,
-                      category: announcement.category,
-                      priority: announcement.priority,
-                      description: announcement.description,
-                      date: announcement.formattedDate,
-                    ),
-                    onSendReminder: () async {
-                      try {
-                        await _service.sendReminder(announcement.id);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Reminder sent successfully'),
-                              backgroundColor: Color(0xFF10B981),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Failed to send reminder: $e'),
-                              backgroundColor: Color(0xFFEF4444),
-                            ),
-                          );
-                        }
-                      }
-                    },
-                    onEdit: () {
-                      showEditAnnouncementModal(
-                        context,
-                        AnnouncementData(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (announcement.attachments.isNotEmpty)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.network(
+                            announcement.attachments.first,
+                            height: 180,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox.shrink(),
+                          ),
+                        ),
+                      AnnouncementCardWidget(
+                        announcement: AnnouncementData(
                           title: announcement.title,
                           category: announcement.category,
                           priority: announcement.priority,
                           description: announcement.description,
                           date: announcement.formattedDate,
                         ),
-                        (updatedAnnouncement) async {
+                        onSendReminder: () async {
                           try {
-                            await _service.updateAnnouncement(
-                              announcementId: announcement.id,
-                              title: updatedAnnouncement.title,
-                              category: updatedAnnouncement.category,
-                              priority: updatedAnnouncement.priority,
-                              description: updatedAnnouncement.description,
+                            await _service.sendReminder(
+                              announcement.id,
+                              sourceCollection: announcement.sourceCollection,
                             );
-
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text(
-                                    'Announcement updated successfully',
-                                  ),
+                                  content: Text('Reminder sent successfully'),
                                   backgroundColor: Color(0xFF10B981),
                                 ),
                               );
@@ -587,69 +564,118 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                             if (mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(
-                                    'Failed to update announcement: $e',
-                                  ),
+                                  content: Text('Failed to send reminder: $e'),
                                   backgroundColor: Color(0xFFEF4444),
                                 ),
                               );
                             }
                           }
                         },
-                      );
-                    },
-                    onDelete: () async {
-                      // Show confirmation dialog
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Delete Announcement'),
-                          content: Text(
-                            'Are you sure you want to delete "${announcement.title}"? This action cannot be undone.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text('Cancel'),
+                        onEdit: () {
+                          showEditAnnouncementModal(
+                            context,
+                            AnnouncementData(
+                              title: announcement.title,
+                              category: announcement.category,
+                              priority: announcement.priority,
+                              description: announcement.description,
+                              date: announcement.formattedDate,
                             ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, true),
-                              style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFFEF4444),
-                              ),
-                              child: const Text('Delete'),
-                            ),
-                          ],
-                        ),
-                      );
+                            (updatedAnnouncement) async {
+                              try {
+                                await _service.updateAnnouncement(
+                                  announcementId: announcement.id,
+                                  title: updatedAnnouncement.title,
+                                  category: updatedAnnouncement.category,
+                                  priority: updatedAnnouncement.priority,
+                                  description: updatedAnnouncement.description,
+                                  sourceCollection:
+                                      announcement.sourceCollection,
+                                );
 
-                      if (confirmed == true) {
-                        try {
-                          await _service.deleteAnnouncement(announcement.id);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Announcement deleted successfully',
-                                ),
-                                backgroundColor: Color(0xFF10B981),
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Announcement updated successfully',
+                                      ),
+                                      backgroundColor: Color(0xFF10B981),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to update announcement: $e',
+                                      ),
+                                      backgroundColor: Color(0xFFEF4444),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                          );
+                        },
+                        onDelete: () async {
+                          // Show confirmation dialog
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Delete Announcement'),
+                              content: Text(
+                                'Are you sure you want to delete "${announcement.title}"? This action cannot be undone.',
                               ),
-                            );
-                          }
-                        } catch (e) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Failed to delete announcement: $e',
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(context, false),
+                                  child: const Text('Cancel'),
                                 ),
-                                backgroundColor: Color(0xFFEF4444),
-                              ),
-                            );
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFFEF4444),
+                                  ),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                          );
+
+                          if (confirmed == true) {
+                            try {
+                              await _service.deleteAnnouncement(
+                                announcement.id,
+                                sourceCollection: announcement.sourceCollection,
+                              );
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Announcement deleted successfully',
+                                    ),
+                                    backgroundColor: Color(0xFF10B981),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Failed to delete announcement: $e',
+                                    ),
+                                    backgroundColor: Color(0xFFEF4444),
+                                  ),
+                                );
+                              }
+                            }
                           }
-                        }
-                      }
-                    },
+                        },
+                      ),
+                    ],
                   ),
                 ),
               )
@@ -1179,8 +1205,7 @@ class AnnouncementCardWidget extends StatelessWidget {
               color: Color(0xFF6B7280),
               height: 1.4,
             ),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
           ),
 
           SizedBox(height: 16.h),

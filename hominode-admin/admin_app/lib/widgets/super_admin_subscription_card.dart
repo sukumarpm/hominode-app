@@ -598,7 +598,7 @@ class _SuperAdminSubscriptionCardState
         _Row(
           label: 'Bank accounts',
           value: maxBankAccounts == null
-              ? 'Plan-defined / unrestricted in V1'
+              ? 'As defined by your plan'
               : 'Maximum $maxBankAccounts',
         ),
 

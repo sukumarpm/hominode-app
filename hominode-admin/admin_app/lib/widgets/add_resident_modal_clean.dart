@@ -8,6 +8,9 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter/services.dart';
+import 'package:easy_localization/easy_localization.dart';
+
+import '../utils/phone_input_validation.dart';
 
 // ============================================================================
 // RESIDENT MODEL
@@ -64,7 +67,7 @@ class AddResidentModal extends StatefulWidget {
     return showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close',
+      barrierLabel: 'close'.tr(),
       barrierColor: const Color(0x59000000),
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
@@ -111,8 +114,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
     if (_fullNameController.text.trim().isEmpty) return false;
     if (_phoneController.text.trim().isEmpty) return false;
 
-    final phone = _phoneController.text.trim().replaceAll(RegExp(r'[^\d]'), '');
-    if (phone.length < 10) return false;
+    if (validateResidentPhoneInput(_phoneController.text) != null) return false;
 
     final email = _emailController.text.trim();
     if (email.isNotEmpty) {
@@ -132,8 +134,8 @@ class _AddResidentModalState extends State<AddResidentModal> {
 
     if (!_isFormValid) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please fill in all required fields correctly'),
+        SnackBar(
+          content: Text('please_fill_required_fields'.tr()),
           backgroundColor: Color(0xFFDC2626),
         ),
       );
@@ -169,8 +171,8 @@ class _AddResidentModalState extends State<AddResidentModal> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to add resident. Please try again.'),
+          SnackBar(
+            content: Text('failed_add_resident_retry'.tr()),
             backgroundColor: Color(0xFFDC2626),
           ),
         );
@@ -254,7 +256,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
             child: Column(
               children: [
                 Text(
-                  'Add New Resident',
+                  'add_new_resident'.tr(),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 19.sp,
@@ -264,7 +266,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
                 ),
                 SizedBox(height: 6.h),
                 Text(
-                  'Add a new resident to the society',
+                  'add_new_resident_description'.tr(),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13.sp,
@@ -299,7 +301,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Full Name',
+          'full_name'.tr(),
           style: TextStyle(
             fontSize: 15.sp,
             fontWeight: FontWeight.w600,
@@ -312,7 +314,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
           textInputAction: TextInputAction.next,
           style: TextStyle(fontSize: 15.sp, color: Color(0xFF111111)),
           decoration: InputDecoration(
-            hintText: 'Enter full name',
+            hintText: 'enter_full_name'.tr(),
             hintStyle: TextStyle(fontSize: 15.sp, color: Color(0xFFD1D5DB)),
             filled: true,
             fillColor: Colors.white,
@@ -343,10 +345,10 @@ class _AddResidentModalState extends State<AddResidentModal> {
           ),
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
-              return 'Full name is required';
+              return 'full_name_required'.tr();
             }
             if (value.trim().length < 2) {
-              return 'Name must be at least 2 characters';
+              return 'name_min_length'.tr();
             }
             return null;
           },
@@ -360,7 +362,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Phone Number',
+          'phone_number'.tr(),
           style: TextStyle(
             fontSize: 15.sp,
             fontWeight: FontWeight.w600,
@@ -404,14 +406,16 @@ class _AddResidentModalState extends State<AddResidentModal> {
             ),
           ),
           validator: (value) {
-            if (value == null || value.trim().isEmpty) {
-              return 'Phone number is required';
-            }
-            final phone = value.trim().replaceAll(RegExp(r'[^\d]'), '');
-            if (phone.length < 10) {
-              return 'Phone number must be at least 10 digits';
-            }
-            return null;
+            final error = validateResidentPhoneInput(value);
+            return switch (error) {
+              null => null,
+              'Phone number is required' => 'phone_number_required'.tr(),
+              'Enter a valid phone number. Use digits and standard phone formatting.' =>
+                'invalid_phone_format'.tr(),
+              'Enter a valid phone number with 7 to 15 digits.' =>
+                'invalid_phone_length'.tr(),
+              _ => error,
+            };
           },
         ),
       ],
@@ -423,7 +427,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Email',
+          'email'.tr(),
           style: TextStyle(
             fontSize: 15.sp,
             fontWeight: FontWeight.w600,
@@ -469,7 +473,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
           validator: (value) {
             if (value != null && value.trim().isNotEmpty) {
               if (!value.contains('@') || !value.contains('.')) {
-                return 'Please enter a valid email address';
+                return 'valid_email'.tr();
               }
             }
             return null;
@@ -484,7 +488,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Number of Members',
+          'number_of_members'.tr(),
           style: TextStyle(
             fontSize: 15.sp,
             fontWeight: FontWeight.w600,
@@ -530,11 +534,11 @@ class _AddResidentModalState extends State<AddResidentModal> {
           ),
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
-              return 'Number of members is required';
+              return 'members_required'.tr();
             }
             final number = int.tryParse(value.trim());
             if (number == null || number < 1) {
-              return 'Must be at least 1 member';
+              return 'at_least_one_member'.tr();
             }
             return null;
           },
@@ -547,12 +551,12 @@ class _AddResidentModalState extends State<AddResidentModal> {
     return DropdownButtonFormField<String>(
       initialValue: _residentType,
       decoration: InputDecoration(
-        labelText: 'Resident type',
+        labelText: 'resident_type'.tr(),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
       ),
-      items: const [
-        DropdownMenuItem(value: 'owner', child: Text('Owner')),
-        DropdownMenuItem(value: 'tenant', child: Text('Tenant')),
+      items: [
+        DropdownMenuItem(value: 'owner', child: Text('owner'.tr())),
+        DropdownMenuItem(value: 'tenant', child: Text('tenant'.tr())),
       ],
       onChanged: _isSubmitting
           ? null
@@ -579,7 +583,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'OTP registration:',
+                  'otp_registration'.tr(),
                   style: TextStyle(
                     fontSize: 15.sp,
                     fontWeight: FontWeight.w600,
@@ -589,16 +593,16 @@ class _AddResidentModalState extends State<AddResidentModal> {
                 SizedBox(height: 8.h),
                 _buildBulletPoint(
                   phone.isNotEmpty
-                      ? 'Resident registers with $phone'
-                      : 'Resident registers with the phone entered above',
+                      ? 'resident_registers_with_phone'.tr(
+                          namedArgs: {'phone': phone},
+                        )
+                      : 'resident_registers_with_phone_above'.tr(),
                 ),
                 SizedBox(height: 4.h),
-                _buildBulletPoint(
-                  'No password or Auth account is created by Admin',
-                ),
+                _buildBulletPoint('admin_creates_no_auth'.tr()),
                 SizedBox(height: 8.h),
                 Text(
-                  'Approval remains pending after verified OTP registration',
+                  'approval_pending_after_otp'.tr(),
                   style: TextStyle(
                     fontSize: 13.sp,
                     color: Color(0xFF061C4C),
@@ -666,7 +670,7 @@ class _AddResidentModalState extends State<AddResidentModal> {
                 ),
               )
             : Text(
-                'Add Resident',
+                'add_resident'.tr(),
                 style: TextStyle(fontSize: 17.sp, fontWeight: FontWeight.w600),
               ),
       ),

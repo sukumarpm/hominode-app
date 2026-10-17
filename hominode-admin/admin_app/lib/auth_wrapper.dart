@@ -224,7 +224,9 @@ Widget adminTenantDestinationForWidth(
       case AdminModuleId.complaints:
         return const ComplaintManagementScreen();
       case AdminModuleId.events:
-        return const EventsAnnouncementsScreen();
+        return const EventsAnnouncementsScreen(eventsOnly: true);
+      case AdminModuleId.announcements:
+        return const EventsAnnouncementsScreen(announcementsOnly: true);
       case AdminModuleId.parking:
         return const ParkingManagementScreenEnhanced();
       case AdminModuleId.residentVehicles:

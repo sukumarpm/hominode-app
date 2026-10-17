@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:hominode_core/hominode_core.dart'
@@ -62,7 +63,7 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
     final selected = picked.files.single;
     final bytes = selected.bytes;
     if (bytes == null) {
-      setState(() => _message = 'The selected file could not be read.');
+      setState(() => _message = 'bulk_file_read_failed'.tr());
       return;
     }
     try {
@@ -72,7 +73,7 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
       if (mounted) setState(() => _message = error.message);
     } catch (_) {
       if (mounted) {
-        setState(() => _message = 'The selected file could not be parsed.');
+        setState(() => _message = 'bulk_file_parse_failed'.tr());
       }
     }
   }
@@ -105,7 +106,7 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
     final file = retryFile ?? _file;
     if (file == null ||
         (_validation?.validRows ?? 0) == 0 && retryFile == null) {
-      setState(() => _message = 'There are no valid rows to import.');
+      setState(() => _message = 'bulk_no_valid_rows'.tr());
       return;
     }
     final confirmed =
@@ -113,20 +114,21 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
         await showDialog<bool>(
               context: context,
               builder: (context) => AlertDialog(
-                title: const Text('Import residents?'),
+                title: Text('bulk_import_title_question'.tr()),
                 content: Text(
-                  '${_validation!.validRows} valid row(s) will be imported or updated. '
-                  'New allocations reserve units without approving residents. '
-                  'Eligible moved-out residents use the existing reassignment checks.',
+                  (_validation!.validRows == 1
+                          ? 'bulk_import_confirmation_one'
+                          : 'bulk_import_confirmation_many')
+                      .tr(namedArgs: {'count': '${_validation!.validRows}'}),
                 ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel'),
+                    child: Text('cancel'.tr()),
                   ),
                   FilledButton(
                     onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Import'),
+                    child: Text('bulk_import_action'.tr()),
                   ),
                 ],
               ),
@@ -218,17 +220,21 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
   Future<void> _saveBytes(String fileName, Uint8List bytes) async {
     try {
       await FilePicker.platform.saveFile(fileName: fileName, bytes: bytes);
-      if (mounted) setState(() => _message = '$fileName saved.');
+      if (mounted) {
+        setState(
+          () => _message = 'bulk_file_saved'.tr(namedArgs: {'file': fileName}),
+        );
+      }
     } catch (_) {
-      if (mounted) setState(() => _message = 'The file could not be saved.');
+      if (mounted) setState(() => _message = 'bulk_file_save_failed'.tr());
     }
   }
 
   String _friendlyError(Object error) {
     if (error is FirebaseFunctionsException) {
-      return error.message ?? 'The import request failed.';
+      return error.message ?? 'bulk_request_failed'.tr();
     }
-    return 'The import request failed. It is safe to try again.';
+    return 'bulk_request_failed_retry'.tr();
   }
 
   @override
@@ -237,17 +243,13 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
         _result?.rows ?? _validation?.rows ?? const <Map<String, dynamic>>[];
     final result = _result;
     return Scaffold(
-      appBar: AppBar(title: const Text('Bulk Resident Import')),
+      appBar: AppBar(title: Text('bulk_resident_import_title'.tr())),
       body: Stack(
         children: [
           ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Text(
-                'Upload up to 500 CSV or XLSX rows using the current building name and custom unit name. '
-                'New residents reserve a vacant unit and remain pending until OTP and approval. '
-                'Existing allocations support contact updates; moves require the resident reassignment workflow.',
-              ),
+              Text('bulk_resident_import_description'.tr()),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
@@ -261,18 +263,28 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
                             ResidentBulkImportParser.templateCsvBytes(),
                           ),
                     icon: const Icon(Icons.download_outlined),
-                    label: const Text('Download Template'),
+                    label: Text('bulk_download_template'.tr()),
                   ),
                   FilledButton.icon(
                     onPressed: _busy ? null : _selectFile,
                     icon: const Icon(Icons.upload_file_outlined),
-                    label: const Text('Select CSV / XLSX'),
+                    label: Text('bulk_select_file'.tr()),
                   ),
                 ],
               ),
               if (_file != null) ...[
                 const SizedBox(height: 16),
-                Text('${_file!.fileName} • ${_file!.rowCount} row(s)'),
+                Text(
+                  (_file!.rowCount == 1
+                          ? 'bulk_file_row_count_one'
+                          : 'bulk_file_row_count_many')
+                      .tr(
+                        namedArgs: {
+                          'fileName': _file!.fileName,
+                          'count': '${_file!.rowCount}',
+                        },
+                      ),
+                ),
               ],
               if (_message != null) ...[
                 const SizedBox(height: 12),
@@ -281,7 +293,7 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
                   actions: [
                     TextButton(
                       onPressed: () => setState(() => _message = null),
-                      child: const Text('Dismiss'),
+                      child: Text('dismiss'.tr()),
                     ),
                   ],
                 ),
@@ -302,7 +314,9 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
                         ? null
                         : _import,
                     child: Text(
-                      'Import ${_validation!.validRows} valid row(s)',
+                      'bulk_import_valid_rows'.tr(
+                        namedArgs: {'count': '${_validation!.validRows}'},
+                      ),
                     ),
                   )
                 else
@@ -314,7 +328,7 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
                           key: const Key('bulk-import-retry'),
                           onPressed: _busy ? null : _retryFailed,
                           icon: const Icon(Icons.refresh),
-                          label: const Text('Retry failed rows'),
+                          label: Text('bulk_retry_failed_rows'.tr()),
                         ),
                       OutlinedButton.icon(
                         onPressed: _busy
@@ -324,19 +338,25 @@ class _ResidentBulkImportScreenState extends State<ResidentBulkImportScreen> {
                                 ResidentBulkImportParser.resultCsvBytes(rows),
                               ),
                         icon: const Icon(Icons.download_outlined),
-                        label: const Text('Download results'),
+                        label: Text('bulk_download_results'.tr()),
                       ),
                     ],
                   ),
                 const SizedBox(height: 16),
                 Text(
-                  result == null ? 'Validation preview' : 'Import results',
+                  result == null
+                      ? 'bulk_validation_preview'.tr()
+                      : 'bulk_import_results'.tr(),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
                 ...rows.take(100).map(_RowCard.new),
                 if (rows.length > 100)
-                  Text('Showing the first 100 of ${rows.length} rows.'),
+                  Text(
+                    'bulk_showing_first_rows'.tr(
+                      namedArgs: {'count': '${rows.length}'},
+                    ),
+                  ),
               ],
             ],
           ),
@@ -371,9 +391,17 @@ class _Summary extends StatelessWidget {
     spacing: 8,
     runSpacing: 8,
     children: [
-      Chip(label: Text('Total $total')),
-      Chip(label: Text('${imported ? 'Successful' : 'Valid'} $success')),
-      Chip(label: Text('Errors $failed')),
+      Chip(label: Text('bulk_total_count'.tr(namedArgs: {'count': '$total'}))),
+      Chip(
+        label: Text(
+          (imported ? 'bulk_successful_count' : 'bulk_valid_count').tr(
+            namedArgs: {'count': '$success'},
+          ),
+        ),
+      ),
+      Chip(
+        label: Text('bulk_errors_count'.tr(namedArgs: {'count': '$failed'})),
+      ),
     ],
   );
 }
@@ -397,7 +425,12 @@ class _RowCard extends StatelessWidget {
           color: isGood ? Colors.green : Colors.red,
         ),
         title: Text(
-          'Row ${row['rowNumber']} • ${row['residentName'] ?? 'Invalid row'}',
+          'bulk_row_title'.tr(
+            namedArgs: {
+              'row': '${row['rowNumber']}',
+              'resident': '${row['residentName'] ?? 'bulk_invalid_row'.tr()}',
+            },
+          ),
         ),
         subtitle: Text(
           [
@@ -409,8 +442,16 @@ class _RowCard extends StatelessWidget {
               .where((value) => value != null && value.toString().isNotEmpty)
               .join('\n'),
         ),
-        trailing: Text(status.replaceAll('_', ' ')),
+        trailing: Text(_bulkStatusLabel(status)),
       ),
     );
   }
 }
+
+String _bulkStatusLabel(String status) => switch (status) {
+  'ready' => 'bulk_status_ready'.tr(),
+  'imported' => 'bulk_status_imported'.tr(),
+  'already_imported' => 'bulk_status_already_imported'.tr(),
+  'error' => 'bulk_status_error'.tr(),
+  _ => status.replaceAll('_', ' '),
+};

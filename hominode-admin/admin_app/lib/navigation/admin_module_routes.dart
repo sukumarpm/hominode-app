@@ -7,6 +7,7 @@ const String adminBillingRoute = '/billing';
 const String adminVisitorsRoute = '/visitors';
 const String adminComplaintsRoute = '/complaints';
 const String adminEventsRoute = '/events';
+const String adminAnnouncementsRoute = '/announcements';
 const String adminParkingRoute = '/parking';
 const String adminResidentVehiclesRoute = '/resident-vehicles';
 const String adminAmenitiesRoute = '/amenities';
@@ -34,6 +35,8 @@ String adminRoutePathForModule(AdminModuleId module) {
       return adminComplaintsRoute;
     case AdminModuleId.events:
       return adminEventsRoute;
+    case AdminModuleId.announcements:
+      return adminAnnouncementsRoute;
     case AdminModuleId.parking:
       return adminParkingRoute;
     case AdminModuleId.residentVehicles:
@@ -64,6 +67,8 @@ AdminModuleId? adminModuleFromRoutePath(String? routePath) {
       return AdminModuleId.complaints;
     case adminEventsRoute:
       return AdminModuleId.events;
+    case adminAnnouncementsRoute:
+      return AdminModuleId.announcements;
     case adminParkingRoute:
     case adminParkingLegacyRoute:
       return AdminModuleId.parking;

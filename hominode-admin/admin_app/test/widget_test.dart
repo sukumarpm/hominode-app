@@ -1,30 +1,33 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
+import 'package:admin_app/about_hominode_screen.dart';
+import 'package:admin_app/theme/hominode_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:admin_app/main.dart';
-
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Hominode About page renders its identity and contact actions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ScreenUtilInit(
+        designSize: const Size(390, 844),
+        builder: (context, child) => MaterialApp(
+          theme: HominodeTheme.light,
+          home: const AboutHominodeScreen(),
+        ),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('About Hominode'), findsOneWidget);
+    expect(find.text('HOMINODE'), findsOneWidget);
+    expect(find.text('Smart place. Better lives.'), findsOneWidget);
+    expect(find.text('Developed by Marantrix.'), findsOneWidget);
+    for (final label in ['https://marantrix.com', 'hominodecare@gmail.com']) {
+      final action = tester.widget<TextButton>(
+        find.ancestor(of: find.text(label), matching: find.byType(TextButton)),
+      );
+      expect(action.onPressed, isNotNull);
+    }
+    expect(tester.takeException(), isNull);
   });
 }

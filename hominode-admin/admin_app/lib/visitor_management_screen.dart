@@ -1,3 +1,4 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -103,13 +104,15 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     HapticFeedback.mediumImpact();
 
     try {
-      // Approve in Firestore and check-in
+      // Admin approval records the request decision. Security records entry
+      // only after the visitor QR is verified at the gate.
       await _visitorService.approveVisitor(visitorId);
-      await _visitorService.checkInVisitor(visitorId);
 
       if (mounted) {
         _showSnackBar(
-          '$visitorName approved and checked in',
+          'visitor_approved_checkin_message'.tr(
+            namedArgs: {'name': visitorName},
+          ),
           const Color(0xFF16A34A),
           Icons.check_circle,
         );
@@ -117,7 +120,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     } catch (e) {
       if (mounted) {
         _showSnackBar(
-          'Failed to approve visitor: $e',
+          'visitor_approve_failed'.tr(namedArgs: {'error': '$e'}),
           const Color(0xFFEF4444),
           Icons.error,
         );
@@ -133,7 +136,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
       if (mounted) {
         _showSnackBar(
-          '$visitorName request rejected',
+          'visitor_rejected_message'.tr(namedArgs: {'name': visitorName}),
           const Color(0xFFEF4444),
           Icons.cancel,
         );
@@ -141,7 +144,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     } catch (e) {
       if (mounted) {
         _showSnackBar(
-          'Failed to reject visitor: $e',
+          'visitor_reject_failed'.tr(namedArgs: {'error': '$e'}),
           const Color(0xFFEF4444),
           Icons.error,
         );
@@ -157,7 +160,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
       if (mounted) {
         _showSnackBar(
-          '$visitorName marked as exited',
+          'visitor_checked_out_message'.tr(namedArgs: {'name': visitorName}),
           const Color(0xFF16A34A),
           Icons.logout,
         );
@@ -165,7 +168,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     } catch (e) {
       if (mounted) {
         _showSnackBar(
-          'Failed to mark exit: $e',
+          'visitor_checkout_failed'.tr(namedArgs: {'error': '$e'}),
           const Color(0xFFEF4444),
           Icons.error,
         );
@@ -204,11 +207,11 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   Widget build(BuildContext context) {
     if (AdminDesktopPresentationScope.isActive(context)) {
       return AdminDesktopPageFrame(
-        title: 'Visitors',
-        subtitle: 'Review visitor requests, active visits, and history.',
+        title: 'visitors_title'.tr(),
+        subtitle: 'visitors_subtitle'.tr(),
         actions: [
           AdminDesktopPrimaryAction(
-            label: 'Scan QR',
+            label: 'visitor_scan_qr'.tr(),
             icon: Icons.qr_code_scanner,
             onPressed: _onQRScannerTap,
           ),
@@ -243,7 +246,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          const StandardHeader(title: 'Visitor Management'),
+          StandardHeader(title: 'visitor_management_title'.tr()),
           SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -300,7 +303,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         elevation: 4,
         icon: Icon(Icons.qr_code_scanner, color: Colors.white, size: 20.w),
         label: Text(
-          'Scan QR',
+          'visitor_scan_qr'.tr(),
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w600,
@@ -332,7 +335,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Visitor Management',
+                  'visitor_management_title'.tr(),
                   style: TextStyle(
                     fontSize: 20.sp,
                     fontWeight: FontWeight.w700,
@@ -377,13 +380,13 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   String _getSubtitleForTab() {
     switch (_currentTab) {
       case 0:
-        return 'Approve pending visitor requests';
+        return 'visitor_pending_subtitle'.tr();
       case 1:
-        return 'Track active visitors inside';
+        return 'visitor_active_subtitle'.tr();
       case 2:
-        return 'View completed visitor records';
+        return 'visitor_history_subtitle'.tr();
       default:
-        return 'Manage visitor entries';
+        return 'visitor_default_subtitle'.tr();
     }
   }
 
@@ -502,11 +505,23 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   String _getStatTitle(int index) {
     switch (_currentTab) {
       case 0: // Pending
-        return ['Pending', 'Today\'s Total', 'Avg. Response'][index];
+        return [
+          'visitor_status_pending'.tr(),
+          'visitor_today_total'.tr(),
+          'visitor_average_response'.tr(),
+        ][index];
       case 1: // Active
-        return ['Active', 'Today\'s Total', 'Avg. Duration'][index];
+        return [
+          'visitor_status_active'.tr(),
+          'visitor_today_total'.tr(),
+          'visitor_average_duration'.tr(),
+        ][index];
       case 2: // History
-        return ['Today\'s Visits', 'Weekly Total', 'Avg. Duration'][index];
+        return [
+          'visitor_today_visits'.tr(),
+          'visitor_weekly_total'.tr(),
+          'visitor_average_duration'.tr(),
+        ][index];
       default:
         return '';
     }
@@ -529,14 +544,22 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     switch (_currentTab) {
       case 0: // Pending
         return [
-          'Awaiting approval',
-          'Requests received',
-          'Response time',
+          'visitor_awaiting_approval'.tr(),
+          'visitor_requests_received'.tr(),
+          'visitor_response_time'.tr(),
         ][index];
       case 1: // Active
-        return ['Currently inside', 'Visitors today', 'Stay duration'][index];
+        return [
+          'visitor_currently_inside'.tr(),
+          'visitor_today_visitors'.tr(),
+          'visitor_stay_duration'.tr(),
+        ][index];
       case 2: // History
-        return ['Completed visits', 'This week', 'Visit duration'][index];
+        return [
+          'visitor_completed_visits'.tr(),
+          'visitor_this_week'.tr(),
+          'visitor_visit_duration'.tr(),
+        ][index];
       default:
         return '';
     }
@@ -601,7 +624,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         child: TextField(
           controller: _searchController,
           decoration: InputDecoration(
-            hintText: 'Search visitors...',
+            hintText: 'visitor_search_hint'.tr(),
             hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14.sp),
             prefixIcon: Icon(
               Icons.search,
@@ -651,9 +674,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         ),
         child: Row(
           children: [
-            Expanded(child: _buildTabButton('Pending', 0)),
-            Expanded(child: _buildTabButton('Active', 1)),
-            Expanded(child: _buildTabButton('History', 2)),
+            Expanded(child: _buildTabButton('visitor_tab_pending'.tr(), 0)),
+            Expanded(child: _buildTabButton('visitor_tab_active'.tr(), 1)),
+            Expanded(child: _buildTabButton('visitor_tab_history'.tr(), 2)),
           ],
         ),
       ),
@@ -718,7 +741,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                   ),
                   SizedBox(height: 16.h),
                   Text(
-                    'Error loading visitors: ${snapshot.error}',
+                    'visitor_load_failed'.tr(
+                      namedArgs: {'error': '${snapshot.error}'},
+                    ),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Color(0xFF6B7280)),
                   ),
@@ -745,11 +770,11 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           return _buildEmptyState(
             icon: Icons.pending_actions,
             title: _searchQuery.isNotEmpty
-                ? 'No visitors found'
-                : 'No Pending Requests',
+                ? 'visitor_no_search_results'.tr()
+                : 'visitor_no_pending_requests'.tr(),
             subtitle: _searchQuery.isNotEmpty
-                ? 'Try adjusting your search'
-                : 'All requests have been processed',
+                ? 'visitor_adjust_search'.tr()
+                : 'visitor_all_requests_processed'.tr(),
           );
         }
 
@@ -790,7 +815,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                   ),
                   SizedBox(height: 16.h),
                   Text(
-                    'Error loading visitors: ${snapshot.error}',
+                    'visitor_load_failed'.tr(
+                      namedArgs: {'error': '${snapshot.error}'},
+                    ),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Color(0xFF6B7280)),
                   ),
@@ -817,11 +844,11 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           return _buildEmptyState(
             icon: Icons.people,
             title: _searchQuery.isNotEmpty
-                ? 'No visitors found'
-                : 'No Active Visitors',
+                ? 'visitor_no_search_results'.tr()
+                : 'visitor_no_active_visitors'.tr(),
             subtitle: _searchQuery.isNotEmpty
-                ? 'Try adjusting your search'
-                : 'No visitors are currently inside',
+                ? 'visitor_adjust_search'.tr()
+                : 'visitor_none_inside'.tr(),
           );
         }
 
@@ -862,7 +889,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                   ),
                   SizedBox(height: 16.h),
                   Text(
-                    'Error loading visitors: ${snapshot.error}',
+                    'visitor_load_failed'.tr(
+                      namedArgs: {'error': '${snapshot.error}'},
+                    ),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Color(0xFF6B7280)),
                   ),
@@ -889,11 +918,11 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           return _buildEmptyState(
             icon: Icons.history,
             title: _searchQuery.isNotEmpty
-                ? 'No visitors found'
-                : 'No History Records',
+                ? 'visitor_no_search_results'.tr()
+                : 'visitor_no_history_records'.tr(),
             subtitle: _searchQuery.isNotEmpty
-                ? 'Try adjusting your search'
-                : 'Completed visitor records will appear here',
+                ? 'visitor_adjust_search'.tr()
+                : 'visitor_history_empty_hint'.tr(),
           );
         }
 
@@ -1032,7 +1061,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                     borderRadius: BorderRadius.circular(6.r),
                   ),
                   child: Text(
-                    'Pending',
+                    'visitor_status_pending'.tr(),
                     style: TextStyle(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w600,
@@ -1047,7 +1076,13 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
             // Request Time
             Text(
-              'Requested: ${visitor.createdAt != null ? _formatTime(visitor.createdAt!) : "N/A"}',
+              'visitor_requested_at'.tr(
+                namedArgs: {
+                  'time': visitor.createdAt != null
+                      ? _formatTime(visitor.createdAt!)
+                      : 'not_available'.tr(),
+                },
+              ),
               style: TextStyle(
                 fontSize: 13.sp,
                 fontWeight: FontWeight.w500,
@@ -1066,11 +1101,17 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
               ),
               child: Column(
                 children: [
-                  _buildDetailRow('Visiting', visitor.residentName),
+                  _buildDetailRow(
+                    'visitor_visiting_label'.tr(),
+                    visitor.residentName,
+                  ),
                   SizedBox(height: 8.h),
-                  _buildDetailRow('Unit', visitor.flatLabel),
+                  _buildDetailRow('visitor_unit_label'.tr(), visitor.flatLabel),
                   SizedBox(height: 8.h),
-                  _buildDetailRow('Purpose', visitor.purpose),
+                  _buildDetailRow(
+                    'visitor_purpose_label'.tr(),
+                    visitor.purpose,
+                  ),
                 ],
               ),
             ),
@@ -1095,7 +1136,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                       ),
                     ),
                     child: Text(
-                      'Reject',
+                      'visitor_reject_action'.tr(),
                       style: TextStyle(
                         fontSize: 14.sp,
                         fontWeight: FontWeight.w600,
@@ -1119,7 +1160,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                       elevation: 0,
                     ),
                     child: Text(
-                      'Approve',
+                      'visitor_approve_action'.tr(),
                       style: TextStyle(
                         fontSize: 14.sp,
                         fontWeight: FontWeight.w600,
@@ -1210,7 +1251,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                     borderRadius: BorderRadius.circular(6.r),
                   ),
                   child: Text(
-                    'Inside',
+                    'visitor_status_inside'.tr(),
                     style: TextStyle(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w600,
@@ -1225,7 +1266,13 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
             // Entry Time
             Text(
-              'Entered: ${visitor.checkInTime != null ? _formatTime(visitor.checkInTime!) : "N/A"}',
+              'visitor_entered_at'.tr(
+                namedArgs: {
+                  'time': visitor.checkInTime != null
+                      ? _formatTime(visitor.checkInTime!)
+                      : 'not_available'.tr(),
+                },
+              ),
               style: TextStyle(
                 fontSize: 13.sp,
                 fontWeight: FontWeight.w500,
@@ -1244,11 +1291,17 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
               ),
               child: Column(
                 children: [
-                  _buildDetailRow('Visiting', visitor.residentName),
+                  _buildDetailRow(
+                    'visitor_visiting_label'.tr(),
+                    visitor.residentName,
+                  ),
                   SizedBox(height: 8.h),
-                  _buildDetailRow('Unit', visitor.flatLabel),
+                  _buildDetailRow('visitor_unit_label'.tr(), visitor.flatLabel),
                   SizedBox(height: 8.h),
-                  _buildDetailRow('Purpose', visitor.purpose),
+                  _buildDetailRow(
+                    'visitor_purpose_label'.tr(),
+                    visitor.purpose,
+                  ),
                 ],
               ),
             ),
@@ -1269,7 +1322,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                 ),
                 icon: Icon(Icons.logout, color: Color(0xFF111827), size: 16.w),
                 label: Text(
-                  'Mark Exit',
+                  'visitor_mark_exit_action'.tr(),
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.w600,
@@ -1393,7 +1446,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Entry',
+                          'visitor_entry_label'.tr(),
                           style: TextStyle(
                             fontSize: 12.sp,
                             fontWeight: FontWeight.w500,
@@ -1428,7 +1481,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          'Exit',
+                          'visitor_exit_label'.tr(),
                           style: TextStyle(
                             fontSize: 12.sp,
                             fontWeight: FontWeight.w500,
@@ -1461,26 +1514,31 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Detail row helper - exact typography matching
   Widget _buildDetailRow(String label, String value) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          '$label:',
-          style: TextStyle(
-            fontSize: 13.sp,
-            fontWeight: FontWeight.w500,
-            color: Color(0xFF6B7280),
+        Expanded(
+          flex: 5,
+          child: Text(
+            'visitor_detail_label_format'.tr(namedArgs: {'label': label}),
+            softWrap: true,
+            style: TextStyle(
+              fontSize: 13.sp,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF6B7280),
+            ),
           ),
         ),
-        Flexible(
+        SizedBox(width: 8.w),
+        Expanded(
+          flex: 6,
           child: Text(
             value,
+            softWrap: true,
             style: TextStyle(
               fontSize: 13.sp,
               fontWeight: FontWeight.w600,
               color: Color(0xFF111827),
             ),
             textAlign: TextAlign.end,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
@@ -1493,7 +1551,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         ? time.hour - 12
         : (time.hour == 0 ? 12 : time.hour);
     final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.hour >= 12 ? 'PM' : 'AM';
+    final period = time.hour >= 12
+        ? 'visitor_time_pm'.tr()
+        : 'visitor_time_am'.tr();
     return '$hour:$minute $period';
   }
 
@@ -1504,22 +1564,28 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   }
 
   String _formatDateTime(DateTime time) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+    final months = [
+      'visitor_month_jan'.tr(),
+      'visitor_month_feb'.tr(),
+      'visitor_month_mar'.tr(),
+      'visitor_month_apr'.tr(),
+      'visitor_month_may'.tr(),
+      'visitor_month_jun'.tr(),
+      'visitor_month_jul'.tr(),
+      'visitor_month_aug'.tr(),
+      'visitor_month_sep'.tr(),
+      'visitor_month_oct'.tr(),
+      'visitor_month_nov'.tr(),
+      'visitor_month_dec'.tr(),
     ];
 
-    return '${months[time.month - 1]} ${time.day}, ${_formatTime(time)}';
+    return 'visitor_date_format'.tr(
+      namedArgs: {
+        'month': months[time.month - 1],
+        'day': '${time.day}',
+        'time': _formatTime(time),
+      },
+    );
   }
 
   // Duration formatting helper
@@ -1529,23 +1595,29 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     final minutes = duration.inMinutes.remainder(60);
 
     if (days > 0) {
-      final parts = <String>['${days}d'];
+      final parts = <String>[
+        'visitor_duration_days'.tr(namedArgs: {'count': '$days'}),
+      ];
 
       if (hours > 0) {
-        parts.add('${hours}h');
+        parts.add('visitor_duration_hours'.tr(namedArgs: {'count': '$hours'}));
       }
 
       if (minutes > 0 || hours == 0) {
-        parts.add('${minutes}m');
+        parts.add(
+          'visitor_duration_minutes'.tr(namedArgs: {'count': '$minutes'}),
+        );
       }
 
       return parts.join(' ');
     }
 
     if (hours > 0) {
-      return '${hours}h ${minutes}m';
+      return 'visitor_duration_hours_minutes'.tr(
+        namedArgs: {'hours': '$hours', 'minutes': '$minutes'},
+      );
     }
 
-    return '${minutes}m';
+    return 'visitor_duration_minutes'.tr(namedArgs: {'count': '$minutes'});
   }
 }

@@ -1,5 +1,5 @@
 import 'package:admin_app/models/admin_profile.dart';
-import 'package:admin_app/services/auth_service.dart';
+import 'package:admin_app/services/admin_role_router.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -48,40 +48,43 @@ void main() {
     expect(parse('superAdmin', isActive: false).isActive, isFalse);
   });
 
-  test('admin authorization policy accepts and rejects canonical roles', () {
-    AdminProfile profile(
-      String role, {
-      bool isActive = true,
-      List<String> communities = const ['community-a'],
-    }) => AdminProfile(
-      uid: 'uid-policy',
-      phoneNumber: '+15550000001',
-      role: role,
-      isActive: isActive,
-      authorizedCommunityIds: communities,
-    );
+  test(
+    'admin role routing accepts and rejects canonical authorization cases',
+    () {
+      AdminProfile profile(
+        String role, {
+        bool isActive = true,
+        List<String> communities = const ['community-a'],
+      }) => AdminProfile(
+        uid: 'uid-policy',
+        phoneNumber: '+15550000001',
+        role: role,
+        isActive: isActive,
+        authorizedCommunityIds: communities,
+      );
 
-    expect(
-      adminAuthorizationStatus(profile('admin')),
-      AdminAuthStatus.authorized,
-    );
-    expect(
-      adminAuthorizationStatus(profile('superAdmin', communities: const [])),
-      AdminAuthStatus.authorized,
-    );
-    expect(
-      adminAuthorizationStatus(
-        profile('superAdmin', isActive: false, communities: const []),
-      ),
-      AdminAuthStatus.inactive,
-    );
-    expect(
-      adminAuthorizationStatus(profile('unknown')),
-      AdminAuthStatus.wrongRole,
-    );
-    expect(
-      adminAuthorizationStatus(profile('admin', communities: const [])),
-      AdminAuthStatus.noCommunities,
-    );
-  });
+      expect(
+        AdminRoleRouter.resolve(profile('admin')),
+        AdminPostAuthDestination.adminTenantFlow,
+      );
+      expect(
+        AdminRoleRouter.resolve(profile('superAdmin', communities: const [])),
+        AdminPostAuthDestination.superAdminHome,
+      );
+      expect(
+        AdminRoleRouter.resolve(
+          profile('superAdmin', isActive: false, communities: const []),
+        ),
+        AdminPostAuthDestination.rejected,
+      );
+      expect(
+        AdminRoleRouter.resolve(profile('unknown')),
+        AdminPostAuthDestination.rejected,
+      );
+      expect(
+        AdminRoleRouter.resolve(profile('admin', communities: const [])),
+        AdminPostAuthDestination.rejected,
+      );
+    },
+  );
 }

@@ -51,8 +51,17 @@ class ComplaintsDesktopContent extends StatelessWidget {
 class EventsDesktopContent extends StatelessWidget {
   const EventsDesktopContent({super.key});
   @override
-  Widget build(BuildContext context) =>
-      const AdminDesktopPresentationScope(child: EventsAnnouncementsScreen());
+  Widget build(BuildContext context) => const AdminDesktopPresentationScope(
+    child: EventsAnnouncementsScreen(eventsOnly: true),
+  );
+}
+
+class AnnouncementsDesktopContent extends StatelessWidget {
+  const AnnouncementsDesktopContent({super.key});
+  @override
+  Widget build(BuildContext context) => const AdminDesktopPresentationScope(
+    child: EventsAnnouncementsScreen(announcementsOnly: true),
+  );
 }
 
 class ParkingDesktopContent extends StatelessWidget {

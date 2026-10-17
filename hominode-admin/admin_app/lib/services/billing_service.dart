@@ -6,8 +6,14 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/notification_models.dart';
+import '../models/billing_schedule_v2.dart';
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
+
+typedef BillingScheduleCallableInvokerV2 =
+    Future<Object?> Function(String name, Map<String, dynamic> payload);
+typedef PaymentProofCallableInvokerV2 =
+    Future<Object?> Function(String name, Map<String, dynamic> payload);
 
 String formatPaymentMethod(Object? value) {
   final method = value is String ? value.trim().toLowerCase() : '';
@@ -134,15 +140,160 @@ String? formatSettlementAttribution(Object? paymentMethod) {
   };
 }
 
-class BillingService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+class BillingService implements BillingScheduleV2Gateway {
+  BillingService({
+    FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
+    AdminService? adminService,
+    BillingScheduleCallableInvokerV2? scheduleCallable,
+    String? Function()? scheduleAdminId,
+    String Function()? scheduleCommunityId,
+    PaymentProofCallableInvokerV2? paymentProofCallable,
+  }) : _firestoreOverride = firestore,
+       _functionsOverride = functions,
+       _adminServiceOverride = adminService,
+       _scheduleCallable = scheduleCallable,
+       _scheduleAdminId = scheduleAdminId,
+       _scheduleCommunityId = scheduleCommunityId,
+       _paymentProofCallable = paymentProofCallable;
+
+  final FirebaseFirestore? _firestoreOverride;
+  late final FirebaseFirestore _firestore =
+      _firestoreOverride ?? FirebaseFirestore.instance;
   final String _collection = 'bills';
-  final AdminService _adminService = AdminService();
-  final NotificationFirestoreService _notificationService =
+  final AdminService? _adminServiceOverride;
+  late final AdminService _adminService =
+      _adminServiceOverride ?? AdminService();
+  late final NotificationFirestoreService _notificationService =
       NotificationFirestoreService();
-  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
-    region: 'asia-southeast1',
-  );
+  final FirebaseFunctions? _functionsOverride;
+  late final FirebaseFunctions _functions =
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'asia-southeast1');
+  final BillingScheduleCallableInvokerV2? _scheduleCallable;
+  final String? Function()? _scheduleAdminId;
+  final String Function()? _scheduleCommunityId;
+  final PaymentProofCallableInvokerV2? _paymentProofCallable;
+
+  @override
+  Future<List<BillingScheduleTargetV2>> loadBillingScheduleBuildings(
+    String communityId,
+  ) async {
+    final normalizedCommunity = communityId.trim();
+    if (normalizedCommunity.isEmpty ||
+        normalizedCommunity != _adminService.requireCurrentCommunityId()) {
+      throw StateError('Select an authorized community.');
+    }
+    final snapshot = await _firestore
+        .collection('buildings')
+        .where('communityId', isEqualTo: normalizedCommunity)
+        .get();
+    final targets =
+        snapshot.docs.map((doc) {
+          final data = doc.data();
+          final label = data['buildingName'] ?? data['name'] ?? doc.id;
+          return BillingScheduleTargetV2(
+            id: doc.id,
+            label: label is String && label.trim().isNotEmpty
+                ? label.trim()
+                : doc.id,
+          );
+        }).toList()..sort(
+          (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+        );
+    return targets;
+  }
+
+  @override
+  Future<List<BillingScheduleTargetV2>> loadBillingScheduleUnits(
+    String communityId,
+  ) async {
+    final normalizedCommunity = communityId.trim();
+    if (normalizedCommunity.isEmpty ||
+        normalizedCommunity != _adminService.requireCurrentCommunityId()) {
+      throw StateError('Select an authorized community.');
+    }
+    final snapshot = await _firestore
+        .collection('flats')
+        .where('communityId', isEqualTo: normalizedCommunity)
+        .get();
+    final targets =
+        snapshot.docs
+            .map((doc) {
+              final data = doc.data();
+              final buildingId = data['buildingId'];
+              final rawLabel =
+                  data['flatLabel'] ??
+                  data['flatNumber'] ??
+                  data['unitNumber'] ??
+                  data['name'] ??
+                  doc.id;
+              return BillingScheduleTargetV2(
+                id: doc.id,
+                label: rawLabel is String && rawLabel.trim().isNotEmpty
+                    ? rawLabel.trim()
+                    : doc.id,
+                buildingId: buildingId is String ? buildingId : null,
+              );
+            })
+            .where((target) => target.buildingId != null)
+            .toList()
+          ..sort(
+            (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+          );
+    return targets;
+  }
+
+  @override
+  Future<BillingScheduleCreatedV2> createBillingScheduleV2(
+    Map<String, dynamic> request,
+  ) async {
+    final adminId =
+        _scheduleAdminId?.call() ?? _adminService.getCurrentAdminId();
+    if (adminId == null || adminId.trim().isEmpty) {
+      throw StateError('An authenticated administrator is required.');
+    }
+    final communityId =
+        _scheduleCommunityId?.call() ??
+        _adminService.requireCurrentCommunityId();
+    final payload = validateBillingScheduleRequestV2(request);
+    if (payload['communityId'] != communityId) {
+      throw StateError(
+        'Recurring schedule community does not match the selected community.',
+      );
+    }
+    final responseData = _scheduleCallable != null
+        ? await _scheduleCallable('createBillingScheduleV2', payload)
+        : (await _functions
+                  .httpsCallable('createBillingScheduleV2')
+                  .call(payload))
+              .data;
+    if (responseData is! Map) {
+      throw const FormatException('Recurring schedule response is invalid.');
+    }
+    final result = Map<String, dynamic>.from(responseData);
+    final scheduleId = result['scheduleId'];
+    final revisionId = result['revisionId'];
+    final revisionNo = result['revisionNo'];
+    final alreadyCompleted = result['alreadyCompleted'];
+    if (result['success'] != true ||
+        scheduleId is! String ||
+        !_isValidFirestoreDocumentId(scheduleId) ||
+        revisionId is! String ||
+        !_isValidFirestoreDocumentId(revisionId) ||
+        revisionNo != 1 ||
+        alreadyCompleted is! bool) {
+      throw const FormatException(
+        'Recurring schedule response could not be validated.',
+      );
+    }
+    return BillingScheduleCreatedV2(
+      scheduleId: scheduleId,
+      revisionId: revisionId,
+      revisionNo: revisionNo as int,
+      alreadyCompleted: alreadyCompleted,
+    );
+  }
 
   Stream<Map<String, dynamic>?> streamPendingPaymentForBill({
     required String communityId,
@@ -232,6 +383,8 @@ class BillingService {
                 data['communityId'] == communityId &&
                 data['billId'] == billId &&
                 data['status'] == 'pending' &&
+                (data['amountContractVersion'] == null ||
+                    data['amountContractVersion'] == 2) &&
                 data['residentId'] is String &&
                 (data['residentId'] as String).trim().isNotEmpty &&
                 data['userId'] == data['residentId'] &&
@@ -287,12 +440,34 @@ class BillingService {
     await callable.call({'paymentId': paymentId});
   }
 
-  Future<void> verifyPaymentProofV2(String paymentId) async {
+  Future<void> verifyPaymentProofV2(
+    String paymentId, {
+    int? confirmedAmountMinor,
+  }) async {
     final id = paymentId.trim();
     if (id.isEmpty) throw ArgumentError.value(paymentId, 'paymentId');
-    await _functions.httpsCallable('verifyPaymentProofV2').call({
+    if (confirmedAmountMinor != null &&
+        (confirmedAmountMinor <= 0 ||
+            confirmedAmountMinor > _safePaymentMinorUnitMax)) {
+      throw ArgumentError.value(confirmedAmountMinor, 'confirmedAmountMinor');
+    }
+    final payload = <String, dynamic>{
       'paymentId': id,
-    });
+      if (confirmedAmountMinor != null)
+        'confirmedAmountMinor': confirmedAmountMinor,
+    };
+    final response = _paymentProofCallable != null
+        ? await _paymentProofCallable('verifyPaymentProofV2', payload)
+        : (await _functions.httpsCallable('verifyPaymentProofV2').call(payload))
+              .data;
+    if (response is! Map ||
+        response['success'] != true ||
+        response['transactionId'] is! String ||
+        (response['transactionId'] as String).trim().isEmpty) {
+      throw const FormatException(
+        'The payment settlement response could not be confirmed.',
+      );
+    }
   }
 
   Future<void> rejectPaymentProof({
@@ -372,7 +547,7 @@ class BillingService {
     );
   }
 
-  final FirebaseStorage _storage = FirebaseStorage.instance;
+  late final FirebaseStorage _storage = FirebaseStorage.instance;
   // Get all bills filtered by adminId (multi-tenancy)
   Stream<List<BillModel>> getBills(String communityId) {
     return _firestore

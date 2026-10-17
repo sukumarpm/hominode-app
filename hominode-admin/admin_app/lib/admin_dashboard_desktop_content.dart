@@ -172,7 +172,7 @@ class _AdminDashboardDesktopContentState
                         _openModule('billing', const BillingScreen()),
                     onEvents: () => _openModule(
                       'events',
-                      const EventsAnnouncementsScreen(),
+                      const EventsAnnouncementsScreen(eventsOnly: true),
                     ),
                     onParking: () => _openModule(
                       'parking',
@@ -205,75 +205,98 @@ class _DashboardHeader extends StatelessWidget {
   final VoidCallback onProfile;
 
   @override
-  Widget build(BuildContext context) => Row(
-    crossAxisAlignment: CrossAxisAlignment.center,
-    children: [
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Admin Dashboard',
-              style: TextStyle(
-                color: AdminDesktopDesign.text,
-                fontSize: 22,
-                height: 1.2,
-                fontWeight: FontWeight.w700,
-              ),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final stacked =
+          constraints.maxWidth < 760 ||
+          MediaQuery.textScalerOf(context).scale(1) > 1.3;
+      final title = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Admin Dashboard',
+            softWrap: true,
+            style: TextStyle(
+              color: AdminDesktopDesign.text,
+              fontSize: 22,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(height: 5),
-            const Text(
-              'Monitor your community and manage daily operations.',
-              style: TextStyle(color: AdminDesktopDesign.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 5),
+          const Text(
+            'Monitor your community and manage daily operations.',
+            softWrap: true,
+            style: TextStyle(color: AdminDesktopDesign.muted, fontSize: 12),
+          ),
+        ],
+      );
+      final controls = Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: AdminDesktopDesign.border),
+              borderRadius: BorderRadius.circular(9),
             ),
-          ],
-        ),
-      ),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: AdminDesktopDesign.border),
-          borderRadius: BorderRadius.circular(9),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.apartment_outlined,
-              size: 17,
-              color: Color(0xFF247B8A),
-            ),
-            const SizedBox(width: 7),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 220),
-              child: Text(
-                communityName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AdminDesktopDesign.text,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.apartment_outlined,
+                  size: 17,
+                  color: Color(0xFF247B8A),
                 ),
-              ),
+                const SizedBox(width: 7),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: (constraints.maxWidth - 110).clamp(120, 220),
+                  ),
+                  child: Text(
+                    communityName,
+                    softWrap: true,
+                    style: const TextStyle(
+                      color: AdminDesktopDesign.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
-      const SizedBox(width: 8),
-      _HeaderButton(
-        tooltip: 'Notifications',
-        icon: Icons.notifications_none_outlined,
-        onPressed: onNotifications,
-      ),
-      const SizedBox(width: 8),
-      _HeaderButton(
-        tooltip: 'Profile',
-        icon: Icons.account_circle_outlined,
-        onPressed: onProfile,
-      ),
-    ],
+          ),
+          _HeaderButton(
+            tooltip: 'Notifications',
+            icon: Icons.notifications_none_outlined,
+            onPressed: onNotifications,
+          ),
+          _HeaderButton(
+            tooltip: 'Profile',
+            icon: Icons.account_circle_outlined,
+            onPressed: onProfile,
+          ),
+        ],
+      );
+
+      if (stacked) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [title, const SizedBox(height: 12), controls],
+        );
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(child: title),
+          const SizedBox(width: 16),
+          controls,
+        ],
+      );
+    },
   );
 }
 
@@ -399,23 +422,26 @@ class _KpiCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: width,
-    height: 104,
-    child: Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
+  Widget build(BuildContext context) {
+    final compactValue =
+        width < 180 || MediaQuery.textScalerOf(context).scale(1) > 1.3;
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: AdminDesktopDesign.cardDecoration,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 80),
+            padding: const EdgeInsets.all(12),
+            decoration: AdminDesktopDesign.cardDecoration,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (compactValue) ...[
                   Container(
                     width: 34,
                     height: 34,
@@ -425,42 +451,64 @@ class _KpiCard extends StatelessWidget {
                     ),
                     child: Icon(icon, size: 19, color: color),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          value,
-                          style: const TextStyle(
-                            color: AdminDesktopDesign.text,
-                            fontSize: 21,
-                            fontWeight: FontWeight.w800,
+                  const SizedBox(height: 8),
+                  Text(
+                    value,
+                    softWrap: true,
+                    style: const TextStyle(
+                      color: AdminDesktopDesign.text,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ] else ...[
+                  Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(icon, size: 19, color: color),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            value,
+                            textAlign: TextAlign.end,
+                            softWrap: true,
+                            style: const TextStyle(
+                              color: AdminDesktopDesign.text,
+                              fontSize: 21,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
-              ),
-              const Spacer(),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AdminDesktopDesign.muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                const SizedBox(height: 10),
+                Text(
+                  label,
+                  softWrap: true,
+                  style: const TextStyle(
+                    color: AdminDesktopDesign.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _DashboardMainGrid extends StatelessWidget {
@@ -822,12 +870,16 @@ class _SummaryPanel extends StatelessWidget {
           children: [
             Icon(icon, size: 24, color: color),
             const Spacer(),
-            Text(
-              value,
-              style: const TextStyle(
-                color: Color(0xFF102A43),
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
+            Flexible(
+              child: Text(
+                value,
+                textAlign: TextAlign.end,
+                softWrap: true,
+                style: const TextStyle(
+                  color: Color(0xFF102A43),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],
@@ -835,8 +887,7 @@ class _SummaryPanel extends StatelessWidget {
         const SizedBox(height: 12),
         Text(
           detail,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          softWrap: true,
           style: const TextStyle(color: Color(0xFF66788A), fontSize: 13),
         ),
         const SizedBox(height: 8),
@@ -874,51 +925,68 @@ class _QuickActionsPanel extends StatelessWidget {
     title: 'Quick Actions',
     subtitle: 'Common administration tasks',
     child: LayoutBuilder(
-      builder: (context, constraints) => GridView.count(
-        crossAxisCount: constraints.maxWidth < 430 ? 3 : 4,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        children: [
-          _QuickAction(
-            label: 'Add Building',
-            icon: Icons.add_business_outlined,
-            onTap: onBuildings,
-          ),
-          _QuickAction(
-            label: 'Add Bill',
-            icon: Icons.post_add_outlined,
-            onTap: onBilling,
-          ),
-          _QuickAction(
-            label: 'Approve Visitor',
-            icon: Icons.how_to_reg_outlined,
-            onTap: onVisitors,
-          ),
-          _QuickAction(
-            label: 'Residents',
-            icon: Icons.people_outline,
-            onTap: onResidents,
-          ),
-          _QuickAction(
-            label: 'Events',
-            icon: Icons.event_outlined,
-            onTap: onEvents,
-          ),
-          _QuickAction(
-            label: 'Parking',
-            icon: Icons.local_parking_outlined,
-            onTap: onParking,
-          ),
-          _QuickAction(
-            label: 'Amenities',
-            icon: Icons.pool_outlined,
-            onTap: onAmenities,
-          ),
-        ],
-      ),
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final crossAxisCount = constraints.maxWidth < 430
+            ? 2
+            : constraints.maxWidth < 720
+            ? 3
+            : 4;
+        final spacing = 10.0;
+        final tileWidth =
+            (constraints.maxWidth - spacing * (crossAxisCount - 1)) /
+            crossAxisCount;
+        final neededHeight = 100 + (textScale - 1).clamp(0.0, 1.0) * 65;
+        final childAspectRatio = tileWidth >= neededHeight
+            ? 1.0
+            : tileWidth / neededHeight;
+
+        return GridView.count(
+          crossAxisCount: crossAxisCount,
+          crossAxisSpacing: spacing,
+          mainAxisSpacing: spacing,
+          childAspectRatio: childAspectRatio,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          children: [
+            _QuickAction(
+              label: 'Add Building',
+              icon: Icons.add_business_outlined,
+              onTap: onBuildings,
+            ),
+            _QuickAction(
+              label: 'Add Bill',
+              icon: Icons.post_add_outlined,
+              onTap: onBilling,
+            ),
+            _QuickAction(
+              label: 'Approve Visitor',
+              icon: Icons.how_to_reg_outlined,
+              onTap: onVisitors,
+            ),
+            _QuickAction(
+              label: 'Residents',
+              icon: Icons.people_outline,
+              onTap: onResidents,
+            ),
+            _QuickAction(
+              label: 'Events',
+              icon: Icons.event_outlined,
+              onTap: onEvents,
+            ),
+            _QuickAction(
+              label: 'Parking',
+              icon: Icons.local_parking_outlined,
+              onTap: onParking,
+            ),
+            _QuickAction(
+              label: 'Amenities',
+              icon: Icons.pool_outlined,
+              onTap: onAmenities,
+            ),
+          ],
+        );
+      },
     ),
   );
 }

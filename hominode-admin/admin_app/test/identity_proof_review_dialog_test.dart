@@ -3,16 +3,16 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:admin_app/pending_residents_screen.dart';
 
+import 'helpers/admin_test_localization.dart';
+
 void main() {
-  Widget subject(ImageProvider image) => ScreenUtilInit(
-    designSize: const Size(390, 844),
-    builder: (_, __) => MaterialApp(
-      home: Scaffold(body: IdentityProofReviewDialog(proofImage: image)),
-    ),
+  setUpAll(initializeAdminTestLocalization);
+
+  Widget subject(ImageProvider image) => localizedAdminTestApp(
+    Scaffold(body: IdentityProofReviewDialog(proofImage: image)),
   );
 
   FilledButton verifyButton(WidgetTester tester) => tester.widget<FilledButton>(
@@ -25,6 +25,7 @@ void main() {
     final provider = _ControlledImageProvider();
 
     await tester.pumpWidget(subject(provider));
+    await tester.pumpAndSettle();
     expect(verifyButton(tester).onPressed, isNull);
 
     final recorder = ui.PictureRecorder();
@@ -33,17 +34,21 @@ void main() {
       const Rect.fromLTWH(0, 0, 1, 1),
       Paint()..color = Colors.blue,
     );
-    final image = await recorder.endRecording().toImage(1, 1);
-    provider.complete(ImageInfo(image: image));
-    await tester.pump();
+    final picture = recorder.endRecording();
+    final image = await tester.runAsync(() => picture.toImage(1, 1));
+    picture.dispose();
+    provider.complete(ImageInfo(image: image!));
+    await tester.pumpAndSettle();
     expect(verifyButton(tester).onPressed, isNotNull);
   });
 
   testWidgets('preview failure cannot enable verification', (tester) async {
     final provider = _ControlledImageProvider();
     await tester.pumpWidget(subject(provider));
+    await tester.pumpAndSettle();
+    expect(verifyButton(tester).onPressed, isNull);
     provider.fail(StateError('preview failed'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(
       find.text('The proof preview could not be loaded. Do not verify it.'),
@@ -52,6 +57,9 @@ void main() {
     expect(verifyButton(tester).onPressed, isNull);
     expect(find.text('Reject'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    expect(verifyButton(tester).onPressed, isNull);
+    expect(tester.takeException(), isNull);
   });
 }
 

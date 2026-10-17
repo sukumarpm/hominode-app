@@ -28,4 +28,15 @@ void main() {
       AdminModuleId.residentVehicles,
     );
   });
+
+  test('Announcements has an independent canonical admin route', () {
+    expect(
+      adminRoutePathForModule(AdminModuleId.announcements),
+      '/announcements',
+    );
+    expect(
+      adminModuleFromRoutePath('/announcements'),
+      AdminModuleId.announcements,
+    );
+  });
 }

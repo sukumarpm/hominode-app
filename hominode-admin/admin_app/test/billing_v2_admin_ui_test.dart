@@ -107,7 +107,7 @@ void main() {
         expect(method, contains("payment['submittedAmountMinor']"));
         expect(method, contains("payment['paymentReference']"));
         expect(method, contains("payment['transactionId']"));
-        expect(method, contains('Submitted amount:'));
+        expect(method, contains('Resident-claimed amount:'));
         expect(method, contains('View Receipt'));
         expect(method, contains('!receiptViewed'));
       },
@@ -118,7 +118,11 @@ void main() {
       final verifyEnd = source.indexOf('// ACTION HANDLERS', verifyStart);
       final verifyMethod = source.substring(verifyStart, verifyEnd);
       expect(verifyMethod, contains('if (bill.isV2)'));
-      expect(verifyMethod, contains('verifyPaymentProofV2(paymentId)'));
+      expect(
+        verifyMethod,
+        contains('confirmedAmountMinor: confirmedAmountMinor'),
+      );
+      expect(verifyMethod, contains("payment['amountContractVersion'] == 2"));
       expect(verifyMethod, contains('verifyPaymentProof(paymentId)'));
       expect(verifyMethod, contains("payment['submittedAmountMinor']"));
       expect(verifyMethod, contains('Verify this submitted payment of'));
@@ -190,7 +194,7 @@ void main() {
         expect(summary, contains('formatV2MinorAmount'));
         expect(source, contains('bill.amount.toStringAsFixed(0)'));
         expect(source, contains('_v2TableAmountLabel(bill)'));
-        expect(source, contains('maxLines: bill.isV2 ? 4 : 1'));
+        expect(source, contains('maxLines: bill.isV2 ? 4 : null'));
       },
     );
 
@@ -404,11 +408,15 @@ void main() {
         expect(method, isNot(contains('billId:')));
         expect(method, contains("if (result['success'] != true)"));
         final failureGuard = method.indexOf("if (result['success'] != true)");
-        final clearAttempt = method.indexOf('preferences.remove(preferenceKey)');
+        final clearAttempt = method.indexOf(
+          'preferences.remove(preferenceKey)',
+        );
         expect(clearAttempt, greaterThan(failureGuard));
         expect(
           clearAttempt,
-          lessThan(method.indexOf('_showOfflinePaymentResult(attempt, result)')),
+          lessThan(
+            method.indexOf('_showOfflinePaymentResult(attempt, result)'),
+          ),
         );
         expect(method, contains('Payment Result Unresolved'));
         expect(method, contains('attempt is saved and will not be replaced'));
@@ -448,28 +456,33 @@ void main() {
       },
     );
 
-    test('successful and already-completed responses clear the saved attempt', () {
-      final start = source.indexOf(
-        'Future<void> _submitOfflinePaymentAttempt(',
-      );
-      final end = source.indexOf(
-        'Future<void> _showOfflinePaymentResult(',
-        start,
-      );
-      final method = source.substring(start, end);
-      expect(method, contains("if (result['success'] != true)"));
-      expect(method, contains('await preferences.remove(preferenceKey)'));
-      expect(method, contains('_showOfflinePaymentResult(attempt, result)'));
-      expect(
-        method.indexOf("if (result['success'] != true)"),
-        lessThan(method.indexOf('await preferences.remove(preferenceKey)')),
-      );
-      expect(
-        method.indexOf('await preferences.remove(preferenceKey)'),
-        lessThan(method.indexOf('_showOfflinePaymentResult(attempt, result)')),
-      );
-      expect(method, isNot(contains("result['alreadyCompleted']")));
-    });
+    test(
+      'successful and already-completed responses clear the saved attempt',
+      () {
+        final start = source.indexOf(
+          'Future<void> _submitOfflinePaymentAttempt(',
+        );
+        final end = source.indexOf(
+          'Future<void> _showOfflinePaymentResult(',
+          start,
+        );
+        final method = source.substring(start, end);
+        expect(method, contains("if (result['success'] != true)"));
+        expect(method, contains('await preferences.remove(preferenceKey)'));
+        expect(method, contains('_showOfflinePaymentResult(attempt, result)'));
+        expect(
+          method.indexOf("if (result['success'] != true)"),
+          lessThan(method.indexOf('await preferences.remove(preferenceKey)')),
+        );
+        expect(
+          method.indexOf('await preferences.remove(preferenceKey)'),
+          lessThan(
+            method.indexOf('_showOfflinePaymentResult(attempt, result)'),
+          ),
+        );
+        expect(method, isNot(contains("result['alreadyCompleted']")));
+      },
+    );
 
     test(
       'reports recovery, allocations, and excess credit without claiming bill settlement',
@@ -495,7 +508,13 @@ void main() {
     test('keeps V2 proof review and financial writes isolated', () {
       expect(source, contains('streamPendingV2PaymentProofForBill'));
       expect(source, contains('View Receipt First'));
-      expect(source, contains('verifyPaymentProofV2(paymentId)'));
+      expect(source, contains('confirmedAmountMinor: confirmedAmountMinor'));
+      expect(source, contains('FlexiblePaymentProofReviewDialog'));
+      expect(
+        source,
+        contains('_paymentVerificationBusyIds.contains(paymentId)'),
+      );
+      expect(source, contains('_confirmedAmountRetryValues[paymentId]'));
       expect(source, contains('rejectPaymentProofV2('));
       for (final collection in [
         'paymentTransactions',

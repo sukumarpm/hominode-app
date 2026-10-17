@@ -6,8 +6,9 @@ import 'package:admin_app/services/flat_service.dart';
 import 'package:admin_app/widgets/add_building_modal.dart';
 import 'package:admin_app/widgets/flat_occupancy_grid_modal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'helpers/admin_test_localization.dart';
 
 Future<void> mount(
   WidgetTester tester,
@@ -19,15 +20,16 @@ Future<void> mount(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
-    ScreenUtilInit(
+    localizedAdminTestApp(
+      Scaffold(body: child),
       designSize: const Size(1000, 1800),
-      builder: (context, _) => MaterialApp(home: Scaffold(body: child)),
     ),
   );
   if (settle) await tester.pumpAndSettle();
 }
 
 void main() {
+  setUpAll(initializeAdminTestLocalization);
   test(
     'legacy normalization defaults to apartments and never mutates maps',
     () {
@@ -163,6 +165,7 @@ void main() {
   testWidgets(
     'cluster occupancy stream keeps search, reserved filter, list/grid and custom rename updates',
     (tester) async {
+      FlatUnit? selectedUnit;
       final stream = StreamController<List<FloorOccupancy>>();
       addTearDown(stream.close);
       FlatUnit unit(String label, FlatStatus status) => FlatUnit(
@@ -180,7 +183,7 @@ void main() {
         FlatOccupancyGridModal(
           towerName: 'Villas',
           dataStream: stream.stream,
-          onFlatTap: (_) {},
+          onFlatTap: (unit) => selectedUnit = unit,
         ),
         settle: false,
       );
@@ -203,7 +206,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Custom Home'), findsOneWidget);
       expect(find.text('Villa-03'), findsNothing);
-      await tester.tap(find.text('List View'));
+      await tester.tap(find.text('Custom Home'));
+      expect(selectedUnit?.docId, 'canonical');
+      expect(selectedUnit?.status, FlatStatus.reserved);
+      await tester.tap(find.text('List view'));
       await tester.pumpAndSettle();
       expect(find.text('Custom Home'), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'missing');

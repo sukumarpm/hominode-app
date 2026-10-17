@@ -338,7 +338,7 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                 border: Border.all(color: const Color(0xFFFDE68A)),
               ),
               child: const Text(
-                'This facility currently uses a legacy image URL. It will keep working until managed photos are added.',
+                'This facility uses an image link. It will keep working until gallery photos are added.',
                 style: TextStyle(fontSize: 11, color: Color(0xFF92400E)),
               ),
             ),
@@ -535,12 +535,12 @@ class _EditAmenityModalState extends State<EditAmenityModal> {
                       _facilityImages.isEmpty &&
                       _initialManagedImagePaths.isEmpty,
                   decoration: InputDecoration(
-                    labelText: 'Legacy image URL (optional)',
+                    labelText: 'Image link (optional)',
                     helperText:
                         _facilityImages.isEmpty &&
                             _initialManagedImagePaths.isEmpty
-                        ? 'Used only by older facilities without managed photos.'
-                        : 'Managed facility photos control the primary image.',
+                        ? 'Used when no gallery photos have been added.'
+                        : 'Gallery photos determine the primary image.',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8.r),
                     ),

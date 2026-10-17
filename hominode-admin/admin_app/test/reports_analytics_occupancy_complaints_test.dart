@@ -276,7 +276,7 @@ void main() {
     expect(find.text('0.0%'), findsNothing);
 
     await _showTab(tester, 'Financial');
-    expect(find.text('Billing V2 Summary'), findsOneWidget);
+    expect(find.text('Billing Summary'), findsOneWidget);
   });
 
   testWidgets('occupancy and complaints export says it is unavailable', (

@@ -516,9 +516,9 @@ class _AddAmenityModalState extends State<AddAmenityModal> {
                   key: const ValueKey('facility-image'),
                   controller: _imageUrlController,
                   decoration: InputDecoration(
-                    labelText: 'Legacy image URL (optional)',
+                    labelText: 'Image link (optional)',
                     helperText:
-                        'Optional compatibility field. Selected photos take priority.',
+                        'Optional image link. Selected photos take priority.',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8.r),
                     ),

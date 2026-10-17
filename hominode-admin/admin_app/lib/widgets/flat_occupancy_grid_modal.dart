@@ -1,4 +1,5 @@
 import '../models/unit_schema.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -76,7 +77,7 @@ class FlatOccupancyGridModal extends StatefulWidget {
     return showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close',
+      barrierLabel: 'close'.tr(),
       barrierColor: Colors.black.withOpacity(0.35),
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (context, animation, secondaryAnimation) {
@@ -178,7 +179,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                               ),
                               SizedBox(height: 12.h),
                               Text(
-                                'Unable to load units.',
+                                'unit_load_failed'.tr(),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 15.sp,
@@ -206,7 +207,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                     if (data.isEmpty) {
                       return Center(
                         child: Text(
-                          'No units found in this building.',
+                          'unit_none_in_building'.tr(),
                           style: TextStyle(
                             fontSize: 15.sp,
                             color: const Color(0xFF6B7280),
@@ -250,12 +251,14 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
       child: Stack(
         children: [
           Padding(
-            padding: EdgeInsets.only(right: 32.w),
+            padding: EdgeInsetsDirectional.only(end: 32.w),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${widget.towerName} - Unit Occupancy',
+                  'unit_occupancy_for_tower'.tr(
+                    namedArgs: {'tower': widget.towerName},
+                  ),
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w700,
@@ -264,7 +267,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  'Visual representation of all units. Click on any unit to view or edit details.',
+                  'unit_grid_accessibility_hint'.tr(),
                   style: TextStyle(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w400,
@@ -275,11 +278,11 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
               ],
             ),
           ),
-          Positioned(
+          PositionedDirectional(
             top: -4,
-            right: -4,
+            end: -4,
             child: Semantics(
-              label: 'Close occupancy grid',
+              label: 'unit_close_occupancy_grid'.tr(),
               button: true,
               child: InkWell(
                 onTap: () => Navigator.of(context).pop(),
@@ -313,14 +316,14 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
         children: [
           Expanded(
             child: _buildToggleButton(
-              label: 'Grid View',
+              label: 'unit_grid_view'.tr(),
               isActive: _viewMode == ViewMode.grid,
               onTap: () => setState(() => _viewMode = ViewMode.grid),
             ),
           ),
           Expanded(
             child: _buildToggleButton(
-              label: 'List View',
+              label: 'unit_list_view'.tr(),
               isActive: _viewMode == ViewMode.list,
               onTap: () => setState(() => _viewMode = ViewMode.list),
             ),
@@ -371,10 +374,13 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
       spacing: 14,
       runSpacing: 8,
       children: [
-        _buildLegendItem('Occupied', const Color(0xFF10B981)),
-        _buildLegendItem('Reserved', const Color(0xFF3B82F6)),
-        _buildLegendItem('Vacant', const Color(0xFFD1D5DB)),
-        _buildLegendItem('Maintenance', const Color(0xFFFBBF24)),
+        _buildLegendItem('unit_status_occupied'.tr(), const Color(0xFF10B981)),
+        _buildLegendItem('unit_status_reserved'.tr(), const Color(0xFF3B82F6)),
+        _buildLegendItem('unit_status_vacant'.tr(), const Color(0xFFD1D5DB)),
+        _buildLegendItem(
+          'unit_status_maintenance'.tr(),
+          const Color(0xFFFBBF24),
+        ),
       ],
     );
   }
@@ -413,7 +419,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
             onChanged: (value) => setState(() => _searchQuery = value),
             style: TextStyle(fontSize: 13.sp),
             decoration: InputDecoration(
-              hintText: 'Search by unit or resident',
+              hintText: 'unit_search_hint'.tr(),
               hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13.sp),
               prefixIcon: Icon(
                 Icons.search,
@@ -465,7 +471,9 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
           children: [
             Expanded(
               child: Text(
-                _statusFilter == null ? 'All' : _getStatusLabel(_statusFilter!),
+                _statusFilter == null
+                    ? 'all'.tr()
+                    : _getStatusLabel(_statusFilter!),
                 style: TextStyle(
                   fontSize: 12.sp,
                   fontWeight: FontWeight.w500,
@@ -483,19 +491,22 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
         ),
       ),
       itemBuilder: (context) => [
-        const PopupMenuItem(value: null, child: Text('All')),
-        const PopupMenuItem(
+        PopupMenuItem(value: null, child: Text('all'.tr())),
+        PopupMenuItem(
           value: FlatStatus.occupied,
-          child: Text('Occupied'),
+          child: Text('unit_status_occupied'.tr()),
         ),
-        const PopupMenuItem(value: FlatStatus.vacant, child: Text('Vacant')),
-        const PopupMenuItem(
+        PopupMenuItem(
+          value: FlatStatus.vacant,
+          child: Text('unit_status_vacant'.tr()),
+        ),
+        PopupMenuItem(
           value: FlatStatus.maintenance,
-          child: Text('Maintenance'),
+          child: Text('unit_status_maintenance'.tr()),
         ),
-        const PopupMenuItem(
+        PopupMenuItem(
           value: FlatStatus.reserved,
-          child: Text('Reserved'),
+          child: Text('unit_status_reserved'.tr()),
         ),
       ],
     );
@@ -504,13 +515,13 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
   String _getStatusLabel(FlatStatus status) {
     switch (status) {
       case FlatStatus.occupied:
-        return 'Occupied';
+        return 'unit_status_occupied'.tr();
       case FlatStatus.reserved:
-        return 'Reserved';
+        return 'unit_status_reserved'.tr();
       case FlatStatus.vacant:
-        return 'Vacant';
+        return 'unit_status_vacant'.tr();
       case FlatStatus.maintenance:
-        return 'Maintenance';
+        return 'unit_status_maintenance'.tr();
     }
   }
 
@@ -522,7 +533,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
         child: Padding(
           padding: EdgeInsets.all(40.w),
           child: Text(
-            'No units found',
+            'unit_none_found'.tr(),
             style: TextStyle(fontSize: 16.sp, color: Color(0xFF6B7280)),
           ),
         ),
@@ -546,8 +557,10 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                 ),
                 child: Text(
                   floor.floorNumber == 0
-                      ? 'Units'
-                      : 'Floor ${floor.floorNumber}',
+                      ? 'unit_units_label'.tr()
+                      : 'unit_floor_label'.tr(
+                          namedArgs: {'floor': '${floor.floorNumber}'},
+                        ),
                   style: TextStyle(
                     fontSize: 13.sp,
                     fontWeight: FontWeight.w600,
@@ -584,7 +597,13 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
         : Colors.white;
 
     return Semantics(
-      label: 'Flat ${flat.id} ${_getStatusLabel(flat.status)} ${flat.type}',
+      label: 'unit_accessibility_status_label'.tr(
+        namedArgs: {
+          'unit': flat.id,
+          'status': _getStatusLabel(flat.status),
+          'type': flat.type,
+        },
+      ),
       button: true,
       child: Material(
         color: color,
@@ -617,7 +636,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                 ),
                 SizedBox(height: 2.h),
                 Text(
-                  flat.residentName ?? 'Vacant',
+                  flat.residentName ?? 'unit_status_vacant'.tr(),
                   style: TextStyle(
                     fontSize: 9.sp,
                     fontWeight: FontWeight.w400,
@@ -642,7 +661,7 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
         child: Padding(
           padding: EdgeInsets.all(40.w),
           child: Text(
-            'No units found',
+            'unit_none_found'.tr(),
             style: TextStyle(fontSize: 16.sp, color: Color(0xFF6B7280)),
           ),
         ),
@@ -666,8 +685,10 @@ class _FlatOccupancyGridModalState extends State<FlatOccupancyGridModal> {
                 ),
                 child: Text(
                   floor.floorNumber == 0
-                      ? 'Units'
-                      : 'Floor ${floor.floorNumber}',
+                      ? 'unit_units_label'.tr()
+                      : 'unit_floor_label'.tr(
+                          namedArgs: {'floor': '${floor.floorNumber}'},
+                        ),
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.w600,

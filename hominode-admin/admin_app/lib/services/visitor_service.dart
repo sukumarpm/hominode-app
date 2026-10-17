@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../models/notification_models.dart';
 import 'admin_service.dart';
-import 'notification_firestore_service.dart';
 
 abstract interface class VisitorWorkflowService {
   Stream<List<VisitorModel>> getPendingVisitors();
@@ -10,15 +8,12 @@ abstract interface class VisitorWorkflowService {
   Stream<List<VisitorModel>> getHistoryVisitors();
   Future<void> approveVisitor(String visitorId);
   Future<void> rejectVisitor(String visitorId);
-  Future<void> checkInVisitor(String visitorId);
   Future<void> checkOutVisitor(String visitorId);
 }
 
 class VisitorService implements VisitorWorkflowService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AdminService _adminService = AdminService();
-  final NotificationFirestoreService _notificationService =
-      NotificationFirestoreService();
   final String _collection = 'visitors';
 
   /// Get visitor by ID
@@ -226,7 +221,9 @@ class VisitorService implements VisitorWorkflowService {
         .map((snapshot) => snapshot.docs.length);
   }
 
-  /// Create visitor request (from resident app)
+  /// Admin cannot create a Resident invitation by supplying a resident ID.
+  /// A walk-in workflow requires a separate server-authorized contract.
+  @Deprecated('Resident invitations must be created by the authenticated Resident.')
   Future<String> createVisitorRequest({
     required String visitorName,
     required String phone,
@@ -238,61 +235,11 @@ class VisitorService implements VisitorWorkflowService {
     DateTime? expectedTime,
     String? buildingId,
   }) async {
-    try {
-      print('VisitorService: Creating visitor request - $visitorName');
-
-      // Get admin ID from building if not provided
-      String? adminId;
-      String? finalBuildingId = buildingId;
-
-      if (buildingId != null) {
-        try {
-          final buildingDoc = await _firestore
-              .collection('buildings')
-              .doc(buildingId)
-              .get();
-          if (buildingDoc.exists) {
-            adminId = buildingDoc.data()?['adminId'];
-            finalBuildingId = buildingId;
-          }
-        } catch (e) {
-          print('VisitorService WARNING: Could not fetch building admin: $e');
-        }
-      }
-
-      // If no admin found, try to get from current admin (fallback)
-      adminId ??= _adminService.getCurrentAdminId();
-
-      final docRef = await _firestore.collection(_collection).add({
-        'visitorName': visitorName,
-        'phone': phone,
-        'residentId': residentId,
-        'residentName': residentName,
-        'flatId': flatId,
-        'flatLabel': flatLabel,
-        'purpose': purpose,
-        'expectedTime': expectedTime != null
-            ? Timestamp.fromDate(expectedTime)
-            : null,
-        'status': 'pending',
-        // Multi-tenancy fields
-        'adminId': adminId,
-        'communityId': _adminService.requireCurrentCommunityId(),
-        'buildingId': finalBuildingId,
-        'buildingIds': finalBuildingId != null ? [finalBuildingId] : [],
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      print('VisitorService: Visitor request created with ID: ${docRef.id}');
-      print(
-        'VisitorService: Stored adminId: $adminId, buildingId: $finalBuildingId',
-      );
-      return docRef.id;
-    } catch (e) {
-      print('VisitorService ERROR: Failed to create visitor request: $e');
-      throw Exception('Failed to create visitor request: $e');
-    }
+    throw UnsupportedError(
+      'Admin cannot create a visitor invitation on behalf of a Resident. '
+      'The authenticated Resident must create the invitation. Admin walk-ins '
+      'require a separate server-authorized gate-entry workflow.',
+    );
   }
 
   /// Approve visitor (admin action) with flow function
@@ -335,30 +282,7 @@ class VisitorService implements VisitorWorkflowService {
       });
       print('✅ STEP 3 PASSED: Visitor approved');
 
-      // STEP 4: Notify Resident
-      print('🔔 STEP 4: Notifying resident...');
-      final residentId = visitorData['residentId'] ?? '';
-      final visitorName = visitorData['visitorName'] ?? 'Visitor';
-
-      if (residentId.isNotEmpty) {
-        try {
-          await _notificationService.createNotification(
-            title: 'Visitor Approved',
-            message: '$visitorName has been approved to visit',
-            type: NotificationType.visitor,
-            priority: NotificationPriority.high,
-            recipientId: residentId,
-            metadata: {'visitorId': visitorId, 'visitorName': visitorName},
-          );
-        } catch (notificationError) {
-          print(
-            '⚠️ STEP 4 WARNING: Failed to send notification: $notificationError',
-          );
-        }
-      }
-      print('✅ STEP 4 PASSED: Resident notified');
-
-      // STEP 5: Return Result
+      // The server-side visitor transition trigger owns host notifications.
       print('✅ VISITOR APPROVAL FLOW: COMPLETE');
     } catch (e) {
       print('❌ ERROR: $e');
@@ -403,62 +327,12 @@ class VisitorService implements VisitorWorkflowService {
           .update(rejectedVisitorUpdate(adminId: adminId));
       print('✅ STEP 3 PASSED: Visitor rejected');
 
-      // STEP 4: Notify Resident
-      print('🔔 STEP 4: Notifying resident...');
-      final residentId = visitorData['residentId'] ?? '';
-      final visitorName = visitorData['visitorName'] ?? 'Visitor';
-
-      if (residentId.isNotEmpty) {
-        try {
-          await _notificationService.createNotification(
-            title: 'Visitor Rejected',
-            message: '$visitorName\'s visit request has been rejected',
-            type: NotificationType.visitor,
-            priority: NotificationPriority.high,
-            recipientId: residentId,
-            metadata: {'visitorId': visitorId, 'visitorName': visitorName},
-          );
-        } catch (notificationError) {
-          print(
-            '⚠️ STEP 4 WARNING: Failed to send notification: $notificationError',
-          );
-        }
-      }
-      print('✅ STEP 4 PASSED: Resident notified');
-
-      // STEP 5: Return Result
+      // The server-side visitor transition trigger owns host notifications.
       print('✅ VISITOR REJECTION FLOW: COMPLETE');
     } catch (e) {
       print('❌ ERROR: $e');
       throw Exception('Failed to reject visitor: $e');
     }
-  }
-
-  /// Gate admission may approve a pending invitation atomically.
-  @override
-  Future<void> checkInVisitor(String visitorId) async {
-    final actorId = _adminService.getCurrentAdminId();
-    if (actorId == null) {
-      throw Exception('Admin not authenticated');
-    }
-    final ref = _firestore.collection(_collection).doc(visitorId);
-    await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      if (!snapshot.exists) {
-        throw Exception('Visitor not found.');
-      }
-      transaction.update(ref, {
-        'status': 'inside',
-        'isApproved': true,
-        'actualArrival': FieldValue.serverTimestamp(),
-        'checkedInBy': actorId,
-        if (snapshot.data()?['isApproved'] != true) ...{
-          'approvedBy': actorId,
-          'approvedAt': FieldValue.serverTimestamp(),
-        },
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    });
   }
 
   @override

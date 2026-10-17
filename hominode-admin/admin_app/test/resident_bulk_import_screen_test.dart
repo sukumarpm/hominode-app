@@ -1,8 +1,11 @@
 import 'package:admin_app/resident_bulk_import_screen.dart';
 import 'package:admin_app/services/resident_bulk_import_service.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hominode_core/hominode_core.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeGateway implements ResidentBulkImportGateway {
   final communities = <String>[];
@@ -60,6 +63,14 @@ class _FakeGateway implements ResidentBulkImportGateway {
 }
 
 void main() {
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
+    await EasyLocalization.ensureInitialized();
+    for (final locale in ['en', 'ta', 'hi', 'es', 'ar']) {
+      await rootBundle.loadString('assets/translations/$locale.json');
+    }
+  });
+
   testWidgets(
     'previews, confirms, displays results, and retries only failed rows',
     (tester) async {
@@ -86,16 +97,16 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ResidentBulkImportScreen(
+      await _pumpLocalizedApp(
+        tester,
+        _testApp(
+          ResidentBulkImportScreen(
             gateway: gateway,
             initialFile: file,
             communityId: 'COMMUNITY_A',
           ),
         ),
       );
-      await tester.pumpAndSettle();
 
       expect(find.text('Validation preview'), findsOneWidget);
       expect(find.textContaining('Alex Resident'), findsOneWidget);
@@ -121,5 +132,61 @@ void main() {
       expect(find.text('Successful 2'), findsOneWidget);
       expect(find.byKey(const Key('bulk-import-retry')), findsNothing);
     },
+  );
+
+  testWidgets('bulk import labels follow the selected locale direction', (
+    tester,
+  ) async {
+    await _pumpLocalizedApp(
+      tester,
+      _testApp(
+        ResidentBulkImportScreen(
+          gateway: _FakeGateway(),
+          communityId: 'COMMUNITY_A',
+        ),
+        locale: const Locale('ar'),
+      ),
+    );
+
+    expect(find.text('استيراد المقيمين بالجملة'), findsOneWidget);
+    expect(
+      Directionality.of(
+        tester.element(find.text('استيراد المقيمين بالجملة')),
+      ).name,
+      'rtl',
+    );
+  });
+}
+
+Future<void> _pumpLocalizedApp(WidgetTester tester, Widget app) async {
+  await tester.pumpWidget(app);
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 100)),
+  );
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.pumpAndSettle();
+}
+
+Widget _testApp(Widget child, {Locale locale = const Locale('en')}) {
+  return EasyLocalization(
+    supportedLocales: const [
+      Locale('en'),
+      Locale('ta'),
+      Locale('hi'),
+      Locale('es'),
+      Locale('ar'),
+    ],
+    path: 'assets/translations',
+    fallbackLocale: const Locale('en'),
+    startLocale: locale,
+    saveLocale: false,
+    child: Builder(
+      builder: (context) => MaterialApp(
+        locale: context.locale,
+        supportedLocales: context.supportedLocales,
+        localizationsDelegates: context.localizationDelegates,
+        home: child,
+      ),
+    ),
   );
 }

@@ -728,7 +728,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Billing V2 Summary',
+            'Billing Summary',
             style: TextStyle(
               fontSize: 16.sp,
               fontWeight: FontWeight.w700,
