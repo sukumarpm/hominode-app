@@ -474,16 +474,6 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
   bool _isImageSelected = false;
   String? _imageError;
 
-  final _dateController = TextEditingController();
-  final _timeController = TextEditingController();
-
-  @override
-  void dispose() {
-    _dateController.dispose();
-    _timeController.dispose();
-    super.dispose();
-  }
-
   Future<void> _pickImage() async {
     try {
       setState(() {
@@ -527,51 +517,6 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
     }
   }
 
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF0E4778)),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _dateController.text =
-            '${picked.day.toString().padLeft(2, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.year}';
-      });
-    }
-  }
-
-  Future<void> _selectTime(BuildContext context) async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF0E4778)),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _timeController.text = picked.format(context);
-      });
-    }
-  }
-
   Future<void> _uploadImage() async {
     if (_selectedImage == null) {
       setState(() {
@@ -589,14 +534,6 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
       print('🔵 ADD IMAGE MODAL: Starting image upload...');
       print('🔐 STEP 1: Validating form data...');
 
-      if (_dateController.text.isEmpty) {
-        print('❌ STEP 1 FAILED: Date not selected');
-        throw Exception('Please select a date');
-      }
-      if (_timeController.text.isEmpty) {
-        print('❌ STEP 1 FAILED: Time not selected');
-        throw Exception('Please select a time');
-      }
       print('✅ STEP 1 PASSED: Form data validated');
 
       print('📋 STEP 2: Uploading image to Cloudinary...');
@@ -606,8 +543,6 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
         type: 'Common Area',
         imageFile: _selectedImage!,
         buildingId: widget.buildingId,
-        uploadDate: _dateController.text,
-        uploadTime: _timeController.text,
       );
       print('✅ STEP 2 PASSED: Image uploaded successfully - $imageId');
 
@@ -687,43 +622,6 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
 
                     SizedBox(height: 20.h),
 
-                    // Date & Time Row
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildFieldLabel('Date'),
-                              SizedBox(height: 8.h),
-                              _buildTextField(
-                                controller: _dateController,
-                                placeholder: 'dd-mm-yyyy',
-                                onTap: () => _selectDate(context),
-                                readOnly: true,
-                              ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(width: 16.w),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildFieldLabel('Time'),
-                              SizedBox(height: 8.h),
-                              _buildTextField(
-                                controller: _timeController,
-                                placeholder: '-- : --',
-                                onTap: () => _selectTime(context),
-                                readOnly: true,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-
                     SizedBox(height: 24.h),
                   ],
                 ),
@@ -782,41 +680,6 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
         fontSize: 16.sp,
         fontWeight: FontWeight.w600,
         color: Color(0xFF111827),
-      ),
-    );
-  }
-
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String placeholder,
-    bool readOnly = false,
-    VoidCallback? onTap,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        borderRadius: BorderRadius.circular(8.r),
-      ),
-      child: TextFormField(
-        controller: controller,
-        readOnly: readOnly,
-        onTap: onTap,
-        style: TextStyle(fontSize: 14.sp, color: Color(0xFF111827)),
-        decoration: InputDecoration(
-          hintText: placeholder,
-          hintStyle: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
-          border: InputBorder.none,
-          contentPadding: EdgeInsets.all(16.w),
-          suffixIcon: readOnly && onTap != null
-              ? Icon(
-                  controller == _dateController
-                      ? Icons.calendar_today
-                      : Icons.access_time,
-                  size: 18.w,
-                  color: const Color(0xFF6B7280),
-                )
-              : null,
-        ),
       ),
     );
   }
