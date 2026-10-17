@@ -27,6 +27,17 @@ class CloudinaryApartmentImagesService {
     String? uploadDate,
     String? uploadTime,
   }) async {
+    // Preserve legacy display fields without requiring admins to choose a date.
+    // createdAt in Firestore remains the authoritative server timestamp.
+    final uploadStartedAt = DateTime.now();
+    final recordedUploadDate = uploadDate ??
+        '${uploadStartedAt.day.toString().padLeft(2, '0')}-'
+            '${uploadStartedAt.month.toString().padLeft(2, '0')}-'
+            '${uploadStartedAt.year}';
+    final recordedUploadTime = uploadTime ??
+        '${uploadStartedAt.hour.toString().padLeft(2, '0')}:'
+            '${uploadStartedAt.minute.toString().padLeft(2, '0')}';
+
     try {
       print('🔵 CLOUDINARY APARTMENT IMAGES SERVICE: Starting image upload...');
 
@@ -221,8 +232,8 @@ class CloudinaryApartmentImagesService {
           'communityId': _adminService.requireCurrentCommunityId(),
           'adminName': adminName,
           'buildingId': buildingId,
-          'uploadDate': uploadDate ?? '',
-          'uploadTime': uploadTime ?? '',
+          'uploadDate': recordedUploadDate,
+          'uploadTime': recordedUploadTime,
           'status': 'active',
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
