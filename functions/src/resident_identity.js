@@ -1434,21 +1434,33 @@ async function createResidentOnboardingCore({ db, auth, data }) {
   const input = validateSingleOnboardingInput(data, actor.community);
   const onboardingId = residentOnboardingId(input.communityId, input.phoneNumber);
   const onboardingRef = db.collection("residentOnboarding").doc(onboardingId);
-  const phoneQuery = db.collection("users")
-    .where("communityId", "==", input.communityId)
-    .where("phoneNumber", "==", input.phoneNumber);
-  const legacyPhoneQuery = db.collection("users")
-    .where("communityId", "==", input.communityId)
-    .where("phone", "==", input.phoneNumber);
+  const usersQuery = db.collection("users")
+    .where("communityId", "==", input.communityId);
+  const onboardingQuery = db.collection("residentOnboarding")
+    .where("communityId", "==", input.communityId);
+  const countryCode = clean(actor.community?.phoneCountryCode || actor.community?.countryCode).toUpperCase();
+  const matchesPhone = (record) => [record?.phoneNumber, record?.phone].some((value) => {
+    if (!clean(value)) return false;
+    try {
+      return normalizePhone(value, /^[A-Z]{2}$/.test(countryCode) ? countryCode : null) === input.phoneNumber;
+    } catch (_) {
+      return false;
+    }
+  });
   return db.runTransaction(async (transaction) => {
-    const [onboardingSnapshot, phoneUsers, legacyPhoneUsers] = await Promise.all([
+    const [onboardingSnapshot, phoneUsers, pendingOnboardings] = await Promise.all([
       transaction.get(onboardingRef),
-      transaction.get(phoneQuery),
-      transaction.get(legacyPhoneQuery),
+      transaction.get(usersQuery),
+      transaction.get(onboardingQuery),
     ]);
-    if (phoneUsers.docs.length > 0 || legacyPhoneUsers.docs.length > 0) {
+    if (phoneUsers.docs.some((doc) => matchesPhone(doc.data()))) {
       throw new RegistrationError("already-exists", "A resident profile already uses this phone in the community.");
     }
+    if (pendingOnboardings.docs.some((doc) => doc.id !== onboardingId && matchesPhone(doc.data()))) {
+      throw new RegistrationError("already-exists", "A resident onboarding already uses this phone in the community.");
+    }
+    // V1 registration intentionally rejects existing resident identities. Adding an
+    // owner to another unit needs a separate, explicit membership workflow.
     if (onboardingSnapshot.exists) {
       const existing = onboardingSnapshot.data();
       if (existing?.communityId === input.communityId &&

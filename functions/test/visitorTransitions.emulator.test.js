@@ -45,24 +45,54 @@ test.beforeEach(async () => {
     await batch.commit();
   });
 });
-for (const uid of ['aa', 'sa']) {
-  check(`${uid}: pending approval, arrival and checkout are actor-attributed and use server time`, async () => {
+check('Admin can approve a pending request without checking the visitor in', async () => {
+    const uid = 'aa';
     await assertSucceeds(ref(uid).update(approve(uid)));
     const approved = (await ref(uid).get()).data();
+    assert.equal(approved.status, 'approved');
+    assert.equal(approved.isApproved, true);
     assert.equal(approved.approvedBy, uid);
     assert(approved.approvedAt.isEqual(approved.updatedAt));
-    await assertSucceeds(ref(uid).update(enter(uid)));
-    const arrived = (await ref(uid).get()).data();
-    assert.equal(arrived.checkedInBy, uid);
-    assert(arrived.actualArrival.isEqual(arrived.updatedAt));
-    assert(arrived.approvedAt.isEqual(approved.approvedAt));
-    await assertSucceeds(ref(uid).update(exit(uid)));
-    const departed = (await ref(uid).get()).data();
-    assert.equal(departed.status, 'completed');
-    assert.equal(departed.checkedOutBy, uid);
-    assert(departed.departure.isEqual(departed.updatedAt));
+    assert.equal(approved.actualArrival, null);
+    assert.equal(approved.checkedInBy, undefined);
   });
-  check(`${uid}: pending rejection is terminal`, async () => {
+check('Admin cannot check in directly or forge arrival fields', async () => {
+  const uid = 'aa';
+  await assertFails(ref(uid).update(enter(uid, true)));
+  await ref(uid).update(approve(uid));
+  await assertFails(ref(uid).update(enter(uid)));
+  await assertFails(ref(uid).update({actualArrival: serverTimestamp(), updatedAt: serverTimestamp()}));
+  await assertFails(ref(uid).update({checkedInBy: uid, updatedAt: serverTimestamp()}));
+  const approved = (await ref(uid).get()).data();
+  assert.equal(approved.status, 'approved');
+  assert.equal(approved.actualArrival, null);
+  assert.equal(approved.checkedInBy, undefined);
+});
+check('Admin checkout remains available for active visitors', async () => {
+  const uid = 'aa';
+  await seed({...initial, status: 'inside', isApproved: true, actualArrival: new Date()});
+  await assertSucceeds(ref(uid).update(exit(uid)));
+  const departed = (await ref(uid).get()).data();
+  assert.equal(departed.status, 'completed');
+  assert.equal(departed.checkedOutBy, uid);
+  assert(departed.departure.isEqual(departed.updatedAt));
+  });
+check('Security cannot approve, reject or check in through direct Firestore writes', async () => {
+    const uid = 'sa';
+    await assertFails(ref(uid).update(approve(uid)));
+    await assertFails(ref(uid).update(reject(uid)));
+    await assertFails(ref(uid).update(enter(uid, true)));
+  });
+check('Security cannot read or directly check out visitors; use the secure callables', async () => {
+    const uid = 'sa';
+    await seed({...initial, status: 'inside', isApproved: true, actualArrival: new Date()});
+    await assertFails(ref(uid).get());
+    await assertFails(client(uid).collection('visitors')
+      .where('communityId', '==', 'a').where('status', '==', 'inside').get());
+    await assertFails(ref(uid).update(exit(uid)));
+  });
+check('Admin pending rejection remains terminal', async () => {
+    const uid = 'aa';
     await assertSucceeds(ref(uid).update(reject(uid)));
     const rejected = (await ref(uid).get()).data();
     assert.equal(rejected.rejectedBy, uid);
@@ -71,19 +101,28 @@ for (const uid of ['aa', 'sa']) {
     await assertFails(ref(uid).update(enter(uid, true)));
     await assertFails(ref(uid).update(reject(uid)));
   });
-}
-check('Security QR admission atomically approves pending invitations', async () => {
-  await assertSucceeds(ref('sa').update(enter('sa', true)));
-  const value = (await ref('sa').get()).data();
-  assert.equal(value.approvedBy, 'sa'); assert.equal(value.checkedInBy, 'sa');
-  assert(value.approvedAt.isEqual(value.actualArrival));
-});
-check('replayed check-in, check-out and terminal re-entry are denied', async () => {
-  await ref('sa').update(enter('sa', true));
+check('Security cannot check in without QR verified backend transition', async () => {
+  await assertFails(ref('sa').update(enter('sa', true)));
   await assertFails(ref('sa').update(enter('sa')));
-  await ref('sa').update(exit('sa'));
+  await assertFails(ref('sa').get());
+});
+check('Security cannot directly check out or re-enter terminal visitors', async () => {
+  await assertFails(ref('sa').update(enter('sa', true)));
+  await seed({...initial, status: 'inside', isApproved: true, actualArrival: new Date()});
+  await assertFails(ref('sa').update(enter('sa')));
+  await assertFails(ref('sa').update(exit('sa')));
   await assertFails(ref('sa').update(exit('sa')));
   await assertFails(ref('sa').update(enter('sa')));
+});
+check('clients cannot forge gate-denial state on create or update', async () => {
+  const forged = {...initial, gateAccessStatus: 'denied', gateEntryDeniedAt: serverTimestamp(),
+    gateEntryDeniedBy: 'sa', gateEntryDenialReason: 'Forged'};
+  await assertFails(ref('ra', 'forged-denial').set(forged));
+  await seed(initial);
+  await assertFails(ref('sa').update({gateAccessStatus: 'denied', gateEntryDeniedAt: serverTimestamp(),
+    gateEntryDeniedBy: 'sa', gateEntryDenialReason: 'Forged', updatedAt: serverTimestamp()}));
+  await assertFails(ref('aa').update({gateAccessStatus: 'denied', gateEntryDeniedAt: serverTimestamp(),
+    gateEntryDeniedBy: 'aa', gateEntryDenialReason: 'Forged', updatedAt: serverTimestamp()}));
 });
 check('forged or missing actor IDs and client timestamps are denied for every transition', async () => {
   for (const [state, make, actorField, timeField] of [
@@ -103,7 +142,7 @@ check('forged or missing actor IDs and client timestamps are denied for every tr
 check('approved check-in cannot rewrite original approval attribution', async () => {
   await ref('aa').update(approve('aa'));
   await assertFails(ref('sa').update(enter('sa', true)));
-  await assertSucceeds(ref('sa').update(enter('sa')));
+  await assertFails(ref('sa').update(enter('sa')));
 });
 check('cross-community actors, residents and unauthenticated callers cannot transition', async () => {
   for (const uid of ['ab', 'sb', 'ra', 'rb']) await assertFails(ref(uid).update(approve(uid)));
@@ -119,45 +158,54 @@ check('cross-community or conflicting host and unit references fail on create an
     await assertFails(ref('sa').update(enter('sa', true)));
   }
 });
-check('all creators must start unapproved, without forged approval or gate fields', async () => {
+check('all clients must use the protected invitation callable; direct and forged creates are denied', async () => {
   for (const uid of ['aa', 'sa', 'ra']) {
     for (const patch of [{status: 'inside'}, {isApproved: true}, {approvedBy: 'aa'}, {rejectedAt: new Date()},
-      {actualArrival: new Date()}, {checkedInBy: 'sa'}, {checkedOutBy: 'sa'}, {departure: new Date()}]) {
+      {actualArrival: new Date()}, {checkedInBy: 'sa'}, {checkedOutBy: 'sa'}, {departure: new Date()},
+      {gateAccessStatus: 'denied'}, {gateEntryDeniedBy: 'sa'}, {verificationMethod: 'qr'}]) {
       await assertFails(ref(uid, 'new').set({...initial, ...patch}));
     }
-    await assertSucceeds(ref(uid, `new-${uid}`).set(initial));
+    await assertFails(ref(uid, `new-${uid}`).set(initial));
   }
 });
-check('Admin residentId-only pending creation and subsequent approval remain supported', async () => {
+check('Admin cannot create a residentId-only invitation but can approve an existing Resident invitation', async () => {
   const {hostUserId, ...data} = initial;
-  await assertSucceeds(ref('aa', 'admin-created').set({...data, residentId: 'ra', status: 'pending'}));
-  await assertSucceeds(ref('aa', 'admin-created').update(approve('aa')));
+  await assertFails(ref('aa', 'admin-created').set({...data, residentId: 'ra', status: 'pending'}));
+  await assertSucceeds(ref('aa').update(approve('aa')));
+  const approved = (await ref('aa').get()).data();
+  assert.equal(approved.hostUserId, hostUserId);
+  assert.equal(approved.status, 'approved');
+  assert.equal(approved.approvedBy, 'aa');
+  assert.equal(approved.actualArrival, null);
 });
-check('simultaneous reject and gate admission produce exactly one valid final state', async () => {
+check('direct Security admission remains denied when Admin rejects', async () => {
   const results = await Promise.allSettled([ref('aa').update(reject('aa')), ref('sa').update(enter('sa', true))]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(results.find(r => r.status === 'rejected').reason.code, 'permission-denied');
   const value = (await ref('aa').get()).data();
-  if (value.status === 'inside') {
-    assert.equal(value.checkedInBy, 'sa'); assert.equal(value.approvedBy, 'sa'); assert.equal(value.rejectedBy, undefined);
-  } else {
-    assert.equal(value.status, 'rejected'); assert.equal(value.rejectedBy, 'aa'); assert.equal(value.actualArrival, null);
-  }
+  assert.equal(value.status, 'rejected'); assert.equal(value.rejectedBy, 'aa'); assert.equal(value.actualArrival, null);
 });
-check('concurrent check-in and check-out replays each have one winner', async () => {
+check('direct check-in is denied and concurrent checkout replays have one winner', async () => {
   await ref('aa').update(approve('aa'));
-  for (const action of [enter, exit]) {
-    const results = await Promise.allSettled([ref('aa').update(action('aa')), ref('sa').update(action('sa'))]);
-    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
-    assert.equal(results.find(r => r.status === 'rejected').reason.code, 'permission-denied');
-  }
+  await assertFails(ref('aa').update(enter('aa')));
+  await assertFails(ref('sa').update(enter('sa')));
+  await seed({...initial, status: 'inside', isApproved: true, actualArrival: new Date()});
+  const results = await Promise.allSettled([
+    ref('aa').update(exit('aa')),
+    ref('sa').update(exit('sa')),
+  ]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.find(r => r.status === 'rejected').reason.code, 'permission-denied');
 });
 check('legacy approved/inside records work, terminal aliases never re-enter', async () => {
   await seed({...initial, isApproved: true});
-  await assertSucceeds(ref('sa').update(enter('sa')));
+  await assertFails(ref('sa').update(enter('sa')));
   for (const status of ['arrived', 'checked_in', 'inside']) {
     await seed({...initial, status, actualArrival: new Date()});
-    await assertSucceeds(ref('sa').update(exit('sa')));
+    // Legacy inside aliases remain manageable by Admin, but Security checkout
+    // is callable-only under SEC-006 and must not use a direct Firestore write.
+    await assertFails(ref('sa').update(exit('sa')));
+    await assertSucceeds(ref('aa').update(exit('aa')));
   }
   for (const status of ['rejected', 'cancelled', 'canceled', 'completed', 'departed', 'checked_out', 'checked-out', 'exited']) {
     await seed({...initial, status});
@@ -169,4 +217,18 @@ check('resident metadata edits cannot preserve a foreign host alias', async () =
   await assertSucceeds(ref('ra').update({visitorName: 'Updated guest'}));
   await seed({...initial, residentId: 'rb'});
   await assertFails(ref('ra').update({visitorName: 'Invalid host'}));
+});
+
+check('visitor credential documents and indexes are server-only', async () => {
+  await env.withSecurityRulesDisabled(async ctx => {
+    const db = ctx.firestore();
+    await db.doc('visitorHostCredentials/visit').set({hostUserId: 'ra', communityId: 'a', qrToken: 'secret'});
+    await db.doc('visitorGateCredentialIndex/hash').set({visitorId: 'visit', communityId: 'a'});
+  });
+  for (const uid of ['ra', 'aa', 'sa']) {
+    await assertFails(client(uid).doc('visitorHostCredentials/visit').get());
+    await assertFails(client(uid).doc('visitorGateCredentialIndex/hash').get());
+    await assertFails(client(uid).doc('visitorHostCredentials/visit').set({qrToken: 'forged'}));
+    await assertFails(client(uid).doc('visitorGateCredentialIndex/hash').set({visitorId: 'forged'}));
+  }
 });

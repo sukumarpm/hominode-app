@@ -2,6 +2,7 @@ const {createHash} = require('node:crypto');
 const {FieldValue, Timestamp} = require('firebase-admin/firestore');
 const {RegistrationError} = require('./register_resident');
 const {requireOperationalAdmin, resolveFlatOccupant} = require('./resident_identity');
+const ledger = require('./billing_v2_ledger');
 
 const STANDARD_LABELS = Object.freeze({
   maintenance: 'Maintenance', water: 'Water', parking: 'Parking', service: 'Service',
@@ -10,6 +11,11 @@ const STANDARD_LABELS = Object.freeze({
 const REVISION_ID = 'revision_1';
 const MAX_TARGETS = 5000;
 const PAGE_SIZE = 100;
+// Keep issuance reconciliation within the same account bounds used by the V2
+// settlement and statement paths. Oversized accounts require reconciliation.
+const MAX_ACCOUNT_BILLS = 200;
+const MAX_HISTORY_DOCUMENTS = 2000;
+const MAX_CREDIT_APPLICATION_WRITES = 440;
 const DAY_MS = 86400000;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -328,7 +334,202 @@ function finishTarget(transaction, batchRef, batch, targetRef, target, status, a
   return status;
 }
 
-async function generateTarget(db, auth, input, batchId, flatId, requireAuthority) {
+function rootDocuments(snapshot, collection) {
+  return snapshot.docs.filter(doc => doc.ref.path === `${collection}/${doc.id}`);
+}
+
+function financialDocuments(snapshot, collection, scope) {
+  return rootDocuments(snapshot, collection).map(doc => {
+    const event = doc.data();
+    if (event.id !== doc.id || event.schemaVersion !== 2 || event.communityId !== scope.communityId ||
+        event.residentId !== scope.residentId || event.currency !== scope.currency) {
+      throw new RegistrationError('failed-precondition', 'Resident financial history requires reconciliation.');
+    }
+    return event;
+  });
+}
+
+function assertProjectionMatches(bill, billId, history, nowMs) {
+  const isOverdue = localDateKeyFromMillis(nowMs, bill.timeZone) > bill.dueDateKey;
+  const expected = ledger.calculateBillProjection({amountMinor: bill.amountMinor,
+    paidAmountMinor: history.payments.paidByBill[billId] || 0,
+    creditAppliedMinor: history.credits.creditAppliedByBill[billId] || 0,
+    currency: 'INR', isOverdue});
+  if (['paidAmountMinor', 'creditAppliedMinor', 'outstandingAmountMinor'].some(key => bill[key] !== expected[key])) {
+    throw new RegistrationError('failed-precondition', 'Resident bill projection requires reconciliation.');
+  }
+  const beforeDue = ledger.calculateBillProjection({amountMinor: bill.amountMinor,
+    paidAmountMinor: expected.paidAmountMinor, creditAppliedMinor: expected.creditAppliedMinor,
+    currency: 'INR', isOverdue: false});
+  if (!['pending', 'partially_paid', 'paid', 'overdue'].includes(bill.status) ||
+      (bill.status !== expected.status && !(expected.status === 'overdue' && bill.status === beforeDue.status))) {
+    throw new RegistrationError('failed-precondition', 'Resident bill status requires reconciliation.');
+  }
+  return expected;
+}
+
+async function existingV2Liability(db, transaction, doc, scope, history, nowMs) {
+  const bill = doc.data();
+  // Current V2 payment settlement supports recurring bills only. Legacy ad-hoc
+  // records are deliberately outside this planner; unknown V2 kinds fail closed.
+  if (bill.billingKind === 'ad_hoc') return null;
+  if (bill.schemaVersion !== 2 || bill.billingKind !== 'recurring' || bill.currency !== 'INR' ||
+      bill.communityId !== scope.communityId || bill.residentId !== scope.residentId ||
+      !['billingBatchId', 'currentRevisionId', 'flatId', 'buildingId'].every(key => validId(bill[key])) ||
+      typeof bill.billingPeriod !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(bill.billingPeriod) ||
+      doc.id !== monthlyBillIdV2(scope.communityId, bill.flatId, bill.billingPeriod) ||
+      (bill.userId != null && bill.userId !== scope.residentId) || !(bill.createdAt instanceof Timestamp) ||
+      !(bill.dueDate instanceof Timestamp) || !Number.isSafeInteger(bill.amountMinor) || bill.amountMinor <= 0 ||
+      typeof bill.dueDateKey !== 'string' || typeof bill.timeZone !== 'string' || !bill.timeZone) {
+    throw new RegistrationError('failed-precondition', 'A resident V2 liability requires reconciliation.');
+  }
+  const batch = (await transaction.get(db.collection('billingBatches').doc(bill.billingBatchId))).data();
+  if (!batch || batch.schemaVersion !== 2 || batch.communityId !== scope.communityId || batch.currency !== 'INR' ||
+      batch.activeRevisionId != null || !validId(batch.currentRevisionId) ||
+      batch.currentRevisionId !== bill.appliedBatchRevisionId || batch.revisionNo !== bill.revisionNo ||
+      batch.billingPeriod !== bill.billingPeriod) {
+    throw new RegistrationError('failed-precondition', 'A resident V2 liability is not ready for settlement.');
+  }
+  const revision = (await transaction.get(db.collection(`bills/${doc.id}/revisions`).doc(bill.currentRevisionId))).data();
+  if (!revision || revision.schemaVersion !== 2 || revision.billId !== doc.id || revision.revisionId !== bill.currentRevisionId ||
+      revision.billingBatchId !== bill.billingBatchId || revision.communityId !== scope.communityId ||
+      revision.residentId !== scope.residentId || revision.flatId !== bill.flatId || revision.buildingId !== bill.buildingId ||
+      revision.billingKind !== 'recurring' || revision.billingPeriod !== bill.billingPeriod ||
+      revision.revisionNo !== bill.revisionNo || revision.appliedBatchRevisionId !== bill.appliedBatchRevisionId ||
+      revision.currency !== 'INR' || revision.amountMinor !== bill.amountMinor ||
+      !(revision.dueDate instanceof Timestamp) || !revision.dueDate.isEqual(bill.dueDate) ||
+      revision.dueDateKey !== bill.dueDateKey || revision.timeZone !== bill.timeZone) {
+    throw new RegistrationError('failed-precondition', 'A resident V2 bill revision requires reconciliation.');
+  }
+  const currentLines = validateChargeLines(bill.chargeLines), revisionLines = validateChargeLines(revision.chargeLines);
+  if (currentLines.amountMinor !== bill.amountMinor || revisionLines.amountMinor !== bill.amountMinor ||
+      JSON.stringify(currentLines.chargeLines) !== JSON.stringify(revisionLines.chargeLines)) {
+    throw new RegistrationError('failed-precondition', 'A resident V2 bill revision requires reconciliation.');
+  }
+  const projection = assertProjectionMatches(bill, doc.id, history, nowMs);
+  return {billId: doc.id, bill, ref: doc.ref, projection, outstandingAmountMinor: projection.outstandingAmountMinor};
+}
+
+function creditApplicationSourceId(batchId, billId) {
+  return `billing_issue_${hash([batchId, billId])}`;
+}
+
+async function applyCreditAtIssuance({db, transaction, scope, generatedBill, generatedBillRef, nowMs}) {
+  const accountRef = db.collection('residentFinancialAccounts').doc(ledger.residentFinancialAccountId(scope));
+  const [accountSnapshot, billsSnapshot, transactionsSnapshot, allocationsSnapshot, creditsSnapshot] = await Promise.all([
+    transaction.get(accountRef),
+    transaction.get(db.collection('bills').where('schemaVersion', '==', 2)
+      .where('communityId', '==', scope.communityId).where('residentId', '==', scope.residentId)
+      .limit(MAX_ACCOUNT_BILLS + 1)),
+    transaction.get(db.collection('paymentTransactions').where('communityId', '==', scope.communityId)
+      .where('residentId', '==', scope.residentId).limit(MAX_HISTORY_DOCUMENTS + 1)),
+    transaction.get(db.collection('paymentAllocations').where('communityId', '==', scope.communityId)
+      .where('residentId', '==', scope.residentId).limit(MAX_HISTORY_DOCUMENTS + 1)),
+    transaction.get(db.collection('residentCreditEntries').where('communityId', '==', scope.communityId)
+      .where('residentId', '==', scope.residentId).limit(MAX_HISTORY_DOCUMENTS + 1)),
+  ]);
+  const billDocs = rootDocuments(billsSnapshot, 'bills');
+  const transactions = financialDocuments(transactionsSnapshot, 'paymentTransactions', scope);
+  const allocations = financialDocuments(allocationsSnapshot, 'paymentAllocations', scope);
+  const credits = financialDocuments(creditsSnapshot, 'residentCreditEntries', scope);
+  if (billDocs.length > MAX_ACCOUNT_BILLS || transactions.length > MAX_HISTORY_DOCUMENTS ||
+      allocations.length > MAX_HISTORY_DOCUMENTS || credits.length > MAX_HISTORY_DOCUMENTS) {
+    throw new RegistrationError('failed-precondition', 'Resident financial history exceeds atomic issuance limits.');
+  }
+  let history;
+  try {
+    history = {payments: ledger.summarizeAllocations({...scope, transactions, events: allocations}),
+      credits: ledger.summarizeCreditEntries({...scope, entries: credits})};
+  } catch (_) {
+    throw new RegistrationError('failed-precondition', 'Resident financial history requires reconciliation.');
+  }
+  const account = accountSnapshot.data();
+  if (accountSnapshot.exists && (account.schemaVersion !== 2 || account.id !== accountRef.id ||
+      account.communityId !== scope.communityId || account.residentId !== scope.residentId || account.currency !== 'INR' ||
+      !Number.isSafeInteger(account.version) || account.version < 0 || !Number.isSafeInteger(account.version + 1) ||
+      account.availableCreditMinor !== history.credits.availableCreditMinor)) {
+    throw new RegistrationError('failed-precondition', 'Resident financial account requires reconciliation.');
+  }
+  if (!accountSnapshot.exists && history.credits.availableCreditMinor !== 0) {
+    throw new RegistrationError('failed-precondition', 'Resident financial account requires reconciliation.');
+  }
+
+  const liabilities = [];
+  for (const doc of billDocs) {
+    if (doc.id === generatedBillRef.id) continue;
+    const liability = await existingV2Liability(db, transaction, doc, scope, history, nowMs);
+    if (liability && liability.outstandingAmountMinor > 0) liabilities.push({...scope, billId: liability.billId,
+      schemaVersion: 2, eligible: true, issued: true, outstandingAmountMinor: liability.outstandingAmountMinor,
+      billingPeriod: liability.bill.billingPeriod, dueDateMs: liability.bill.dueDate.toMillis(),
+      createdAtMs: liability.bill.createdAt.toMillis()});
+  }
+  const generatedProjection = ledger.calculateBillProjection({amountMinor: generatedBill.amountMinor,
+    paidAmountMinor: 0, creditAppliedMinor: 0, currency: 'INR',
+    isOverdue: localDateKeyFromMillis(nowMs, generatedBill.timeZone) > generatedBill.dueDateKey});
+  liabilities.push({...scope, billId: generatedBillRef.id, schemaVersion: 2, eligible: true, issued: true,
+    outstandingAmountMinor: generatedProjection.outstandingAmountMinor, billingPeriod: generatedBill.billingPeriod,
+    dueDateMs: generatedBill.dueDate.toMillis(), createdAtMs: nowMs});
+
+  const sourceId = creditApplicationSourceId(generatedBill.billingBatchId, generatedBillRef.id);
+  const plan = ledger.planCreditApplications({...scope, availableCreditMinor: history.credits.availableCreditMinor,
+    liabilities});
+  const applicationEvents = plan.applications.map(application => ledger.buildCreditEntry({...scope,
+    eventType: 'applied', sourceType: 'credit_application', sourceId, billId: application.billId,
+    amountMinor: application.amountMinor, createdAt: nowMs}));
+  if (applicationEvents.length + plan.applications.length + 6 > MAX_CREDIT_APPLICATION_WRITES) {
+    throw new RegistrationError('failed-precondition', 'Credit application exceeds the atomic issuance write limit.');
+  }
+  for (const event of applicationEvents) {
+    const existing = await transaction.get(db.collection('residentCreditEntries').doc(event.id));
+    if (existing.exists) {
+      try {ledger.assertImmutableRetry(existing.data(), event);} catch (_) {
+        throw new RegistrationError('failed-precondition', 'Immutable credit event conflict requires reconciliation.');
+      }
+      throw new RegistrationError('failed-precondition', 'Credit event exists before bill issuance; reconciliation is required.');
+    }
+  }
+  // Check the deterministic event IDs first. If a retry sees the same source
+  // with changed terms, immutable conflict detection must surface that exact
+  // inconsistency instead of the broader source-collision error.
+  if (credits.some(event => event.sourceType === 'credit_application' && event.sourceId === sourceId)) {
+    throw new RegistrationError('failed-precondition', 'Credit application exists before bill issuance; reconciliation is required.');
+  }
+  let nextCredits;
+  try {nextCredits = ledger.summarizeCreditEntries({...scope, entries: [...credits, ...applicationEvents]});} catch (_) {
+    throw new RegistrationError('failed-precondition', 'Credit applications exceed the available account balance.');
+  }
+  if (nextCredits.availableCreditMinor !== plan.remainingCreditMinor) {
+    throw new RegistrationError('failed-precondition', 'Credit application projection requires reconciliation.');
+  }
+  const projectedBills = new Map();
+  for (const application of plan.applications) {
+    const existing = liabilities.find(item => item.billId === application.billId);
+    const bill = application.billId === generatedBillRef.id ? generatedBill : billDocs.find(doc => doc.id === application.billId)?.data();
+    if (!bill || !existing) throw new RegistrationError('failed-precondition', 'Credit application targets an unavailable liability.');
+    const appliedMinor = nextCredits.creditAppliedByBill[application.billId] || 0;
+    const amountPaidMinor = history.payments.paidByBill[application.billId] || 0;
+    projectedBills.set(application.billId, ledger.calculateBillProjection({amountMinor: bill.amountMinor,
+      paidAmountMinor: amountPaidMinor, creditAppliedMinor: appliedMinor, currency: 'INR',
+      isOverdue: localDateKeyFromMillis(nowMs, bill.timeZone) > bill.dueDateKey}));
+  }
+
+  for (const event of applicationEvents) transaction.create(db.collection('residentCreditEntries').doc(event.id), event);
+  for (const [billId, projection] of projectedBills) {
+    if (billId === generatedBillRef.id) continue;
+    transaction.update(db.collection('bills').doc(billId), {...projection, updatedAt: FieldValue.serverTimestamp()});
+  }
+  // Only mutate the account when credit is consumed. The transactional account
+  // read still fences a concurrent settlement that creates/changes credit; a
+  // non-consuming bill issuance does not create financial-account records.
+  if (applicationEvents.length) {
+    const nextAccount = {...account, availableCreditMinor: nextCredits.availableCreditMinor,
+      version: account.version + 1, updatedAt: nowMs};
+    transaction.update(accountRef, nextAccount);
+  }
+  return {applicationEvents, projection: projectedBills.get(generatedBillRef.id) || generatedProjection};
+}
+
+async function generateTarget(db, auth, input, batchId, flatId, requireAuthority, now) {
   const batchRef = db.collection('billingBatches').doc(batchId);
   const targetRef = db.collection(`billingBatches/${batchId}/targets`).doc(flatId);
   return db.runTransaction(async transaction => {
@@ -395,18 +596,27 @@ async function generateTarget(db, auth, input, batchId, flatId, requireAuthority
     const identity = {communityId: input.communityId, flatId, buildingId: flat.buildingId,
       residentId, residentName: clean(resident.name) || clean(resident.fullName) || residentId,
       flatLabel: clean(flat.flatLabel) || clean(flat.unitLabel) || clean(flat.flatNumber) || flatId};
+    const issuanceNowMs = now();
+    const generatedBill = {...terms, ...identity, billingBatchId: batchId, billingKind: 'recurring',
+      createdAt: Timestamp.fromMillis(issuanceNowMs), dueDate: batch.dueDate, dueDateKey: batch.dueDateKey,
+      timeZone: batch.timeZone};
+    const creditPlan = await applyCreditAtIssuance({db, transaction,
+      scope: {communityId: input.communityId, residentId, currency: 'INR'}, generatedBill,
+      generatedBillRef: billRef, nowMs: issuanceNowMs});
+    const issuedTerms = {...terms, ...creditPlan.projection};
     transaction.create(assignmentRef, {schemaVersion: 2, communityId: input.communityId, flatId,
       billingPeriod: input.billingPeriod, billingBatchId: batchId, billId,
       createdBy: actor.uid, updatedBy: actor.uid,
       createdAt: FieldValue.serverTimestamp()});
-    transaction.create(billRef, {...terms, ...identity, adminId: batch.createdBy,
-      month: MONTHS[Number(input.billingPeriod.slice(5)) - 1], year: input.billingPeriod.slice(0, 4),
-      type: 'combined', status: 'pending', currentRevisionId: REVISION_ID, revisionNo: 1,
+    transaction.create(billRef, {...issuedTerms, ...identity, billingBatchId: batchId, billingKind: 'recurring',
+      adminId: batch.createdBy, month: MONTHS[Number(input.billingPeriod.slice(5)) - 1], year: input.billingPeriod.slice(0, 4),
+      type: 'combined', status: creditPlan.projection.status, currentRevisionId: REVISION_ID, revisionNo: 1,
       createdBy: actor.uid, updatedBy: actor.uid,
-      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()});
+      // Persist the same trusted issuance instant used by the FIFO planner.
+      createdAt: generatedBill.createdAt, updatedAt: FieldValue.serverTimestamp()});
     transaction.create(db.collection(`bills/${billId}/revisions`).doc(REVISION_ID), {
-      ...terms, ...identity, billId, revisionId: REVISION_ID, revisionNo: 1,
-      createdBy: actor.uid, updatedBy: actor.uid, createdAt: FieldValue.serverTimestamp(),
+      ...issuedTerms, ...identity, billId, revisionId: REVISION_ID, revisionNo: 1,
+      createdBy: actor.uid, updatedBy: actor.uid, createdAt: generatedBill.createdAt,
     });
     return finish('completed');
   });
@@ -449,7 +659,7 @@ async function createMonthlyBillingBatchV2Core({db, auth, data, now = Date.now, 
   const unresolved = [];
   for (const target of [...pending, ...failures]) {
     try {
-      if (await generateTarget(db, auth, input, batchId, target.id, requireAuthority) === 'completed') created++;
+      if (await generateTarget(db, auth, input, batchId, target.id, requireAuthority, now) === 'completed') created++;
     } catch (error) {
       if (error instanceof RegistrationError) throw error;
       unresolved.push({flatId: target.id, reason: 'generation_failed_retry_required'});

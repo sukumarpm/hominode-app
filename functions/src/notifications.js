@@ -368,6 +368,22 @@ function notificationIdFor(input) {
     .slice(0, 48);
 }
 
+function visitorNotificationId(visitorId, eventType, recipientUid) {
+  return crypto.createHash("sha256")
+    .update(`${visitorId}|${eventType}|${recipientUid}`)
+    .digest("hex")
+    .slice(0, 48);
+}
+
+function legacyVisitorEventType(visitor) {
+  if (visitor?.status === "approved" && visitor.isApproved === true &&
+      visitor.approvedBy && visitor.approvedAt != null) return "visitor_approved";
+  if (visitor?.status === "rejected" && visitor.rejectedBy && visitor.rejectedAt != null) {
+    return "visitor_rejected";
+  }
+  return null;
+}
+
 async function deleteStaleDevices(db, refs) {
   if (refs.length === 0) return;
   const batch = db.batch();
@@ -385,6 +401,7 @@ async function sendCanonicalNotification({
   notificationId,
   title,
   message,
+  notificationData = {},
 }) {
   await requireCanonicalRecipient(db, {
     recipientUid,
@@ -429,6 +446,8 @@ async function sendCanonicalNotification({
         type: "notification",
         entityId: notificationId,
         communityId,
+        ...(typeof notificationData.eventType === "string" ? {eventType: notificationData.eventType} : {}),
+        ...(typeof notificationData.route === "string" ? {route: notificationData.route} : {}),
       },
       android: {
         priority: "high",
@@ -467,12 +486,30 @@ async function sendNotificationCore({db, messaging, auth, app, data}) {
   if (!ALLOWED_CATEGORIES.has(category) || !ALLOWED_PRIORITIES.has(priority)) {
     throw new RegistrationError("invalid-argument", "Invalid notification category or priority.");
   }
+  const senderUid = await requireAdminSender(db, auth, app, communityId);
+  await requireResidentRecipient(db, recipientUid, communityId);
+  if (category === "visitor") {
+    if (!sourceEntityId) {
+      throw new RegistrationError("failed-precondition", "Visitor notifications are managed by the visitor workflow.");
+    }
+    const visitorSnapshot = await db.collection("visitors").doc(sourceEntityId).get();
+    const visitor = visitorSnapshot.data();
+    const hostUid = visitor?.hostUserId || visitor?.residentId;
+    const eventType = legacyVisitorEventType(visitor);
+    if (!visitorSnapshot.exists || visitor.communityId !== communityId ||
+        hostUid !== recipientUid || (visitor.hostUserId && visitor.residentId &&
+        visitor.hostUserId !== visitor.residentId) || !eventType) {
+      throw new RegistrationError("failed-precondition", "Visitor notifications are managed by the visitor workflow.");
+    }
+    return {
+      notificationId: visitorNotificationId(sourceEntityId, eventType, recipientUid),
+      duplicate: true,
+      serverManaged: true,
+    };
+  }
   if (!messaging || typeof messaging.sendEachForMulticast !== "function") {
     throw new RegistrationError("failed-precondition", "Firebase Messaging is unavailable.");
   }
-
-  const senderUid = await requireAdminSender(db, auth, app, communityId);
-  await requireResidentRecipient(db, recipientUid, communityId);
   const notificationId = notificationIdFor({
     senderUid,
     communityId,
@@ -552,9 +589,11 @@ module.exports = {
   NOTIFICATION_CHANNEL_ID,
   notificationAudienceKey,
   notificationDeviceId,
+  visitorNotificationId,
   registerNotificationDeviceCore,
   unregisterNotificationDeviceCore,
   sendCanonicalNotification,
   requireCanonicalRecipient,
+  requireActiveCommunity,
   sendNotificationCore,
 };

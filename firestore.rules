@@ -1166,23 +1166,11 @@ function securityCanAccessCommunity(communityId) {
             : (raw == 'approved' ? 'invalid' : 'pending')) : 'invalid';
     }
 
-    function visitorInitialState(data) {
-      return data.get('status', '') in ['expected', 'pending']
-        && data.get('isApproved', false) == false
-        && data.get('approvedBy', null) == null && data.get('approvedAt', null) == null
-        && data.get('rejectedBy', null) == null && data.get('rejectedAt', null) == null
-        && data.get('actualArrival', null) == null && data.get('departure', null) == null
-        && data.get('checkedInBy', null) == null && data.get('checkedOutBy', null) == null
-        && data.get('checkedInAt', null) == null && data.get('checkedOutAt', null) == null
-        && !data.keys().hasAny(['visitStatus', 'approvalStatus', 'checkInTime', 'checkOutTime']);
-    }
-
     function visitorTransitionIsSafe() {
       let before = visitorState(resource.data);
       let after = request.resource.data;
       let changed = after.diff(resource.data).affectedKeys();
-      return before in ['pending', 'approved', 'inside']
-        && visitorHostMatches(resource.data)
+      return before in ['pending', 'inside']
         && after.updatedAt == request.time
         && (
           (before == 'pending' && after.status == 'approved'
@@ -1193,20 +1181,21 @@ function securityCanAccessCommunity(communityId) {
             && after.isApproved == false
             && after.rejectedBy == request.auth.uid && after.rejectedAt == request.time
             && changed.hasOnly(['status', 'isApproved', 'rejectedBy', 'rejectedAt', 'rejectionReason', 'updatedAt']))
-          // Gate admission may atomically approve a pending invitation, as in
-          // the existing QR flow. Both actions belong to the authenticated actor.
-          || (before in ['pending', 'approved'] && after.status == 'inside'
-            && after.isApproved == true && after.actualArrival == request.time
-            && after.checkedInBy == request.auth.uid
-            && (before == 'pending'
-              ? (after.approvedBy == request.auth.uid && after.approvedAt == request.time
-                && changed.hasOnly(['status', 'isApproved', 'approvedBy', 'approvedAt', 'actualArrival', 'checkedInBy', 'updatedAt']))
-              : changed.hasOnly(['status', 'isApproved', 'actualArrival', 'checkedInBy', 'updatedAt'])))
           || (before == 'inside' && resource.data.get('actualArrival', null) is timestamp
             && after.status == 'completed' && after.departure == request.time
             && after.checkedOutBy == request.auth.uid
             && changed.hasOnly(['status', 'departure', 'checkedOutBy', 'updatedAt']))
         );
+    }
+
+    function visitorGateUpdateIsSafe() {
+      let communityId = resource.data.communityId;
+      // Security state transitions use App Check protected callables. Direct
+      // Security visitor writes are denied, including checkout.
+      return adminCanAccessCommunity(communityId)
+        && request.resource.data.communityId == communityId
+        && visitorHostMatches(resource.data)
+        && visitorTransitionIsSafe();
     }
 
     function residentVisitorUpdateIsSafe() {
@@ -1245,17 +1234,6 @@ function securityCanAccessCommunity(communityId) {
 
       ||
 
-      // Security: own active community only.
-      (
-        ('communityId' in resource.data)
-        && resource.data.communityId is string
-        && securityCanAccessCommunity(
-          resource.data.communityId
-        )
-      )
-
-      ||
-
       // Resident: only visitors hosted by this resident.
       (
         approvedResident()
@@ -1272,59 +1250,10 @@ function securityCanAccessCommunity(communityId) {
     // CREATE
     // ------------------------------------------------------------
 
-    allow create: if visitorHostMatches(request.resource.data)
-      && visitorInitialState(request.resource.data)
-      && (
-
-      // Admin.
-      (
-        ('communityId' in request.resource.data)
-        && request.resource.data.communityId is string
-        && adminCanAccessCommunity(
-          request.resource.data.communityId
-        )
-      )
-
-      ||
-
-      // Security manual visitor entry.
-      (
-        ('communityId' in request.resource.data)
-        && request.resource.data.communityId is string
-        && securityCanAccessCommunity(
-          request.resource.data.communityId
-        )
-      )
-
-      ||
-
-      // Resident creates only their own visitor
-      // within their own community and flat.
-      (
-        // residentSameFlat below also checks canonical phone and eligibility.
-        ('communityId' in request.resource.data)
-        && request.resource.data.communityId
-          == userProfile().communityId
-        && ('hostUserId' in request.resource.data)
-        && request.resource.data.hostUserId
-          == request.auth.uid
-        && residentSameFlat(
-          request.resource.data
-        )
-        && request.resource.data.status == 'expected'
-        && request.resource.data.isApproved == false
-        && request.resource.data.approvedBy == null
-        && request.resource.data.approvedAt == null
-        && request.resource.data.actualArrival == null
-        && request.resource.data.departure == null
-        && !request.resource.data.keys().hasAny([
-          'rejectedBy',
-          'rejectedAt',
-          'rejectionReason',
-          'checkedInAt',
-          'checkedOutAt'
-        ])
-      ));
+    // Invitations and credential documents are created atomically by the
+    // App Check and verified-phone protected Resident callable. Clients cannot
+    // create visitor records directly, including Admin or Security clients.
+    allow create: if false;
 
 
     // ------------------------------------------------------------
@@ -1333,14 +1262,9 @@ function securityCanAccessCommunity(communityId) {
 
     allow update: if
 
-      // Each state write is checked against the current committed document.
-      // Matching an earlier client snapshot never authorizes a replay.
-      (
-        (adminCanAccessCommunity(resource.data.communityId)
-          || securityCanAccessCommunity(resource.data.communityId))
-        && request.resource.data.communityId == resource.data.communityId
-        && visitorTransitionIsSafe()
-      )
+      // Each Admin state write is checked against the current committed
+      // document. Security gate transitions use App Check protected callables.
+      visitorGateUpdateIsSafe()
 
       ||
 
@@ -1920,6 +1844,117 @@ function securityCanAccessCommunity(communityId) {
       }
     }
 
+    // Announcements are available on every plan. Events remain an explicit
+    // Events entitlement and cannot be read or written through the generic
+    // tenant collection rule below.
+    function communityHasEventsEntitlement(communityId) {
+      let subscription = get(
+        /databases/$(database)/documents/subscriptions/$(communityId)
+      ).data;
+      let planId = subscription.get('planId', '');
+      let plan = get(
+        /databases/$(database)/documents/subscriptionPlans/$(planId)
+      ).data;
+      return plan.get('features', {}).get('events', false) == true
+        && (
+          subscription.get('status', '') == 'active'
+          || (
+            subscription.get('status', '') in ['trial', 'grace']
+            && subscription.get('endsAt', null) is timestamp
+            && subscription.get('endsAt', null) > request.time
+          )
+        )
+        && (
+          subscription.get('startsAt', null) == null
+          || subscription.get('startsAt', null) <= request.time
+        )
+        && (
+          subscription.get('endsAt', null) == null
+          || subscription.get('endsAt', null) > request.time
+        );
+    }
+
+    match /events_announcements/{itemId} {
+      function announcementOrEntitledEvent(data) {
+        let communityId = data.get('communityId', null);
+        return data.get('type', '') == 'announcement'
+          || (
+            data.get('type', '') == 'event'
+            && communityId is string
+            && communityId.size() > 0
+            && communityHasEventsEntitlement(communityId)
+          );
+      }
+
+      allow read: if resource.data != null
+        && ('communityId' in resource.data)
+        && resource.data.communityId is string
+        && canAccessCommunity(resource.data.communityId)
+        && announcementOrEntitledEvent(resource.data);
+
+      allow create: if ('communityId' in request.resource.data)
+        && adminCanAccessCommunity(request.resource.data.communityId)
+        && request.resource.data.type in ['announcement', 'event']
+        && (
+          request.resource.data.type == 'announcement'
+          || communityHasEventsEntitlement(request.resource.data.communityId)
+        )
+        && contentReferencesMatch(
+          request.resource.data,
+          request.resource.data.communityId
+        );
+
+      allow update: if resource.data != null
+        && ('communityId' in resource.data)
+        && resource.data.communityId is string
+        && adminCanAccessCommunity(resource.data.communityId)
+        && request.resource.data.communityId == resource.data.communityId
+        && request.resource.data.type == resource.data.type
+        && announcementOrEntitledEvent(resource.data)
+        && contentReferencesMatch(
+          request.resource.data,
+          request.resource.data.communityId
+        );
+
+      allow delete: if resource.data != null
+        && ('communityId' in resource.data)
+        && resource.data.communityId is string
+        && adminCanAccessCommunity(resource.data.communityId)
+        && announcementOrEntitledEvent(resource.data);
+    }
+
+    // Legacy event documents remain readable only for communities with the
+    // Events entitlement. Legacy announcements stay generally available.
+    match /events/{eventId} {
+      allow read: if resource.data != null
+        && ('communityId' in resource.data)
+        && resource.data.communityId is string
+        && canAccessCommunity(resource.data.communityId)
+        && communityHasEventsEntitlement(resource.data.communityId);
+      allow create: if ('communityId' in request.resource.data)
+        && adminCanAccessCommunity(request.resource.data.communityId)
+        && communityHasEventsEntitlement(request.resource.data.communityId)
+        && contentReferencesMatch(
+          request.resource.data,
+          request.resource.data.communityId
+        );
+      allow update: if resource.data != null
+        && ('communityId' in resource.data)
+        && resource.data.communityId is string
+        && adminCanAccessCommunity(resource.data.communityId)
+        && request.resource.data.communityId == resource.data.communityId
+        && communityHasEventsEntitlement(resource.data.communityId)
+        && contentReferencesMatch(
+          request.resource.data,
+          request.resource.data.communityId
+        );
+      allow delete: if resource.data != null
+        && ('communityId' in resource.data)
+        && resource.data.communityId is string
+        && adminCanAccessCommunity(resource.data.communityId)
+        && communityHasEventsEntitlement(resource.data.communityId);
+    }
+
 
     // ============================================================
     // GATES
@@ -1963,7 +1998,7 @@ function securityCanAccessCommunity(communityId) {
       function adminManagedCollection() {
         return collectionName in [
           'parcels', 'staff', 'parkingSlots', 'parking_violations', 'vendors',
-          'broadcasts', 'events_announcements', 'events', 'announcements',
+          'broadcasts', 'announcements',
           'posters', 'pinnedPosts'
         ];
       }
@@ -2417,6 +2452,17 @@ match /marketplaces/{listingId} {
       // Prevent collection enumeration and all client writes.
       allow list: if false;
       allow create, update, delete: if false;
+    }
+
+    // Visitor credentials are accessible only through authenticated,
+    // App Check-protected callables. No client, including the host, reads or
+    // mutates these records directly.
+    match /visitorHostCredentials/{visitorId} {
+      allow read, write: if false;
+    }
+
+    match /visitorGateCredentialIndex/{credentialHash} {
+      allow read, write: if false;
     }
 
 

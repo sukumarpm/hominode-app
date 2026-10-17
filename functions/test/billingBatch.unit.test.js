@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { sosStore } = require('./helpers/sos_store');
 const { createMonthlyBillingBatchV2Core: generate, monthlyBillIdV2,
   validateChargeLines, validateDueDateV2 } = require('../src/billing_batch');
+const ledger = require('../src/billing_v2_ledger');
 const { resolveBillingReconciliationV2Core: resolveReconciliation, resolutionId } = require('../src/billing_reconciliation');
 const { recurringBillId, createMaintenanceBillsCore } = require('../src/billing_management');
 const { operationalBillingSystemAuthority, SYSTEM_BILLING_ACTOR_ID } = require('../src/resident_identity');
@@ -36,6 +37,21 @@ function fixture(count = 2) {
   const docs = collection => [...db.values.entries()].filter(([path]) => path.split('/').length === 2 && path.startsWith(`${collection}/`));
   const bill = n => db.values.get(`bills/${monthlyBillIdV2('C', `f${n}`, data.billingPeriod)}`);
   return { db, set, patch, addUnit, run, docs, bill };
+}
+
+function seedResidentCredit(f, amountMinor, residentId = 'r1') {
+  const scope = {communityId: 'C', residentId, currency: 'INR'};
+  const transaction = ledger.buildPaymentTransaction({...scope, sourceType: 'admin_cash', sourceId: `credit-seed-${residentId}`,
+    sourceState: 'received', method: 'cash', amountMinor, reference: null, receivedAt: now(), createdAt: now()});
+  const issued = ledger.buildCreditEntry({...scope, eventType: 'issued', sourceType: 'payment_excess',
+    sourceId: transaction.id, transactionId: transaction.id, amountMinor, createdAt: now()});
+  f.set(`paymentTransactions/${transaction.id}`, transaction);
+  f.set(`residentCreditEntries/${issued.id}`, issued);
+  const accountId = ledger.residentFinancialAccountId(scope);
+  const existing = f.db.values.get(`residentFinancialAccounts/${accountId}`);
+  f.set(`residentFinancialAccounts/${accountId}`, {...(existing || ledger.buildResidentFinancialAccount({...scope, createdAt: now()})),
+    availableCreditMinor: amountMinor, version: (existing?.version || 0) + 1, updatedAt: now()});
+  return {scope, transaction, issued, accountId};
 }
 
 const auditRecordId = value => `billing_reconciliation_resolve_v2_${value}`;
@@ -193,6 +209,126 @@ test('generated bill and immutable revisions contain coherent independent terms 
   assert.deepEqual(batchRevision.lineApplicability.map(item => item.lineId).sort(), ['lift', 'maintenance-base', 'parking']);
 });
 
+test('bill issuance preserves zero-credit behavior when the resident account has no credit', async () => {
+  const f = fixture(1);
+  const result = await f.run({chargeLines: [line('base', 'maintenance', 1000)]});
+  const bill = f.bill(1);
+  assert.equal(result.created, 1);
+  assert.equal(bill.creditAppliedMinor, 0); assert.equal(bill.outstandingAmountMinor, 1000); assert.equal(bill.status, 'pending');
+  assert.equal(f.docs('residentCreditEntries').length, 0);
+  assert.equal(f.docs('residentFinancialAccounts').length, 0);
+});
+
+test('issuance applies partial and full available credit as immutable ledger events', async () => {
+  for (const [creditMinor, amountMinor, expectedApplied, expectedOutstanding, status] of [
+    [400, 1000, 400, 600, 'partially_paid'],
+    [1000, 1000, 1000, 0, 'paid'],
+  ]) {
+    const f = fixture(1), seed = seedResidentCredit(f, creditMinor);
+    const result = await f.run({chargeLines: [line('base', 'maintenance', amountMinor)]});
+    const bill = f.bill(1), account = f.db.values.get(`residentFinancialAccounts/${seed.accountId}`);
+    const applications = f.docs('residentCreditEntries').filter(([, event]) => event.eventType === 'applied');
+    assert.equal(result.created, 1); assert.equal(bill.creditAppliedMinor, expectedApplied);
+    assert.equal(bill.outstandingAmountMinor, expectedOutstanding); assert.equal(bill.status, status);
+    assert.equal(applications.length, 1); assert.equal(applications[0][1].amountMinor, expectedApplied);
+    assert.equal(account.availableCreditMinor, creditMinor - expectedApplied); assert.equal(account.version, 2);
+  }
+});
+
+test('credit in excess of all current V2 liabilities remains available', async () => {
+  const f = fixture(1), seed = seedResidentCredit(f, 1500);
+  await f.run({chargeLines: [line('base', 'maintenance', 1000)]});
+  const bill = f.bill(1), account = f.db.values.get(`residentFinancialAccounts/${seed.accountId}`);
+  assert.equal(bill.creditAppliedMinor, 1000); assert.equal(bill.outstandingAmountMinor, 0); assert.equal(bill.status, 'paid');
+  assert.equal(account.availableCreditMinor, 500);
+});
+
+test('credit applies to an older eligible V2 liability before the newly issued bill', async () => {
+  const f = fixture(1);
+  await f.run({billingPeriod: '2029-12', idempotencyKey: 'older-period', dueDate: '2030-01-20',
+    chargeLines: [line('base', 'maintenance', 400)]});
+  const seed = seedResidentCredit(f, 700);
+  await f.run({idempotencyKey: 'new-period', dueDate: '2030-02-16', chargeLines: [line('base', 'maintenance', 500)]});
+  const olderId = monthlyBillIdV2('C', 'f1', '2029-12'), older = f.db.values.get(`bills/${olderId}`), newer = f.bill(1);
+  assert.equal(older.creditAppliedMinor, 400); assert.equal(older.outstandingAmountMinor, 0);
+  assert.equal(newer.creditAppliedMinor, 300); assert.equal(newer.outstandingAmountMinor, 200);
+  assert.equal(f.db.values.get(`residentFinancialAccounts/${seed.accountId}`).availableCreditMinor, 0);
+  assert.deepEqual(f.docs('residentCreditEntries').filter(([, event]) => event.eventType === 'applied')
+    .map(([, event]) => [event.billId, event.amountMinor]).sort((a, b) => a[0].localeCompare(b[0])),
+  [[olderId, 400], [monthlyBillIdV2('C', 'f1', '2030-01'), 300]].sort((a, b) => a[0].localeCompare(b[0])));
+});
+
+test('separate bills for one resident consume remaining credit once, oldest first', async () => {
+  const f = fixture(1);
+  await f.run({idempotencyKey: 'january-only', chargeLines: [line('base', 'maintenance', 300)]});
+  const seed = seedResidentCredit(f, 500);
+  await f.run({billingPeriod: '2030-02', idempotencyKey: 'february-only', dueDate: '2030-03-15',
+    chargeLines: [line('base', 'maintenance', 500)]}, {now: () => Date.parse('2030-02-15T00:00:00Z')});
+  const january = f.bill(1), februaryId = monthlyBillIdV2('C', 'f1', '2030-02');
+  const february = f.db.values.get(`bills/${februaryId}`);
+  assert.equal(january.creditAppliedMinor, 300); assert.equal(january.outstandingAmountMinor, 0);
+  assert.equal(february.creditAppliedMinor, 200); assert.equal(february.outstandingAmountMinor, 300);
+  assert.equal(f.db.values.get(`residentFinancialAccounts/${seed.accountId}`).availableCreditMinor, 0);
+  assert.equal(f.docs('residentCreditEntries').filter(([, event]) => event.eventType === 'applied').length, 2);
+});
+
+test('same-key issuance retry cannot duplicate applications or debit the account again', async () => {
+  const f = fixture(1), seed = seedResidentCredit(f, 600);
+  const first = await f.run({chargeLines: [line('base', 'maintenance', 500)]});
+  const before = [...f.docs('residentCreditEntries'), ...f.docs('residentFinancialAccounts')];
+  const retry = await f.run({chargeLines: [line('base', 'maintenance', 500)]});
+  assert.equal(retry.batchId, first.batchId); assert.equal(retry.created, 0); assert.equal(retry.alreadyCompleted, 1);
+  assert.deepEqual([...f.docs('residentCreditEntries'), ...f.docs('residentFinancialAccounts')], before);
+  assert.equal(f.db.values.get(`residentFinancialAccounts/${seed.accountId}`).availableCreditMinor, 100);
+});
+
+test('conflicting deterministic application event blocks issuance without changing financial history', async () => {
+  const f = fixture(1), seed = seedResidentCredit(f, 1000);
+  const batchId = `monthly_batch_v2_${createHash('sha256').update(JSON.stringify(['C', 'conflicting-application'])).digest('hex')}`;
+  const billId = monthlyBillIdV2('C', 'f1', data.billingPeriod);
+  const conflicting = ledger.buildCreditEntry({...seed.scope, eventType: 'applied', sourceType: 'credit_application',
+    sourceId: `billing_issue_${createHash('sha256').update(JSON.stringify([batchId, billId])).digest('hex')}`,
+    billId, amountMinor: 200, createdAt: now()});
+  f.set(`residentCreditEntries/${conflicting.id}`, conflicting);
+  f.patch(`residentFinancialAccounts/${seed.accountId}`, {availableCreditMinor: 800, version: 2});
+  const before = [...f.docs('residentCreditEntries'), ...f.docs('residentFinancialAccounts')];
+  await assert.rejects(f.run({idempotencyKey: 'conflicting-application', chargeLines: [line('base', 'maintenance', 500)]}),
+    /Immutable credit event conflict/);
+  assert.equal(f.db.values.has(`bills/${billId}`), false);
+  assert.deepEqual([...f.docs('residentCreditEntries'), ...f.docs('residentFinancialAccounts')], before);
+});
+
+test('failed credit event staging rolls back bill, account and application writes', async () => {
+  const f = fixture(1), seed = seedResidentCredit(f, 600), originalRun = f.db.runTransaction.bind(f.db);
+  let failed = false;
+  f.db.runTransaction = callback => originalRun(transaction => {
+    const create = transaction.create.bind(transaction);
+    transaction.create = (ref, value) => {
+      if (!failed && ref.path.startsWith('residentCreditEntries/')) {failed = true; throw Error('injected credit write failure');}
+      return create(ref, value);
+    };
+    return callback(transaction);
+  });
+  try {
+    const result = await f.run({chargeLines: [line('base', 'maintenance', 500)]});
+    assert.equal(result.failed, 1);
+  }
+  finally {f.db.runTransaction = originalRun;}
+  const billId = monthlyBillIdV2('C', 'f1', data.billingPeriod);
+  assert.equal(f.db.values.has(`bills/${billId}`), false);
+  assert.equal(f.docs('residentCreditEntries').filter(([, event]) => event.eventType === 'applied').length, 0);
+  assert.equal(f.db.values.get(`residentFinancialAccounts/${seed.accountId}`).availableCreditMinor, 600);
+});
+
+test('account balance mismatch blocks issuance credit without changing bill or ledger state', async () => {
+  const f = fixture(1), seed = seedResidentCredit(f, 600);
+  f.patch(`residentFinancialAccounts/${seed.accountId}`, {availableCreditMinor: 599});
+  const before = [...f.docs('residentCreditEntries'), ...f.docs('residentFinancialAccounts')];
+  await assert.rejects(f.run({chargeLines: [line('base', 'maintenance', 500)]}), /account_projection_mismatch|account requires reconciliation/);
+  assert.equal(f.db.values.has(`bills/${monthlyBillIdV2('C', 'f1', data.billingPeriod)}`), false);
+  assert.deepEqual([...f.docs('residentCreditEntries'), ...f.docs('residentFinancialAccounts')], before);
+});
+
 test('idempotencyKey rejects changed terms and client totals; scope cannot expand on retry', async () => {
   const f = fixture(); const first = await f.run(); f.addUnit(3);
   for (const change of [{ chargeLines: [line('different')] }, { dueDate: '2030-01-20' }, { billingPeriod: '2030-02' }]) {
@@ -324,12 +460,13 @@ test('trusted source is strictly validated and client data cannot inject schedul
   }
 });
 
-test('batch core contains no recurring schedule writes or financial ledger writes', () => {
+test('batch core contains no recurring schedule writes and uses the existing credit ledger for issuance', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '../src/billing_batch.js'), 'utf8');
   assert.doesNotMatch(source, /collection\(['"]billingSchedules['"]\)/);
-  assert.doesNotMatch(source, /paymentTransactions|paymentAllocations|residentCreditEntries|residentFinancialAccounts|paymentSettlementsV2/);
+  assert.match(source, /ledger\.planCreditApplications/);
+  assert.doesNotMatch(source, /paymentSettlementsV2/);
 });
 
 test('overlapping V2 scopes/charge lines reserve only one monthly liability', async () => {

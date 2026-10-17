@@ -23,6 +23,20 @@ paymentCases((name, fn) => test(name, {skip: !enabled}, fn), async () => ({db, b
     metadata: {contentType: 'image/jpeg', metadata}}),
 }));
 
+test('Storage and Firestore notification trigger payloads and retry policies match their handlers', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/index'), 'utf8');
+  const firestoreTrigger = source.slice(source.indexOf('exports.dispatchBillingV2PaymentNotification ='),
+    source.indexOf('exports.notifyResidentOfSubmittedV2PaymentProof ='));
+  const storageTrigger = source.slice(source.indexOf('exports.notifyResidentOfSubmittedV2PaymentProof ='),
+    source.indexOf('exports.getBillingV2FinancialReport ='));
+  assert.match(firestoreTrigger, /onDocumentCreated\(\{[\s\S]*?retry:\s*false/);
+  assert.match(firestoreTrigger, /\(\s*event\s*\)\s*=>\s*dispatchPaymentV2NotificationCore\([\s\S]*?event,/);
+  assert.match(storageTrigger, /onObjectFinalized\(\{[\s\S]*?retry:\s*true/);
+  assert.match(storageTrigger, /object:\s*event\.data/);
+  assert.doesNotMatch(storageTrigger, /catch\s*\(/,
+    'bookkeeping errors must escape the Storage handler so its configured retry can run');
+});
+
 // Client rules are exercised separately from the Admin SDK settlement cases.
 // These tests need only the Firestore emulator.
 const {readFileSync} = require('node:fs');

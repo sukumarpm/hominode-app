@@ -5,6 +5,7 @@ const {getFirestore} = require('firebase-admin/firestore');
 const {createMonthlyBillingBatchV2Core: issue, monthlyBillIdV2} = require('../src/billing_batch');
 const {reviseMonthlyBillingBatchV2Core: revise, billingRevisionId, assertV2SettlementReady} = require('../src/billing_revision');
 const ledger = require('../src/billing_v2_ledger');
+const {getResidentBillingV2StatementCore} = require('../src/billing_v2_resident_statement');
 const enabled = !!process.env.FIRESTORE_EMULATOR_HOST;
 const projectId = 'demo-hominode-billing-revision';
 const auth = {uid: 'a', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
@@ -218,6 +219,74 @@ run('concurrent revisions of two monthly bills serialize the same resident accou
   assert.equal((await db.collection('paymentAllocations').get()).size, 4);
   assert.equal((await f.billRef(1).get()).data().paidAmountMinor, 800);
   assert.equal((await db.doc(`bills/${billId}`).get()).data().paidAmountMinor, 800);
+});
+
+run('concurrent issuance and downward revision reconcile restored credit in either transaction order', async () => {
+  const f = await fixture();
+  const scope = {communityId: 'C', residentId: 'r1', currency: 'INR'};
+  const billId = f.billRef(1).id;
+  const transaction = ledger.buildPaymentTransaction({...scope, sourceType: 'admin_cash', sourceId: 'fully-applied-credit',
+    sourceState: 'received', method: 'cash', amountMinor: 1000, reference: null, receivedAt: now(), createdAt: now()});
+  const issuedCredit = ledger.buildCreditEntry({...scope, eventType: 'issued', sourceType: 'payment_excess',
+    sourceId: transaction.id, transactionId: transaction.id, amountMinor: 1000, createdAt: now()});
+  const appliedCredit = ledger.buildCreditEntry({...scope, eventType: 'applied', sourceType: 'credit_application',
+    sourceId: 'initial-application', billId, amountMinor: 1000, createdAt: now()});
+  const account = {...ledger.buildResidentFinancialAccount({...scope, createdAt: now()}),
+    availableCreditMinor: 0, version: 2, updatedAt: now()};
+  const seed = db.batch();
+  seed.create(db.doc(`paymentTransactions/${transaction.id}`), transaction);
+  seed.create(db.doc(`residentCreditEntries/${issuedCredit.id}`), issuedCredit);
+  seed.create(db.doc(`residentCreditEntries/${appliedCredit.id}`), appliedCredit);
+  seed.create(db.doc(`residentFinancialAccounts/${account.id}`), account);
+  seed.update(f.billRef(1), ledger.calculateBillProjection({amountMinor: 1000, paidAmountMinor: 0,
+    creditAppliedMinor: 1000, currency: 'INR', isOverdue: false}));
+  await seed.commit();
+
+  const februaryId = monthlyBillIdV2('C', 'f1', '2030-02');
+  const nextMonth = {communityId: 'C', scope: 'unit', buildingId: 'b', flatId: 'f1', billingPeriod: '2030-02',
+    idempotencyKey: 'revision-race-february', chargeLines: lines(500), dueDate: '2030-03-15'};
+  const februaryNow = () => Date.parse('2030-02-15T00:00:00Z');
+  const race = await Promise.allSettled([
+    f.run({idempotencyKey: 'downward-credit-race', chargeLines: lines(500)}),
+    issue({db, auth, now: februaryNow, data: nextMonth}),
+  ]);
+  assert.equal(race[0].status, 'fulfilled');
+  let revision = race[0].value;
+  for (let attempt = 0; revision.resumeRequired && attempt < 2; attempt++) {
+    revision = await f.run({idempotencyKey: 'downward-credit-race', chargeLines: lines(500)});
+  }
+  assert.equal(revision.applied, 1); assert.equal(revision.failed, 0); assert.equal(revision.resumeRequired, false);
+  let issuance;
+  if (race[1].status === 'fulfilled') issuance = race[1].value;
+  else {
+    assert.equal(race[1].reason.code, 'failed-precondition');
+    issuance = await issue({db, auth, now: februaryNow, data: nextMonth});
+  }
+  for (let attempt = 0; issuance.resumeRequired && attempt < 2; attempt++) {
+    issuance = await issue({db, auth, now: februaryNow, data: nextMonth});
+  }
+  assert.equal(issuance.failed, 0); assert.equal(issuance.reconciliationRequired, 0);
+
+  const january = (await f.billRef(1).get()).data();
+  const february = (await db.doc(`bills/${februaryId}`).get()).data();
+  assert.equal(january.creditAppliedMinor, 500); assert.equal(january.outstandingAmountMinor, 0);
+  assert.equal(february.amountMinor, 500); assert(february.outstandingAmountMinor >= 0);
+  assert.equal(february.amountMinor, february.paidAmountMinor + february.creditAppliedMinor + february.outstandingAmountMinor);
+  const entries = (await db.collection('residentCreditEntries').where('residentId', '==', 'r1').get()).docs
+    .map(doc => doc.data());
+  const credits = ledger.summarizeCreditEntries({...scope, entries});
+  const finalAccount = (await db.doc(`residentFinancialAccounts/${account.id}`).get()).data();
+  assert.equal(finalAccount.availableCreditMinor, credits.availableCreditMinor);
+  assert.equal(credits.creditAppliedByBill[billId], 500);
+  assert.equal((credits.creditAppliedByBill[februaryId] || 0) + finalAccount.availableCreditMinor, 500);
+  const restored = entries.filter(entry => entry.eventType === 'restored');
+  assert.equal(restored.length, 1); assert.equal(restored[0].amountMinor, 500);
+  assert.equal(restored[0].originalCreditEntryId, appliedCredit.id); assert.equal(restored[0].billId, billId);
+  const statement = await getResidentBillingV2StatementCore({db,
+    auth: {uid: 'r1', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}},
+    data: {billingPeriod: '2030-02'}, now: februaryNow});
+  assert.equal(statement.summary.availableCreditMinor, finalAccount.availableCreditMinor);
+  assert.equal(statement.bills[0].creditAppliedMinor, february.creditAppliedMinor);
 });
 
 run('equal-total mixed edit leaves every allocation/credit balance unchanged', async () => {

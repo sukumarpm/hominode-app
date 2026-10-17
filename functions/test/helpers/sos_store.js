@@ -26,7 +26,7 @@ function sosStore() {
   function read(target) {
     if (target.path) return snapshot(target.path);
     let docs = [...values.keys()].filter((path) => path.startsWith(`${target.name}/`) && target.clauses.every(([key, op, v]) => {
-      const value = values.get(path)[key];
+      const value = key.split('.').reduce((current, part) => current?.[part], values.get(path));
       return op === '==' ? value === v : op === 'in' ? v.includes(value) : op === 'array-contains' ? Array.isArray(value) && value.includes(v) : Array.isArray(value) && value.some((x) => v.includes(x));
     })).map(snapshot);
     if (target.sort) {const [field, direction] = target.sort; docs.sort((a, b) => (a.data()[field].toMillis() - b.data()[field].toMillis()) * (direction === 'desc' ? -1 : 1));}

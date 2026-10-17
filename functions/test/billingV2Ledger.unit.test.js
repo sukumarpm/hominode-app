@@ -149,6 +149,15 @@ test('planner ordering uses due date, billing period, creation time then codepoi
   assert.deepEqual(plan(liabilities), plan([...liabilities].reverse()));
 });
 
+test('payment planner prioritizes the selected bill, then retains FIFO order for other liabilities', () => {
+  const liabilities = [liability('mar', 800, '03'), liability('jan', 1000), liability('feb', 1200, '02')];
+  const result = ledger.planPaymentAllocations({...scope, amountMinor: 1500, priorityBillId: 'mar', liabilities});
+  assert.deepEqual(result.allocations, [
+    {billId: 'mar', amountMinor: 800}, {billId: 'jan', amountMinor: 700},
+  ]);
+  assert.equal(result.unallocatedAmountMinor, 0);
+});
+
 test('planner rejects duplicate/malformed/ineligible/cross-account/currency-mixed liabilities', () => {
   const run = liabilities => ledger.planPaymentAllocations({...scope, amountMinor: 1, liabilities});
   assert.throws(() => run([liability('jan', 1), liability('jan', 1)]), /Duplicate/);

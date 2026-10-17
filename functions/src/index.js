@@ -5,10 +5,11 @@ const { getStorage } = require("firebase-admin/storage");
 const { getMessaging } = require("firebase-admin/messaging");
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
-const { defineSecret } = require("firebase-functions/params");
+const { defineSecret, defineString } = require("firebase-functions/params");
 const { hasVerifiedPhoneAuth, hasCanonicalPhoneProfile } = require("./phone_auth");
 
 const {
@@ -55,6 +56,10 @@ const {
   rejectPaymentProofV2Core,
   recordOfflinePaymentV2Core,
 } = require("./payment_v2");
+const {
+  createProofSubmittedNotification,
+  dispatchPaymentV2NotificationCore,
+} = require("./payment_v2_notifications");
 
 const {
   getBillingV2FinancialReportCore,
@@ -63,6 +68,10 @@ const {
 const {
   getResidentBillingV2StatementCore,
 } = require("./billing_v2_resident_statement");
+
+const {
+  getResidentBillingV2ReceiptCore,
+} = require("./billing_v2_receipt");
 
 const {
   createAdminCore,
@@ -130,6 +139,15 @@ const {
   createAmenityBookingCore,
   cancelAmenityBookingCore,
 } = require("./amenity_booking");
+const { resolveVisitorQrCore, transitionVisitorFromQrCore } = require("./visitor_gate");
+const { createVisitorInvitationCore, getVisitorCredentialsCore } = require("./visitor_credentials");
+const { dispatchVisitorDecisionCore } = require("./visitor_notifications");
+const { verifyVisitorCredentialCore } = require("./visitor_verification");
+const {
+  checkoutVisitorsCore,
+  denyVisitorEntryCore,
+  listSecurityVisitorsCore,
+} = require("./security_visitor_workflow");
 
 const {
   refreshPublicPlatformStatsCore,
@@ -148,6 +166,23 @@ const {
 
 const REGION = "asia-southeast1";
 const GOOGLE_GEOCODING_API_KEY = defineSecret("GOOGLE_GEOCODING_API_KEY");
+const VISITOR_CREDENTIAL_HMAC_KEY = defineSecret("VISITOR_CREDENTIAL_HMAC_KEY");
+// Empty means the SEC-003 legacy compatibility window has not been retired.
+// Set only through an explicitly approved deployment configuration.
+const VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC = defineString("VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC", {default: "DISABLED"});
+
+function requireVisitorCredentialHmacKey() {
+  let key;
+  try {
+    key = VISITOR_CREDENTIAL_HMAC_KEY.value();
+  } catch (_) {
+    throw new HttpsError("failed-precondition", "Visitor credential service is unavailable.");
+  }
+  if (typeof key !== "string" || Buffer.byteLength(key, "utf8") < 32) {
+    throw new HttpsError("failed-precondition", "Visitor credential service is unavailable.");
+  }
+  return key;
+}
 
 function requireAdminAppContext(app) {
   const context = APP_CONTEXTS[app?.appId];
@@ -242,6 +277,29 @@ exports.preparePaymentProofV2 = appCheckedCallable(preparePaymentProofV2Core, 'V
 exports.verifyPaymentProofV2 = appCheckedCallable(verifyPaymentProofV2Core, 'V2 payment proof could not be verified.');
 exports.rejectPaymentProofV2 = appCheckedCallable(rejectPaymentProofV2Core, 'V2 payment proof could not be rejected.');
 exports.recordOfflinePaymentV2 = appCheckedCallable(recordOfflinePaymentV2Core, 'V2 offline payment could not be recorded.');
+exports.dispatchBillingV2PaymentNotification = onDocumentCreated({
+  region: REGION,
+  document: 'billingV2PaymentNotificationEvents/{eventId}',
+  // In-app notification and financial event writes are atomic. Push is
+  // best-effort; retrying an accepted FCM send can duplicate the push.
+  retry: false,
+  timeoutSeconds: 120,
+}, (event) => dispatchPaymentV2NotificationCore({
+  db: getFirestore(), messaging: getMessaging(), event,
+  logger: {warn: (message, context) => logger.warn(message, context)},
+}));
+exports.notifyResidentOfSubmittedV2PaymentProof = onObjectFinalized({
+  region: REGION,
+  // This handler only creates deterministic Firestore records; retrying it is
+  // idempotent and ensures receipt finalization eventually reaches the inbox.
+  retry: true,
+  timeoutSeconds: 120,
+}, async (event) => {
+  // Firestore notification bookkeeping is independent from proof/settlement
+  // writes. Let transient storage-trigger bookkeeping errors escape so the
+  // configured retry can complete the deterministic in-app notification.
+  await createProofSubmittedNotification({db: getFirestore(), object: event.data});
+});
 exports.getBillingV2FinancialReport = appCheckedCallable(
   getBillingV2FinancialReportCore,
   'Billing V2 financial report could not be generated.'
@@ -249,6 +307,10 @@ exports.getBillingV2FinancialReport = appCheckedCallable(
 exports.getResidentBillingV2Statement = appCheckedCallable(
   getResidentBillingV2StatementCore,
   'Resident Billing V2 statement could not be generated.'
+);
+exports.getResidentBillingV2Receipt = appCheckedCallable(
+  getResidentBillingV2ReceiptCore,
+  'Billing V2 receipt could not be generated.'
 );
 
 const { triggerSosCore, transitionSosCore, getSosContextCore } = require('./sos');
@@ -260,6 +322,122 @@ exports.dispatchSosNotifications = onDocumentCreated({
   region: REGION, document: 'sosNotificationEvents/{eventId}',
   retry: true, timeoutSeconds: 300
 }, (event) => dispatchSosEventCore({ db: getFirestore(), messaging: getMessaging(), eventId: event.params.eventId }));
+
+function securityVisitorCallable(core, failureMessage, {legacyCutoff = false} = {}) {
+  return onCall({region: REGION, enforceAppCheck: true, secrets: [VISITOR_CREDENTIAL_HMAC_KEY]}, async (request) => {
+    try {
+      requirePhoneAuth(request.auth);
+      return await core({
+        db: getFirestore(), auth: request.auth, data: request.data,
+        hmacKey: requireVisitorCredentialHmacKey(),
+        ...(legacyCutoff ? {
+          legacyCredentialCutoffUtc: VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC.value() === "DISABLED"
+            ? null : VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC.value(),
+        } : {}),
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
+      logger.error(failureMessage, {code: error?.code || "unknown"});
+      throw new HttpsError("internal", failureMessage);
+    }
+  });
+}
+
+exports.resolveVisitorQr = securityVisitorCallable(
+  resolveVisitorQrCore,
+  "This visitor QR could not be verified.",
+  {legacyCutoff: true}
+);
+exports.transitionVisitorFromQr = securityVisitorCallable(
+  transitionVisitorFromQrCore,
+  "This visitor request could not be processed.",
+  {legacyCutoff: true}
+);
+exports.verifyVisitorCredential = onCall({
+  region: REGION,
+  enforceAppCheck: true,
+  secrets: [VISITOR_CREDENTIAL_HMAC_KEY],
+}, async (request) => {
+  try {
+    requirePhoneAuth(request.auth);
+    return await verifyVisitorCredentialCore({
+      db: getFirestore(), auth: request.auth, data: request.data,
+      hmacKey: requireVisitorCredentialHmacKey(),
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
+    // Do not log request data, credential values, HMAC indexes, or exception messages.
+    logger.error("Visitor credential verification failed.", {code: error?.code || "unknown"});
+    throw new HttpsError("internal", "Visitor credential could not be verified.");
+  }
+});
+function securityWorkflowCallable(core, failureMessage) {
+  return onCall({region: REGION, enforceAppCheck: true}, async (request) => {
+    try {
+      requirePhoneAuth(request.auth);
+      return await core({db: getFirestore(), auth: request.auth, data: request.data});
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
+      logger.error(failureMessage, {code: error?.code || "unknown"});
+      throw new HttpsError("internal", failureMessage);
+    }
+  });
+}
+exports.listSecurityVisitors = securityWorkflowCallable(
+  listSecurityVisitorsCore,
+  "Security visitor records could not be loaded."
+);
+exports.denyVisitorEntry = securityWorkflowCallable(
+  denyVisitorEntryCore,
+  "Visitor entry could not be denied."
+);
+exports.checkoutVisitors = securityWorkflowCallable(
+  checkoutVisitorsCore,
+  "Visitor checkout could not be confirmed."
+);
+exports.dispatchVisitorDecisionNotification = onDocumentUpdated({
+  region: REGION,
+  document: "visitors/{visitorId}",
+  // Delivery retries are bounded inside the handler. Replaying this event can
+  // resend a push accepted by FCM before the Firestore delivery marker updates.
+  retry: false,
+  timeoutSeconds: 120,
+}, (event) => dispatchVisitorDecisionCore({
+  db: getFirestore(), messaging: getMessaging(), event,
+}));
+
+function residentVisitorCallable(core, failureMessage) {
+  return onCall({
+    region: REGION,
+    enforceAppCheck: true,
+    secrets: [VISITOR_CREDENTIAL_HMAC_KEY],
+  }, async (request) => {
+    try {
+      requirePhoneAuth(request.auth);
+      return await core({
+        db: getFirestore(), auth: request.auth, data: request.data,
+        hmacKey: requireVisitorCredentialHmacKey(),
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
+      logger.error(failureMessage, {code: error?.code || "unknown"});
+      throw new HttpsError("internal", failureMessage);
+    }
+  });
+}
+
+exports.createVisitorInvitation = residentVisitorCallable(
+  createVisitorInvitationCore,
+  "The visitor invitation could not be created."
+);
+exports.getVisitorCredentials = residentVisitorCallable(
+  getVisitorCredentialsCore,
+  "The visitor credentials are unavailable."
+);
 
 exports.rejectPaymentProof = appCheckedCallable(
   rejectPaymentProofCore,

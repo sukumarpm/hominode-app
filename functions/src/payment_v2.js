@@ -6,6 +6,7 @@ const {buildAuditLog} = require('./audit_log');
 const {validateChargeLines, monthlyBillIdV2} = require('./billing_batch');
 const {assertV2SettlementReady} = require('./billing_revision');
 const ledger = require('./billing_v2_ledger');
+const {createPaymentNotificationWrites} = require('./payment_v2_notifications');
 
 const MAX_ALLOCATIONS = 20;
 const MAX_ACCOUNT_BILLS = 200;
@@ -33,6 +34,9 @@ function reference(value) {
   if (value == null) return null;
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 200) fail('Invalid payment reference.', 'invalid-argument');
   return value.trim();
+}
+function normalizedReference(value) {
+  return typeof value === 'string' ? value.trim().normalize('NFKC').toUpperCase() : '';
 }
 function authUid(auth) {if (!validId(auth?.uid)) fail('Authentication is required.', 'unauthenticated'); return auth.uid;}
 const rootDocs = (snapshot, name) => snapshot.docs.filter(doc => doc.ref.path === `${name}/${doc.id}`);
@@ -128,9 +132,12 @@ function proofContext(proof, paymentId) {
     proof.submittedAt instanceof Timestamp, 'invalid_v2_proof');
   const prefix = `payment_receipts/${proof.communityId}/${proof.billId}/${proof.residentId}/${paymentId}`;
   check(EXTENSIONS.some(extension => proof.receiptPath === `${prefix}.${extension}`), 'Receipt path does not match this proof.');
+  check(proof.amountContractVersion == null || proof.amountContractVersion === 2, 'invalid_v2_proof');
   return {paymentId, billId: proof.billId, communityId: proof.communityId, residentId: proof.residentId,
     amountMinor: proof.submittedAmountMinor, submittedBillRevisionId: proof.submittedBillRevisionId,
-    submittedAt: proof.submittedAt.toMillis(), receiptPath: proof.receiptPath, paymentReference: reference(proof.paymentReference)};
+    submittedAt: proof.submittedAt.toMillis(), receiptPath: proof.receiptPath,
+    paymentReference: reference(proof.paymentReference),
+    ...(proof.amountContractVersion === 2 ? {amountContractVersion: 2} : {})};
 }
 async function receiptEvidence(bucket, proof) {
   let metadata;
@@ -152,10 +159,12 @@ async function receiptEvidence(bucket, proof) {
 // V2 proofs are deliberately outside payments, so V1 review cannot process them.
 async function preparePaymentProofV2Core({db, auth, data, now = Date.now}) {
   const uid = authUid(auth);
-  input(data, ['billId', 'submittedAmountMinor', 'submittedBillRevisionId', 'idempotencyKey', 'receiptExtension', 'paymentReference']);
+  input(data, ['billId', 'submittedAmountMinor', 'submittedBillRevisionId', 'idempotencyKey', 'receiptExtension', 'paymentReference', 'amountContractVersion']);
+  if (data.amountContractVersion != null && data.amountContractVersion !== 2) fail('Unsupported payment amount contract.', 'invalid-argument');
   const request = {billId: id(data.billId), submittedAmountMinor: amount(data.submittedAmountMinor),
     submittedBillRevisionId: id(data.submittedBillRevisionId), idempotencyKey: id(data.idempotencyKey),
-    receiptExtension: data.receiptExtension, paymentReference: reference(data.paymentReference)};
+    receiptExtension: data.receiptExtension, paymentReference: reference(data.paymentReference),
+    ...(data.amountContractVersion === 2 ? {amountContractVersion: 2} : {})};
   if (!EXTENSIONS.includes(request.receiptExtension)) fail('Invalid receipt extension.', 'invalid-argument');
   const paymentId = `proof_v2_${hash([uid, request.idempotencyKey])}`;
   const ref = db.collection('paymentProofsV2').doc(paymentId);
@@ -195,11 +204,14 @@ async function preparePaymentProofV2Core({db, auth, data, now = Date.now}) {
     const checked = await verifyProjection(db, tx, entry, scope, history, nowMs);
     check(bill.currentRevisionId === request.submittedBillRevisionId, 'Bill revision changed; refresh before preparing payment.');
     check(checked.outstandingAmountMinor > 0, 'This bill has no outstanding liability.');
-    check(request.submittedAmountMinor === checked.outstandingAmountMinor,
-      'submitted_amount_mismatch: submittedAmountMinor must equal the current outstandingAmountMinor; refresh before preparing payment');
+    if (request.amountContractVersion !== 2) {
+      check(request.submittedAmountMinor === checked.outstandingAmountMinor,
+        'submitted_amount_mismatch: legacy submittedAmountMinor must equal the current outstandingAmountMinor; refresh before preparing payment');
+    }
     const receiptPath = `payment_receipts/${scope.communityId}/${request.billId}/${uid}/${paymentId}.${request.receiptExtension}`;
     tx.create(ref, {schemaVersion: 2, id: paymentId, ...scope, userId: uid, billId: request.billId,
       submittedAmountMinor: request.submittedAmountMinor, submittedBillRevisionId: request.submittedBillRevisionId,
+      ...(request.amountContractVersion === 2 ? {amountContractVersion: 2} : {}),
       submittedAt: Timestamp.fromMillis(nowMs), provider: 'direct_upi', method: 'upi', verificationMode: 'manual',
       evidenceType: 'receipt', status: 'pending', receiptPath, paymentReference: request.paymentReference, requestHash: hash(request)});
     tx.set(guardRef, {schemaVersion: 2, communityId: scope.communityId, residentId: uid,
@@ -221,16 +233,28 @@ async function retrySettlement(db, tx, existing, request) {
   }
   return {...existing.result, alreadyCompleted: true};
 }
-function audit(uid, scope, transaction, plan) {
+function audit(uid, scope, transaction, plan, proofVerification) {
+  const metadata = proofVerification ? {
+    transactionId: transaction.id, residentId: scope.residentId, amountMinor: transaction.amountMinor,
+    claimedAmountMinor: proofVerification.claimedAmountMinor,
+    confirmedAmountMinor: proofVerification.confirmedAmountMinor,
+    amountMismatch: proofVerification.amountMismatch,
+    amountConfirmationMode: proofVerification.amountConfirmationMode,
+    allocatedBillIds: plan.allocations.map(a => a.billId),
+    allocatedAmountsMinor: plan.allocations.map(a => String(a.amountMinor)),
+    excessCreditMinor: plan.unallocatedAmountMinor, paymentMethod: transaction.method,
+    referenceReviewRequired: proofVerification.referenceReviewRequired,
+  } : {transactionId: transaction.id, residentId: scope.residentId,
+    amountMinor: transaction.amountMinor, allocatedBillIds: plan.allocations.map(a => a.billId),
+    allocatedAmountsMinor: plan.allocations.map(a => String(a.amountMinor)), excessCreditMinor: plan.unallocatedAmountMinor,
+    paymentMethod: transaction.method, paymentReference: transaction.reference};
   return buildAuditLog({actorUid: uid, actorRole: 'admin', communityId: scope.communityId,
     action: transaction.method === 'upi' ? 'payment_v2.verify' : 'payment_v2.offline', targetType: 'paymentTransaction',
-    targetId: transaction.id, summary: 'V2 payment settled', metadata: {transactionId: transaction.id, residentId: scope.residentId,
-      amountMinor: transaction.amountMinor, allocatedBillIds: plan.allocations.map(a => a.billId),
-      allocatedAmountsMinor: plan.allocations.map(a => String(a.amountMinor)), excessCreditMinor: plan.unallocatedAmountMinor,
-      paymentMethod: transaction.method, paymentReference: transaction.reference}});
+    targetId: transaction.id, summary: 'V2 payment settled', metadata});
 }
-async function settle(db, tx, {scope, request, source, entries, history, recordRef, uid, nowMs, proofRef, evidence}) {
-  const plan = ledger.planPaymentAllocations({...scope, amountMinor: request.amountMinor, liabilities: entries.map(entry => ({
+async function settle(db, tx, {scope, request, source, entries, history, recordRef, uid, nowMs, proofRef, evidence, priorityBillId}) {
+  const plan = ledger.planPaymentAllocations({...scope, amountMinor: request.amountMinor,
+    ...(priorityBillId ? {priorityBillId} : {}), liabilities: entries.map(entry => ({
     ...scope, billId: entry.billId, schemaVersion: 2, eligible: true, issued: true, outstandingAmountMinor: entry.outstandingAmountMinor,
     billingPeriod: entry.bill.billingPeriod, dueDateMs: entry.bill.dueDate.toMillis(), createdAtMs: entry.bill.createdAt.toMillis(),
   }))});
@@ -246,7 +270,21 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
   const result = {success: true, transactionId: transaction.id, allocations: plan.allocations,
     excessCreditMinor: plan.unallocatedAmountMinor, alreadyCompleted: false};
   const record = {schemaVersion: 2, requestHash: hash(request), transaction, allocationEvents, creditEntries, result,
-    createdBy: uid, createdAt: Timestamp.fromMillis(nowMs)};
+    createdBy: uid, createdAt: Timestamp.fromMillis(nowMs),
+    ...(proofRef ? {claimedAmountMinor: request.claimedAmountMinor ?? request.amountMinor,
+      confirmedAmountMinor: request.amountMinor, amountMismatch: (request.claimedAmountMinor ?? request.amountMinor) !== request.amountMinor,
+      amountConfirmationMode: request.amountConfirmationMode || 'legacy_exact_balance_fallback', reviewedBy: uid,
+      reviewedAt: Timestamp.fromMillis(nowMs), referenceReviewRequired: !normalizedReference(request.paymentReference)} : {})};
+  const normalizedPaymentReference = normalizedReference(request.paymentReference);
+  const paymentReferenceGuardRef = normalizedPaymentReference
+    ? db.collection('paymentReferenceGuardsV2').doc(`payment_reference_v2_${hash([scope.communityId, scope.residentId, normalizedPaymentReference])}`)
+    : null;
+  if (normalizedPaymentReference) {
+    check(!history.paymentTransactions.some(item => normalizedReference(item.reference) === normalizedPaymentReference),
+      'duplicate_payment_reference: this reference is already recorded for the resident account');
+    check(!(await tx.get(paymentReferenceGuardRef)).exists,
+      'duplicate_payment_reference: this reference is already recorded for the resident account');
+  }
   // Every deterministic document is checked before any write. An orphan record
   // cannot be imported as a fresh receipt of money or applied a second time.
   for (const {collection, event} of eventWrites(record)) {
@@ -258,45 +296,84 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
   }
   const auditRef = db.collection('auditLogs').doc(recordRef.id);
   check(!(await tx.get(auditRef)).exists, 'immutable_audit_conflict');
-  const auditEntry = audit(uid, scope, transaction, plan);
+  const auditEntry = audit(uid, scope, transaction, plan, proofRef ? record : null);
+  const paymentEventType = proofRef ? 'payment_proof_verified' : 'offline_payment_settled';
+  createPaymentNotificationWrites(tx, db, paymentEventType, transaction.id, {
+    communityId: scope.communityId,
+    recipientUid: scope.residentId,
+    confirmedAmountMinor: transaction.amountMinor,
+    method: transaction.method,
+  }, nowMs);
   const updates = plan.allocations.map(a => {
     const entry = entries.find(e => e.billId === a.billId);
     return {ref: entry.ref, value: projection(entry.bill, entry.billId, next, nowMs)};
   });
   for (const {collection, event} of eventWrites(record)) tx.create(db.collection(collection).doc(event.id), event);
+  if (paymentReferenceGuardRef) tx.create(paymentReferenceGuardRef, {schemaVersion: 2,
+    communityId: scope.communityId, residentId: scope.residentId, referenceHash: hash(normalizedPaymentReference),
+    transactionId: transaction.id, createdAt: Timestamp.fromMillis(nowMs)});
   // Always serialize settlements on the account, even when no excess is issued.
   const account = {...(history.account || ledger.buildResidentFinancialAccount({...scope, createdAt: nowMs})),
     availableCreditMinor: next.credits.availableCreditMinor, version: (history.account?.version || 0) + 1, updatedAt: nowMs};
   if (history.account) tx.update(history.accountRef, account); else tx.create(history.accountRef, account);
   for (const update of updates) tx.update(update.ref, {...update.value, updatedAt: stamp()});
   if (proofRef) tx.update(proofRef, {status: 'completed', transactionId: transaction.id, ...evidence,
+    confirmedAmountMinor: record.confirmedAmountMinor,
+    amountMismatch: record.amountMismatch,
+    amountConfirmationMode: record.amountConfirmationMode,
     reviewedBy: uid, reviewedAt: stamp(), updatedAt: stamp()});
   tx.create(recordRef, record);
   tx.create(auditRef, auditEntry);
   return result;
 }
 async function verifyPaymentProofV2Core({db, bucket, auth, data, now = Date.now}) {
-  input(data, ['paymentId']); const paymentId = id(data.paymentId);
+  input(data, ['paymentId', 'confirmedAmountMinor']); const paymentId = id(data.paymentId);
+  const callerConfirmedAmount = Object.hasOwn(data, 'confirmedAmountMinor')
+    ? amount(data.confirmedAmountMinor) : null;
   const proofRef = db.collection('paymentProofsV2').doc(paymentId);
   return db.runTransaction(async tx => {
     const proof = (await tx.get(proofRef)).data();
     if (!proof) fail('V2 proof was not found.', 'not-found');
-    const request = proofContext(proof, paymentId);
+    const context = proofContext(proof, paymentId);
     const {uid} = await requireOperationalAdmin(db, auth, proof.communityId, tx);
     const recordRef = db.collection('paymentSettlementsV2').doc(`settlement_v2_${hash(['proof', paymentId])}`);
     const existing = (await tx.get(recordRef)).data();
     if (existing) {
       check(proof.status === 'completed' && proof.transactionId === existing.transaction.id, 'proof_settlement_mismatch');
+      const settledAmount = existing.confirmedAmountMinor ?? existing.transaction.amountMinor;
+      if (callerConfirmedAmount != null) check(callerConfirmedAmount === settledAmount, 'idempotency_conflict');
+      const request = existing.confirmedAmountMinor == null || existing.amountConfirmationMode === 'legacy_exact_balance_fallback'
+        ? context
+        : {...context, amountMinor: settledAmount, claimedAmountMinor: context.amountMinor,
+          confirmedAmountMinor: settledAmount, amountConfirmationMode: existing.amountConfirmationMode || 'admin_confirmed'};
       return retrySettlement(db, tx, existing, request);
     }
     check(proof.status === 'pending', 'Only pending V2 proofs can be approved.');
+    const flexible = proof.amountContractVersion === 2;
+    check(!flexible || callerConfirmedAmount != null,
+      'An Admin-confirmed received amount is required for flexible-amount proofs.');
+    const confirmedAmountMinor = callerConfirmedAmount ?? context.amountMinor;
+    const amountConfirmationMode = callerConfirmedAmount == null ? 'legacy_exact_balance_fallback' : 'admin_confirmed';
+    const request = callerConfirmedAmount == null
+      ? context
+      : {...context, amountMinor: confirmedAmountMinor, claimedAmountMinor: context.amountMinor,
+        confirmedAmountMinor, amountConfirmationMode};
     const scope = {communityId: proof.communityId, residentId: proof.residentId, currency: 'INR'};
-    const entry = await liability(db, tx, await tx.get(db.collection('bills').doc(proof.billId)), scope);
     const history = await historyFor(db, tx, scope), nowMs = now();
-    const checked = await verifyProjection(db, tx, entry, scope, history, nowMs);
+    const billSnapshot = await tx.get(db.collection('bills').where('schemaVersion', '==', 2)
+      .where('communityId', '==', scope.communityId).where('residentId', '==', scope.residentId)
+      .limit(MAX_ACCOUNT_BILLS + 1));
+    const billDocs = rootDocs(billSnapshot, 'bills');
+    check(billDocs.length <= MAX_ACCOUNT_BILLS, 'account_liability_limit: too many bills for an atomic settlement');
+    const entries = [];
+    for (const doc of billDocs) {
+      const entry = await liability(db, tx, doc, scope);
+      entries.push(await verifyProjection(db, tx, entry, scope, history, nowMs));
+    }
+    check(entries.some(entry => entry.billId === proof.billId), 'The linked bill is no longer an eligible liability.');
     const evidence = await receiptEvidence(bucket, proof);
     return settle(db, tx, {scope, request, source: {sourceType: 'direct_upi_proof', sourceId: paymentId, sourceState: 'approved', method: 'upi'},
-      entries: [checked], history, recordRef, uid, nowMs, proofRef, evidence});
+      entries, history, recordRef, uid, nowMs, proofRef, evidence, priorityBillId: proof.billId});
   });
 }
 async function rejectPaymentProofV2Core({db, auth, data}) {
@@ -309,6 +386,10 @@ async function rejectPaymentProofV2Core({db, auth, data}) {
     check(proof?.schemaVersion === 2 && validId(proof.communityId), 'V2 proof was not found.');
     const {uid} = await requireOperationalAdmin(db, auth, proof.communityId, tx);
     check(proof.status === 'pending', 'Only pending V2 proofs can be rejected.');
+    createPaymentNotificationWrites(tx, db, 'payment_proof_rejected', paymentId, {
+      communityId: proof.communityId,
+      recipientUid: proof.residentId,
+    }, Date.now());
     tx.update(ref, {status: 'failed', rejectionReason: data.rejectionReason.trim(), reviewedBy: uid, reviewedAt: stamp(), updatedAt: stamp()});
     return {success: true, paymentId};
   });

@@ -134,6 +134,21 @@ function billingV2ReportCases(test, environment, reportCore) {
     assertMinorUnits(paid);
   });
 
+  test('financial report reconciles credit automatically applied during later bill issuance', async () => {
+    const f = await fixture(environment, [1000]);
+    await f.pay({amountMinor: 1100, idempotencyKey: 'issue-resident-credit'});
+    await issue({db: f.db, auth, now: () => Date.parse('2030-02-15T00:00:00Z'),
+      data: {communityId: 'C', scope: 'community', billingPeriod: '2030-02', idempotencyKey: 'issue-february-credit',
+        chargeLines: lines(1000), dueDate: '2030-03-15'}});
+    const result = await report(f.db, '2030-02');
+    assert.equal(result.liabilitySummary.billedMinor, 1000);
+    assert.equal(result.liabilitySummary.creditAppliedMinor, 100);
+    assert.equal(result.liabilitySummary.outstandingMinor, 900);
+    assert.equal(result.liabilitySummary.statusCounts.partially_paid, 1);
+    assert.equal(result.creditPosition.totalAvailableCreditMinor, 0);
+    assertMinorUnits(result);
+  });
+
   test('overdue outstanding is computed from local due-date context', async () => {
     const f = await fixture(environment, [1000]);
     const overdue = await report(f.db, '2030-01', {now: () => Date.parse('2030-02-15T16:00:00Z')});

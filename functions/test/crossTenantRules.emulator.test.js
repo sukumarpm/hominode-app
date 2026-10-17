@@ -124,6 +124,14 @@ function dbForClaims(uid, claims) {
   return environment.authenticatedContext(uid, withPhone).firestore();
 }
 
+async function seedVisitorFixture(id, data) {
+  // Privileged setup represents an existing invitation created by the backend
+  // callable. Assertions below still use ordinary client contexts and rules.
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`visitors/${id}`).set(data);
+  });
+}
+
 test("Phone Auth is required for Admin, Resident, and Security Firestore authority", { skip: !enabled }, async () => {
   await assertSucceeds(dbFor("admin-a").doc("bills/bill-a").get());
   await assertSucceeds(dbFor("resident-a").doc("bills/bill-a").get());
@@ -272,7 +280,7 @@ test("residents cannot cross tenant or flat boundaries", { skip: !enabled }, asy
   await assertFails(dbFor("resident-a").collection("visitors").doc("visitor-a").update({ communityId: "community-b" }));
 });
 
-test("resident ownership is required for writes", { skip: !enabled }, async () => {
+test("resident ownership is required for writes and residents cannot create visitors directly", { skip: !enabled }, async () => {
   const ownVisitor = dbFor("resident-a").collection("visitors").doc("new-own");
   const expectedVisitor = {
     communityId: "community-a",
@@ -287,19 +295,19 @@ test("resident ownership is required for writes", { skip: !enabled }, async () =
     actualArrival: null,
     departure: null,
   };
-  await assertSucceeds(ownVisitor.set(expectedVisitor));
+  await assertFails(ownVisitor.set(expectedVisitor));
   await assertFails(dbFor("resident-a").collection("visitors").doc("new-forged").set({ ...expectedVisitor, hostUserId: "resident-b" }));
   await assertFails(dbFor("resident-a").collection("bills").doc("bill-a").update({ amount: 0 }));
   await assertSucceeds(dbFor("resident-a").collection("familyMembers").doc("family-a").set({ communityId: "community-a", userId: "resident-a", name: "Member" }));
   await assertFails(dbFor("resident-b").collection("familyMembers").doc("family-forged").set({ communityId: "community-a", userId: "resident-b", name: "Member" }));
 });
 
-test("verified tenant can create own expected visitor", { skip: !enabled }, async () => {
+test("verified tenant cannot create visitor documents directly", { skip: !enabled }, async () => {
   const visitor = dbFor("tenant-verified")
     .collection("visitors")
     .doc("tenant-own-visitor");
 
-  await assertSucceeds(visitor.set({
+  await assertFails(visitor.set({
     communityId: "community-a",
     buildingId: "building-a",
     flatId: "flat-tv",
@@ -368,6 +376,48 @@ test("building edits preserve structural fields after creation", { skip: !enable
 });
 
 test("visitor approval and gate state remain Admin/Security-only", { skip: !enabled }, async () => {
+  await assertFails(dbFor("admin-a").collection("visitors").doc("admin-forged-host").set({
+    communityId: "community-a",
+    buildingId: "building-a",
+    flatId: "flat-a",
+    hostUserId: "resident-a",
+    residentId: "resident-a",
+    visitorName: "Forged guest",
+    status: "expected",
+    isApproved: false,
+    approvedBy: null,
+    approvedAt: null,
+    actualArrival: null,
+    departure: null,
+  }));
+  await assertFails(dbFor("admin-a").collection("visitors").doc("admin-walk-in").set({
+    communityId: "community-a",
+    buildingId: "building-a",
+    flatId: "flat-a",
+    hostUserId: "resident-a",
+    residentId: "resident-a",
+    visitorName: "Walk-in guest",
+    status: "expected",
+    isApproved: false,
+    approvedBy: null,
+    approvedAt: null,
+    actualArrival: null,
+    departure: null,
+  }));
+  await assertFails(dbFor("security-a").collection("visitors").doc("security-created").set({
+    communityId: "community-a",
+    buildingId: "building-a",
+    flatId: "flat-a",
+    hostUserId: "resident-a",
+    residentId: "resident-a",
+    visitorName: "Security-created guest",
+    status: "expected",
+    isApproved: false,
+    approvedBy: null,
+    approvedAt: null,
+    actualArrival: null,
+    departure: null,
+  }));
   const residentVisitor = dbFor("resident-a").collection("visitors").doc("visitor-a");
   await assertSucceeds(residentVisitor.update({ visitorName: "Updated guest" }));
   await assertFails(residentVisitor.update({ status: "inside" }));
@@ -380,7 +430,7 @@ test("visitor approval and gate state remain Admin/Security-only", { skip: !enab
   await assertFails(residentVisitor.update({ communityId: "community-b" }));
   await assertFails(residentVisitor.update({ buildingId: "building-b" }));
   await assertFails(residentVisitor.update({ flatId: "flat-tv" }));
-  await assertSucceeds(dbFor("resident-a").collection("visitors").doc("resident-cancelled").set({
+  const cancelledVisitor = {
     communityId: "community-a",
     buildingId: "building-a",
     flatId: "flat-a",
@@ -392,7 +442,9 @@ test("visitor approval and gate state remain Admin/Security-only", { skip: !enab
     approvedAt: null,
     actualArrival: null,
     departure: null,
-  }));
+  };
+  await assertFails(dbFor("resident-a").collection("visitors").doc("resident-cancelled").set(cancelledVisitor));
+  await seedVisitorFixture("resident-cancelled", cancelledVisitor);
   await assertSucceeds(dbFor("resident-a").collection("visitors").doc("resident-cancelled").delete());
   await assertFails(dbFor("resident-a").collection("visitors").doc("visitor-approved-a").delete());
   await assertFails(dbFor("resident-a").collection("visitors").doc("self-approved").set({
@@ -413,10 +465,11 @@ test("visitor approval and gate state remain Admin/Security-only", { skip: !enab
     approvedAt: serverTimestamp(), updatedAt: serverTimestamp(),
   }));
   await assertFails(dbFor("admin-a").collection("visitors").doc("visitor-a").update({ hostUserId: "tenant-verified" }));
-  await assertSucceeds(dbFor("security-a").collection("visitors").doc("visitor-a").update({
+  await assertFails(dbFor("security-a").collection("visitors").doc("visitor-a").update({
     status: "inside",
     actualArrival: serverTimestamp(), checkedInBy: "security-a", updatedAt: serverTimestamp(),
   }));
+  await assertFails(dbFor("security-a").collection("visitors").doc("visitor-a").get());
   await assertFails(dbFor("security-a").collection("visitors").doc("visitor-a").update({ flatId: "flat-tv" }));
   await assertFails(dbFor("admin-a").collection("visitors").doc("visitor-b").update({ isApproved: true }));
   await assertFails(dbFor("security-a").collection("visitors").doc("visitor-b").update({ status: "inside" }));
@@ -981,7 +1034,7 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
   const scoped = {communityId: 'a', buildingId: 'ba', flatId: 'fa'};
   const owned = {...scoped, authorId: 'ra', content: 'Original'};
   const contentCollections = ['posts', 'community_wall', 'listings', 'marketplace'];
-  const officialCollections = ['parcels', 'staff', 'parkingSlots', 'parking_violations', 'vendors', 'broadcasts', 'events_announcements', 'events', 'announcements', 'posters', 'pinnedPosts'];
+  const officialCollections = ['parcels', 'staff', 'parkingSlots', 'parking_violations', 'vendors', 'broadcasts', 'announcements', 'posters', 'pinnedPosts'];
   const check = (name, fn) => test(name, {skip: !enabled}, fn);
 
   test.before(async () => {
@@ -1008,6 +1061,10 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
         put(`buildings/b${c}`, {communityId: c});
         put(`flats/f${c}`, {communityId: c, buildingId: `b${c}`});
       }
+      put('subscriptionPlans/essential', {features: {events: false}});
+      put('subscriptionPlans/plus', {features: {events: true}});
+      put('subscriptions/a', {planId: 'essential', status: 'active'});
+      put('subscriptions/b', {planId: 'plus', status: 'active'});
       put('buildings/ba2', {communityId: 'a'});
       put('flats/fa2', {communityId: 'a', buildingId: 'ba2'});
       for (const [uid, communityId] of [['ra', 'a'], ['ra2', 'a'], ['rb', 'b']]) {
@@ -1087,6 +1144,71 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
     await assertFails(ref('ra', 'events_announcements', 'announcement').update({title: 'Forged'}));
     await assertSucceeds(ref('aa', 'events_announcements', 'announcement').update({title: 'Updated'}));
   });
+  check('announcements are available on Basic while Events remain entitlement-gated', async () => {
+    const diagnose = async (label, operation) => {
+      console.log(`[FC-001] ${label}`);
+      try {
+        return await operation();
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error
+          ? error.code
+          : 'assertion-failed';
+        const name = error && typeof error === 'object' && 'name' in error
+          ? error.name
+          : 'Error';
+        throw new Error(`[FC-001] ${label} failed (code=${code}, name=${name})`);
+      }
+    };
+
+    await diagnose('Admin aa create Basic announcement in community a', () =>
+      ref('aa', 'events_announcements', 'basic-announcement')
+        .set({...scoped, type: 'announcement', title: 'Announcement'})
+        .then(assertSucceeds));
+    await diagnose('Resident ra get Basic announcement in community a (expected allow)', () =>
+      ref('ra', 'events_announcements', 'basic-announcement').get().then(assertSucceeds));
+    await env.withSecurityRulesDisabled(async context => {
+      await context.firestore().doc('events_announcements/basic-event').set({...scoped, type: 'event', title: 'Event'});
+      await context.firestore().doc('events_announcements/plus-event').set({communityId: 'b', buildingId: 'bb', flatId: 'fb', type: 'event', title: 'Event'});
+      await context.firestore().doc('events/legacy-basic-event').set({...scoped, status: 'published', title: 'Legacy event'});
+      await context.firestore().doc('events/legacy-plus-event').set({communityId: 'b', buildingId: 'bb', flatId: 'fb', status: 'published', title: 'Legacy event'});
+    });
+    await diagnose('Resident ra get Basic canonical Event (expected deny)', () =>
+      assertFails(ref('ra', 'events_announcements', 'basic-event').get()));
+    await diagnose('Resident ra query Basic canonical Events in community a (expected deny)', () =>
+      assertFails(db('ra').collection('events_announcements').where('communityId', '==', 'a').where('type', '==', 'event').get()));
+    await diagnose('Admin aa create Basic Event in community a (expected deny)', () =>
+      assertFails(ref('aa', 'events_announcements', 'forbidden-event').set({...scoped, type: 'event'})));
+    await diagnose('Resident rb get Plus canonical Event in community b (expected allow)', () =>
+      assertSucceeds(ref('rb', 'events_announcements', 'plus-event').get()));
+    await diagnose('Resident ra get Basic legacy Event in community a (expected deny)', () =>
+      assertFails(ref('ra', 'events', 'legacy-basic-event').get()));
+    await diagnose('Resident rb get Plus legacy Event in community b (expected allow)', () =>
+      assertSucceeds(ref('rb', 'events', 'legacy-plus-event').get()));
+    await diagnose('Admin aa create legacy Event in Basic community a (expected deny)', () =>
+      assertFails(ref('aa', 'events', 'forged-basic-event').set({...scoped, status: 'published'})));
+    await env.withSecurityRulesDisabled(async context => {
+      await context.firestore().doc('subscriptions/b').delete();
+    });
+    await diagnose('Resident rb get Plus canonical Event without a community subscription (expected deny)', () =>
+      assertFails(ref('rb', 'events_announcements', 'plus-event').get()));
+  });
+  check('announcement and event reads fail closed for missing or null community scope', async () => {
+    await env.withSecurityRulesDisabled(async context => {
+      const firestore = context.firestore();
+      await firestore.doc('events_announcements/missing-community').set({type: 'announcement'});
+      await firestore.doc('events_announcements/null-community').set({communityId: null, type: 'announcement'});
+      await firestore.doc('events_announcements/null-event-community').set({communityId: null, type: 'event'});
+      await firestore.doc('events/null-community').set({communityId: null, status: 'published'});
+    });
+    for (const [collection, id] of [
+      ['events_announcements', 'missing-community'],
+      ['events_announcements', 'null-community'],
+      ['events_announcements', 'null-event-community'],
+      ['events', 'null-community'],
+    ]) {
+      await assertFails(ref('ra', collection, id).get());
+    }
+  });
   for (const c of [...contentCollections, 'documents', 'apartmentImages', 'marketplaces']) {
     const actor = ['documents', 'apartmentImages'].includes(c) ? 'aa' : 'ra';
     check(`${c}: tenant reassignment/removal and ownership alias injection denied; legitimate edits succeed`, async () => {
@@ -1154,9 +1276,9 @@ test.describe("content authorization and immutable tenant scope", {skip: !enable
       await assertSucceeds(ref('aa', c).update({content: 'Reviewed'}));
     }
   });
-  check('Security visitor and assigned-gate access remains unchanged', async () => {
-    await assertSucceeds(ref('sa', 'visitors', 'visitor').get());
-    await assertSucceeds(ref('sa', 'visitors', 'visitor').update({status: 'inside', isApproved: true, approvedBy: 'sa', approvedAt: serverTimestamp(), actualArrival: serverTimestamp(), checkedInBy: 'sa', updatedAt: serverTimestamp()}));
+  check('Security visitor reads and direct transitions require secure callables', async () => {
+    await assertFails(ref('sa', 'visitors', 'visitor').get());
+    await assertFails(ref('sa', 'visitors', 'visitor').update({status: 'inside', isApproved: true, approvedBy: 'sa', approvedAt: serverTimestamp(), actualArrival: serverTimestamp(), checkedInBy: 'sa', updatedAt: serverTimestamp()}));
     await assertSucceeds(ref('sa', 'gates', 'gate').get());
   });
 

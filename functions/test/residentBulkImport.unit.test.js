@@ -201,6 +201,44 @@ test("national phones require context and normalize to E.164", () => {
   assert.throws(() => normalizePhone("4155552671", null), {rowCode: "missing_country_context"});
 });
 
+test("explicit international numbers retain their country code in an Indian community", async () => {
+  const numbers = [
+    ["+91 98765 43210", "+919876543210"],
+    ["+63 917 123 4567", "+639171234567"],
+    ["+1 415 555 2671", "+14155552671"],
+    ["+44 20 7946 0958", "+442079460958"],
+  ];
+  for (const [input, expected] of numbers) {
+    const db = fakeDb({
+      ...baseSeed,
+      "communities/A": {name: "Alpha", isActive: true, countryCode: "IN"},
+    });
+    const result = await validateResidentBulkImportCore(args(db, [row({
+      phoneNumber: input,
+      countryCode: "",
+    })]));
+    assert.equal(result.rows[0].status, "ready", input);
+    assert.equal(result.rows[0].phoneNumber, expected, input);
+  }
+});
+
+test("bulk import detects legacy resident phone values in equivalent formats", async () => {
+  const db = fakeDb({
+    ...baseSeed,
+    "communities/A": {name: "Alpha", isActive: true, countryCode: "IN"},
+    "users/legacy-indian": {
+      communityId: "A",
+      role: "resident",
+      phoneNumber: "+91 98765-43210",
+    },
+  });
+  const result = await validateResidentBulkImportCore(args(db, [row({
+    phoneNumber: "+919876543210",
+    countryCode: "",
+  })]));
+  assert.equal(result.rows[0].code, "resident_already_exists");
+});
+
 test("import reserves canonical units while keeping onboarding pending and unverified", async () => {
   const db = fakeDb(baseSeed);
   const result = await importResidentsBulkCore(args(db, [row()], {importJobId: "job_20260825_alpha"}));

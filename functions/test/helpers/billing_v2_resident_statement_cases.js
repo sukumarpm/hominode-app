@@ -32,23 +32,20 @@ async function setAccount(f, creditMinor, version = 1) {
 }
 
 async function createCreditAppliedToFebruary(f, appliedMinor = 100) {
-  await f.pay({amountMinor: 1200, idempotencyKey: 'issue-excess-credit'});
+  await f.pay({amountMinor: 1000 + appliedMinor, idempotencyKey: 'issue-excess-credit'});
   const february = await issue({db: f.db, auth: adminAuth, now, data: {communityId: 'C', scope: 'community',
     billingPeriod: '2030-02', idempotencyKey: 'statement-credit-february',
     chargeLines: [{lineId: 'base', code: 'maintenance', amountMinor: 1000}], dueDate: '2030-02-15'}});
   f.bills.push(monthlyBillIdV2('C', 'f', '2030-02'));
   f.batches.push(february.batchId);
-  const existing = (await f.get(`residentFinancialAccounts/${ledger.residentFinancialAccountId({communityId: 'C', residentId: 'r'})}`));
-  assert.equal(existing.availableCreditMinor, 200);
-  const entry = ledger.buildCreditEntry({communityId: 'C', residentId: 'r', currency: 'INR',
-    eventType: 'applied', sourceType: 'credit_application', sourceId: 'apply-february-credit',
-    billId: f.bills[1], amountMinor: appliedMinor, createdAt: now()});
-  await f.ref(`residentCreditEntries/${entry.id}`).set(entry);
+  const existing = await f.get(`residentFinancialAccounts/${ledger.residentFinancialAccountId({communityId: 'C', residentId: 'r'})}`);
+  assert.equal(existing.availableCreditMinor, 0);
+  const entry = (await f.db.collection('residentCreditEntries').where('billId', '==', f.bills[1]).get()).docs
+    .map(doc => doc.data()).find(value => value.eventType === 'applied');
+  assert(entry); assert.equal(entry.amountMinor, appliedMinor);
   const bill = await f.get(`bills/${f.bills[1]}`);
-  await f.patch(`bills/${f.bills[1]}`, {creditAppliedMinor: appliedMinor,
-    outstandingAmountMinor: bill.amountMinor - appliedMinor,
-    status: appliedMinor === bill.amountMinor ? 'paid' : 'partially_paid'});
-  await setAccount(f, 200 - appliedMinor, 2);
+  assert.equal(bill.creditAppliedMinor, appliedMinor);
+  assert.equal(bill.outstandingAmountMinor, bill.amountMinor - appliedMinor);
 }
 
 async function seedPaymentHistory(f, {amountMinor, allocationMinor, reversalMinor = 0}) {
@@ -215,7 +212,7 @@ function billingV2ResidentStatementCases(test, environment) {
     await createCreditAppliedToFebruary(f, 100);
     const result = await statement(f.db, '2030-02');
     assert.equal(result.summary.creditAppliedMinor, 100);
-    assert.equal(result.summary.availableCreditMinor, 100);
+    assert.equal(result.summary.availableCreditMinor, 0);
     assert.equal(result.bills[0].outstandingMinor, 900);
     const accountId = ledger.residentFinancialAccountId({communityId: 'C', residentId: 'r'});
     await f.patch(`residentFinancialAccounts/${accountId}`, {availableCreditMinor: 99});
@@ -229,7 +226,7 @@ function billingV2ResidentStatementCases(test, environment) {
     const result = await statement(f.db, '2030-02');
     assert.equal(result.bills[0].amountMinor, 50);
     assert.equal(result.bills[0].creditAppliedMinor, 50);
-    assert.equal(result.summary.availableCreditMinor, 150);
+    assert.equal(result.summary.availableCreditMinor, 50);
   });
 
   test('handles a downward revision by reducing net settlement attribution', async () => {

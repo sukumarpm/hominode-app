@@ -168,8 +168,15 @@ async function loadTenantData(db, communityId, importJobId, transaction) {
     flats: flats.docs, users: users.docs, onboarding: onboarding.docs, importRows: importRows.docs};
 }
 
-function userPhone(data) {
-  return clean(data?.phoneNumber || data?.phone).replace(/[\s().-]/g, "");
+function userHasPhone(data, phoneNumber, countryCode) {
+  return [data?.phoneNumber, data?.phone].some((value) => {
+    if (!clean(value)) return false;
+    try {
+      return normalizePhone(value, countryCode) === phoneNumber;
+    } catch (_) {
+      return false;
+    }
+  });
 }
 
 function validateNormalizedRows({normalizedRows, tenantData, communityId, importJobId}) {
@@ -202,8 +209,13 @@ function validateNormalizedRows({normalizedRows, tenantData, communityId, import
     const flat = matches[0];
     const unit = flat.data();
     if (seenUnits.has(flat.id)) return fail('duplicate_unit_allocation', 'This unit is allocated more than once in this file.');
-    const users = tenantData.users.filter((doc) => userPhone(doc.data()) === row.phoneNumber);
-    const pending = tenantData.onboarding.filter((doc) => userPhone(doc.data()) === row.phoneNumber);
+    const communityCountryCode = validCountryCode(
+      tenantData.community?.phoneCountryCode || tenantData.community?.countryCode,
+    );
+    const users = tenantData.users.filter((doc) =>
+      userHasPhone(doc.data(), row.phoneNumber, communityCountryCode));
+    const pending = tenantData.onboarding.filter((doc) =>
+      userHasPhone(doc.data(), row.phoneNumber, communityCountryCode));
     if (users.length > 1 || pending.length > 1) return fail('ambiguous_resident', 'Multiple resident records use this phone. Resolve them before importing.');
     const user = users[0];
     const onboarding = pending[0];

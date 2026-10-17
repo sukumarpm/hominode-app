@@ -6,6 +6,7 @@ const {
   sendCanonicalNotification,
   sendNotificationCore,
   unregisterNotificationDeviceCore,
+  visitorNotificationId,
 } = require("../src/notifications");
 
 const RESIDENT_ANDROID = "1:551984029668:android:ef652ea4d8e070ca0db1f1";
@@ -218,6 +219,37 @@ test("sender rejects a Resident from another community", async () => {
   );
 });
 
+test("legacy Admin visitor notification request is acknowledged without a duplicate write or push", async () => {
+  const db = fakeDb({
+    "admins/admin-a": activeAdmin,
+    "users/resident-a": activeResident,
+    "communities/COMMUNITY_A": activeCommunity,
+    "visitors/visitor-1": {
+      communityId: "COMMUNITY_A", hostUserId: "resident-a", residentId: "resident-a",
+      status: "approved", isApproved: true, approvedBy: "admin-a", approvedAt: new Date(),
+    },
+  });
+  let sends = 0;
+  const result = await sendNotificationCore({
+    db,
+    messaging: {sendEachForMulticast: async () => { sends++; return {successCount: 1, failureCount: 0, responses: []}; }},
+    auth: phoneAuth("admin-a"),
+    app: {appId: ADMIN_ANDROID},
+    data: {
+      communityId: "COMMUNITY_A", recipientUid: "resident-a",
+      title: "Visitor Approved", message: "Guest was approved to visit.",
+      category: "visitor", priority: "high", sourceEntityId: "visitor-1",
+    },
+  });
+  assert.deepEqual(result, {
+    notificationId: visitorNotificationId("visitor-1", "visitor_approved", "resident-a"),
+    duplicate: true,
+    serverManaged: true,
+  });
+  assert.equal(sends, 0);
+  assert.equal([...db.values.keys()].filter((path) => path.startsWith("notifications/")).length, 0);
+});
+
 test("sender uses only canonical app/tenant tokens, removes stale tokens, and deduplicates", async () => {
   const db = fakeDb({
     "admins/admin-a": activeAdmin,
@@ -278,7 +310,7 @@ test("sender uses only canonical app/tenant tokens, removes stale tokens, and de
       recipientUid: "resident-a",
       title: "Visitor approved",
       message: "Your visitor was approved.",
-      category: "visitor",
+      category: "general",
       priority: "high",
       sourceEntityId: "visitor-1",
     },

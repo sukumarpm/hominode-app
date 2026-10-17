@@ -173,8 +173,9 @@ function summarizeAllocations({communityId, residentId, currency, transactions, 
   return {paidByBill: Object.fromEntries([...byBill].map(([key, value]) => [key, safeMoney(value)])), remainingAllocations};
 }
 
-function orderedLiabilities(scope, liabilities) {
+function orderedLiabilities(scope, liabilities, priorityBillId) {
   if (!Array.isArray(liabilities)) fail('Liabilities must be an array of trusted issued descriptors.');
+  if (priorityBillId != null) documentId(priorityBillId);
   const ids = new Set();
   const result = liabilities.map(bill => {
     sameContext(bill, scope);
@@ -187,14 +188,15 @@ function orderedLiabilities(scope, liabilities) {
       dueDateMs: time(bill.dueDateMs), billingPeriod: bill.billingPeriod, createdAtMs: time(bill.createdAtMs)};
   });
   const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-  return result.sort((a, b) => compare(a.dueDateMs, b.dueDateMs) || compare(a.billingPeriod, b.billingPeriod) ||
+  return result.sort((a, b) => (a.billId === priorityBillId ? -1 : b.billId === priorityBillId ? 1 : 0) ||
+    compare(a.dueDateMs, b.dueDateMs) || compare(a.billingPeriod, b.billingPeriod) ||
     compare(a.createdAtMs, b.createdAtMs) || compare(a.billId, b.billId));
 }
 function distribute(value, availableMinor) {
   const scope = context(value);
   let remainingMinor = money(availableMinor);
   const allocations = [];
-  for (const bill of orderedLiabilities(scope, value.liabilities)) {
+  for (const bill of orderedLiabilities(scope, value.liabilities, value.priorityBillId)) {
     const amountMinor = Math.min(remainingMinor, bill.outstandingAmountMinor);
     if (amountMinor > 0) allocations.push(Object.freeze({billId: bill.billId, amountMinor}));
     remainingMinor -= amountMinor;

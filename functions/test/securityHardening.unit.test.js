@@ -65,7 +65,7 @@ test('Admin, Resident and Security authentication remain bound to phone identity
   assert.match(security, /signInProvider: tokenResult\.signInProvider/);
   assert.doesNotMatch(security, /user\.providerData/);
   assert.match(security, /matchesVerifiedPhone\(/);
-  assert.match(security, /await _safeSignOut\(\);/);
+  assert.match(security, /await _safeSignOut\(\s*expectedUid: user\.uid,\s*isSessionCurrent: isSessionCurrent,\s*\);/);
 });
 
 test('client callable boundary requires verified Phone Auth except the classified public resolver', async () => {

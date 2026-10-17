@@ -604,6 +604,39 @@ test("Admin onboarding cannot create a second profile path for an existing moved
   assert.equal([...db.values.keys()].filter((path) => path.startsWith("residentOnboarding/")).length, 0);
 });
 
+test("single onboarding accepts E.164 independent of community and detects legacy formatted records", async () => {
+  const numbers = [
+    ["+91 98765 43210", "+919876543210"],
+    ["+63 917 123 4567", "+639171234567"],
+    ["+1 415 555 2671", "+14155552671"],
+    ["+44 20 7946 0958", "+442079460958"],
+  ];
+  for (const [input, expected] of numbers) {
+    const db = fakeDb({
+      "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+      "communities/A": {isActive: true, countryCode: "IN"},
+    });
+    const created = await createResidentOnboardingCore({
+      db,
+      auth: phoneAuth("admin-a"),
+      data: {communityId: "A", residentName: "International Resident", phoneNumber: input, residentType: "owner"},
+    });
+    assert.equal(db.values.get(`residentOnboarding/${created.onboardingId}`).phoneNumber, expected);
+  }
+
+  const legacyDb = fakeDb({
+    "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+    "communities/A": {isActive: true, countryCode: "IN"},
+    "users/legacy": {uid: "legacy", role: "resident", communityId: "A", phoneNumber: "98765-43210"},
+  });
+  await assert.rejects(() => createResidentOnboardingCore({
+    db: legacyDb,
+    auth: phoneAuth("admin-a"),
+    data: {communityId: "A", residentName: "Duplicate Resident", phoneNumber: "+919876543210", residentType: "owner"},
+  }), {code: "already-exists"});
+  assert.equal(legacyDb.values.has("users/legacy"), true);
+});
+
 test("trusted approval activates optional-proof owner and blocks unverified tenant approval", async () => {
   const ownerDb = fakeDb(approvalSeed());
   const owner = await approveResidentRegistrationCore({db: ownerDb, auth: phoneAuth("admin-a"), data: approvalData("owner")});
@@ -666,37 +699,41 @@ test("trusted approval prevents an active duplicate owner and cross-community re
   );
 });
 
-test("all owner and tenant combinations reject a second active occupant", async () => {
+test("all owner and tenant combinations reject a second active occupant", async (t) => {
   for (const [existingType, candidateType] of [
     ["owner", "owner"],
     ["owner", "tenant"],
     ["tenant", "owner"],
     ["tenant", "tenant"],
   ]) {
-    const candidate = {
-      declaredResidentType: candidateType,
-      ...(candidateType === "tenant"
-        ? {identityVerified: true, identityVerificationStatus: "verified"}
-        : {}),
-    };
-    const db = fakeDb(approvalSeed(candidate, {
-      "flats/flat-a": {
-        communityId: "A",
-        buildingId: "building-a",
-        status: "occupied",
-        residentUserId: "current-resident",
-      },
-      "users/current-resident": activeOccupant(existingType),
-    }));
-    await assert.rejects(
-      () => approveResidentRegistrationCore({
-        db,
-        auth: phoneAuth("admin-a"),
-        data: approvalData(candidateType),
-      }),
-      (error) => error.code === "failed-precondition" &&
-        /not safely vacant/.test(error.message),
-    );
+    await t.test(`${existingType} occupant rejects ${candidateType} candidate`, async () => {
+      const candidate = {
+        declaredResidentType: candidateType,
+        ...(candidateType === "tenant"
+          ? {identityVerified: true, identityVerificationStatus: "verified"}
+          : {}),
+      };
+      const db = fakeDb(approvalSeed(candidate, {
+        "flats/flat-a": {
+          communityId: "A",
+          buildingId: "building-a",
+          status: "occupied",
+          residentUserId: "current-resident",
+        },
+        "users/current-resident": activeOccupant(existingType),
+      }));
+      const before = structuredClone([...db.values.entries()]);
+      await assert.rejects(
+        () => approveResidentRegistrationCore({
+          db,
+          auth: phoneAuth("admin-a"),
+          data: approvalData(candidateType),
+        }),
+        (error) => error.code === "failed-precondition" &&
+          /unit is not available or reserved/.test(error.message),
+      );
+      assert.deepEqual([...db.values.entries()], before);
+    });
   }
 });
 
