@@ -2,6 +2,7 @@
 // Cloud Firestore Database Service with CRUD operations
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/user_model.dart';
 import '../models/building_model.dart';
 import '../models/flat_model.dart';
@@ -428,9 +429,22 @@ class DatabaseService {
 
   Future<DatabaseResult<VisitorModel>> createVisitor(VisitorModel visitor) async {
     try {
-      final docRef = await _firestore.collection(visitorsCollection).add(visitor.toMap());
-      final created = visitor.copyWith(id: docRef.id);
-      await docRef.update({'id': docRef.id});
+      final response = await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+          .httpsCallable('createVisitorInvitation')
+          .call<Map<String, dynamic>>({
+            'visitorName': visitor.visitorName,
+            'purpose': visitor.purpose,
+            'expectedArrival': visitor.expectedArrival.millisecondsSinceEpoch,
+            'phoneNumber': visitor.visitorPhone,
+            'vehicleNumber': visitor.vehicleNumber,
+          });
+      final visitorId = response.data['visitorId'] as String?;
+      if (visitorId == null || visitorId.isEmpty) {
+        throw StateError('Visitor invitation response was incomplete.');
+      }
+      final createdSnapshot = await _firestore.collection(visitorsCollection).doc(visitorId).get();
+      if (!createdSnapshot.exists) throw StateError('Created visitor could not be loaded.');
+      final created = VisitorModel.fromSnapshot(createdSnapshot);
       return DatabaseResult.success(message: 'Visitor created successfully', data: created);
     } catch (e) {
       return DatabaseResult.failure(message: 'Failed to create visitor: $e');

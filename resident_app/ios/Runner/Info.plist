@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Hominode</string>
+	<string>Hominode Resident</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -41,6 +41,8 @@
 	<string>Hominode uses the camera to add photos to marketplace listings.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Optionally share your location once when requesting emergency assistance.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Hominode uses your location only when you choose to share it while requesting emergency assistance. Hominode does not continuously track your location in the background.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hominode uses the microphone for video recording.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

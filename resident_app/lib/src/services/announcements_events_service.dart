@@ -1,11 +1,15 @@
 // lib/src/services/announcements_events_service.dart
 // Service for fetching tenant-scoped announcements and events from Firestore
 
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../models/announcement_model.dart';
 import '../models/event_model.dart';
+import 'subscription_entitlement_service.dart';
 
 class AnnouncementsEventsService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -16,6 +20,12 @@ class AnnouncementsEventsService {
         .collection('events_announcements')
         .where('communityId', isEqualTo: communityId)
         .where('type', isEqualTo: 'event');
+  }
+
+  Future<bool> eventsAllowed(String communityId) async {
+    final entitlement = await ResidentSubscriptionEntitlementService()
+        .getEntitlement(communityId);
+    return entitlement?.canUseFeature('events') == true;
   }
 
   /// Get current resident's community ID
@@ -47,6 +57,8 @@ class AnnouncementsEventsService {
     return communityId;
   }
 
+  Future<String?> currentCommunityId() => _getCurrentCommunityId();
+
   /// Stream active announcements for current resident's community
   Stream<List<AnnouncementModel>> streamAnnouncements() async* {
     try {
@@ -57,25 +69,181 @@ class AnnouncementsEventsService {
         return;
       }
 
-      print('📢 Streaming announcements for community: $communityId');
+      final user = _auth.currentUser;
+      if (user == null) {
+        yield [];
+        return;
+      }
+      final profile = await _firestore.collection('users').doc(user.uid).get();
+      final flatId = profile.data()?['flatId'] as String?;
+      if (flatId == null ||
+          flatId.isEmpty ||
+          profile.data()?['communityId'] != communityId) {
+        yield [];
+        return;
+      }
 
-      yield* _firestore
-          .collection('events_announcements')
-          .where('communityId', isEqualTo: communityId)
-          .where('type', isEqualTo: 'announcement')
-          .snapshots()
-          .map((snapshot) {
-            final announcements = snapshot.docs
-                .where((doc) => doc.data()['status'] == 'active')
-                .map((doc) => AnnouncementModel.fromFirestore(doc))
-                .toList();
+      final response = await FirebaseFunctions.instanceFor(
+        region: 'asia-southeast1',
+      ).httpsCallable('getResidentNoticeIds').call();
+      final result = Map<String, dynamic>.from(response.data as Map);
+      if (result['communityId'] != communityId || result['flatId'] != flatId) {
+        throw StateError('Resident announcement scope could not be verified.');
+      }
 
-            announcements.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final output = StreamController<List<AnnouncementModel>>();
+      final canonical = <String, AnnouncementModel>{};
+      final oldAnnouncements = <String, AnnouncementModel>{};
+      final legacy = <String, AnnouncementModel>{};
+      void publish() {
+        final values = <AnnouncementModel>[
+          ...canonical.values,
+          ...oldAnnouncements.values,
+          ...legacy.values,
+        ];
+        final seen = <String>{};
+        final unique = values.where((item) {
+          final signature =
+              '${item.title.trim().toLowerCase()}\u0000'
+              '${item.description.trim().toLowerCase()}\u0000'
+              '${item.createdAt.year}-${item.createdAt.month}-${item.createdAt.day}';
+          return seen.add(signature);
+        }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        output.add(unique);
+      }
 
-            print('✅ Streamed ${announcements.length} announcements');
+      final subscriptions = <StreamSubscription<dynamic>>[];
+      subscriptions.add(
+        _firestore
+            .collection('events_announcements')
+            .where('communityId', isEqualTo: communityId)
+            .where('type', isEqualTo: 'announcement')
+            .snapshots()
+            .map((snapshot) {
+              canonical
+                ..clear()
+                ..addEntries(
+                  snapshot.docs
+                      .where((doc) {
+                        final data = doc.data();
+                        final expiry = data['expiresAt'] ?? data['expiryDate'];
+                        final expiryDate = expiry is Timestamp
+                            ? expiry.toDate()
+                            : null;
+                        final targets = List<String>.from(
+                          data['targetFlats'] ?? const [],
+                        );
+                        return (data['status'] == 'active' ||
+                                data['status'] == 'published') &&
+                            (expiryDate == null ||
+                                !expiryDate.isBefore(DateTime.now())) &&
+                            (targets.isEmpty || targets.contains(flatId));
+                      })
+                      .map(
+                        (doc) => MapEntry(
+                          doc.id,
+                          AnnouncementModel.fromFirestore(doc),
+                        ),
+                      ),
+                );
+              publish();
+              return snapshot;
+            })
+            .listen((_) {}, onError: output.addError),
+      );
 
-            return announcements;
-          });
+      subscriptions.add(
+        _firestore
+            .collection('announcements')
+            .where('communityId', isEqualTo: communityId)
+            .snapshots()
+            .listen((snapshot) {
+              oldAnnouncements
+                ..clear()
+                ..addEntries(
+                  snapshot.docs
+                      .where((doc) {
+                        final data = doc.data();
+                        final expiry = data['expiresAt'] ?? data['expiryDate'];
+                        final expiryDate = expiry is Timestamp
+                            ? expiry.toDate()
+                            : null;
+                        return (data['status'] == 'active' ||
+                                data['status'] == 'published') &&
+                            (expiryDate == null ||
+                                !expiryDate.isBefore(DateTime.now()));
+                      })
+                      .map(
+                        (doc) => MapEntry(
+                          doc.id,
+                          AnnouncementModel.fromFirestore(doc),
+                        ),
+                      ),
+                );
+              publish();
+            }, onError: output.addError),
+      );
+
+      final ids = (result['noticeIds'] as List<dynamic>? ?? const [])
+          .map((value) => value.toString())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      for (final id in ids) {
+        subscriptions.add(
+          _firestore.collection('notices').doc(id).snapshots().listen((doc) {
+            final data = doc.data();
+            legacy.remove(id);
+            if (data != null &&
+                doc.exists &&
+                data['communityId'] == communityId) {
+              final active =
+                  data['isActive'] == true || data['status'] == 'published';
+              final expiry = data['expiryDate'] ?? data['expiresAt'];
+              final expiryDate = expiry is Timestamp ? expiry.toDate() : null;
+              if (active &&
+                  (expiryDate == null ||
+                      !expiryDate.isBefore(DateTime.now()))) {
+                final createdAt =
+                    data['createdAt'] as Timestamp? ??
+                    data['publishDate'] as Timestamp?;
+                legacy[id] = AnnouncementModel(
+                  id: 'notices:$id',
+                  title: data['title']?.toString() ?? '',
+                  description:
+                      data['content']?.toString() ??
+                      data['description']?.toString() ??
+                      '',
+                  category: data['category']?.toString() ?? 'General',
+                  priority: data['priority']?.toString() ?? 'medium',
+                  status: 'active',
+                  createdAt: createdAt?.toDate() ?? DateTime.now(),
+                  updatedAt:
+                      (data['updatedAt'] as Timestamp?)?.toDate() ??
+                      DateTime.now(),
+                  attachments: List<String>.from(
+                    data['attachments'] ?? const [],
+                  ),
+                  authorName:
+                      data['authorName']?.toString() ??
+                      data['adminName']?.toString() ??
+                      '',
+                );
+              }
+            }
+            publish();
+          }, onError: output.addError),
+        );
+      }
+      if (ids.isEmpty) publish();
+
+      try {
+        yield* output.stream;
+      } finally {
+        for (final subscription in subscriptions) {
+          await subscription.cancel();
+        }
+        await output.close();
+      }
     } catch (e) {
       print('❌ Error starting announcements stream: $e');
       rethrow;
@@ -90,6 +258,10 @@ class AnnouncementsEventsService {
       if (communityId == null) {
         yield [];
         return;
+      }
+
+      if (!await eventsAllowed(communityId)) {
+        throw StateError('Events are not available for this community plan.');
       }
 
       print('📅 Streaming events for community: $communityId');

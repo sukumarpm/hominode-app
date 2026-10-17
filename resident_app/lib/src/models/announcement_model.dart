@@ -12,6 +12,8 @@ class AnnouncementModel {
   final String status; // 'active', 'inactive'
   final DateTime createdAt;
   final DateTime updatedAt;
+  final List<String> attachments;
+  final String authorName;
 
   AnnouncementModel({
     required this.id,
@@ -22,6 +24,8 @@ class AnnouncementModel {
     required this.status,
     required this.createdAt,
     required this.updatedAt,
+    this.attachments = const [],
+    this.authorName = '',
   });
 
   factory AnnouncementModel.fromFirestore(DocumentSnapshot doc) {
@@ -29,12 +33,22 @@ class AnnouncementModel {
     return AnnouncementModel(
       id: doc.id,
       title: data['title'] ?? '',
-      description: data['description'] ?? '',
+      description: data['description'] ?? data['content'] ?? '',
       category: data['category'] ?? 'General',
       priority: data['priority'] ?? 'medium',
       status: data['status'] ?? 'active',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      attachments:
+          List<String>.from(
+            data['attachments'] ?? data['imageUrls'] ?? const [],
+          )..addAll(
+            data['imageUrl'] is String &&
+                    (data['imageUrl'] as String).isNotEmpty
+                ? [data['imageUrl'] as String]
+                : const [],
+          ),
+      authorName: data['authorName'] ?? data['adminName'] ?? '',
     );
   }
 

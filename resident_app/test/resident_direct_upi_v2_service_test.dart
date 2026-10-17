@@ -120,8 +120,14 @@ class _Fixture {
   Future<ResidentV2ProofSubmissionAttempt> attempt({
     String extension = 'jpg',
     String? reference,
+    int? submittedAmountMinor,
+    bool allowFlexibleAmounts = false,
   }) async => service.createV2ProofSubmissionAttempt(
-    preparation: await service.preparePayment('bill'),
+    preparation: await service.preparePayment(
+      'bill',
+      submittedAmountMinor: submittedAmountMinor,
+      allowFlexibleAmounts: allowFlexibleAmounts,
+    ),
     receiptBytes: Uint8List.fromList([1, 2, 3]),
     receiptExtension: extension,
     paymentReference: reference,
@@ -169,6 +175,58 @@ void main() {
       ]);
     },
   );
+  test(
+    'flexible amount preparation keeps exact paise in URI and proof payload',
+    () async {
+      final f = _Fixture();
+      final attempt = await f.attempt(
+        submittedAmountMinor: 12345,
+        allowFlexibleAmounts: true,
+      );
+      expect(attempt.preparation.paymentUri.queryParameters['am'], '123.45');
+      expect(attempt.preparation.paymentAmountMinor, 12345);
+      expect(attempt.preparation.amountContractVersion, 2);
+      await f.service.submitV2PaymentProof(attempt);
+      expect(f.calls.single['submittedAmountMinor'], 12345);
+      expect(f.calls.single['amountContractVersion'], 2);
+    },
+  );
+  test(
+    'flexible exact and excess amounts use marker 2; default stays legacy',
+    () async {
+      final f = _Fixture();
+      final exact = await f.service.preparePayment(
+        'bill',
+        submittedAmountMinor: 100000,
+        allowFlexibleAmounts: true,
+      );
+      final excess = await f.service.preparePayment(
+        'bill',
+        submittedAmountMinor: 150001,
+        allowFlexibleAmounts: true,
+      );
+      final legacy = await f.service.preparePayment('bill');
+      expect(exact.amountContractVersion, 2);
+      expect(excess.paymentUri.queryParameters['am'], '1500.01');
+      expect(excess.amountContractVersion, 2);
+      expect(legacy.amountContractVersion, isNull);
+    },
+  );
+  test('amount parser rejects rounding and unsafe INR inputs', () {
+    expect(parseResidentInrMinorUnits('12.3'), 1230);
+    expect(parseResidentInrMinorUnits('12.34'), 1234);
+    for (final invalid in [
+      '',
+      '0',
+      '-1',
+      '1.234',
+      '1e3',
+      '01.00',
+      '90071992547409.92',
+    ]) {
+      expect(parseResidentInrMinorUnits(invalid), isNull, reason: invalid);
+    }
+  });
   for (final status in ['pending', 'overdue', 'partially_paid']) {
     test('V2 $status pays only the partial outstanding', () async {
       final f = _Fixture()

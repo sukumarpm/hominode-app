@@ -8,6 +8,8 @@ import 'package:resident_app/src/services/bill_firestore_service.dart';
 import 'package:resident_app/src/services/resident_billing_statement_service.dart';
 import 'package:resident_app/src/services/resident_direct_upi_service.dart';
 
+import 'localization_test_app.dart';
+
 Map<String, dynamic> _v1({String status = 'pending', String id = 'v1'}) => {
   'id': id,
   'communityId': 'community',
@@ -164,16 +166,33 @@ class _Fixture {
   );
 }
 
-Widget _app(_Fixture fixture) => ScreenUtilInit(
-  designSize: const Size(390, 844),
-  builder: (_, _) => MaterialApp(
-    home: MaintenanceBillingScreen(
-      billService: fixture.billService,
-      directUpiService: fixture.upiService,
-      statementService: fixture.statementService,
-      languageCodeOverride: 'en',
+Widget _app(
+  _Fixture fixture, {
+  double width = 390,
+  double textScale = 1,
+  bool showBackButton = false,
+  Locale locale = const Locale('en'),
+}) => withResidentLocalization(
+  (context) => ScreenUtilInit(
+    designSize: const Size(390, 844),
+    builder: (_, _) => localizedMaterialApp(
+      context,
+      home: MediaQuery(
+        data: MediaQueryData(
+          size: Size(width, 844),
+          textScaler: TextScaler.linear(textScale),
+        ),
+        child: MaintenanceBillingScreen(
+          billService: fixture.billService,
+          directUpiService: fixture.upiService,
+          statementService: fixture.statementService,
+          languageCodeOverride: locale.languageCode,
+          showBackButton: showBackButton,
+        ),
+      ),
     ),
   ),
+  startLocale: locale,
 );
 
 void _setViewport(WidgetTester tester) {
@@ -184,6 +203,77 @@ void _setViewport(WidgetTester tester) {
 }
 
 void main() {
+  setUpAll(initializeTestLocalization);
+
+  testWidgets('current bill status and heading fit narrow large-text layout', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _Fixture()..bills = [_v2(status: 'partially_paid')];
+
+    await tester.pumpWidget(_app(fixture, width: 320, textScale: 1.8));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [320.0, 390.0]) {
+    for (final textScale in [1.0, 1.8]) {
+      testWidgets(
+        'Tamil billing empty state fits ${width.toInt()}px at ${textScale}x',
+        (tester) async {
+          tester.view.physicalSize = Size(width, 844);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          await tester.pumpWidget(
+            _app(
+              _Fixture(),
+              width: width,
+              textScale: textScale,
+              locale: const Locale('ta'),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(find.text('பராமரிப்பு மற்றும் கட்டணங்கள்'), findsOneWidget);
+          expect(find.text('நிலுவை பில்கள் இல்லை'), findsOneWidget);
+          expect(
+            find.text('நீங்கள் அனைத்தையும் பார்த்துவிட்டீர்கள்!'),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets('pushed Maintenance and Billing exposes a visible Back action', (
+    tester,
+  ) async {
+    _setViewport(tester);
+    final fixture = _Fixture();
+    await tester.pumpWidget(_app(fixture, showBackButton: true));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back_ios), findsOneWidget);
+    expect(find.text('Maintenance & Billing'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Payments tab keeps the normal tab-navigation header', (
+    tester,
+  ) async {
+    _setViewport(tester);
+    await tester.pumpWidget(_app(_Fixture()));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back_ios), findsNothing);
+  });
+
   testWidgets('V1 pending bill keeps its amount and chargeBreakdown UI', (
     tester,
   ) async {
@@ -213,8 +303,8 @@ void main() {
 
       expect(find.text('August 2026 Bill'), findsOneWidget);
       expect(find.text('₹2500.00'), findsNWidgets(2));
-      expect(find.text('Total bill'), findsOneWidget);
-      expect(find.text('Paid'), findsOneWidget);
+      expect(find.text('Total billed'), findsOneWidget);
+      expect(find.text('PAID'), findsOneWidget);
       expect(find.text('Credit applied'), findsOneWidget);
       expect(find.text('Outstanding'), findsOneWidget);
       expect(find.text('₹1000.00'), findsOneWidget);
@@ -306,8 +396,9 @@ void main() {
       await tester.pumpWidget(_app(fixture));
       await tester.pumpAndSettle();
 
+      expect(find.text('Pending Admin Verification'), findsOneWidget);
       expect(
-        find.text('Payment submitted / awaiting Admin verification'),
+        find.text('Your bill remains open until the payment is verified.'),
         findsOneWidget,
       );
       expect(find.text('Check receipt or resume upload'), findsOneWidget);
@@ -326,7 +417,7 @@ void main() {
     await tester.pumpWidget(_app(fixture));
     await tester.pumpAndSettle();
 
-    expect(find.text('Payment Rejected'), findsOneWidget);
+    expect(find.text('Rejected'), findsOneWidget);
     expect(find.text('Reason: Receipt is unreadable'), findsOneWidget);
     expect(find.text('Resubmit Payment Proof'), findsOneWidget);
     expect(fixture.v1BillIds, isEmpty);
@@ -373,7 +464,7 @@ void main() {
     },
   );
 
-  testWidgets('Monthly Statement action preserves View All Payment History', (
+  testWidgets('Monthly Statement action preserves View all Payment History', (
     tester,
   ) async {
     _setViewport(tester);
@@ -384,8 +475,8 @@ void main() {
 
     expect(find.text('Monthly Statement'), findsOneWidget);
     expect(find.text('Payment History'), findsOneWidget);
-    expect(find.text('View All'), findsOneWidget);
-    await tester.tap(find.text('View All'));
+    expect(find.text('View all'), findsOneWidget);
+    await tester.tap(find.text('View all'));
     await tester.pumpAndSettle();
 
     expect(find.text('Payment History'), findsOneWidget);

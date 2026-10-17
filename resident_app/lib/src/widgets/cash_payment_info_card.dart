@@ -9,9 +9,16 @@ class CashPaymentInfoCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE6E6E6)),
+        color: Colors.white.withValues(alpha: .94),
+        borderRadius: BorderRadius.circular(23),
+        border: Border.all(color: Colors.white, width: 1.3),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF082F73).withValues(alpha: .06),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,

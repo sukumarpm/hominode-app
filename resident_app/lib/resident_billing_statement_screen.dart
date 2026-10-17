@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
+import 'receipt_screen.dart';
 import 'src/services/bill_firestore_service.dart';
 import 'src/services/resident_billing_statement_service.dart';
+import 'src/services/resident_billing_v2_receipt_service.dart';
 import 'src/utils/payment_method.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
 class ResidentBillingStatementScreen extends StatefulWidget {
-  const ResidentBillingStatementScreen({super.key, this.service, this.now});
+  const ResidentBillingStatementScreen({
+    super.key,
+    this.service,
+    this.receiptService,
+    this.now,
+  });
 
   final ResidentBillingStatementService? service;
+  final ResidentBillingV2ReceiptService? receiptService;
   final DateTime Function()? now;
 
   @override
@@ -19,6 +29,8 @@ class _ResidentBillingStatementScreenState
     extends State<ResidentBillingStatementScreen> {
   late final ResidentBillingStatementService _service =
       widget.service ?? ResidentBillingStatementService();
+  late final ResidentBillingV2ReceiptService _receiptService =
+      widget.receiptService ?? ResidentBillingV2ReceiptService();
   late DateTime _selectedMonth;
   ResidentBillingStatement? _statement;
   bool _loading = true;
@@ -76,17 +88,20 @@ class _ResidentBillingStatementScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: const Color(0xFFF7F9FD),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E4778),
-        foregroundColor: Colors.white,
-        title: const Text('Monthly Statement'),
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: const Color(0xFF0E2247),
+        elevation: 0,
+        title: Text('monthly_statement'.tr()),
       ),
-      body: Column(
-        children: [
-          _monthSelector(),
-          Expanded(child: _statementBody()),
-        ],
+      body: ResidentVisitorPageBackground(
+        child: Column(
+          children: [
+            _monthSelector(),
+            Expanded(child: _statementBody()),
+          ],
+        ),
       ),
     );
   }
@@ -98,7 +113,7 @@ class _ResidentBillingStatementScreenState
       children: [
         IconButton(
           key: const ValueKey('statement-previous-month'),
-          tooltip: 'Previous month',
+          tooltip: 'previous'.tr(),
           onPressed: () => _changeMonth(-1),
           icon: const Icon(Icons.chevron_left),
         ),
@@ -107,12 +122,16 @@ class _ResidentBillingStatementScreenState
             _monthLabel(_selectedMonth),
             key: const ValueKey('statement-selected-month'),
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0E2247),
+            ),
           ),
         ),
         IconButton(
           key: const ValueKey('statement-next-month'),
-          tooltip: 'Next month',
+          tooltip: 'next'.tr(),
           onPressed: () => _changeMonth(1),
           icon: const Icon(Icons.chevron_right),
         ),
@@ -140,7 +159,7 @@ class _ResidentBillingStatementScreenState
               TextButton(
                 key: const ValueKey('statement-retry'),
                 onPressed: _loadStatement,
-                child: const Text('Retry'),
+                child: Text('retry'.tr()),
               ),
             ],
           ),
@@ -156,10 +175,16 @@ class _ResidentBillingStatementScreenState
         _summaryCard(statement.summary),
         const SizedBox(height: 12),
         if (statement.bills.isEmpty)
-          const Card(
+          Card(
+            color: Colors.white.withValues(alpha: .94),
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+              side: const BorderSide(color: Colors.white, width: 1.2),
+            ),
             child: Padding(
               padding: EdgeInsets.all(24),
-              child: Center(child: Text('No bills for this period.')),
+              child: Center(child: Text('no_bills_period'.tr())),
             ),
           )
         else
@@ -169,41 +194,56 @@ class _ResidentBillingStatementScreenState
   }
 
   Widget _summaryCard(ResidentBillingStatementSummary summary) => Card(
+    color: Colors.white.withValues(alpha: .94),
+    elevation: 1,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(22),
+      side: const BorderSide(color: Colors.white, width: 1.2),
+    ),
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Statement Summary',
+          Text(
+            'statement_summary'.tr(),
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
-          _moneyRow('Total billed', summary.billedMinor),
-          _moneyRow('Payments applied', summary.paidAllocationMinor),
-          _moneyRow('Credit applied', summary.creditAppliedMinor),
-          _moneyRow('Outstanding', summary.outstandingMinor),
+          _moneyRow('total_billed'.tr(), summary.billedMinor),
+          _moneyRow('payments_applied'.tr(), summary.paidAllocationMinor),
+          _moneyRow('credit_applied'.tr(), summary.creditAppliedMinor),
+          _moneyRow('outstanding'.tr(), summary.outstandingMinor),
           _moneyRow(
-            'Current available credit',
+            'current_available_credit'.tr(),
             summary.availableCreditMinor,
-            note: 'Account-level balance',
+            note: 'account_level_balance'.tr(),
           ),
           const Divider(height: 24),
-          const Text(
-            'Bill status counts',
+          Text(
+            'bill_status_counts'.tr(),
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
-          _countRow('Pending', summary.statusCounts['pending']!),
-          _countRow('Partially paid', summary.statusCounts['partially_paid']!),
-          _countRow('Paid', summary.statusCounts['paid']!),
-          _countRow('Overdue', summary.statusCounts['overdue']!),
+          _countRow('pending'.tr(), summary.statusCounts['pending']!),
+          _countRow(
+            'partially_paid'.tr(),
+            summary.statusCounts['partially_paid']!,
+          ),
+          _countRow('paid'.tr(), summary.statusCounts['paid']!),
+          _countRow('overdue'.tr(), summary.statusCounts['overdue']!),
         ],
       ),
     ),
   );
 
   Widget _billCard(ResidentStatementBill bill) => Card(
+    color: Colors.white.withValues(alpha: .94),
+    elevation: 1,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(22),
+      side: const BorderSide(color: Colors.white, width: 1.2),
+    ),
     margin: const EdgeInsets.only(bottom: 12),
     child: Padding(
       padding: const EdgeInsets.all(16),
@@ -221,32 +261,32 @@ class _ResidentBillingStatementScreenState
                   ),
                 ),
               ),
-              Text(_titleCase(bill.status)),
+              _statusBadge(bill.status),
             ],
           ),
           const SizedBox(height: 10),
-          _moneyRow('Total', bill.amountMinor),
-          _moneyRow('Payment allocations', bill.paidAllocationMinor),
-          _moneyRow('Credit applied', bill.creditAppliedMinor),
-          _moneyRow('Outstanding', bill.outstandingMinor),
-          _detailRow('Due date', _formatDateKey(bill.dueDateKey)),
+          _moneyRow('total'.tr(), bill.amountMinor),
+          _moneyRow('payment_allocations'.tr(), bill.paidAllocationMinor),
+          _moneyRow('credit_applied'.tr(), bill.creditAppliedMinor),
+          _moneyRow('outstanding'.tr(), bill.outstandingMinor),
+          _detailRow('due_date'.tr(), _formatDateKey(bill.dueDateKey)),
           const Divider(height: 24),
-          const Text(
-            'Charge lines',
+          Text(
+            'charge_lines'.tr(),
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           ...bill.chargeLines.map(
             (line) => _moneyRow(line.label, line.amountMinor),
           ),
           const Divider(height: 24),
-          const Text(
-            'Settlements',
+          Text(
+            'settlements'.tr(),
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           if (bill.settlements.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(top: 8),
-              child: Text('No payment allocations'),
+              child: Text('no_payment_allocations'.tr()),
             )
           else
             ...bill.settlements.map(_settlement),
@@ -265,52 +305,156 @@ class _ResidentBillingStatementScreenState
           settlement.netAppliedMinor,
         ),
         _detailRow(
-          'Received',
+          'received'.tr(),
           _formatDate(
             DateTime.fromMillisecondsSinceEpoch(settlement.receivedAt),
           ),
         ),
         if (settlement.reference != null &&
             settlement.reference!.trim().isNotEmpty)
-          _detailRow('Payment reference', settlement.reference!.trim()),
-      ],
-    ),
-  );
-
-  Widget _moneyRow(String label, int amountMinor, {String? note}) => Padding(
-    padding: const EdgeInsets.only(top: 6),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: Text(note == null ? label : '$label ($note)')),
-        const SizedBox(width: 12),
-        Text(BillFirestoreService.formatInrMinorUnits(amountMinor)),
-      ],
-    ),
-  );
-
-  Widget _countRow(String label, int count) => Padding(
-    padding: const EdgeInsets.only(top: 4),
-    child: Row(
-      children: [
-        Expanded(child: Text(label)),
-        Text('$count'),
-      ],
-    ),
-  );
-
-  Widget _detailRow(String label, String value) => Padding(
-    padding: const EdgeInsets.only(top: 6),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 105,
-          child: Text(label, style: const TextStyle(color: Color(0xFF7A7A7A))),
+          _detailRow('payment_reference'.tr(), settlement.reference!.trim()),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: TextButton.icon(
+            key: ValueKey('view-receipt-${settlement.transactionId}'),
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => ResidentBillingV2ReceiptScreen(
+                  transactionId: settlement.transactionId,
+                  service: _receiptService,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.receipt_long_outlined),
+            label: Text('view_receipt'.tr()),
+          ),
         ),
-        Expanded(child: Text(value)),
       ],
     ),
+  );
+
+  Widget _moneyRow(String label, int amountMinor, {String? note}) =>
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final labelText = Text(note == null ? label : '$label ($note)');
+          final amountText = Text(
+            BillFirestoreService.formatInrMinorUnits(amountMinor),
+            textAlign: TextAlign.end,
+          );
+          final stack =
+              constraints.maxWidth < 320 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.3;
+          return Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: stack
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      labelText,
+                      Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: amountText,
+                      ),
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: labelText),
+                      const SizedBox(width: 12),
+                      amountText,
+                    ],
+                  ),
+          );
+        },
+      );
+
+  Widget _statusBadge(String status) {
+    final normalized = status.toLowerCase();
+    final background = normalized == 'overdue'
+        ? const Color(0xFFFEE2E2)
+        : normalized == 'paid' || normalized == 'settled'
+        ? const Color(0xFFD1FAE5)
+        : normalized == 'partially_paid'
+        ? const Color(0xFFDBEAFE)
+        : const Color(0xFFFFF3D6);
+    final foreground = normalized == 'overdue'
+        ? const Color(0xFFB42318)
+        : normalized == 'paid' || normalized == 'settled'
+        ? const Color(0xFF047857)
+        : normalized == 'partially_paid'
+        ? const Color(0xFF1D4ED8)
+        : const Color(0xFF9A6700);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        _titleCase(status),
+        style: TextStyle(
+          color: foreground,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget _countRow(String label, int count) => LayoutBuilder(
+    builder: (context, constraints) {
+      final stack =
+          constraints.maxWidth < 320 ||
+          MediaQuery.textScalerOf(context).scale(1) > 1.3;
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: stack
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(label),
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Text('$count'),
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: Text(label)),
+                  Text('$count'),
+                ],
+              ),
+      );
+    },
+  );
+
+  Widget _detailRow(String label, String value) => LayoutBuilder(
+    builder: (context, constraints) {
+      final labelWidget = Text(
+        label,
+        style: const TextStyle(color: Color(0xFF7A7A7A)),
+      );
+      final stack =
+          constraints.maxWidth < 320 ||
+          MediaQuery.textScalerOf(context).scale(1) > 1.3;
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: stack
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [labelWidget, Text(value)],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: 105, child: labelWidget),
+                  Expanded(child: Text(value)),
+                ],
+              ),
+      );
+    },
   );
 }
 

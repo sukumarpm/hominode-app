@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'src/services/visitor_firestore_service.dart';
 
 // Design Constants
 const kPrimary = Color(0xFF0E4778);
 const kModalBackground = Color(0xFFFFFFFF);
-const kInputBorder = Color(0xFFE6E6E6);
-const kPlaceholder = Color(0xFFBDBDBD);
+const kInputBorder = Color(0xFFDCE5EF);
+const kPlaceholder = Color(0xFF718096);
 const kDimOverlay = Color(0x5C000000); // rgba(0,0,0,0.36)
 const kRadius = 20.0;
 const kInputRadius = 12.0;
@@ -190,7 +191,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('An error occurred: $e'),
+          content: Text('visitor_save_error'.tr()),
           backgroundColor: const Color(0xFFDC2626),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -222,13 +223,14 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
         child: Container(
           width: double.infinity,
           decoration: BoxDecoration(
-            color: kModalBackground,
+            color: kModalBackground.withValues(alpha: .97),
             borderRadius: BorderRadius.circular(kRadius),
+            border: Border.all(color: Colors.white, width: 1.4),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
+                color: const Color(0xFF082F73).withValues(alpha: .12),
+                blurRadius: 26,
+                offset: const Offset(0, 9),
               ),
             ],
           ),
@@ -245,8 +247,8 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
 
                 // Visitor Name field
                 _buildLabeledTextField(
-                  label: 'Visitor Name',
-                  placeholder: 'Enter name',
+                  label: 'visitor_name'.tr(),
+                  placeholder: 'enter_name'.tr(),
                   controller: _nameController,
                 ),
 
@@ -254,8 +256,8 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
 
                 // Purpose field
                 _buildLabeledTextField(
-                  label: 'Purpose',
-                  placeholder: 'e.g., Personal visit',
+                  label: 'purpose'.tr(),
+                  placeholder: 'visitor_purpose_example'.tr(),
                   controller: _purposeController,
                 ),
 
@@ -263,8 +265,8 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
 
                 // Phone Number field (Optional)
                 _buildLabeledTextField(
-                  label: 'Phone Number (Optional)',
-                  placeholder: 'Enter phone number',
+                  label: 'optional_phone'.tr(),
+                  placeholder: 'enter_phone'.tr(),
                   controller: _phoneController,
                 ),
 
@@ -272,7 +274,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
 
                 // Vehicle Number field (Optional)
                 _buildLabeledTextField(
-                  label: 'Vehicle Number (Optional)',
+                  label: 'optional_vehicle'.tr(),
                   placeholder: 'e.g., MH 01 AB 1234',
                   controller: _vehicleController,
                 ),
@@ -284,7 +286,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
                   children: [
                     Expanded(
                       child: _buildDateTimeField(
-                        label: 'Date',
+                        label: 'date'.tr(),
                         placeholder: 'dd-mm-yyyy',
                         value: _selectedDate != null
                             ? _formatDate(_selectedDate!)
@@ -295,7 +297,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
                     const SizedBox(width: kSpacing),
                     Expanded(
                       child: _buildDateTimeField(
-                        label: 'Time',
+                        label: 'time'.tr(),
                         placeholder: '-- / --',
                         value: _selectedTime != null
                             ? _formatTime(_selectedTime!)
@@ -325,11 +327,11 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
         // Centered title
         Center(
           child: Text(
-            'Add Expected Visitor',
+            'add_expected_visitor'.tr(),
             style: TextStyle(
               fontSize: 22.sp,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF1E293B),
+              color: Color(0xFF0E2247),
             ),
           ),
         ),
@@ -371,7 +373,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
           style: TextStyle(
             fontSize: 18.sp,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF1E293B),
+            color: Color(0xFF0E2247),
           ),
         ),
 
@@ -393,7 +395,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
               color: kPlaceholder,
             ),
             filled: true,
-            fillColor: Colors.white,
+            fillColor: const Color(0xFFF8FAFD),
             contentPadding: EdgeInsets.symmetric(
               horizontal: 16.w,
               vertical: 16.h,
@@ -432,7 +434,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
           style: TextStyle(
             fontSize: 18.sp,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF1E293B),
+            color: Color(0xFF0E2247),
           ),
         ),
 
@@ -490,7 +492,7 @@ class _AddExpectedVisitorModalState extends State<AddExpectedVisitorModal> {
                 ),
               )
             : Text(
-                'Add Visitor',
+                'add'.tr(),
                 style: TextStyle(
                   fontSize: 18.sp,
                   fontWeight: FontWeight.w600,

@@ -1,9 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/resident_billing_statement_screen.dart';
 import 'package:resident_app/src/services/resident_billing_statement_service.dart';
+import 'package:resident_app/src/services/resident_billing_v2_receipt_service.dart';
+
+import 'localization_test_app.dart';
 
 Map<String, dynamic> _response({
   required String period,
@@ -91,14 +95,83 @@ Map<String, dynamic> _emptyResponse(String period, {int availableCredit = 0}) =>
       'bills': <Object>[],
     };
 
-Widget _app(ResidentBillingStatementService service) => MaterialApp(
-  home: ResidentBillingStatementScreen(
-    service: service,
-    now: () => DateTime(2026, 8, 20),
+Map<String, dynamic> _receiptResponse(String transactionId) => {
+  'success': true,
+  'schemaVersion': 1,
+  'receiptId': 'HOMINODE-V2-$transactionId',
+  'transactionId': transactionId,
+  'community': {
+    'communityId': 'community-1',
+    'name': 'Green Wave',
+    'address': '',
+  },
+  'currency': 'INR',
+  'method': 'upi',
+  'paymentReference': 'REF-1',
+  'receivedAt': 1785542400000,
+  'moneyReceivedMinor': 1000,
+  'confirmedAmountMinor': 1000,
+  'claimedAmountMinor': 1000,
+  'amountMismatch': false,
+  'confirmation': {
+    'status': 'verified',
+    'verifiedAt': 1785542400000,
+    'verifiedBy': 'Community Admin',
+  },
+  'allocations': [
+    {
+      'billId': 'bill-internal',
+      'amountMinor': 1000,
+      'allocatedAt': 1785542400000,
+    },
+  ],
+  'allocatedAmountMinor': 1000,
+  'excessCreditMinor': 0,
+  'reconciliation': {
+    'confirmedAmountMinor': 1000,
+    'allocatedAmountMinor': 1000,
+    'excessCreditMinor': 0,
+  },
+  'accountingBasis': {
+    'amountsAreMinorUnits': true,
+    'allocationsAreFromThisPayment': true,
+    'existingCreditApplicationsExcluded': true,
+  },
+  'snapshot': 'original_settlement',
+  'laterAdjustments': {
+    'reversedAllocationMinor': 0,
+    'revisionCreditIssuedMinor': 0,
+  },
+};
+
+Widget _app(
+  ResidentBillingStatementService service, {
+  ResidentBillingV2ReceiptService? receiptService,
+  double width = 375,
+  double textScale = 1,
+}) => withEnglishLocalization(
+  (context) => ScreenUtilInit(
+    designSize: const Size(375, 812),
+    builder: (_, _) => localizedMaterialApp(
+      context,
+      home: MediaQuery(
+        data: MediaQueryData(
+          size: Size(width, 812),
+          textScaler: TextScaler.linear(textScale),
+        ),
+        child: ResidentBillingStatementScreen(
+          service: service,
+          receiptService: receiptService,
+          now: () => DateTime(2026, 8, 20),
+        ),
+      ),
+    ),
   ),
 );
 
 void main() {
+  setUpAll(initializeTestLocalization);
+
   testWidgets('loads the current local YYYY-MM and renders canonical summary', (
     tester,
   ) async {
@@ -139,12 +212,30 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Bill status counts'), findsOneWidget);
-    expect(find.text('Partially paid'), findsOneWidget);
+    expect(find.text('Partially Paid'), findsNWidgets(2));
     expect(
       find.text('Current available credit (Account-level balance)'),
       findsOneWidget,
     );
     expect(find.text('₹5.00'), findsOneWidget);
+  });
+
+  testWidgets('summary values remain visible at narrow width and large text', (
+    tester,
+  ) async {
+    final service = ResidentBillingStatementService(
+      callable: (_, _) async => _response(period: '2026-08'),
+    );
+    await tester.pumpWidget(_app(service, width: 320, textScale: 1.8));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Current available credit (Account-level balance)'),
+      findsOneWidget,
+    );
+    expect(find.text('₹1234.56'), findsWidgets);
+    expect(find.text('₹900.00'), findsWidgets);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('renders charge lines and canonical settlement detail', (
@@ -163,6 +254,54 @@ void main() {
     expect(find.text('UPI-123'), findsOneWidget);
     expect(find.text('Due date'), findsOneWidget);
     expect(find.text('Aug 15, 2026'), findsOneWidget);
+  });
+
+  testWidgets('each verified statement settlement opens its own V2 receipt', (
+    tester,
+  ) async {
+    final statementService = ResidentBillingStatementService(
+      callable: (_, payload) async {
+        final response = _response(period: payload['billingPeriod'] as String);
+        response['bills'][0]['settlements'] = [
+          {
+            'transactionId': 'tx-first',
+            'method': 'upi',
+            'receivedAt': 1785542400000,
+            'netAppliedMinor': 10000,
+          },
+          {
+            'transactionId': 'tx-second',
+            'method': 'upi',
+            'receivedAt': 1785542400000,
+            'netAppliedMinor': 13456,
+          },
+        ];
+        return response;
+      },
+    );
+    String? requestedTransaction;
+    final receiptService = ResidentBillingV2ReceiptService(
+      callable: (_, payload) async {
+        requestedTransaction = payload['transactionId'] as String;
+        return _receiptResponse(requestedTransaction!);
+      },
+    );
+    await tester.pumpWidget(
+      _app(statementService, receiptService: receiptService),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('View Receipt'), findsNWidgets(2));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('view-receipt-tx-second')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('view-receipt-tx-second')));
+    await tester.pumpAndSettle();
+    expect(requestedTransaction, 'tx-second');
+    expect(find.text('Amount Received'), findsOneWidget);
+    expect(find.byKey(const ValueKey('receipt-total-amount')), findsOneWidget);
+    expect(find.text('bill-internal'), findsNothing);
   });
 
   testWidgets('does not show an absent settlement reference as recorded', (

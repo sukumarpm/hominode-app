@@ -2,6 +2,7 @@
 // Enhanced Messages screen with Chats & Requests tabs, flat members, and admin chat
 
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/chat_model.dart';
 import '../services/chat_firestore_service.dart';
@@ -49,7 +50,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
       body: Column(
         children: [
           // Header
-          const PrimaryHeader(title: 'Messages'),
+          PrimaryHeader(title: 'messages'.tr()),
 
           SizedBox(height: 20.h),
 
@@ -59,7 +60,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
               horizontal: AppSizes.pagePadding,
             ),
             child: AppSegmentedControl(
-              segments: const ['Chats', 'Requests'],
+              segments: ['chats'.tr(), 'requests'.tr()],
               selectedIndex: _selectedTab,
               onChanged: (index) {
                 setState(() {
@@ -96,7 +97,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
         }
 
         if (snapshot.hasError) {
-          return _buildErrorState('Error loading chats');
+          return _buildErrorState('error_loading_chats'.tr());
         }
 
         final chats = snapshot.data ?? [];
@@ -145,8 +146,8 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                 padding: EdgeInsets.only(top: 40.h),
                 child: _buildEmptyState(
                   icon: Icons.chat_bubble_outline,
-                  title: 'No chats yet',
-                  subtitle: 'Start a conversation with building members',
+                  title: 'no_chats_yet'.tr(),
+                  subtitle: 'start_conversation_members'.tr(),
                 ),
               );
             }
@@ -169,7 +170,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
         if (snapshot.hasError) {
           print('❌ MessagesScreen: Requests tab error: ${snapshot.error}');
           return _buildErrorState(
-            'Error loading requests\n${snapshot.error.toString().contains('index') ? 'Missing Firestore index' : 'Please try again'}',
+            '${'error_loading_requests'.tr()}\n${snapshot.error.toString().contains('index') ? 'missing_firestore_index'.tr() : 'please_try_again'.tr()}',
           );
         }
 
@@ -178,8 +179,8 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
         if (requests.isEmpty) {
           return _buildEmptyState(
             icon: Icons.inbox_outlined,
-            title: 'No requests',
-            subtitle: 'Chat requests from building members will appear here',
+            title: 'no_requests'.tr(),
+            subtitle: 'chat_requests_empty'.tr(),
           );
         }
 
@@ -264,7 +265,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Building Admin',
+                    'building_admin'.tr(),
                     style: TextStyle(
                       fontSize: 16.sp,
                       fontWeight: FontWeight.w600,
@@ -273,7 +274,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                   ),
                   SizedBox(height: 4.h),
                   Text(
-                    'Get help and support',
+                    'get_help_support'.tr(),
                     style: TextStyle(fontSize: 14.sp, color: Colors.white70),
                   ),
                 ],
@@ -420,7 +421,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                   ),
                   SizedBox(height: 4.h),
                   Text(
-                    chat.lastMessage ?? 'No messages yet',
+                    chat.lastMessage ?? 'no_messages_yet'.tr(),
                     style: TextStyle(
                       fontSize: 14.sp,
                       color: AppColors.textSecondary,
@@ -491,7 +492,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                     ),
                     SizedBox(height: 2.h),
                     Text(
-                      'Wants to chat with you',
+                      'wants_to_chat'.tr(),
                       style: TextStyle(
                         fontSize: 14.sp,
                         color: AppColors.textSecondary,
@@ -513,8 +514,8 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                     );
                     if (chatId != null && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Request accepted!'),
+                        SnackBar(
+                          content: Text('chat_request_accepted'.tr()),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -539,7 +540,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                       borderRadius: BorderRadius.circular(8.r),
                     ),
                   ),
-                  child: const Text('Accept'),
+                  child: Text('accept'.tr()),
                 ),
               ),
               SizedBox(width: 12.w),
@@ -551,8 +552,8 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                     );
                     if (success && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Request rejected'),
+                        SnackBar(
+                          content: Text('chat_request_rejected'.tr()),
                           backgroundColor: Colors.grey,
                         ),
                       );
@@ -565,7 +566,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                       borderRadius: BorderRadius.circular(8.r),
                     ),
                   ),
-                  child: const Text('Reject'),
+                  child: Text('reject'.tr()),
                 ),
               ),
             ],
@@ -582,8 +583,8 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
 
     if (members.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No other members in your flat'),
+        SnackBar(
+          content: Text('no_other_flat_members'.tr()),
           backgroundColor: Colors.orange,
         ),
       );
@@ -613,15 +614,15 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
     if (requestId == null && mounted) {
       // Chat already exists
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Chat already exists with this member'),
+        SnackBar(
+          content: Text('chat_already_exists'.tr()),
           backgroundColor: Colors.blue,
         ),
       );
     } else if (requestId != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Chat request sent!'),
+        SnackBar(
+          content: Text('chat_request_sent'.tr()),
           backgroundColor: Colors.green,
         ),
       );
@@ -697,7 +698,7 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
           ),
           SizedBox(height: 8.h),
           Text(
-            'Please try again',
+            'please_try_again'.tr(),
             style: TextStyle(fontSize: 14.sp, color: Colors.grey),
           ),
         ],
@@ -739,18 +740,13 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
     final difference = now.difference(timestamp);
 
     if (difference.inDays == 0) {
-      final hour = timestamp.hour > 12
-          ? timestamp.hour - 12
-          : (timestamp.hour == 0 ? 12 : timestamp.hour);
-      final minute = timestamp.minute.toString().padLeft(2, '0');
-      final period = timestamp.hour >= 12 ? 'PM' : 'AM';
-      return '$hour:$minute $period';
+      return DateFormat.jm(context.locale.toString()).format(timestamp);
     } else if (difference.inDays == 1) {
-      return 'Yesterday';
+      return 'yesterday'.tr();
     } else if (difference.inDays < 7) {
-      return '${difference.inDays} days ago';
+      return 'days_ago'.tr(namedArgs: {'count': '${difference.inDays}'});
     } else {
-      return '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+      return DateFormat.yMd(context.locale.toString()).format(timestamp);
     }
   }
 }
@@ -794,7 +790,7 @@ class _BuildingMembersSheet extends StatelessWidget {
                 Icon(Icons.people, color: const Color(0xFF0E4778), size: 24.w),
                 SizedBox(width: 12.w),
                 Text(
-                  'Building Members',
+                  'building_members'.tr(),
                   style: TextStyle(
                     fontSize: 20.sp,
                     fontWeight: FontWeight.w700,
@@ -822,7 +818,9 @@ class _BuildingMembersSheet extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    '${members.length} ${members.length == 1 ? 'member' : 'members'} in your flat',
+                    'members_in_flat'.tr(
+                      namedArgs: {'count': '${members.length}'},
+                    ),
                     style: TextStyle(
                       fontSize: 14.sp,
                       color: Colors.grey.shade600,
@@ -847,7 +845,7 @@ class _BuildingMembersSheet extends StatelessWidget {
                         ),
                         SizedBox(height: 16.h),
                         Text(
-                          'No building members found',
+                          'no_building_members_found'.tr(),
                           style: TextStyle(
                             fontSize: 16.sp,
                             color: Colors.grey.shade600,
@@ -856,7 +854,7 @@ class _BuildingMembersSheet extends StatelessWidget {
                         ),
                         SizedBox(height: 8.h),
                         Text(
-                          'No other residents in your flat',
+                          'no_other_flat_members'.tr(),
                           style: TextStyle(
                             fontSize: 14.sp,
                             color: Colors.grey.shade500,
@@ -880,8 +878,8 @@ class _BuildingMembersSheet extends StatelessWidget {
   }
 
   Widget _buildMemberCard(BuildContext context, Map<String, dynamic> member) {
-    final memberName = member['name'] ?? 'Unknown';
-    final flatNumber = member['flatNumber'] ?? 'N/A';
+    final memberName = member['name'] ?? 'unknown'.tr();
+    final flatNumber = member['flatNumber'] ?? 'not_available'.tr();
     final photoUrl = member['photoUrl'];
 
     return GestureDetector(

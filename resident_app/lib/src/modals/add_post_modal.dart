@@ -7,14 +7,14 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../services/image_upload_flow_function.dart';
 
-const Color kPrimary = Color(0xFF0E4778);
-const Color kModalBackground = Color(0xFFFFFFFF);
+const Color kPrimary = Color(0xFF172B4D);
+const Color kModalBackground = Color(0xFFFCFDFE);
 const Color kOverlayDim = Color(0x5C000000);
-const Color kInputBorder = Color(0xFFE6E6E6);
+const Color kInputBorder = Color(0xFFDCE5EF);
 const Color kPlaceholderText = Color(0xFFBDBDBD);
 const Color kHeaderText = Color(0xFF111111);
 const Color kCloseIcon = Color(0xFF8C8C8C);
-const double kModalRadius = 18.0;
+const double kModalRadius = 22.0;
 const double kInputRadius = 12.0;
 
 void showAddPostModal(
@@ -158,13 +158,14 @@ class _AddPostModalState extends State<AddPostModal> {
           bottom: keyboardPadding > 0 ? keyboardPadding + 20 : 40,
         ),
         decoration: BoxDecoration(
-          color: kModalBackground,
+          color: kModalBackground.withValues(alpha: .97),
           borderRadius: BorderRadius.circular(kModalRadius),
+          border: Border.all(color: Colors.white, width: 1.2),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
+              color: const Color(0xFF172B4D).withValues(alpha: .14),
+              blurRadius: 26,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
@@ -196,6 +197,8 @@ class _AddPostModalState extends State<AddPostModal> {
                       autofocus: true,
                       style: TextStyle(fontSize: 15.sp, color: kHeaderText),
                       decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Colors.white.withValues(alpha: .92),
                         hintText: 'What\'s on your mind?',
                         hintStyle: TextStyle(
                           color: kPlaceholderText,
@@ -292,7 +295,7 @@ class _AddPostModalState extends State<AddPostModal> {
               style: TextStyle(
                 fontSize: 21.sp,
                 fontWeight: FontWeight.w600,
-                color: kHeaderText,
+                color: kPrimary,
               ),
             ),
           ),

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../components/app_segmented_control.dart';
-import '../components/standard_screen.dart';
 import '../modals/add_edit_member_modal.dart';
 import '../modals/add_edit_vehicle_modal.dart';
 import '../models/family_member.dart';
@@ -13,6 +12,7 @@ import '../services/vehicle_firestore_service.dart';
 import '../widgets/confirm_delete_dialog.dart';
 import '../widgets/family_card.dart';
 import '../widgets/vehicle_card.dart';
+import '../widgets/resident_visitor_page_background.dart';
 
 class FamilyVehiclesScreen extends StatefulWidget {
   const FamilyVehiclesScreen({super.key});
@@ -60,69 +60,44 @@ class _FamilyVehiclesScreenState extends State<FamilyVehiclesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return StandardScreen(
-      title: 'family_vehicles'.tr(),
-      isScrollable: false,
-      padding: EdgeInsets.zero,
-      body: Column(
-        children: [
-          SizedBox(height: 20.h),
-          AppSegmentedControl(
-            segments: ['family_members'.tr(), 'vehicles'.tr()],
-            selectedIndex: _selectedTab,
-            onChanged: (index) {
-              setState(() => _selectedTab = index);
-            },
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        backgroundColor: Colors.white.withValues(alpha: 0.82),
+        foregroundColor: const Color(0xFF172B4D),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'family_vehicles'.tr(),
+          style: TextStyle(
+            color: const Color(0xFF172B4D),
+            fontSize: 20.sp,
+            fontWeight: FontWeight.w700,
           ),
-          SizedBox(height: 20.h),
-          _buildSectionHeader(),
-          SizedBox(height: 16.h),
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeIn,
-              child: _buildContent(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOldHeader() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Color(0xFF0E4778),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24.r),
-          bottomRight: Radius.circular(24.r),
         ),
       ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(4.w, 12.h, 16.w, 24.h),
-          child: Row(
+      body: ResidentVisitorPageBackground(
+        child: SafeArea(
+          top: false,
+          child: Column(
             children: [
-              IconButton(
-                onPressed: () => Navigator.pop(context),
-                icon: Icon(
-                  Icons.arrow_back_ios,
-                  color: Colors.white,
-                  size: 20.w,
-                ),
-                padding: EdgeInsets.all(12.w),
-                constraints: BoxConstraints(minWidth: 44.w, minHeight: 44.h),
+              SizedBox(height: 20.h),
+              AppSegmentedControl(
+                segments: ['family_members'.tr(), 'vehicles'.tr()],
+                selectedIndex: _selectedTab,
+                onChanged: (index) {
+                  setState(() => _selectedTab = index);
+                },
               ),
-              Text(
-                'family_vehicles'.tr(),
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20.sp,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.3,
+              SizedBox(height: 20.h),
+              _buildSectionHeader(),
+              SizedBox(height: 16.h),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: _buildContent(),
                 ),
               ),
             ],
@@ -146,7 +121,7 @@ class _FamilyVehiclesScreenState extends State<FamilyVehiclesScreen> {
               style: TextStyle(
                 fontSize: 18.sp,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF111827),
+                color: const Color(0xFF172B4D),
                 letterSpacing: -0.3,
               ),
             ),
@@ -164,7 +139,7 @@ class _FamilyVehiclesScreenState extends State<FamilyVehiclesScreen> {
               ),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0E4778),
+              backgroundColor: const Color(0xFF172B4D),
               elevation: 0,
               padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 11.h),
               shape: RoundedRectangleBorder(

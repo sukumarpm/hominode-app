@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
 /// Visitor QR Pass Screen
 /// Displays the QR code for an approved visitor
@@ -50,14 +52,14 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
       } else {
         print('❌ QR Screen: Visitor document not found');
         setState(() {
-          _error = 'Visitor not found';
+          _error = 'visitor_not_found'.tr();
           _isLoading = false;
         });
       }
     } catch (e) {
       print('❌ QR Screen: Error loading visitor: $e');
       setState(() {
-        _error = 'Failed to load visitor data';
+        _error = 'visitor_load_error'.tr();
         _isLoading = false;
       });
     }
@@ -85,33 +87,26 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Set status bar to black background with white icons
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
-        statusBarColor: Colors.black,
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark,
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
       ),
     );
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: Column(
-        children: [
-          // Status bar spacer
-          Container(
-            color: Colors.black,
-            height: MediaQuery.of(context).padding.top,
-          ),
+      backgroundColor: const Color(0xFFF7F9FD),
+      body: ResidentVisitorPageBackground(
+        child: Column(
+          children: [
+            // Status bar spacer
+            SizedBox(height: MediaQuery.of(context).padding.top),
 
-          // Main content
-          Expanded(
-            child: Container(
-              color: const Color(0xFFF8F9FA),
+            Expanded(
               child: Column(
                 children: [
                   _buildHeader(context),
-
                   Expanded(
                     child: _isLoading
                         ? const Center(child: CircularProgressIndicator())
@@ -136,8 +131,8 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -146,32 +141,29 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
-        ),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24.r),
-          bottomRight: Radius.circular(24.r),
-        ),
+        color: Colors.white.withValues(alpha: .82),
+        border: Border(bottom: BorderSide(color: Color(0xFFDFE7F1))),
       ),
       child: Padding(
-        padding: EdgeInsets.fromLTRB(8.w, 16.h, 16.w, 20.h),
+        padding: EdgeInsets.fromLTRB(8.w, 8.h, 16.w, 12.h),
         child: Row(
           children: [
             IconButton(
               onPressed: () => Navigator.pop(context),
-              icon: Icon(Icons.arrow_back_ios, color: Colors.white, size: 20.w),
+              icon: Icon(
+                Icons.arrow_back_ios,
+                color: Color(0xFF0E2247),
+                size: 20.w,
+              ),
               padding: EdgeInsets.all(8.w),
             ),
             SizedBox(width: 4.w),
             Text(
-              'Visitor QR Pass',
+              'visitor_qr_pass'.tr(),
               style: TextStyle(
-                color: Colors.white,
+                color: const Color(0xFF0E2247),
                 fontSize: 20.sp,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],
@@ -208,7 +200,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
                   borderRadius: BorderRadius.circular(12.r),
                 ),
               ),
-              child: const Text('Go Back'),
+              child: Text('back'.tr()),
             ),
           ],
         ),
@@ -218,13 +210,14 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
 
   Widget _buildQRCard() {
     return Container(
-      padding: EdgeInsets.all(32.w),
+      padding: EdgeInsets.all(22.w),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24.r),
+        color: Colors.white.withValues(alpha: .92),
+        borderRadius: BorderRadius.circular(26.r),
+        border: Border.all(color: Colors.white, width: 1.3),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: const Color(0xFF082F73).withValues(alpha: .09),
             blurRadius: 20,
             offset: const Offset(0, 4),
           ),
@@ -240,12 +233,14 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
               borderRadius: BorderRadius.circular(16.r),
               border: Border.all(color: const Color(0xFFE5E7EB), width: 2),
             ),
-            child: QrImageView(
-              data: _generateQRData(),
-              version: QrVersions.auto,
-              size: 240,
-              backgroundColor: Colors.white,
-              errorCorrectionLevel: QrErrorCorrectLevel.H,
+            child: LayoutBuilder(
+              builder: (context, constraints) => QrImageView(
+                data: _generateQRData(),
+                version: QrVersions.auto,
+                size: constraints.maxWidth.clamp(0, 240),
+                backgroundColor: Colors.white,
+                errorCorrectionLevel: QrErrorCorrectLevel.H,
+              ),
             ),
           ),
 
@@ -289,11 +284,12 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
     return Container(
       padding: EdgeInsets.all(20.w),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16.r),
+        color: Colors.white.withValues(alpha: .9),
+        borderRadius: BorderRadius.circular(23.r),
+        border: Border.all(color: Colors.white, width: 1.2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: const Color(0xFF082F73).withValues(alpha: .06),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -303,7 +299,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Visitor Details',
+            'visitor_details'.tr(),
             style: TextStyle(
               color: Color(0xFF1E293B),
               fontSize: 16.sp,
@@ -313,40 +309,40 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
           SizedBox(height: 16.h),
           _buildDetailRow(
             icon: Icons.person_outline,
-            label: 'Name',
+            label: 'visitor_name'.tr(),
             value: visitorName,
           ),
           SizedBox(height: 12.h),
           _buildDetailRow(
             icon: Icons.home_outlined,
-            label: 'Visiting',
-            value: 'Flat $flatLabel',
+            label: 'visiting'.tr(),
+            value: '${'apartment'.tr()} $flatLabel',
           ),
           SizedBox(height: 12.h),
           _buildDetailRow(
             icon: Icons.category_outlined,
-            label: 'Purpose',
+            label: 'purpose'.tr(),
             value: purpose,
           ),
           SizedBox(height: 12.h),
           _buildDetailRow(
             icon: Icons.access_time,
-            label: 'Expected Time',
+            label: 'expected_time'.tr(),
             value: timeString,
           ),
           if (vehicleNumber != 'N/A') ...[
             SizedBox(height: 12.h),
             _buildDetailRow(
               icon: Icons.directions_car_outlined,
-              label: 'Vehicle',
+              label: 'my_vehicles'.tr(),
               value: vehicleNumber,
             ),
           ],
           SizedBox(height: 12.h),
           _buildDetailRow(
             icon: Icons.check_circle_outline,
-            label: 'Status',
-            value: 'Approved',
+            label: 'status'.tr(),
+            value: 'approved'.tr(),
             valueColor: const Color(0xFF10B981),
           ),
         ],
@@ -405,7 +401,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
               Icon(Icons.info_outline, color: Color(0xFF0E4778), size: 20.w),
               SizedBox(width: 8.w),
               Text(
-                'Instructions',
+                'instructions'.tr(),
                 style: TextStyle(
                   color: Color(0xFF0E4778),
                   fontSize: 16.sp,
@@ -415,10 +411,10 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
             ],
           ),
           SizedBox(height: 12.h),
-          _buildInstructionItem('Show this QR code at the security gate'),
-          _buildInstructionItem('Valid for single entry only'),
-          _buildInstructionItem('Pass expires after scheduled time'),
-          _buildInstructionItem('Visitor must carry valid ID proof'),
+          _buildInstructionItem('show_qr_at_gate'.tr()),
+          _buildInstructionItem('single_entry_only'.tr()),
+          _buildInstructionItem('pass_expires_at_time'.tr()),
+          _buildInstructionItem('valid_id_proof'.tr()),
         ],
       ),
     );
@@ -463,12 +459,12 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
         gradient: const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
+          colors: [Color(0xFF243143), Color(0xFF0E2247)],
         ),
         borderRadius: BorderRadius.circular(16.r),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0E4778).withOpacity(0.3),
+            color: const Color(0xFF082F73).withValues(alpha: .2),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -485,7 +481,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
               Icon(Icons.share_outlined, color: Colors.white, size: 24.w),
               SizedBox(width: 12.w),
               Text(
-                'Share Pass',
+                'share_pass'.tr(),
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16.sp,
@@ -522,7 +518,7 @@ Please show this QR code at the security gate.
           borderRadius: BorderRadius.circular(16.r),
         ),
         title: Text(
-          'Share QR Pass',
+          'visitor_qr_pass'.tr(),
           style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.w600),
         ),
         content: Column(
@@ -531,7 +527,7 @@ Please show this QR code at the security gate.
             _buildShareOption(
               context,
               icon: Icons.message_outlined,
-              label: 'Share via SMS',
+              label: 'share_via_sms'.tr(),
               onTap: () {
                 Navigator.pop(context);
                 _showShareSuccess(context, 'SMS');
@@ -541,7 +537,7 @@ Please show this QR code at the security gate.
             _buildShareOption(
               context,
               icon: Icons.email_outlined,
-              label: 'Share via Email',
+              label: 'share_via_email'.tr(),
               onTap: () {
                 Navigator.pop(context);
                 _showShareSuccess(context, 'Email');
@@ -551,7 +547,7 @@ Please show this QR code at the security gate.
             _buildShareOption(
               context,
               icon: Icons.chat_bubble_outline,
-              label: 'Share via WhatsApp',
+              label: 'share_via_whatsapp'.tr(),
               onTap: () {
                 Navigator.pop(context);
                 _showShareSuccess(context, 'WhatsApp');
@@ -563,7 +559,7 @@ Please show this QR code at the security gate.
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text(
-              'Cancel',
+              'cancel'.tr(),
               style: TextStyle(
                 color: Color(0xFF64748B),
                 fontSize: 16.sp,
@@ -619,7 +615,7 @@ Please show this QR code at the security gate.
   void _showShareSuccess(BuildContext context, String method) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Pass shared via $method'),
+        content: Text('pass_shared'.tr(namedArgs: {'method': method})),
         backgroundColor: const Color(0xFF10B981),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,

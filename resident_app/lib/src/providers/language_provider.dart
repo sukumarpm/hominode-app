@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 class LanguageProvider extends ChangeNotifier {
   final UserDataService _userDataService = UserDataService();
-  
+
   String _currentLanguageCode = 'en';
   bool _isLoading = false;
   String? _error;
@@ -13,16 +13,37 @@ class LanguageProvider extends ChangeNotifier {
   String get currentLanguageCode => _currentLanguageCode;
   bool get isLoading => _isLoading;
   String? get error => _error;
-  List<String> get supportedLanguages => const ['en', 'ta', 'hi', 'es', 'ar'];
+  List<String> get supportedLanguages => const [
+    'en',
+    'ta',
+    'hi',
+    'es',
+    'ar',
+    'ml',
+    'te',
+    'kn',
+  ];
 
-  static const List<String> _supportedLanguages = ['en', 'ta', 'hi', 'es', 'ar'];
-  
+  static const List<String> _supportedLanguages = [
+    'en',
+    'ta',
+    'hi',
+    'es',
+    'ar',
+    'ml',
+    'te',
+    'kn',
+  ];
+
   static const Map<String, String> languageNames = {
     'en': 'English',
     'ta': 'Tamil',
     'hi': 'Hindi',
     'es': 'Spanish',
     'ar': 'العربية',
+    'ml': 'മലയാളം',
+    'te': 'తెలుగు',
+    'kn': 'ಕನ್ನಡ',
   };
 
   static const Map<String, String> languageCodes = {
@@ -31,6 +52,9 @@ class LanguageProvider extends ChangeNotifier {
     'hi': 'HI',
     'es': 'ES',
     'ar': 'AR',
+    'ml': 'ML',
+    'te': 'TE',
+    'kn': 'KN',
   };
 
   LanguageProvider() {
@@ -46,8 +70,11 @@ class LanguageProvider extends ChangeNotifier {
       // Try to get user's saved language preference from Firestore
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final savedLanguage = await _userDataService.getUserLanguagePreference(user.uid);
-        if (savedLanguage != null && _supportedLanguages.contains(savedLanguage)) {
+        final savedLanguage = await _userDataService.getUserLanguagePreference(
+          user.uid,
+        );
+        if (savedLanguage != null &&
+            _supportedLanguages.contains(savedLanguage)) {
           _currentLanguageCode = savedLanguage;
         }
       }
@@ -85,7 +112,10 @@ class LanguageProvider extends ChangeNotifier {
       // Save to Firestore
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        await _userDataService.saveUserLanguagePreference(user.uid, languageCode);
+        await _userDataService.saveUserLanguagePreference(
+          user.uid,
+          languageCode,
+        );
       }
 
       _error = null;
@@ -119,10 +149,8 @@ class LanguageProvider extends ChangeNotifier {
   }
 
   /// Translate a key (for backward compatibility with existing code)
-  /// This delegates to the LocalizationService
+  /// Uses the same EasyLocalization assets and active locale as the widgets.
   String translate(String key, {Map<String, String>? params}) {
-    // This is a placeholder - actual translation should use EasyLocalization's .tr()
-    // in the UI. This method is here for backward compatibility only.
-    return key;
+    return key.tr(namedArgs: params);
   }
 }

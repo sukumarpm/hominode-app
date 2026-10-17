@@ -6,10 +6,10 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/post.dart';
 import 'post_actions_row.dart';
 
-const kPrimaryBlue = Color(0xFF0E4778);
-const kBlackText = Color(0xFF111111);
-const kGrayText = Color(0xFF8C8C8C);
-const kDivider = Color(0xFFE6E6E6);
+const kPrimaryBlue = Color(0xFF172B4D);
+const kBlackText = Color(0xFF172B4D);
+const kGrayText = Color(0xFF52627A);
+const kDivider = Color(0xFFE2EAF3);
 
 class PostCard extends StatelessWidget {
   final Post post;
@@ -33,13 +33,14 @@ class PostCard extends StatelessWidget {
       margin: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16.r),
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: const Color(0xFFE2EAF3)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 2),
+            color: const Color(0xFF172B4D).withValues(alpha: 0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 5),
           ),
         ],
       ),

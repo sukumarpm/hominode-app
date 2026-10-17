@@ -16,11 +16,7 @@ class AmenityImage {
   final String? storagePath;
   final String? name;
 
-  const AmenityImage({
-    required this.url,
-    this.storagePath,
-    this.name,
-  });
+  const AmenityImage({required this.url, this.storagePath, this.name});
 }
 
 /// Amenity model for real-time streaming
@@ -165,7 +161,9 @@ class AmenityModel {
     if (images.isNotEmpty) return images;
 
     final legacy = safeImageUrl(legacyImageUrl);
-    return legacy == null ? const <AmenityImage>[] : [AmenityImage(url: legacy)];
+    return legacy == null
+        ? const <AmenityImage>[]
+        : [AmenityImage(url: legacy)];
   }
 
   factory AmenityModel.fromMap(
@@ -185,10 +183,7 @@ class AmenityModel {
     final isFree = data['isFree'] == true;
     final rawPricingMode = _text(data['pricingMode']);
     final imageUrl = safeImageUrl(data['imageUrl']);
-    final images = _facilityImages(
-      data['images'],
-      legacyImageUrl: imageUrl,
-    );
+    final images = _facilityImages(data['images'], legacyImageUrl: imageUrl);
 
     return AmenityModel(
       id: id,
@@ -286,7 +281,7 @@ class AmenityModel {
   String get timeSlotsDisplay {
     if (timeSlots.isEmpty) return 'No time slots available';
     if (timeSlots.length == 1) return timeSlots.first;
-    return '${timeSlots.length} slots available';
+    return '${timeSlots.length} configured time slots';
   }
 
   String get capacityDisplay {
@@ -704,7 +699,8 @@ class BookingFirestoreService {
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
 
-  DateTime _dateOnly(DateTime date) => DateTime(date.year, date.month, date.day);
+  DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
 
   Map<String, dynamic> _stringMap(Object? value) {
     if (value is! Map) return const <String, dynamic>{};
@@ -722,13 +718,15 @@ class BookingFirestoreService {
       throw StateError('Callable Functions are not configured.');
     }
 
-    final result = await functions.httpsCallable('getAmenityAvailability').call({
-      'amenityId': amenityId,
-      'startDateMs': _dateOnly(startDate).millisecondsSinceEpoch,
-      'endDateMs': _dateOnly(endDate).millisecondsSinceEpoch,
-      'numberOfPeople': numberOfPeople,
-      'timezoneOffsetMinutes': startDate.timeZoneOffset.inMinutes,
-    });
+    final result = await functions
+        .httpsCallable('getAmenityAvailability')
+        .call({
+          'amenityId': amenityId,
+          'startDateMs': _dateOnly(startDate).millisecondsSinceEpoch,
+          'endDateMs': _dateOnly(endDate).millisecondsSinceEpoch,
+          'numberOfPeople': numberOfPeople,
+          'timezoneOffsetMinutes': startDate.timeZoneOffset.inMinutes,
+        });
 
     final data = _stringMap(result.data);
     if (data['dates'] is! Map) {
@@ -768,9 +766,13 @@ class BookingFirestoreService {
       final day = _stringMap(dates[_dateKey(date)]);
       final slots = _stringMap(day['slots']);
 
-      return slots.map(
-        (slot, value) => MapEntry(slot, _stringMap(value)),
-      );
+      return slots.map((slot, value) {
+        final availability = _stringMap(value);
+        return MapEntry(slot, {
+          ...availability,
+          'availabilityVerified': availability['available'] is bool,
+        });
+      });
     } on FirebaseFunctionsException catch (e) {
       print('❌ Callable availability error: ${e.code} ${e.message}');
       final amenity = await getAmenityDetails(amenityId);
@@ -779,6 +781,7 @@ class BookingFirestoreService {
         for (final slot in amenity.timeSlots)
           slot: {
             'available': false,
+            'availabilityVerified': false,
             'reason': e.message ?? 'Unable to check availability',
             'remainingSpots': 0,
             'totalCapacity': amenity.allowMultipleBookings
@@ -796,6 +799,7 @@ class BookingFirestoreService {
         for (final slot in amenity.timeSlots)
           slot: {
             'available': false,
+            'availabilityVerified': false,
             'reason': 'Unable to check availability',
             'remainingSpots': 0,
             'totalCapacity': amenity.allowMultipleBookings
@@ -981,6 +985,7 @@ class BookingFirestoreService {
         print('✅ Single booking mode: ${available ? "Available" : "Booked"}');
         return {
           'available': available,
+          'availabilityVerified': true,
           'reason': available ? 'Available' : 'Already booked',
           'remainingSpots': available ? 1 : 0,
           'totalCapacity': 1,
@@ -999,6 +1004,7 @@ class BookingFirestoreService {
         print('   Can book: $canBook');
         return {
           'available': canBook,
+          'availabilityVerified': true,
           'reason': canBook ? 'Available' : 'Not enough capacity',
           'remainingSpots': remainingSpots > 0 ? remainingSpots : 0,
           'totalCapacity': amenity.maxCapacity,
@@ -1013,6 +1019,7 @@ class BookingFirestoreService {
       // impression that a slot is free.
       return {
         'available': false,
+        'availabilityVerified': false,
         'reason': 'Unable to check availability',
         'remainingSpots': 0,
         'totalCapacity': 0,
@@ -1128,16 +1135,18 @@ class BookingFirestoreService {
     final functions = _functions;
     if (functions != null) {
       try {
-        final result = await functions.httpsCallable('createAmenityBooking').call({
-          'amenityId': amenityId,
-          'dateMs': _dateOnly(date).millisecondsSinceEpoch,
-          'timeSlot': timeSlot,
-          'bookingType': bookingType,
-          'numberOfPeople': numberOfPeople,
-          if (familyMembers != null && familyMembers.isNotEmpty)
-            'familyMembers': familyMembers,
-          'timezoneOffsetMinutes': date.timeZoneOffset.inMinutes,
-        });
+        final result = await functions
+            .httpsCallable('createAmenityBooking')
+            .call({
+              'amenityId': amenityId,
+              'dateMs': _dateOnly(date).millisecondsSinceEpoch,
+              'timeSlot': timeSlot,
+              'bookingType': bookingType,
+              'numberOfPeople': numberOfPeople,
+              if (familyMembers != null && familyMembers.isNotEmpty)
+                'familyMembers': familyMembers,
+              'timezoneOffsetMinutes': date.timeZoneOffset.inMinutes,
+            });
         final data = _stringMap(result.data);
         final bookingId = data['bookingId']?.toString();
         if (bookingId == null || bookingId.isEmpty) {

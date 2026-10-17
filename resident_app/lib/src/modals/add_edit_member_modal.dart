@@ -304,8 +304,9 @@ class _AddEditMemberModalState extends State<AddEditMemberModal>
               ),
               margin: EdgeInsets.symmetric(horizontal: 16.w),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18.r),
+                color: const Color(0xFFFCFDFE),
+                borderRadius: BorderRadius.circular(22.r),
+                border: Border.all(color: const Color(0xFFE2EAF3)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.15),
@@ -406,7 +407,7 @@ class _AddEditMemberModalState extends State<AddEditMemberModal>
                                   ? null
                                   : _handleSave,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0E4778),
+                                backgroundColor: const Color(0xFF172B4D),
                                 disabledBackgroundColor: const Color(
                                   0xFF0E4778,
                                 ).withOpacity(0.4),

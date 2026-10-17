@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -51,6 +52,8 @@ class _BookingModalState extends State<BookingModal> {
   bool _isSubmitting = false;
   bool _isLoadingTimeSlots = false;
   bool _isCheckingAvailability = false;
+  bool _availabilityVerified = false;
+  int _availabilityRequestId = 0;
   late final _bookingService =
       widget.bookingService ?? BookingFirestoreService();
   StreamSubscription<AmenityModel?>? _facilitySubscription;
@@ -149,8 +152,16 @@ class _BookingModalState extends State<BookingModal> {
 
   Future<void> _loadSlotAvailability() async {
     if (_selectedDate == null || _amenityDetails == null) return;
+    final requestId = ++_availabilityRequestId;
+    final requestedDate = _selectedDate!;
 
-    setState(() => _isCheckingAvailability = true);
+    setState(() {
+      _isCheckingAvailability = true;
+      _availabilityVerified = false;
+      _selectedTimeSlot = null;
+      _availableSlots = [];
+      _slotAvailability = {};
+    });
 
     try {
       final now = DateTime.now();
@@ -173,9 +184,19 @@ class _BookingModalState extends State<BookingModal> {
 
       final slotResults = await _bookingService.getSlotAvailabilityForDate(
         amenityId: widget.amenity.id,
-        date: _selectedDate!,
+        date: requestedDate,
         numberOfPeople: _numberOfPeople,
       );
+
+      if (!mounted || requestId != _availabilityRequestId) return;
+
+      final availabilityVerified =
+          _timeSlots.isNotEmpty &&
+          _timeSlots.every((slot) {
+            final result = slotResults[slot];
+            return result?['availabilityVerified'] == true &&
+                result?['available'] is bool;
+          });
 
       for (final timeSlot in _timeSlots) {
         final slotResult =
@@ -195,7 +216,7 @@ class _BookingModalState extends State<BookingModal> {
             (slotResult['totalCapacity'] as num?)?.toInt() ??
             _amenityDetails!.maxCapacity;
 
-        if (isAvailable) {
+        if (availabilityVerified && isAvailable) {
           availableSlots.add(timeSlot);
         }
 
@@ -215,11 +236,12 @@ class _BookingModalState extends State<BookingModal> {
         };
       }
 
-      if (!mounted) return;
+      if (!mounted || requestId != _availabilityRequestId) return;
 
       setState(() {
         _availableSlots = availableSlots;
         _slotAvailability = availability;
+        _availabilityVerified = availabilityVerified;
         _isCheckingAvailability = false;
       });
 
@@ -228,20 +250,20 @@ class _BookingModalState extends State<BookingModal> {
     } catch (e) {
       print('❌ Error loading slot availability: $e');
 
-      if (mounted) {
-        setState(() => _isCheckingAvailability = false);
+      if (mounted && requestId == _availabilityRequestId) {
+        setState(() {
+          _availabilityVerified = false;
+          _availableSlots = [];
+          _slotAvailability = {};
+          _selectedTimeSlot = null;
+          _isCheckingAvailability = false;
+        });
       }
     }
   }
 
   bool _isSlotAvailable(String timeSlot) {
-    // Use the filtered available slots from AmenitiesBookingLogic
-    if (_availableSlots.isEmpty && _slotAvailability.isEmpty) {
-      print(
-        '⚠️  No availability data loaded yet for $timeSlot, assuming available',
-      );
-      return true;
-    }
+    if (!_availabilityVerified) return false;
 
     // First check if slot is in the available slots list (after filtering)
     if (_availableSlots.isNotEmpty) {
@@ -255,11 +277,10 @@ class _BookingModalState extends State<BookingModal> {
     // Fallback to availability data
     final availability = _slotAvailability[timeSlot];
     if (availability == null) {
-      print('⚠️  No availability data for $timeSlot, assuming available');
-      return true;
+      return false;
     }
 
-    final isAvailable = availability['available'] ?? true;
+    final isAvailable = availability['available'] == true;
     print('📊 Slot $timeSlot: ${isAvailable ? "Available" : "Full"}');
     return isAvailable;
   }
@@ -316,8 +337,11 @@ class _BookingModalState extends State<BookingModal> {
   bool get _canConfirm {
     return _amenityDetails?.isAvailable == true &&
         !_isLoadingTimeSlots &&
+        !_isCheckingAvailability &&
+        _availabilityVerified &&
         _selectedDate != null &&
         _selectedTimeSlot != null &&
+        _isSlotAvailable(_selectedTimeSlot!) &&
         !_isSubmitting &&
         _numberOfPeople > 0;
   }
@@ -369,11 +393,11 @@ class _BookingModalState extends State<BookingModal> {
 
     switch (_bookingType) {
       case 'weekly':
-        return 'Weekly';
+        return 'weekly'.tr();
       case 'monthly':
-        return 'Monthly';
+        return 'monthly'.tr();
       case 'yearly':
-        return 'Yearly';
+        return 'yearly'.tr();
       default:
         return null;
     }
@@ -402,7 +426,11 @@ class _BookingModalState extends State<BookingModal> {
           Navigator.of(context).pop();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${widget.amenity.name} booked successfully!'),
+              content: Text(
+                'facility_booked_successfully'.tr(
+                  namedArgs: {'name': widget.amenity.name},
+                ),
+              ),
               backgroundColor: Colors.green,
               duration: const Duration(seconds: 2),
             ),
@@ -410,9 +438,7 @@ class _BookingModalState extends State<BookingModal> {
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                result.message ?? 'Booking failed. Please try again.',
-              ),
+              content: Text(result.message ?? 'booking_failed_retry'.tr()),
               backgroundColor: Colors.red,
               duration: const Duration(seconds: 3),
             ),
@@ -425,7 +451,9 @@ class _BookingModalState extends State<BookingModal> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text(
+              'operation_error'.tr(namedArgs: {'error': e.toString()}),
+            ),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),
@@ -450,13 +478,14 @@ class _BookingModalState extends State<BookingModal> {
             maxHeight: screenHeight - 48,
           ),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18.r),
+            color: const Color(0xFFFCFDFE),
+            borderRadius: BorderRadius.circular(24.r),
+            border: Border.all(color: const Color(0xFFE1E9F2)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
+                color: const Color(0xFF172B4D).withValues(alpha: 0.14),
+                blurRadius: 26,
+                offset: const Offset(0, 12),
               ),
             ],
           ),
@@ -473,9 +502,7 @@ class _BookingModalState extends State<BookingModal> {
                       if (_isLoadingTimeSlots)
                         const Center(child: CircularProgressIndicator())
                       else if (_amenityDetails == null)
-                        const Text(
-                          'This facility is unavailable or no longer exists.',
-                        )
+                        Text('facility_unavailable_now'.tr())
                       else ...[
                         _buildInfoCard(),
 
@@ -501,7 +528,7 @@ class _BookingModalState extends State<BookingModal> {
 
                         SizedBox(height: 24.h),
                         Text(
-                          'Select Date',
+                          'select_date'.tr(),
                           style: TextStyle(
                             fontSize: 16.sp,
                             fontWeight: FontWeight.w600,
@@ -523,7 +550,7 @@ class _BookingModalState extends State<BookingModal> {
                         ),
                         SizedBox(height: 24.h),
                         Text(
-                          'Select Time Slot',
+                          'select_time_slot'.tr(),
                           style: TextStyle(
                             fontSize: 16.sp,
                             fontWeight: FontWeight.w600,
@@ -543,7 +570,7 @@ class _BookingModalState extends State<BookingModal> {
                                 child: Padding(
                                   padding: EdgeInsets.all(24.w),
                                   child: Text(
-                                    'No time slots available',
+                                    'no_time_slots_available'.tr(),
                                     style: TextStyle(
                                       fontSize: 14.sp,
                                       color: Colors.grey[600],
@@ -577,8 +604,10 @@ class _BookingModalState extends State<BookingModal> {
           Expanded(
             child: Text(
               _amenityDetails == null
-                  ? 'Facility'
-                  : 'Book ${_amenityDetails!.name}',
+                  ? 'facility'.tr()
+                  : 'book_named_facility'.tr(
+                      namedArgs: {'name': _amenityDetails!.name},
+                    ),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 20.sp,
@@ -618,7 +647,7 @@ class _BookingModalState extends State<BookingModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Booking Type',
+          'booking_type'.tr(),
           style: TextStyle(
             fontSize: 16.sp,
             fontWeight: FontWeight.w600,
@@ -635,46 +664,46 @@ class _BookingModalState extends State<BookingModal> {
             children: [
               _buildBookingTypeOption(
                 'daily',
-                'Daily',
+                'daily'.tr(),
                 _amenityDetails!.priceDisplay,
               ),
               if (_amenityDetails?.subscriptionPackages?.containsKey(
-                    'Weekly',
+                    'weekly'.tr(),
                   ) ??
                   false)
                 _buildBookingTypeOption(
                   'weekly',
-                  'Weekly Package',
+                  'weekly_package'.tr(),
                   AmenityModel.formatPrice(
                     _amenityDetails!.subscriptionPackages!['Weekly'],
                     isFree: _amenityDetails!.isFree,
-                    suffix: '/week',
+                    suffix: '/${'week'.tr()}',
                   ),
                 ),
               if (_amenityDetails?.subscriptionPackages?.containsKey(
-                    'Monthly',
+                    'monthly'.tr(),
                   ) ??
                   false)
                 _buildBookingTypeOption(
                   'monthly',
-                  'Monthly Package',
+                  'monthly_package'.tr(),
                   AmenityModel.formatPrice(
                     _amenityDetails!.subscriptionPackages!['Monthly'],
                     isFree: _amenityDetails!.isFree,
-                    suffix: '/month',
+                    suffix: '/${'month'.tr()}',
                   ),
                 ),
               if (_amenityDetails?.subscriptionPackages?.containsKey(
-                    'Yearly',
+                    'yearly'.tr(),
                   ) ??
                   false)
                 _buildBookingTypeOption(
                   'yearly',
-                  'Yearly Package',
+                  'yearly_package'.tr(),
                   AmenityModel.formatPrice(
                     _amenityDetails!.subscriptionPackages!['Yearly'],
                     isFree: _amenityDetails!.isFree,
-                    suffix: '/year',
+                    suffix: '/${'year'.tr()}',
                   ),
                 ),
             ],
@@ -774,7 +803,7 @@ class _BookingModalState extends State<BookingModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Number of People',
+          'number_of_people'.tr(),
           style: TextStyle(
             fontSize: 16.sp,
             fontWeight: FontWeight.w600,
@@ -797,16 +826,18 @@ class _BookingModalState extends State<BookingModal> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '$_numberOfPeople ${_numberOfPeople == 1 ? "Person" : "People"}',
+                      'people_count'.tr(
+                        namedArgs: {'count': '$_numberOfPeople'},
+                      ),
                       style: TextStyle(
                         fontSize: 16.sp,
                         fontWeight: FontWeight.w600,
-                        color: Colors.black,
+                        color: const Color(0xFF172B4D),
                       ),
                     ),
                     SizedBox(height: 2.h),
                     Text(
-                      'Each person counts toward capacity',
+                      'each_person_capacity'.tr(),
                       style: TextStyle(
                         fontSize: 12.sp,
                         color: Color(0xFF9CA3AF),
@@ -912,7 +943,7 @@ class _BookingModalState extends State<BookingModal> {
               Icon(Icons.card_membership, size: 20.w, color: Color(0xFF0E4778)),
               SizedBox(width: 8.w),
               Text(
-                'Package Details',
+                'package_details'.tr(),
                 style: TextStyle(
                   fontSize: 15.sp,
                   fontWeight: FontWeight.w600,
@@ -922,15 +953,24 @@ class _BookingModalState extends State<BookingModal> {
             ],
           ),
           SizedBox(height: 12.h),
-          _buildPackageDetailRow('Package Type', packageType ?? 'N/A'),
+          _buildPackageDetailRow(
+            'package_type'.tr(),
+            packageType ?? 'not_available'.tr(),
+          ),
           SizedBox(height: 8.h),
-          _buildPackageDetailRow('Start Date', _formatDate(_selectedDate!)),
+          _buildPackageDetailRow(
+            'start_date'.tr(),
+            _formatDate(_selectedDate!),
+          ),
           SizedBox(height: 8.h),
-          _buildPackageDetailRow('End Date', _formatDate(endDate)),
+          _buildPackageDetailRow('end_date'.tr(), _formatDate(endDate)),
           SizedBox(height: 8.h),
-          _buildPackageDetailRow('Validity', '$validityDays days'),
+          _buildPackageDetailRow(
+            'validity'.tr(),
+            'days_count'.tr(namedArgs: {'count': '$validityDays'}),
+          ),
           SizedBox(height: 8.h),
-          _buildPackageDetailRow('Price', _selectedPriceLabel),
+          _buildPackageDetailRow('price'.tr(), _selectedPriceLabel),
         ],
       ),
     );
@@ -949,7 +989,7 @@ class _BookingModalState extends State<BookingModal> {
           style: TextStyle(
             fontSize: 13.sp,
             fontWeight: FontWeight.w600,
-            color: Colors.black,
+            color: const Color(0xFF172B4D),
           ),
         ),
       ],
@@ -957,21 +997,7 @@ class _BookingModalState extends State<BookingModal> {
   }
 
   String _formatDate(DateTime date) {
-    final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return '${date.day} ${months[date.month - 1]} ${date.year}';
+    return DateFormat.yMMMd(context.locale.toString()).format(date);
   }
 
   Widget _buildTimeSlotSelector() {
@@ -980,7 +1006,7 @@ class _BookingModalState extends State<BookingModal> {
         child: Padding(
           padding: EdgeInsets.all(24.w),
           child: Text(
-            'Please select a date first',
+            'select_date_first'.tr(),
             style: TextStyle(fontSize: 14.sp, color: Colors.grey[600]),
           ),
         ),
@@ -996,8 +1022,29 @@ class _BookingModalState extends State<BookingModal> {
               CircularProgressIndicator(),
               SizedBox(height: 12.h),
               Text(
-                'Checking availability...',
+                'checking_availability'.tr(),
                 style: TextStyle(fontSize: 13.sp, color: Color(0xFF6B7280)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_availabilityVerified) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(16.w),
+          child: Column(
+            children: [
+              Text(
+                'facility_availability_unverified'.tr(),
+                textAlign: TextAlign.center,
+              ),
+              TextButton.icon(
+                onPressed: _loadSlotAvailability,
+                icon: const Icon(Icons.refresh),
+                label: Text('retry_availability_check'.tr()),
               ),
             ],
           ),
@@ -1060,8 +1107,13 @@ class _BookingModalState extends State<BookingModal> {
                   SizedBox(height: 4.h),
                   Text(
                     isAvailable
-                        ? '$remainingSpots/$totalCapacity spots booked'
-                        : 'Slot Full',
+                        ? 'spots_booked'.tr(
+                            namedArgs: {
+                              'booked': '$remainingSpots',
+                              'capacity': '$totalCapacity',
+                            },
+                          )
+                        : 'slot_full'.tr(),
                     style: TextStyle(
                       fontSize: 11.sp,
                       color: !isAvailable
@@ -1087,7 +1139,7 @@ class _BookingModalState extends State<BookingModal> {
       child: ElevatedButton(
         onPressed: _canConfirm ? _handleConfirm : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF0E4778),
+          backgroundColor: const Color(0xFF172B4D),
           foregroundColor: Colors.white,
           disabledBackgroundColor: const Color(0xFFE6E6E6),
           disabledForegroundColor: const Color(0xFF9B9B9B),
@@ -1106,7 +1158,7 @@ class _BookingModalState extends State<BookingModal> {
                 ),
               )
             : Text(
-                'Confirm Booking',
+                'confirm_booking'.tr(),
                 style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
               ),
       ),

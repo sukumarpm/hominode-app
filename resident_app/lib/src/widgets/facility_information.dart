@@ -1,7 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../services/booking_firestore_service.dart';
+
+String _localizedPrice(String value) {
+  if (value == 'Free') return 'free'.tr();
+  if (value == 'Price unavailable') return 'price_unavailable'.tr();
+  if (value.endsWith('/day')) {
+    return 'price_per_day'.tr(
+      namedArgs: {'price': value.substring(0, value.length - 4)},
+    );
+  }
+  return value;
+}
 
 IconData facilityIcon(String? name) {
   switch (name?.toLowerCase()) {
@@ -90,16 +102,43 @@ class _FacilityImageState extends State<FacilityImage> {
   }
 
   Widget _fallback() {
-    return ColoredBox(
-      color: const Color(0xFFD6EBFF),
-      child: Center(
-        child: Icon(
-          facilityIcon(widget.amenity.iconName),
-          size: 44.w,
-          color: const Color(0xFF0A64FF),
-          semanticLabel: 'Facility image unavailable',
+    return Stack(
+      key: const ValueKey('facility-image-fallback'),
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          'assets/hominode_residential_hero.jpg',
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) =>
+              const ColoredBox(color: Color(0xFFDCE3EA)),
         ),
-      ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xA8172B4D), Color(0x7036475E)],
+            ),
+          ),
+        ),
+        Center(
+          child: Container(
+            width: 54.w,
+            height: 54.w,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .88),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white),
+            ),
+            child: Icon(
+              facilityIcon(widget.amenity.iconName),
+              size: 28.w,
+              color: const Color(0xFF24364B),
+              semanticLabel: 'Facility image unavailable',
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -150,7 +189,6 @@ class _FacilityImageState extends State<FacilityImage> {
                     right: 6.w,
                     top: 6.h,
                     child: Container(
-                      key: const ValueKey('facility-photo-count'),
                       padding: EdgeInsets.symmetric(
                         horizontal: 7.w,
                         vertical: 3.h,
@@ -287,28 +325,39 @@ class FacilityInformation extends StatelessWidget {
         ),
         Text(amenity.type),
         if (amenity.buildingName != null)
-          Text('Building: ${amenity.buildingName}'),
+          Text(
+            'building_name_value'.tr(
+              namedArgs: {'name': amenity.buildingName ?? ''},
+            ),
+          ),
         if (amenity.description != null) ...[
           SizedBox(height: 8.h),
           Text(amenity.description!),
         ],
         SizedBox(height: 8.h),
-        Text('Price: ${amenity.priceDisplay}'),
+        Text(
+          'price_value'.tr(
+            namedArgs: {'price': _localizedPrice(amenity.priceDisplay)},
+          ),
+        ),
         SizedBox(height: 8.h),
         if (amenity.timeSlots.isNotEmpty) ...[
-          const Text('Time slots'),
+          Text('time_slots'.tr()),
           for (final slot in amenity.timeSlots) Text(slot),
         ] else
-          const Text('No time slots available'),
+          Text('no_time_slots_available'.tr()),
         if (amenity.bookingDurations.isNotEmpty) ...[
           SizedBox(height: 8.h),
-          Text('Booking durations: ${amenity.bookingDurations.join(', ')}'),
+          Text(
+            'booking_durations_value'.tr(
+              namedArgs: {'durations': amenity.bookingDurations.join(', ')},
+            ),
+          ),
         ],
         if (amenity.hasConfiguredCapacity) ...[
           SizedBox(height: 8.h),
           Text(
-            'Capacity: ${amenity.maxCapacity} '
-            '${amenity.maxCapacity == 1 ? 'person' : 'people'}',
+            'capacity_value'.tr(namedArgs: {'count': '${amenity.maxCapacity}'}),
           ),
         ],
       ],

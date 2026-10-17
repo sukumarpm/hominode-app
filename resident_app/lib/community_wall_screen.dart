@@ -6,13 +6,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import 'comments_screen.dart';
 import 'src/components/post_card.dart';
-import 'src/components/standard_screen.dart';
 import 'src/modals/add_post_modal.dart';
 import 'src/modals/post_menu_bottomsheet.dart';
 import 'src/models/post.dart';
 import 'src/services/post_firestore_service.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
-const kPrimaryBlue = Color(0xFF0E4778);
+const kPrimaryBlue = Color(0xFF172B4D);
 
 class CommunityWallScreen extends StatefulWidget {
   const CommunityWallScreen({super.key});
@@ -238,21 +238,47 @@ class _CommunityWallScreenState extends State<CommunityWallScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
-      body: StandardScreen(
-        title: 'Community Wall',
-        showBackButton: true,
-        isScrollable: false,
-        padding: EdgeInsets.zero,
-        body: _isLoading
+      backgroundColor: const Color(0xFFF4F7FB),
+      appBar: AppBar(
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: const Color(0xFF172B4D),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Community Wall',
+          style: TextStyle(
+            color: const Color(0xFF172B4D),
+            fontSize: 20.sp,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      body: ResidentVisitorPageBackground(
+        child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : _posts.isEmpty
             ? Center(
-                child: Padding(
-                  padding: EdgeInsets.all(32.w),
+                child: Container(
+                  margin: EdgeInsets.all(24.w),
+                  padding: EdgeInsets.all(24.w),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .94),
+                    borderRadius: BorderRadius.circular(20.r),
+                    border: Border.all(color: const Color(0xFFE2EAF3)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF172B4D).withValues(alpha: .06),
+                        blurRadius: 18,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
                   child: Text(
                     'No posts yet. Be the first to post!',
-                    style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      color: const Color(0xFF52627A),
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),

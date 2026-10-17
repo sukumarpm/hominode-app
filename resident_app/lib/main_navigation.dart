@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -11,8 +12,16 @@ import 'src/screens/visitor_management_screen_new.dart';
 import 'maintenance_billing_screen.dart';
 import 'events_announcements_screen.dart';
 import 'profile_screen.dart';
+import 'src/screens/amenities_booking_screen.dart';
+import 'src/screens/messages_screen_enhanced.dart';
+import 'src/screens/emergency_sos_screen.dart';
+import 'complaints_screen.dart';
+import 'src/screens/notifications_screen.dart';
+import 'src/screens/marketplace_screen.dart';
 import 'src/widgets/flat_access_wrapper.dart';
-import 'src/constants/app_colors.dart';
+import 'src/widgets/community_verification_feedback.dart';
+import 'src/widgets/resident_floating_bottom_navigation.dart';
+import 'src/widgets/resident_navigation_loading_overlay.dart';
 import 'src/services/subscription_entitlement_service.dart';
 import 'src/services/tenant_resolution_service.dart';
 
@@ -29,18 +38,16 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation>
     with SingleTickerProviderStateMixin {
   int _currentIndex = 0;
+  bool _isNavigationLoading = false;
+  final _communityAccessFeedback = CommunityVerificationFeedback();
   late AnimationController _animationController;
-
-  // Inactive color for navigation items
-  Color get inactiveColor => const Color(0xFF64748B);
 
   // All screens - state is preserved with IndexedStack
   List<Widget> get _screens => [
-    DashboardScreen(onTabChange: _onTabTapped),
-    const VisitorManagementScreenNew(),
+    DashboardScreen(onTabChange: _onTabTapped, isActive: _currentIndex == 0),
+    const AmenitiesBookingScreen(),
+    const EventsAnnouncementsScreen(announcementsOnly: true),
     const MaintenanceBillingScreen(),
-    const EventsAnnouncementsScreen(),
-    const ProfileScreen(),
   ];
 
   @override
@@ -57,21 +64,38 @@ class _MainNavigationState extends State<MainNavigation>
 
   @override
   void dispose() {
+    _communityAccessFeedback.cancel();
     _animationController.dispose();
     super.dispose();
   }
 
   void _onTabTapped(int index) {
-    if (index == 3) {
-      unawaited(_openEventsTabIfAllowed());
+    if (index != 2) _communityAccessFeedback.cancel();
+    if (index == 4) {
+      _openMoreMenu();
+      return;
+    }
+    if (index == 2) {
+      unawaited(_openCommunityDestination());
       return;
     }
 
     _switchTab(index);
   }
 
+  Future<void> _withNavigationLoading(Future<void> Function() operation) async {
+    if (_isNavigationLoading) return;
+    await runWithNavigationLoading<void>(
+      onLoadingChanged: (loading) {
+        if (mounted) setState(() => _isNavigationLoading = loading);
+      },
+      operation: operation,
+    );
+  }
+
   void _switchTab(int index) {
     if (_currentIndex == index) return;
+    _communityAccessFeedback.cancel();
 
     setState(() {
       _currentIndex = index;
@@ -81,187 +105,298 @@ class _MainNavigationState extends State<MainNavigation>
     _animationController.forward();
   }
 
-  Future<void> _openEventsTabIfAllowed() async {
+  Future<void> _openCommunityDestination() async {
     final tenantResolution = context.read<TenantResolutionService>();
-    final communityId = tenantResolution.communityId;
+    await _communityAccessFeedback.run(
+      context: context,
+      operation: 'community-tab/community-membership-resolution',
+      verify: () async {
+        if (tenantResolution.current == null) {
+          await _withNavigationLoading(() async {
+            await tenantResolution.resolve();
+          });
+        }
+        if (tenantResolution.communityId?.trim().isNotEmpty != true) {
+          throw const TenantResolutionException(
+            TenantResolutionFailure.communityMissing,
+            'Community membership could not be resolved.',
+          );
+        }
+      },
+      onFailure: (error) {
+        if (error is TenantResolutionException) {
+          _communityAccessFeedback.showNotice(
+            context: context,
+            message: 'community_resolution_error'.tr(),
+          );
+          return;
+        }
+        _communityAccessFeedback.showRetryableNotice(
+          context: context,
+          message: 'community_access_error'.tr(),
+          retryLabel: 'retry'.tr(),
+          onRetry: () => unawaited(_openCommunityDestination()),
+        );
+      },
+      onSuccess: () => _switchTab(2),
+    );
+  }
 
-    if (communityId == null || communityId.trim().isEmpty) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Your community could not be resolved. Please try again.',
+  void _openMoreMenu() {
+    _communityAccessFeedback.cancel();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: ClipRRect(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28.r)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 24.h),
+              color: Colors.white.withValues(alpha: .94),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 38.w,
+                    height: 4.h,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFCBD5E1),
+                      borderRadius: BorderRadius.circular(4.r),
+                    ),
+                  ),
+                  SizedBox(height: 16.h),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'more'.tr(),
+                      style: TextStyle(
+                        fontSize: 20.sp,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF0E2247),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 12.h),
+                  Wrap(
+                    spacing: 10.w,
+                    runSpacing: 10.h,
+                    children: [
+                      _moreAction(
+                        sheetContext,
+                        Icons.groups_outlined,
+                        'visitors'.tr(),
+                        const VisitorManagementScreenNew(),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.campaign_outlined,
+                        'announcements'.tr(),
+                        const EventsAnnouncementsScreen(
+                          announcementsOnly: true,
+                        ),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.calendar_month_outlined,
+                        'events'.tr(),
+                        null,
+                        onTap: () => _openEventsFromMore(sheetContext),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.chat_bubble_outline,
+                        'messages'.tr(),
+                        const MessagesScreenEnhanced(),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.support_agent_outlined,
+                        'complaints'.tr(),
+                        const ComplaintsScreen(),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.shield_outlined,
+                        'security'.tr(),
+                        const EmergencySosScreen(),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.shopping_bag_outlined,
+                        'marketplace'.tr(),
+                        const MarketplaceScreen(),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.person_outline,
+                        'profile'.tr(),
+                        const ProfileScreen(),
+                      ),
+                      _moreAction(
+                        sheetContext,
+                        Icons.notifications_outlined,
+                        'notifications'.tr(),
+                        const NotificationsScreen(),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _moreAction(
+    BuildContext sheetContext,
+    IconData icon,
+    String label,
+    Widget? screen, {
+    VoidCallback? onTap,
+  }) => SizedBox(
+    width: (MediaQuery.sizeOf(sheetContext).width - 60.w) / 3,
+    child: InkWell(
+      onTap:
+          onTap ??
+          () {
+            Navigator.pop(sheetContext);
+            if (screen != null) {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(builder: (_) => screen),
+              );
+            }
+          },
+      borderRadius: BorderRadius.circular(16.r),
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 12.h, horizontal: 4.w),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 48.w,
+              height: 48.w,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF1F7),
+                borderRadius: BorderRadius.circular(16.r),
+              ),
+              child: Icon(icon, color: const Color(0xFF173B60), size: 23.w),
+            ),
+            SizedBox(height: 6.h),
+            Text(
+              label,
+              softWrap: true,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: const Color(0xFF23364D),
+                fontSize: 11.sp,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _openEventsFromMore(BuildContext sheetContext) async {
+    Navigator.pop(sheetContext);
+    bool? hasAccess;
+    await _withNavigationLoading(() async {
+      hasAccess = await _checkEventsEntitlement();
+    });
+    if (!mounted || hasAccess == null) return;
+    if (!hasAccess!) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('events_unavailable_title'.tr()),
+          content: Text('events_restricted'.tr()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text('ok'.tr()),
+            ),
+          ],
         ),
       );
       return;
     }
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => const EventsAnnouncementsScreen(eventsOnly: true),
+      ),
+    );
+  }
 
+  Future<bool?> _checkEventsEntitlement() async {
+    final communityId = context.read<TenantResolutionService>().communityId;
+    if (communityId == null || communityId.trim().isEmpty) return null;
     try {
       final entitlement = await ResidentSubscriptionEntitlementService()
           .getEntitlement(communityId);
-
-      if (!mounted) return;
-
-      if (entitlement?.canUseFeature('events') != true) {
-        await showDialog<void>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Events unavailable'),
-            content: const Text(
-              'Events are available with Hominode Plus and Pro.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-        return;
-      }
-
-      _switchTab(3);
+      return entitlement?.canUseFeature('events') == true;
     } catch (_) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Events availability could not be verified. Please try again.',
-          ),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('events_verification_error'.tr())),
+        );
+      }
+      return null;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return FlatAccessWrapper(
-      child: Scaffold(
-        body: IndexedStack(index: _currentIndex, children: _screens),
-        bottomNavigationBar: _buildAnimatedBottomNavBar(),
+      child: ResidentNavigationLoadingOverlay(
+        loading: _isNavigationLoading,
+        child: Scaffold(
+          body: IndexedStack(index: _currentIndex, children: _screens),
+          bottomNavigationBar: _buildAnimatedBottomNavBar(),
+        ),
       ),
     );
   }
 
   /// Animated Bottom Navigation Bar with smooth transitions
   Widget _buildAnimatedBottomNavBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(16.r),
-          topRight: Radius.circular(16.r),
+    return ResidentFloatingBottomNavigation(
+      selectedIndex: _currentIndex,
+      onSelected: _onTabTapped,
+      items: [
+        ResidentNavigationItem(
+          icon: Icons.home_outlined,
+          activeIcon: Icons.home,
+          label: 'nav_home'.tr(),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(20),
-            blurRadius: 12,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildNavItem(
-                icon: Icons.home_outlined,
-                activeIcon: Icons.home,
-                label: 'home'.tr(),
-                index: 0,
-              ),
-              _buildNavItem(
-                icon: Icons.people_outline,
-                activeIcon: Icons.people,
-                label: 'visitors'.tr(),
-                index: 1,
-              ),
-              _buildNavItem(
-                icon: Icons.receipt_long_outlined,
-                activeIcon: Icons.receipt_long,
-                label: 'billing'.tr(),
-                index: 2,
-              ),
-              _buildNavItem(
-                icon: Icons.calendar_today_outlined,
-                activeIcon: Icons.calendar_today,
-                label: 'events'.tr(),
-                index: 3,
-              ),
-              _buildNavItem(
-                icon: Icons.person_outline,
-                activeIcon: Icons.person,
-                label: 'profile'.tr(),
-                index: 4,
-              ),
-            ],
-          ),
+        ResidentNavigationItem(
+          icon: Icons.event_available_outlined,
+          activeIcon: Icons.event_available,
+          label: 'nav_facilities'.tr(),
         ),
-      ),
-    );
-  }
-
-  /// Individual animated navigation item
-  Widget _buildNavItem({
-    required IconData icon,
-    required IconData activeIcon,
-    required String label,
-    required int index,
-  }) {
-    final bool isActive = _currentIndex == index;
-
-    return Expanded(
-      child: InkWell(
-        onTap: () => _onTabTapped(index),
-        borderRadius: BorderRadius.circular(12.r),
-        splashColor: AppColors.primaryLight.withAlpha(25),
-        highlightColor: AppColors.primaryLight.withAlpha(13),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeInOut,
-          padding: EdgeInsets.symmetric(vertical: 4.h),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Animated Icon with size and color transition
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                padding: EdgeInsets.all(isActive ? 6 : 4),
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? AppColors.primaryLight.withAlpha(25)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10.r),
-                ),
-                child: Icon(
-                  isActive ? activeIcon : icon,
-                  color: isActive ? AppColors.primary : inactiveColor,
-                  size: isActive ? 24 : 22,
-                ),
-              ),
-              SizedBox(height: 3.h),
-              // Animated Label with color and weight transition
-              AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                style: TextStyle(
-                  color: isActive ? const Color(0xFF0E4778) : inactiveColor,
-                  fontSize: 10.sp,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                ),
-                child: Text(label),
-              ),
-            ],
-          ),
+        ResidentNavigationItem(
+          icon: Icons.groups_outlined,
+          activeIcon: Icons.groups,
+          label: 'nav_community'.tr(),
         ),
-      ),
+        ResidentNavigationItem(
+          icon: Icons.credit_card_outlined,
+          activeIcon: Icons.credit_card,
+          label: 'nav_payments'.tr(),
+        ),
+        ResidentNavigationItem(
+          icon: Icons.apps_outlined,
+          activeIcon: Icons.apps,
+          label: 'nav_more'.tr(),
+        ),
+      ],
     );
   }
 }

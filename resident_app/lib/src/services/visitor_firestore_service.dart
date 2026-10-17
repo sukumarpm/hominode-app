@@ -1,11 +1,10 @@
 // lib/src/services/visitor_firestore_service.dart
 // Visitor Firestore Service - Save and manage visitor data
 
-import 'dart:convert';
-import 'dart:math';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Result class for visitor operations
@@ -45,31 +44,35 @@ class VisitorFirestoreService {
   static final VisitorFirestoreService instance =
       VisitorFirestoreService._internal();
   factory VisitorFirestoreService() => instance;
-  VisitorFirestoreService._internal();
+  VisitorFirestoreService._internal({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    Future<Map<String, dynamic>> Function(Map<String, dynamic>)?
+    createInvitation,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _createInvitationOverride = createInvitation;
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  @visibleForTesting
+  VisitorFirestoreService.withDependencies({
+    required FirebaseFirestore firestore,
+    required FirebaseAuth auth,
+    Future<Map<String, dynamic>> Function(Map<String, dynamic>)?
+    createInvitation,
+  }) : _firestore = firestore,
+       _auth = auth,
+       _createInvitationOverride = createInvitation;
+
+  final FirebaseFirestore _firestore;
+  final FirebaseAuth _auth;
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic>)?
+  _createInvitationOverride;
 
   // Collection name
   static const String visitorsCollection = 'visitors';
-  final Random _secureRandom = Random.secure();
-
-  static const String _passAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-  String _generateVisitorPassCode() {
-    final raw = List.generate(
-      8,
-      (_) => _passAlphabet[_secureRandom.nextInt(_passAlphabet.length)],
-    ).join();
-
-    return '${raw.substring(0, 4)}-${raw.substring(4)}';
-  }
-
-  String _generateQrToken() {
-    final bytes = List<int>.generate(24, (_) => _secureRandom.nextInt(256));
-
-    return base64UrlEncode(bytes).replaceAll('=', '');
-  }
+  FirebaseFunctions? _functions;
+  FirebaseFunctions get _visitorFunctions =>
+      _functions ??= FirebaseFunctions.instanceFor(region: 'asia-southeast1');
 
   // ============================================================================
   // ADD EXPECTED VISITOR
@@ -185,76 +188,27 @@ class VisitorFirestoreService {
         expectedTime.minute,
       );
 
-      // ------------------------------------------------------------
-      // Visitor gate credentials
-      // ------------------------------------------------------------
-      //
-      // visitorPassCode:
-      // Human-readable code that Security can type manually.
-      //
-      // qrToken:
-      // Opaque random credential used by the QR code.
-      // Do not put visitor personal information in the QR.
-      //
-      final visitorPassCode = _generateVisitorPassCode();
-      final qrToken = _generateQrToken();
-
-      // Create visitor document
-      final visitorData = {
-        'hostUserId': userId,
-        'hostName': userName,
-        'hostEmail': userEmail,
-
-        'flatId': flatId,
-        'flatLabel': flatLabel,
-
-        'adminId': adminId,
-        'communityId': communityId,
-
+      final request = {
         'visitorName': visitorName,
         'purpose': purpose,
-
-        'expectedArrival': Timestamp.fromDate(expectedArrival),
-
+        'expectedArrival': expectedArrival.millisecondsSinceEpoch,
         'phoneNumber': phoneNumber,
         'vehicleNumber': vehicleNumber,
-
-        // ----------------------------------------------------------
-        // Gate credentials
-        // ----------------------------------------------------------
-        'visitorPassCode': visitorPassCode,
-        'qrToken': qrToken,
-
-        // ----------------------------------------------------------
-        // Visitor status
-        // ----------------------------------------------------------
-        'status': 'expected',
-        'isApproved': false,
-
-        'approvedBy': null,
-        'approvedAt': null,
-
-        'actualArrival': null,
-        'departure': null,
-
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
       };
-
-      print('📦 Visitor data created');
-
-      // Add to Firestore
-      final docRef = await _firestore
-          .collection(visitorsCollection)
-          .add(visitorData);
-
-      print('✅ Visitor added successfully!');
-      print('🆔 Visitor ID: ${docRef.id}');
-      print('🎫 Visitor Pass Code: $visitorPassCode');
+      final response = _createInvitationOverride != null
+          ? await _createInvitationOverride(request)
+          : (await _visitorFunctions
+                    .httpsCallable('createVisitorInvitation')
+                    .call<Map<String, dynamic>>(request))
+                .data;
+      final visitorId = response['visitorId'] as String?;
+      if (visitorId == null || visitorId.isEmpty) {
+        throw StateError('Visitor invitation response was incomplete.');
+      }
 
       return VisitorResult.success(
         message: 'Visitor added successfully',
-        visitorId: docRef.id,
+        visitorId: visitorId,
       );
     } on FirebaseException catch (e) {
       print('❌ Firebase Error: ${e.code}');

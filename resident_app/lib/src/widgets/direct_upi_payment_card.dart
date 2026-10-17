@@ -1,26 +1,37 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/resident_direct_upi_service.dart';
 
 typedef PrepareDirectUpiPayment =
-    Future<DirectUpiPaymentPreparation> Function(String billId);
+    Future<DirectUpiPaymentPreparation> Function(
+      String billId,
+      int? submittedAmountMinor,
+      bool allowFlexibleAmounts,
+    );
 typedef LaunchDirectUpiPayment = Future<bool> Function(Uri uri);
 typedef SubmitDirectUpiProof = Future<void> Function();
+typedef SubmitPreparedDirectUpiProof =
+    Future<void> Function(DirectUpiPaymentPreparation preparation);
 
 class DirectUpiPaymentCard extends StatefulWidget {
   const DirectUpiPaymentCard({
     super.key,
     required this.billId,
     required this.onSubmitProof,
+    this.onSubmitPreparedProof,
     this.preparePayment,
     this.launchPayment,
+    this.flexibleAmountsEnabled = flexibleResidentV2PaymentAmountsEnabled,
   });
 
   final String billId;
   final SubmitDirectUpiProof onSubmitProof;
+  final SubmitPreparedDirectUpiProof? onSubmitPreparedProof;
   final PrepareDirectUpiPayment? preparePayment;
   final LaunchDirectUpiPayment? launchPayment;
+  final bool flexibleAmountsEnabled;
 
   @override
   State<DirectUpiPaymentCard> createState() => _DirectUpiPaymentCardState();
@@ -34,9 +45,27 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
 
     setState(() => _isBusy = true);
     try {
+      final prepare =
+          widget.preparePayment ??
+          (String id, int? amount, bool flexible) =>
+              ResidentDirectUpiService().preparePayment(
+                id,
+                submittedAmountMinor: amount,
+                allowFlexibleAmounts: flexible,
+              );
+      final initial = await prepare(widget.billId, null, false);
+      if (!mounted) return;
+      final selectedAmount = await _selectAmount(initial);
+      if (selectedAmount == null || !mounted) return;
       final preparation =
-          await (widget.preparePayment ??
-              ResidentDirectUpiService().preparePayment)(widget.billId);
+          selectedAmount == initial.paymentAmountMinor &&
+              !widget.flexibleAmountsEnabled
+          ? initial
+          : await prepare(
+              widget.billId,
+              selectedAmount,
+              widget.flexibleAmountsEnabled,
+            );
       if (!mounted) return;
 
       var launched = false;
@@ -51,22 +80,116 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       if (!mounted) return;
 
       if (launched) {
-        await widget.onSubmitProof();
+        await _submitProof(preparation);
       } else {
         final shouldSubmitProof = await _showManualFallback(preparation);
         if (shouldSubmitProof && mounted) {
-          await widget.onSubmitProof();
+          await _submitProof(preparation);
         }
       }
     } on ResidentDirectUpiException catch (error) {
       if (mounted) _showMessage(error.message);
     } catch (_) {
       if (mounted) {
-        _showMessage('UPI payment could not be started. Please try again.');
+        _showMessage('upi_start_error'.tr());
       }
     } finally {
       if (mounted) setState(() => _isBusy = false);
     }
+  }
+
+  Future<void> _submitProof(DirectUpiPaymentPreparation preparation) async {
+    final submit = widget.onSubmitPreparedProof;
+    if (submit != null) {
+      await submit(preparation);
+    } else {
+      await widget.onSubmitProof();
+    }
+  }
+
+  Future<int?> _selectAmount(DirectUpiPaymentPreparation preparation) async {
+    final controller = TextEditingController(
+      text: _inrText(
+        preparation.paymentAmountMinor ??
+            preparation.outstandingAmountMinor ??
+            0,
+      ),
+    );
+    String? error;
+    try {
+      return await showDialog<int>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            backgroundColor: const Color(0xFFFBFCFE),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: const BorderSide(color: Colors.white, width: 1.2),
+            ),
+            title: Text('payment_amount_title'.tr()),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${'selected_bill_outstanding'.tr()}: ₹${_inrText(preparation.outstandingAmountMinor ?? 0)}',
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  enabled: widget.flexibleAmountsEnabled,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'payment_amount_inr'.tr(),
+                    prefixText: '₹',
+                    errorText: error,
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Color(0xFFDCE5EF)),
+                    ),
+                  ),
+                  onChanged: (_) => setDialogState(() => error = null),
+                ),
+                const SizedBox(height: 8),
+                if (widget.flexibleAmountsEnabled)
+                  Text('excess_credit_info'.tr()),
+                Text('upi_return_not_confirm'.tr()),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text('cancel'.tr()),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final amount = parseResidentInrMinorUnits(controller.text);
+                  if (amount == null ||
+                      (!widget.flexibleAmountsEnabled &&
+                          amount != preparation.outstandingAmountMinor)) {
+                    setDialogState(() => error = 'invalid_inr_amount'.tr());
+                    return;
+                  }
+                  Navigator.pop(dialogContext, amount);
+                },
+                child: Text('continue'.tr()),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  String _inrText(int? minor) {
+    final value = minor ?? 0;
+    return '${value ~/ 100}.${(value % 100).toString().padLeft(2, '0')}';
   }
 
   Future<bool> _showManualFallback(
@@ -75,33 +198,31 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
     final submitProof = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Unable to open a UPI app automatically.'),
+        title: Text('upi_open_failed'.tr()),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Open your preferred UPI app and pay the exact amount using these details.',
-            ),
+            Text('upi_manual_instructions'.tr()),
             const SizedBox(height: 16),
-            const Text('Payee name'),
+            Text('payee_name'.tr()),
             SelectableText(preparation.payeeName),
             const SizedBox(height: 8),
-            const Text('UPI ID'),
+            Text('upi_id'.tr()),
             SelectableText(preparation.vpa),
             const SizedBox(height: 8),
-            const Text('Exact amount'),
+            Text('exact_amount'.tr()),
             Text('₹${preparation.amount.toStringAsFixed(2)}'),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Close'),
+            child: Text('close'.tr()),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Submit payment proof'),
+            child: Text('submit_payment_proof'.tr()),
           ),
         ],
       ),
@@ -124,9 +245,16 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE6E6E6)),
+        color: Colors.white.withValues(alpha: .94),
+        borderRadius: BorderRadius.circular(23),
+        border: Border.all(color: Colors.white, width: 1.3),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF082F73).withValues(alpha: .07),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -154,14 +282,23 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.account_balance_wallet_outlined),
-              label: Text(_isBusy ? 'Preparing payment…' : 'Pay via UPI'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF243143),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              label: Text(
+                _isBusy ? 'preparing_payment'.tr() : 'pay_via_upi'.tr(),
+              ),
             ),
           ),
           const SizedBox(height: 10),
           Center(
             child: TextButton(
               onPressed: _isBusy ? null : widget.onSubmitProof,
-              child: const Text('Already paid? Submit payment proof'),
+              child: Text('already_paid_submit_proof'.tr()),
             ),
           ),
         ],

@@ -8,10 +8,14 @@ import 'package:resident_app/src/services/resident_direct_upi_service.dart';
 import 'package:resident_app/src/widgets/cash_payment_info_card.dart';
 import 'package:resident_app/src/widgets/direct_upi_payment_card.dart';
 
+import 'localization_test_app.dart';
+
 final _preparation = DirectUpiPaymentPreparation(
   billId: 'bill-123',
   communityId: 'community-123',
   amount: 850.5,
+  paymentAmountMinor: 85050,
+  outstandingAmountMinor: 85050,
   vpa: 'association@upi',
   payeeName: 'Green Community',
   paymentUri: Uri(
@@ -27,32 +31,42 @@ final _preparation = DirectUpiPaymentPreparation(
 );
 
 Widget _app({
-  required Future<DirectUpiPaymentPreparation> Function(String billId)
+  required Future<DirectUpiPaymentPreparation> Function(
+    String billId,
+    int? amountMinor,
+    bool allowFlexible,
+  )
   preparePayment,
   required Future<bool> Function(Uri uri) launchPayment,
   required Future<void> Function() onSubmitProof,
-}) => MaterialApp(
-  home: Scaffold(
-    body: DirectUpiPaymentCard(
-      billId: 'bill-123',
-      preparePayment: preparePayment,
-      launchPayment: launchPayment,
-      onSubmitProof: onSubmitProof,
+}) => withEnglishLocalization(
+  (context) => localizedMaterialApp(
+    context,
+    home: Scaffold(
+      body: DirectUpiPaymentCard(
+        billId: 'bill-123',
+        preparePayment: preparePayment,
+        launchPayment: launchPayment,
+        onSubmitProof: onSubmitProof,
+      ),
     ),
   ),
 );
 
 void main() {
+  setUpAll(initializeTestLocalization);
+
   testWidgets('renders Pay via UPI and the already paid proof action', (
     tester,
   ) async {
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async => _preparation,
+        preparePayment: (_, _, _) async => _preparation,
         launchPayment: (_) async => true,
         onSubmitProof: () async {},
       ),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('Pay via UPI'), findsOneWidget);
     expect(find.text('Already paid? Submit payment proof'), findsOneWidget);
@@ -63,8 +77,14 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: CashPaymentInfoCard())),
+      withEnglishLocalization(
+        (context) => localizedMaterialApp(
+          context,
+          home: const Scaffold(body: CashPaymentInfoCard()),
+        ),
+      ),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('Cash'), findsOneWidget);
     expect(
@@ -90,7 +110,7 @@ void main() {
 
     await tester.pumpWidget(
       _app(
-        preparePayment: (billId) async {
+        preparePayment: (billId, _, _) async {
           prepareCalls++;
           expect(billId, 'bill-123');
           return _preparation;
@@ -103,8 +123,11 @@ void main() {
         onSubmitProof: () async => proofCalls++,
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
     expect(prepareCalls, 1);
@@ -123,7 +146,7 @@ void main() {
 
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) {
+        preparePayment: (_, _, _) {
           prepareCalls++;
           return preparation.future;
         },
@@ -134,6 +157,7 @@ void main() {
         onSubmitProof: () async {},
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
     await tester.pump();
@@ -145,6 +169,8 @@ void main() {
     expect(prepareCalls, 1);
 
     preparation.complete(_preparation);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     expect(prepareCalls, 1);
     expect(launchCalls, 1);
@@ -155,7 +181,7 @@ void main() {
     var launchCalls = 0;
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) => preparation.future,
+        preparePayment: (_, _, _) => preparation.future,
         launchPayment: (_) async {
           launchCalls++;
           return true;
@@ -163,6 +189,7 @@ void main() {
         onSubmitProof: () async {},
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
     await tester.pump();
@@ -178,11 +205,12 @@ void main() {
     var proofCalls = 0;
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async => _preparation,
+        preparePayment: (_, _, _) async => _preparation,
         launchPayment: (_) => launch.future,
         onSubmitProof: () async => proofCalls++,
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
     await tester.pump();
@@ -197,9 +225,10 @@ void main() {
     var launchCalls = 0;
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async => throw const ResidentDirectUpiException(
-          ResidentDirectUpiFailure.directUpiDisabled,
-        ),
+        preparePayment: (_, _, _) async =>
+            throw const ResidentDirectUpiException(
+              ResidentDirectUpiFailure.directUpiDisabled,
+            ),
         launchPayment: (_) async {
           launchCalls++;
           return true;
@@ -207,6 +236,7 @@ void main() {
         onSubmitProof: () async {},
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
     await tester.pumpAndSettle();
@@ -221,7 +251,7 @@ void main() {
     var launchCalls = 0;
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async => throw StateError('internal detail'),
+        preparePayment: (_, _, _) async => throw StateError('internal detail'),
         launchPayment: (_) async {
           launchCalls++;
           return true;
@@ -229,12 +259,13 @@ void main() {
         onSubmitProof: () async {},
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
     await tester.pumpAndSettle();
 
     expect(
-      find.text('UPI payment could not be started. Please try again.'),
+      find.text('Could not start UPI payment. Please try again.'),
       findsOneWidget,
     );
     expect(find.textContaining('internal detail'), findsNothing);
@@ -250,13 +281,16 @@ void main() {
     ) async {
       await tester.pumpWidget(
         _app(
-          preparePayment: (_) async => _preparation,
+          preparePayment: (_, _, _) async => _preparation,
           launchPayment: launchCase.run,
           onSubmitProof: () async {},
         ),
       );
+      await tester.pumpAndSettle();
 
       await tester.tap(find.text('Pay via UPI'));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.text('Continue'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
 
@@ -266,7 +300,7 @@ void main() {
       );
       expect(
         find.text(
-          'Open your preferred UPI app and pay the exact amount using these details.',
+          'Open your preferred UPI app and pay the displayed amount using these details.',
         ),
         findsOneWidget,
       );
@@ -283,7 +317,7 @@ void main() {
     var proofCalls = 0;
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async {
+        preparePayment: (_, _, _) async {
           prepareCalls++;
           return _preparation;
         },
@@ -294,8 +328,11 @@ void main() {
         onSubmitProof: () async => proofCalls++,
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Continue'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('Submit payment proof'));
@@ -314,7 +351,7 @@ void main() {
     var proofCalls = 0;
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async {
+        preparePayment: (_, _, _) async {
           prepareCalls++;
           return _preparation;
         },
@@ -325,6 +362,7 @@ void main() {
         onSubmitProof: () async => proofCalls++,
       ),
     );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Already paid? Submit payment proof'));
     await tester.pumpAndSettle();
@@ -337,11 +375,12 @@ void main() {
   testWidgets('keeps payment copy provider neutral', (tester) async {
     await tester.pumpWidget(
       _app(
-        preparePayment: (_) async => _preparation,
+        preparePayment: (_, _, _) async => _preparation,
         launchPayment: (_) async => true,
         onSubmitProof: () async {},
       ),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('Google Pay'), findsNothing);
     expect(find.text('PhonePe'), findsNothing);
@@ -368,4 +407,65 @@ void main() {
 
     expect(find.text('₹42.50'), findsOneWidget);
   });
+
+  testWidgets(
+    'flexible selected amount matches launched UPI URI and proof prep',
+    (tester) async {
+      DirectUpiPaymentPreparation? proofPreparation;
+      final calls = <(int?, bool)>[];
+      await tester.pumpWidget(
+        withEnglishLocalization(
+          (context) => localizedMaterialApp(
+            context,
+            home: Scaffold(
+              body: DirectUpiPaymentCard(
+                billId: 'bill-123',
+                flexibleAmountsEnabled: true,
+                preparePayment: (id, amount, flexible) async {
+                  calls.add((amount, flexible));
+                  final minor = amount ?? 85050;
+                  return DirectUpiPaymentPreparation(
+                    billId: id,
+                    communityId: 'community-123',
+                    amount: minor / 100,
+                    paymentAmountMinor: minor,
+                    outstandingAmountMinor: 85050,
+                    amountContractVersion: flexible ? 2 : null,
+                    vpa: 'association@upi',
+                    payeeName: 'Green Community',
+                    paymentUri: Uri(
+                      scheme: 'upi',
+                      host: 'pay',
+                      queryParameters: {
+                        'pa': 'association@upi',
+                        'am':
+                            '${minor ~/ 100}.${(minor % 100).toString().padLeft(2, '0')}',
+                        'cu': 'INR',
+                      },
+                    ),
+                  );
+                },
+                launchPayment: (uri) async {
+                  expect(uri.queryParameters['am'], '900.00');
+                  return true;
+                },
+                onSubmitProof: () async {},
+                onSubmitPreparedProof: (preparation) async =>
+                    proofPreparation = preparation,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pay via UPI'));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.enterText(find.byType(TextField), '900.00');
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(calls, [(null, false), (90000, true)]);
+      expect(proofPreparation?.paymentAmountMinor, 90000);
+      expect(proofPreparation?.amountContractVersion, 2);
+    },
+  );
 }

@@ -3,12 +3,18 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/services.dart';
 import '../components/app_segmented_control.dart';
-import '../components/standard_screen.dart';
+import '../components/resident_visitor_card_header.dart';
+import '../components/resident_visitor_empty_state.dart';
+import '../components/resident_visitor_page_header.dart';
+import '../models/resident_visitor_lifecycle.dart';
 import '../services/visitor_firestore_service.dart';
+import '../services/visitor_qr_contract.dart';
 import '../../visitor_qr_screen.dart';
 import '../../add_expected_visitor_modal.dart';
 import '../providers/language_provider.dart';
+import '../widgets/resident_visitor_page_background.dart';
 
 /// Pixel-Perfect Visitor Management Screen
 /// Based on reference design with exact spacing and colors
@@ -30,47 +36,53 @@ class _VisitorManagementScreenNewState
   Widget build(BuildContext context) {
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, _) {
-        return Scaffold(
-          backgroundColor: const Color(0xFFF7F7F7),
-          body: StandardScreen(
-            title: 'visitor_management'.tr(),
-            showBackButton: false,
-            isScrollable: true,
-            padding: EdgeInsets.zero,
-            body: Column(
-              children: [
-                SizedBox(height: 20.h),
-
-                // Segmented Control
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.w),
-                  child: AppSegmentedControl(
-                    segments: [
-                      'pending'.tr(),
-                      'approved'.tr(),
-                      'rejected'.tr(),
-                      'deliveries'.tr(),
+        return ResidentVisitorBackHandler(
+          child: Scaffold(
+            backgroundColor: const Color(0xFFF7F9FD),
+            body: AnnotatedRegion<SystemUiOverlayStyle>(
+              value: const SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: Brightness.dark,
+                statusBarBrightness: Brightness.light,
+              ),
+              child: ResidentVisitorPageBackground(
+                child: SafeArea(
+                  bottom: false,
+                  child: Column(
+                    children: [
+                      ResidentVisitorPageHeader(
+                        title: 'visitor_management'.tr(),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 14.h),
+                        child: AppSegmentedControl(
+                          segments: [
+                            'visitor_tab_expected'.tr(),
+                            'visitor_tab_checked_in'.tr(),
+                            'visitor_tab_history'.tr(),
+                            'deliveries'.tr(),
+                          ],
+                          selectedIndex: _selectedTabIndex,
+                          scrollable: true,
+                          onChanged: (index) {
+                            setState(() => _selectedTabIndex = index);
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          padding: EdgeInsets.fromLTRB(16.w, 2.h, 16.w, 110.h),
+                          child: _buildTabContent(languageProvider),
+                        ),
+                      ),
                     ],
-                    selectedIndex: _selectedTabIndex,
-                    onChanged: (index) {
-                      setState(() => _selectedTabIndex = index);
-                    },
                   ),
                 ),
-
-                SizedBox(height: 20.h),
-
-                // Content - Stream from Firestore
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.w),
-                  child: _buildTabContent(languageProvider),
-                ),
-
-                SizedBox(height: 100.h), // Space for FAB
-              ],
+              ),
             ),
+            floatingActionButton: _buildFAB(),
           ),
-          floatingActionButton: _buildFAB(),
         );
       },
     );
@@ -129,27 +141,16 @@ class _VisitorManagementScreenNewState
         List<Map<String, dynamic>> filteredVisitors;
 
         if (_selectedTabIndex == 0) {
-          // Pending - not approved yet
           filteredVisitors = allVisitors
-              .where(
-                (v) => v['isApproved'] == false && v['status'] == 'expected',
-              )
+              .where(ResidentVisitorLifecycle.isExpected)
               .toList();
         } else if (_selectedTabIndex == 1) {
-          // Approved - exclude departed/exited visitors
           filteredVisitors = allVisitors
-              .where(
-                (v) =>
-                    v['isApproved'] == true &&
-                    v['status'] != 'departed' &&
-                    v['status'] != 'exited' &&
-                    v['status'] != 'cancelled',
-              )
+              .where(ResidentVisitorLifecycle.isCheckedIn)
               .toList();
         } else if (_selectedTabIndex == 2) {
-          // Rejected - keep declined requests visible to the resident
           filteredVisitors = allVisitors
-              .where((v) => v['status'] == 'rejected')
+              .where(ResidentVisitorLifecycle.isHistory)
               .toList();
         } else {
           // Deliveries - for now, empty (can be implemented later)
@@ -158,53 +159,7 @@ class _VisitorManagementScreenNewState
 
         // Empty state
         if (filteredVisitors.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: EdgeInsets.all(32.w),
-              child: Column(
-                children: [
-                  Icon(
-                    _selectedTabIndex == 0
-                        ? Icons.pending_outlined
-                        : _selectedTabIndex == 1
-                        ? Icons.check_circle_outline
-                        : _selectedTabIndex == 2
-                        ? Icons.cancel_outlined
-                        : Icons.local_shipping_outlined,
-                    size: 64.w,
-                    color: const Color(0xFFE5E5E5),
-                  ),
-                  SizedBox(height: 16.h),
-                  Text(
-                    _selectedTabIndex == 0
-                        ? 'No pending visitors'
-                        : _selectedTabIndex == 1
-                        ? 'No approved visitors'
-                        : _selectedTabIndex == 2
-                        ? 'No rejected visitors'
-                        : 'No deliveries',
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFA3A3A3),
-                    ),
-                  ),
-                  SizedBox(height: 8.h),
-                  Text(
-                    _selectedTabIndex == 0
-                        ? 'Add expected visitors using the + button.\nAdmin will approve your requests.'
-                        : _selectedTabIndex == 1
-                        ? 'Admin-approved visitors will appear here'
-                        : _selectedTabIndex == 2
-                        ? 'Visitor requests rejected by management will appear here.'
-                        : 'Deliveries will appear here.',
-                    style: TextStyle(fontSize: 14.sp, color: Color(0xFFA3A3A3)),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-          );
+          return ResidentVisitorEmptyState.forTab(_selectedTabIndex);
         }
 
         // Display visitors
@@ -216,9 +171,7 @@ class _VisitorManagementScreenNewState
                   child: _buildVisitorCard(
                     visitor,
                     languageProvider,
-                    isPending: _selectedTabIndex == 0,
-                    isApproved: _selectedTabIndex == 1,
-                    isRejected: _selectedTabIndex == 2,
+                    isExpected: _selectedTabIndex == 0,
                   ),
                 ),
               )
@@ -229,51 +182,31 @@ class _VisitorManagementScreenNewState
   }
 
   String _formatRejectedAt(DateTime dateTime) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-
-    final hour = dateTime.hour == 0
-        ? 12
-        : dateTime.hour > 12
-        ? dateTime.hour - 12
-        : dateTime.hour;
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
-
-    return '${dateTime.day} ${months[dateTime.month - 1]} ${dateTime.year}, '
-        '$hour:$minute $period';
+    return DateFormat(
+      'd MMM y, h:mm a',
+      context.locale.toString(),
+    ).format(dateTime);
   }
 
   Widget _buildVisitorCard(
     Map<String, dynamic> visitor,
     LanguageProvider languageProvider, {
-    bool isPending = false,
-    bool isApproved = false,
-    bool isRejected = false,
+    bool isExpected = false,
   }) {
     // Extract data from Firestore document
     final visitorId = visitor['id'] as String;
-    final visitorName = visitor['visitorName'] as String? ?? 'Unknown';
-    final purpose = visitor['purpose'] as String? ?? 'No purpose';
+    final visitorName = visitor['visitorName'] as String? ?? 'unknown'.tr();
+    final submittedPurpose = visitor['purpose'] as String?;
+    final purpose = submittedPurpose?.trim().isNotEmpty == true
+        ? submittedPurpose!
+        : 'visitor_purpose_not_provided'.tr();
     final expectedArrival = (visitor['expectedArrival'] as Timestamp?)
         ?.toDate();
     final phoneNumber = visitor['phoneNumber'] as String?;
     final rejectedAt = (visitor['rejectedAt'] as Timestamp?)?.toDate();
 
     // Format time
-    String timeText = 'No time set';
+    String timeText = 'visitor_time_not_set'.tr();
     if (expectedArrival != null) {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -292,216 +225,72 @@ class _VisitorManagementScreenNewState
       final period = expectedArrival.hour >= 12 ? 'PM' : 'AM';
 
       if (visitDate == today) {
-        timeText = '$hour:$minute $period Today';
+        timeText = '$hour:$minute $period ${'today'.tr()}';
       } else if (visitDate == today.add(const Duration(days: 1))) {
-        timeText = '$hour:$minute $period Tomorrow';
+        timeText = '$hour:$minute $period ${'tomorrow'.tr()}';
       } else {
         timeText =
             '$hour:$minute $period ${expectedArrival.day}/${expectedArrival.month}';
       }
     }
 
+    final statusKey = ResidentVisitorLifecycle.statusKeyFor(visitor);
+    final adminDecisionKey = ResidentVisitorLifecycle.adminDecisionKeyFor(
+      visitor,
+    );
+    final isDenied = statusKey == 'visitor_status_entry_denied';
+    final isCheckedIn = statusKey == 'visitor_status_checked_in';
+    final statusColor = isDenied || statusKey == 'visitor_status_rejected'
+        ? const Color(0xFFDC2626)
+        : isCheckedIn || adminDecisionKey == 'visitor_admin_approved'
+        ? const Color(0xFF10B981)
+        : const Color(0xFF0E4778);
+    final statusBackgroundColor =
+        isDenied || statusKey == 'visitor_status_rejected'
+        ? const Color(0xFFFEE2E2)
+        : isCheckedIn || adminDecisionKey == 'visitor_admin_approved'
+        ? const Color(0xFFD1FAE5)
+        : const Color(0xFFE0E7FF);
+
     return Container(
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: const Color(0xFFE5E5E5), width: 1),
+        color: Colors.white.withValues(alpha: .9),
+        borderRadius: BorderRadius.circular(23.r),
+        border: Border.all(color: Colors.white, width: 1.3),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: const Color(0xFF082F73).withValues(alpha: .07),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              // Avatar
-              Container(
-                width: 56.w,
-                height: 56.h,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE0E7FF),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    visitorName.isNotEmpty ? visitorName[0].toUpperCase() : 'V',
-                    style: TextStyle(
-                      color: Color(0xFF0E4778),
-                      fontSize: 24.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-
-              SizedBox(width: 12.w),
-
-              // Details
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      visitorName,
-                      style: TextStyle(
-                        color: Color(0xFF111111),
-                        fontSize: 17.sp,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    SizedBox(height: 4.h),
-                    Text(
-                      purpose,
-                      style: TextStyle(
-                        color: Color(0xFFA3A3A3),
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    SizedBox(height: 4.h),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.access_time,
-                          size: 14.w,
-                          color: Color(0xFFA3A3A3),
-                        ),
-                        SizedBox(width: 4.w),
-                        Text(
-                          timeText,
-                          style: TextStyle(
-                            color: Color(0xFFA3A3A3),
-                            fontSize: 14.sp,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Show phone if available
-                    if (phoneNumber != null && phoneNumber.isNotEmpty) ...[
-                      SizedBox(height: 4.h),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.phone,
-                            size: 14.w,
-                            color: Color(0xFFA3A3A3),
-                          ),
-                          SizedBox(width: 4.w),
-                          Text(
-                            phoneNumber,
-                            style: TextStyle(
-                              color: Color(0xFFA3A3A3),
-                              fontSize: 14.sp,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (isRejected && rejectedAt != null) ...[
-                      SizedBox(height: 4.h),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.cancel_outlined,
-                            size: 14.w,
-                            color: const Color(0xFFDC2626),
-                          ),
-                          SizedBox(width: 4.w),
-                          Flexible(
-                            child: Text(
-                              'Rejected ${_formatRejectedAt(rejectedAt)}',
-                              style: TextStyle(
-                                color: const Color(0xFFDC2626),
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-
-              // Status Badge
-              if (isPending)
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12.w,
-                    vertical: 6.h,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFE6EB),
-                    borderRadius: BorderRadius.circular(8.r),
-                  ),
-                  child: Text(
-                    'Awaiting Approval',
-                    style: TextStyle(
-                      color: Color(0xFFE11D48),
-                      fontSize: 12.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-
-              if (isApproved)
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12.w,
-                    vertical: 6.h,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD1FAE5),
-                    borderRadius: BorderRadius.circular(8.r),
-                  ),
-                  child: Text(
-                    'Approved',
-                    style: TextStyle(
-                      color: Color(0xFF10B981),
-                      fontSize: 12.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-
-              if (isRejected)
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12.w,
-                    vertical: 6.h,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(8.r),
-                  ),
-                  child: Text(
-                    'Rejected',
-                    style: TextStyle(
-                      color: Color(0xFFDC2626),
-                      fontSize: 12.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-            ],
+          ResidentVisitorCardHeader(
+            visitorName: visitorName,
+            purpose: purpose,
+            timeText: timeText,
+            phoneNumber: phoneNumber,
+            statusLabel: statusKey.tr(),
+            statusColor: statusColor,
+            statusBackgroundColor: statusBackgroundColor,
+            secondaryStatusLabel: adminDecisionKey?.tr(),
+            rejectedAtLabel:
+                statusKey == 'visitor_status_rejected' && rejectedAt != null
+                ? '${'visitor_rejected_at'.tr()} ${_formatRejectedAt(rejectedAt)}'
+                : null,
           ),
 
           // Action Buttons
-          if (isPending) ...[
+          if (isExpected && visitor['isApproved'] != true) ...[
             SizedBox(height: 16.h),
             // Only show Reject button - Admin approves, not user
             _buildRejectButton(visitorId, visitorName),
           ],
 
-          if (isApproved) ...[
+          if (VisitorQrContract.canDisplay(visitor)) ...[
             SizedBox(height: 16.h),
             _buildViewQRButton(visitor),
           ],
@@ -524,7 +313,7 @@ class _VisitorManagementScreenNewState
           ),
         ),
         child: Text(
-          'Cancel Request',
+          'cancel_request'.tr(),
           style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
         ),
       ),
@@ -553,7 +342,7 @@ class _VisitorManagementScreenNewState
         },
         icon: Icon(Icons.qr_code_2, size: 20.w),
         label: Text(
-          'View QR Pass',
+          'view_qr_pass'.tr(),
           style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
         ),
         style: OutlinedButton.styleFrom(
@@ -572,12 +361,8 @@ class _VisitorManagementScreenNewState
       width: 56.w,
       height: 56.h,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
-        ),
-        borderRadius: BorderRadius.circular(16.r),
+        color: const Color(0xFF243143),
+        borderRadius: BorderRadius.circular(18.r),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF0E4778).withValues(alpha: 0.3),
@@ -605,21 +390,21 @@ class _VisitorManagementScreenNewState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Cancel Visitor Request'),
+        title: Text('cancel_request'.tr()),
         content: Text(
-          'Are you sure you want to cancel the visitor request for $visitorName?',
+          'visitor_cancel_confirmation'.tr(namedArgs: {'name': visitorName}),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('No'),
+            child: Text('no'.tr()),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(
               foregroundColor: const Color(0xFFDC2626),
             ),
-            child: const Text('Yes, Cancel'),
+            child: Text('yes_cancel'.tr()),
           ),
         ],
       ),
@@ -646,7 +431,7 @@ class _VisitorManagementScreenNewState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Visitor request for $visitorName cancelled'),
+              content: Text('visitor_cancelled'.tr()),
               backgroundColor: const Color(0xFFDC2626),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
@@ -660,7 +445,7 @@ class _VisitorManagementScreenNewState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(result.message ?? 'Failed to cancel request'),
+              content: Text(result.message ?? 'visitor_cancel_error'.tr()),
               backgroundColor: const Color(0xFFDC2626),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
@@ -678,7 +463,7 @@ class _VisitorManagementScreenNewState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text('visitor_cancel_error'.tr()),
             backgroundColor: const Color(0xFFDC2626),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(

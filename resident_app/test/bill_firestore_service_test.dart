@@ -1,8 +1,33 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/src/services/bill_firestore_service.dart';
 
 void main() {
+  test('resident payment logs do not expose payment or identity details', () {
+    final sources = [
+      File('lib/src/screens/submit_payment_proof_screen.dart'),
+      File('lib/src/services/bill_firestore_service.dart'),
+    ];
+
+    for (final file in sources) {
+      final source = file.readAsStringSync();
+      expect(source, isNot(contains('print(')), reason: file.path);
+      expect(source, isNot(contains('debugPrint(')), reason: file.path);
+    }
+
+    final receiptScreen = File('lib/receipt_screen.dart').readAsStringSync();
+    final receiptLogs = RegExp(
+      r'debugPrint\(([\s\S]*?)\);',
+    ).allMatches(receiptScreen);
+    expect(receiptLogs, isNotEmpty);
+    expect(
+      receiptLogs.every((match) => !match.group(1)!.contains(r'$')),
+      isTrue,
+    );
+  });
+
   test('only schemaVersion 2 selects the V2 billing contract', () {
     for (final schemaVersion in [null, 1, '2', 3, 2.0, 2.5]) {
       expect(

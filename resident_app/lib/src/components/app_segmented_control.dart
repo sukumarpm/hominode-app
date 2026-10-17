@@ -37,6 +37,14 @@ class AppSegmentedControl extends StatefulWidget {
   /// Optional custom height (default: 48px)
   final double? height;
 
+  /// Allows labels to wrap to two lines instead of truncating.
+  final bool allowLabelWrap;
+
+  /// Gives labels their natural width and scrolls horizontally when they do
+  /// not fit. This is useful for translated tab names that should not break
+  /// inside a word.
+  final bool scrollable;
+
   /// Optional horizontal margin (default: 20px)
   final double? horizontalMargin;
 
@@ -47,6 +55,8 @@ class AppSegmentedControl extends StatefulWidget {
     required this.onChanged,
     this.height,
     this.horizontalMargin,
+    this.allowLabelWrap = false,
+    this.scrollable = false,
   }) : assert(
          segments.length >= 2 && segments.length <= 5,
          'Segments must contain 2-5 items',
@@ -93,39 +103,72 @@ class _AppSegmentedControlState extends State<AppSegmentedControl>
 
   @override
   Widget build(BuildContext context) {
-    final height = widget.height ?? 48.0;
+    final height = widget.height ?? (widget.allowLabelWrap ? 64.0 : 48.0);
     final horizontalMargin = widget.horizontalMargin ?? 20.0;
 
-    return Container(
-      height: height,
-      margin: EdgeInsets.symmetric(horizontal: horizontalMargin),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F1F3),
-        borderRadius: BorderRadius.circular(30.r),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(4.w),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final segmentWidth = constraints.maxWidth / widget.segments.length;
+    return LayoutBuilder(
+      builder: (context, outerConstraints) {
+        final availableWidth = outerConstraints.maxWidth.isFinite
+            ? outerConstraints.maxWidth - horizontalMargin * 2
+            : double.infinity;
+        final labelWidths = widget.scrollable
+            ? _naturalSegmentWidths(context)
+            : null;
+        final naturalTrackWidth = labelWidths == null
+            ? availableWidth
+            : labelWidths.reduce((a, b) => a + b) + 8.w;
+        final trackWidth =
+            availableWidth.isFinite && naturalTrackWidth < availableWidth
+            ? availableWidth
+            : naturalTrackWidth;
+        final segmentWidths = labelWidths == null
+            ? List<double>.filled(
+                widget.segments.length,
+                (trackWidth - 8.w) / widget.segments.length,
+              )
+            : labelWidths.map((width) {
+                final extraWidth =
+                    (trackWidth - 8.w - labelWidths.reduce((a, b) => a + b)) /
+                    widget.segments.length;
+                return width + extraWidth;
+              }).toList();
 
-            return Stack(
+        final track = Container(
+          width: trackWidth.isFinite ? trackWidth : null,
+          height: height,
+          key: const ValueKey('app-segmented-control-track'),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0F1F3),
+            borderRadius: BorderRadius.circular(30.r),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(4.w),
+            child: Stack(
               children: [
                 // Animated sliding pill
                 AnimatedBuilder(
                   animation: _animation,
                   builder: (context, child) {
-                    final startPosition = _previousIndex * segmentWidth;
-                    final endPosition = widget.selectedIndex * segmentWidth;
+                    final startPosition = _segmentStart(
+                      segmentWidths,
+                      _previousIndex,
+                    );
+                    final endPosition = _segmentStart(
+                      segmentWidths,
+                      widget.selectedIndex,
+                    );
                     final currentPosition =
                         startPosition +
                         (endPosition - startPosition) * _animation.value;
 
-                    return Positioned(
-                      left: currentPosition,
+                    return PositionedDirectional(
+                      start: currentPosition,
                       top: 0,
                       bottom: 0,
-                      width: segmentWidth,
+                      width: segmentWidths[widget.selectedIndex],
+                      key: const ValueKey(
+                        'app-segmented-control-selected-pill',
+                      ),
                       child: Container(
                         decoration: BoxDecoration(
                           color: Colors.white,
@@ -147,24 +190,66 @@ class _AppSegmentedControlState extends State<AppSegmentedControl>
                 ),
                 // Segment labels
                 Row(
-                  children: List.generate(
-                    widget.segments.length,
-                    (index) => Expanded(
+                  children: List.generate(widget.segments.length, (index) {
+                    return SizedBox(
+                      width: segmentWidths[index],
                       child: _buildSegment(
                         label: widget.segments[index],
                         index: index,
                         isSelected: widget.selectedIndex == index,
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                 ),
               ],
-            );
-          },
-        ),
-      ),
+            ),
+          ),
+        );
+
+        return Container(
+          height: height,
+          margin: EdgeInsets.symmetric(horizontal: horizontalMargin),
+          clipBehavior: Clip.hardEdge,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(30.r)),
+          child: widget.scrollable
+              ? SingleChildScrollView(
+                  key: const ValueKey('app-segmented-control-scroll'),
+                  scrollDirection: Axis.horizontal,
+                  child: track,
+                )
+              : track,
+        );
+      },
     );
   }
+
+  List<double> _naturalSegmentWidths(BuildContext context) {
+    final textScaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    return widget.segments.map((label) {
+      double measuredWidth(FontWeight weight) {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: label,
+            style: TextStyle(
+              fontSize: 15.sp,
+              fontWeight: weight,
+              letterSpacing: -0.2,
+            ),
+          ),
+          textDirection: direction,
+          textScaler: textScaler,
+          maxLines: 1,
+        )..layout();
+        return painter.width;
+      }
+
+      return measuredWidth(FontWeight.w700) + 24.w;
+    }).toList();
+  }
+
+  double _segmentStart(List<double> widths, int index) =>
+      widths.take(index).fold(4.w, (sum, width) => sum + width);
 
   Widget _buildSegment({
     required String label,
@@ -180,7 +265,9 @@ class _AppSegmentedControlState extends State<AppSegmentedControl>
       behavior: HitTestBehavior.opaque,
       child: Container(
         alignment: Alignment.center,
-        padding: EdgeInsets.symmetric(horizontal: 12.w),
+        padding: EdgeInsets.symmetric(
+          horizontal: widget.allowLabelWrap ? 4.w : 12.w,
+        ),
         child: AnimatedDefaultTextStyle(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOut,
@@ -195,8 +282,11 @@ class _AppSegmentedControlState extends State<AppSegmentedControl>
           child: Text(
             label,
             textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            maxLines: widget.allowLabelWrap && !widget.scrollable ? 2 : 1,
+            softWrap: widget.allowLabelWrap && !widget.scrollable,
+            overflow: widget.scrollable || widget.allowLabelWrap
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
           ),
         ),
       ),

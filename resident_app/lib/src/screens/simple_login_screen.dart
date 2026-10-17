@@ -861,6 +861,9 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen>
                                           child: TextField(
                                             controller: _phoneController,
                                             focusNode: _phoneFocusNode,
+                                            onTapOutside: (_) => FocusScope.of(
+                                              context,
+                                            ).unfocus(),
                                             readOnly: _isLoading,
                                             keyboardType: TextInputType.phone,
                                             textInputAction:

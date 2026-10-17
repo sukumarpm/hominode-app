@@ -1,31 +1,41 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:ui' show ImageFilter;
+
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:hominode_sos/hominode_sos.dart';
 import 'package:provider/provider.dart';
 
 import 'community_wall_screen.dart';
 import 'complaints_screen.dart';
-import 'src/screens/amenities_booking_screen.dart';
+import 'profile_screen.dart';
 import 'src/screens/emergency_sos_screen.dart';
-import 'src/screens/marketplace_screen.dart';
 import 'src/screens/messages_screen.dart';
 import 'src/screens/notifications_screen.dart';
+import 'events_announcements_screen.dart';
 import 'src/services/apartment_images_service.dart';
 import 'src/services/bill_firestore_service.dart';
-import 'src/services/complaint_firestore_service.dart';
 import 'src/services/recent_activity_flow_function.dart';
 import 'src/services/subscription_entitlement_service.dart';
 import 'src/services/tenant_resolution_service.dart';
 import 'src/services/visitor_firestore_service.dart';
+import 'src/widgets/resident_home_quick_actions.dart';
+import 'src/widgets/resident_home_identity_actions.dart';
+import 'src/widgets/resident_home_due_payment_content.dart';
+import 'src/widgets/resident_home_summary_navigation.dart';
+import 'src/widgets/resident_home_summary_card.dart';
+import 'src/widgets/community_verification_feedback.dart';
+import 'src/services/community_wall_entitlement_policy.dart';
 
 class DashboardScreen extends StatefulWidget {
   final Function(int)? onTabChange;
+  final bool isActive;
 
-  const DashboardScreen({super.key, this.onTabChange});
+  const DashboardScreen({super.key, this.onTabChange, this.isActive = true});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -34,29 +44,27 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   static const Color _navy = Color(0xFF082F73);
   static const Color _blue = Color(0xFF1558D6);
-  static const Color _cyan = Color(0xFF2B95C8);
   static const Color _ink = Color(0xFF0E2247);
   static const Color _muted = Color(0xFF667792);
   static const Color _pageBg = Color(0xFFF7F9FD);
 
-  final PageController _pageController = PageController();
   int _currentPage = 0;
   late Future<List<dynamic>> _recentActivityFuture;
 
   final _billService = BillFirestoreService();
   final _visitorService = VisitorFirestoreService();
-  final _complaintService = ComplaintFirestoreService();
   final _apartmentImagesService = ApartmentImagesService();
 
-  String _userName = 'User';
-  String _userFlat = 'Not Set';
-  String _organizationName = 'Your Apartment';
+  String _userName = '';
+  String _userFlat = '';
+  String _organizationName = '';
   bool _isLoading = true;
 
-  double _pendingBillAmount = 0;
-  int _visitorTodayCount = 0;
-  int _openComplaintCount = 0;
+  Map<String, dynamic>? _upcomingVisitor;
+  Map<String, dynamic>? _currentBill;
+  String? _profileImageUrl;
   List<String> _bannerImages = [];
+  final _communityWallFeedback = CommunityVerificationFeedback();
 
   @override
   void initState() {
@@ -65,6 +73,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadDashboardData();
     _loadApartmentImages();
     Future.delayed(const Duration(seconds: 5), _autoScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive && !widget.isActive) {
+      _communityWallFeedback.cancel();
+    }
+  }
+
+  void _navigateToTab(int index) {
+    _communityWallFeedback.cancel();
+    widget.onTabChange?.call(index);
+  }
+
+  void _prepareForDashboardNavigation() {
+    _communityWallFeedback.cancel();
   }
 
   Future<void> _loadDashboardData() async {
@@ -88,14 +113,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
 
       final userData = userDoc.data() as Map<String, dynamic>;
-      final userName = userData['name'] ?? 'User';
-      final userFlat = userData['flatLabel'] ?? userData['flatId'] ?? 'Not Set';
+      final userName = userData['name'] ?? '';
+      final userFlat = userData['flatLabel'] ?? userData['flatId'] ?? '';
       final userOrganization = (userData['organization'] as String?)?.trim();
       var organizationName = tenantName?.isNotEmpty == true
           ? tenantName!
           : userOrganization?.isNotEmpty == true
           ? userOrganization!
-          : 'Your Apartment';
+          : '';
 
       final communityId = (userData['communityId'] as String?)?.trim();
       if (communityId?.isNotEmpty == true) {
@@ -116,56 +141,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      final currentBill = await _billService.getCurrentBill();
-      final billAmount = currentBill != null
-          ? (currentBill['amount'] as num?)?.toDouble() ?? 0.0
-          : 0.0;
+      final bills = await _billService.getBills();
+      final payableBills =
+          bills.where((bill) {
+            if (BillFirestoreService.isV2Bill(bill)) {
+              final outstanding = bill['outstandingAmountMinor'];
+              return BillFirestoreService.isV2InrBill(bill) &&
+                  outstanding is int &&
+                  outstanding > 0;
+            }
+            return (bill['status'] as String?)?.toLowerCase() == 'pending';
+          }).toList()..sort((a, b) {
+            DateTime dueDate(Map<String, dynamic> bill) {
+              final value = bill['dueDate'];
+              return value is Timestamp
+                  ? value.toDate()
+                  : value is DateTime
+                  ? value
+                  : DateTime(9999);
+            }
 
-      final results = await Future.wait<dynamic>([
-        _visitorService.getMyVisitors(),
-        _complaintService.getMyComplaints(),
-      ]);
+            return dueDate(a).compareTo(dueDate(b));
+          });
+      final currentBill = payableBills.isEmpty ? null : payableBills.first;
 
-      final visitors = results[0] as List<Map<String, dynamic>>;
-      final complaints = results[1] as List;
+      final visitors = await _visitorService.getMyVisitors();
 
       final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
 
-      final visitorsToday = visitors.where((visitor) {
-        final expectedArrival = visitor['expectedArrival'];
-        DateTime? visitDate;
-        if (expectedArrival is Timestamp) {
-          visitDate = expectedArrival.toDate();
-        } else if (expectedArrival is DateTime) {
-          visitDate = expectedArrival;
-        }
-        if (visitDate == null) return false;
-        return visitDate.isAfter(todayStart) && visitDate.isBefore(todayEnd);
-      }).length;
-
-      final openComplaints = complaints.where((complaint) {
-        if (complaint is Map) {
-          final status = complaint['status'] as String?;
-          return status == 'pending' ||
-              status == 'in-progress' ||
-              status == 'inProgress';
-        }
-        final status = (complaint as dynamic).status?.toString() ?? '';
-        return status == 'pending' ||
-            status == 'in-progress' ||
-            status == 'inProgress';
-      }).length;
+      final upcomingVisitor =
+          visitors.where((visitor) {
+            final status = (visitor['status'] as String? ?? '').toLowerCase();
+            final denied =
+                visitor['securityDeniedAt'] != null ||
+                visitor['entryDeniedAt'] != null ||
+                status == 'denied';
+            final date = _visitorArrival(visitor['expectedArrival']);
+            return status == 'expected' &&
+                !denied &&
+                date != null &&
+                !date.isBefore(now);
+          }).toList()..sort((a, b) {
+            return _visitorArrival(
+              a['expectedArrival'],
+            )!.compareTo(_visitorArrival(b['expectedArrival'])!);
+          });
 
       if (mounted) {
         setState(() {
           _userName = userName;
           _userFlat = userFlat;
           _organizationName = organizationName;
-          _pendingBillAmount = billAmount;
-          _visitorTodayCount = visitorsToday;
-          _openComplaintCount = openComplaints;
+          _currentBill = currentBill;
+          _upcomingVisitor = upcomingVisitor.isEmpty
+              ? null
+              : upcomingVisitor.first;
+          _profileImageUrl =
+              userData['profileImageUrl'] as String? ??
+              userData['photoUrl'] as String?;
           _isLoading = false;
         });
       }
@@ -199,20 +232,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    final nextPage = (_currentPage + 1) % _bannerImages.length;
-    if (_pageController.hasClients) {
-      _pageController.animateToPage(
-        nextPage,
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.easeInOut,
-      );
-    }
+    setState(() => _currentPage = (_currentPage + 1) % _bannerImages.length);
     Future.delayed(const Duration(seconds: 5), _autoScroll);
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
+    _communityWallFeedback.cancel();
     super.dispose();
   }
 
@@ -221,41 +247,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
       ),
       child: Scaffold(
         backgroundColor: _pageBg,
-        body: RefreshIndicator(
-          onRefresh: () async {
-            await Future.wait([_loadDashboardData(), _loadApartmentImages()]);
-          },
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics(),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Image.asset(
+                'assets/hominode_residential_hero.jpg',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.expand(),
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeroAndBanner(),
-                SizedBox(height: 12.h),
-                SosEntryButton(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => const EmergencySosScreen(),
-                    ),
-                  ),
+            const ColoredBox(color: Color(0xB8F7FAFD)),
+            RefreshIndicator(
+              onRefresh: () async {
+                await Future.wait([
+                  _loadDashboardData(),
+                  _loadApartmentImages(),
+                ]);
+              },
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
                 ),
-                _buildSummaryCards(),
-                SizedBox(height: 20.h),
-                _buildQuickAccessSection(),
-                SizedBox(height: 18.h),
-                _buildRecentActivitySection(),
-                SizedBox(height: 110.h),
-              ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeroAndBanner(),
+                    SizedBox(height: 12.h),
+                    _buildQuickAccessSection(),
+                    SizedBox(height: 18.h),
+                    _buildSummaryCards(),
+                    SizedBox(height: 16.h),
+                    _buildFacilityBanner(),
+                    SizedBox(height: 18.h),
+                    _buildRecentActivitySection(),
+                    SizedBox(height: 110.h),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -263,121 +300,210 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildHeroAndBanner() {
     final topInset = MediaQuery.of(context).padding.top;
-
-    // Keep header + banner to roughly 45-48% of an iPhone-height screen.
-    // The Stack itself reserves the banner's full height, so following widgets
-    // can never overlap it.
-    final heroHeight = 230.h + topInset;
-    final bannerHeight = 150.h;
-    final bannerTop = heroHeight - 24.h;
-    final indicatorSpace = 22.h;
-    final totalHeight = bannerTop + bannerHeight + indicatorSpace;
-
-    return SizedBox(
-      height: totalHeight,
-      child: Stack(
-        clipBehavior: Clip.none,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(18.w, topInset + 10.h, 18.w, 8.h),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            height: heroHeight,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF0B376C),
-                  Color(0xFF103F78),
-                  Color(0xFF2CA4C7),
-                ],
-                stops: [0.05, 0.60, 1.0],
+          Row(
+            children: [
+              const ResidentHomeLogo(),
+              const Spacer(),
+              _notificationButton(),
+              SizedBox(width: 10.w),
+              InkWell(
+                onTap: () {
+                  _prepareForDashboardNavigation();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => const ProfileScreen(),
+                    ),
+                  );
+                },
+                borderRadius: BorderRadius.circular(24.r),
+                child: CircleAvatar(
+                  radius: 21.r,
+                  backgroundColor: Colors.white,
+                  backgroundImage: _profileImageUrl?.isNotEmpty == true
+                      ? NetworkImage(_profileImageUrl!)
+                      : null,
+                  child: _profileImageUrl?.isNotEmpty == true
+                      ? null
+                      : Icon(Icons.person_outline, color: _navy, size: 24.w),
+                ),
               ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(30.r),
-                bottomRight: Radius.circular(30.r),
-              ),
+            ],
+          ),
+          SizedBox(height: 17.h),
+          Text(
+            'good_morning'.tr(),
+            style: TextStyle(color: _muted, fontSize: 13.sp),
+          ),
+          Text(
+            'home_greeting_name'.tr(
+              namedArgs: {
+                'name': _userName.isEmpty ? 'resident'.tr() : _userName,
+              },
             ),
-            child: Stack(
-              children: [
-                Positioned(
-                  right: -45.w,
-                  top: topInset + 8.h,
-                  child: Container(
-                    width: 220.w,
-                    height: 125.h,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(100.r),
+            softWrap: true,
+            style: TextStyle(
+              color: _ink,
+              fontSize: 25.sp,
+              height: 1.18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          SizedBox(height: 7.h),
+          Row(
+            children: [
+              Icon(Icons.location_on_outlined, color: _navy, size: 19.w),
+              SizedBox(width: 5.w),
+              Expanded(
+                child: Text(
+                  _organizationName.isEmpty
+                      ? 'your_apartment'.tr()
+                      : _organizationName,
+                  softWrap: true,
+                  style: TextStyle(
+                    color: _muted,
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                _userFlat.isEmpty ? 'not_set'.tr() : _userFlat,
+                style: TextStyle(
+                  color: _navy,
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 12.h),
+          const ResidentHomeEmergencySosButton(),
+          SizedBox(height: 15.h),
+          _communityHeroCard(),
+        ],
+      ),
+    );
+  }
+
+  Widget _communityHeroCard() {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).toDouble();
+    final image = _bannerImages.isEmpty
+        ? null
+        : _bannerImages[_currentPage.clamp(0, _bannerImages.length - 1)];
+    final ImageProvider heroImage = image == null
+        ? const AssetImage('assets/hominode_residential_hero.jpg')
+        : NetworkImage(image);
+    return GestureDetector(
+      onHorizontalDragEnd: _bannerImages.length < 2
+          ? null
+          : (details) {
+              if (details.primaryVelocity == null) return;
+              setState(() {
+                final delta = details.primaryVelocity! < 0 ? 1 : -1;
+                _currentPage =
+                    (_currentPage + delta + _bannerImages.length) %
+                    _bannerImages.length;
+              });
+            },
+      child: Container(
+        height: 204.h * textScale,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26.r),
+          color: const Color(0xFFDCE7F0),
+          boxShadow: [
+            BoxShadow(
+              color: _navy.withValues(alpha: .12),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+          image: DecorationImage(image: heroImage, fit: BoxFit.cover),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(26.r),
+          child: Stack(
+            children: [
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        Color(0xEDF7FAFC),
+                        Color(0xB8F7FAFC),
+                        Color(0x087F8FA6),
+                      ],
+                      stops: [0, .57, 1],
                     ),
                   ),
                 ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    20.w,
-                    topInset + 10.h,
-                    20.w,
-                    18.h,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: _notificationButton(),
+              ),
+              Padding(
+                padding: EdgeInsets.all(20.w),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'your_community'.tr(),
+                      style: TextStyle(
+                        color: _navy,
+                        fontSize: 10.sp,
+                        letterSpacing: 3,
+                        fontWeight: FontWeight.w800,
                       ),
-                      SizedBox(height: 2.h),
-                      Text(
-                        'good_morning'.tr(),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.95),
-                          fontSize: 13.sp,
-                          fontWeight: FontWeight.w500,
-                        ),
+                    ),
+                    SizedBox(height: 7.h),
+                    Text(
+                      'a_better_tomorrow'.tr(),
+                      style: TextStyle(
+                        color: _ink,
+                        fontSize: 29.sp,
+                        height: 1.02,
+                        fontWeight: FontWeight.w800,
                       ),
-                      SizedBox(height: 2.h),
+                    ),
+                    SizedBox(height: 8.h),
+                    Text(
+                      'modern_living_subtitle'.tr(),
+                      maxLines: 2,
+                      style: TextStyle(
+                        color: const Color(0xFF40536B),
+                        fontSize: 12.5.sp,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_bannerImages.length > 1)
                       Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              'Hi, $_userName!',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 23.sp,
-                                fontWeight: FontWeight.w800,
-                                height: 1.05,
-                              ),
+                        children: List.generate(
+                          _bannerImages.length,
+                          (i) => Container(
+                            margin: EdgeInsets.only(right: 6.w),
+                            width: i == _currentPage ? 16.w : 7.w,
+                            height: 7.w,
+                            decoration: BoxDecoration(
+                              color: i == _currentPage
+                                  ? _navy
+                                  : _navy.withValues(alpha: .3),
+                              borderRadius: BorderRadius.circular(8.r),
                             ),
                           ),
-                          SizedBox(width: 5.w),
-                          Text('👋', style: TextStyle(fontSize: 21.sp)),
-                        ],
-                      ),
-                      SizedBox(height: 3.h),
-                      Text(
-                        'Welcome back to your community',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.92),
-                          fontSize: 12.5.sp,
                         ),
                       ),
-                      SizedBox(height: 9.h),
-                      _apartmentCard(),
-                    ],
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-
-          Positioned(
-            left: 16.w,
-            right: 16.w,
-            top: bannerTop,
-            child: _bannerCard(height: bannerHeight),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -385,6 +511,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _notificationButton() {
     return GestureDetector(
       onTap: () {
+        _prepareForDashboardNavigation();
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const NotificationsScreen()),
@@ -397,11 +524,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             width: 42.w,
             height: 42.w,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.96),
+              color: Colors.white.withValues(alpha: 0.96),
               borderRadius: BorderRadius.circular(13.r),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.10),
+                  color: Colors.black.withValues(alpha: 0.10),
                   blurRadius: 14,
                   offset: const Offset(0, 5),
                 ),
@@ -430,309 +557,218 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _apartmentCard() {
-    return Container(
-      width: 245.w,
-      constraints: BoxConstraints(minHeight: 62.h),
-      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.10),
-        borderRadius: BorderRadius.circular(17.r),
-        border: Border.all(color: Colors.white.withOpacity(0.40), width: 1.1),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42.w,
-            height: 42.w,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0D4EA8).withOpacity(0.86),
-              borderRadius: BorderRadius.circular(16.r),
+  Widget _buildSummaryCards() {
+    final width = MediaQuery.sizeOf(context).width;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final visitor = _upcomingVisitor;
+    final visitorCard = ResidentHomeSummaryCard(
+      icon: Icons.schedule_rounded,
+      title: 'upcoming_visitor'.tr(),
+      action: 'view_all'.tr(),
+      onAction: _openVisitors,
+      child: _isLoading
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          : visitor == null
+          ? _informationEmpty(
+              Icons.directions_walk_outlined,
+              'no_upcoming_visitors'.tr(),
+            )
+          : _visitorPreview(visitor),
+    );
+    final bill = _currentBill;
+    final due = _billOutstandingLabel(bill);
+    final billCard = ResidentHomeSummaryCard(
+      icon: Icons.credit_card_outlined,
+      title: 'due_payment'.tr(),
+      action: 'view_all'.tr(),
+      onAction: _openBilling,
+      child: _isLoading
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          : ResidentHomeDuePaymentContent(
+              amount: due,
+              isEmpty: bill == null,
+              billTitle: bill == null
+                  ? 'no_current_bill'.tr()
+                  : (bill['title']?.toString() ?? 'maintenance_charges'.tr()),
+              onViewBilling: _openBilling,
+              viewBillingLabel: 'view_billing'.tr(),
             ),
-            child: Icon(
-              Icons.apartment_rounded,
-              color: Colors.white,
-              size: 23.w,
-            ),
-          ),
-          SizedBox(width: 12.w),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    );
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16.w),
+      child: width < 376 || textScale > 1.2
+          ? Column(
               children: [
-                Text(
-                  _organizationName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.95),
-                    fontSize: 12.5.sp,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                SizedBox(height: 2.h),
-                Text(
-                  _userFlat,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18.sp,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+                visitorCard,
+                SizedBox(height: 12.h),
+                billCard,
               ],
+            )
+          : IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: visitorCard),
+                  SizedBox(width: 12.w),
+                  Expanded(child: billCard),
+                ],
+              ),
             ),
-          ),
-          Icon(Icons.chevron_right_rounded, color: Colors.white, size: 25.w),
-        ],
-      ),
     );
   }
 
-  Widget _bannerCard({required double height}) {
-    return Column(
+  String _billOutstandingLabel(Map<String, dynamic>? bill) {
+    if (bill == null) return '—';
+    if (BillFirestoreService.isV2Bill(bill)) {
+      final minor = bill['outstandingAmountMinor'];
+      return minor is int
+          ? BillFirestoreService.formatV2BillMinorUnits(bill, minor)
+          : '—';
+    }
+    final amount = (bill['amount'] as num?)?.toDouble() ?? 0;
+    return '₹${amount.toStringAsFixed(0)}';
+  }
+
+  Widget _visitorPreview(Map<String, dynamic> visitor) {
+    final name = visitor['visitorName']?.toString().trim();
+    final arrival = visitor['expectedArrival'];
+    final date = _visitorArrival(arrival);
+    return Row(
       children: [
-        Container(
-          height: height,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24.r),
-            border: Border.all(color: Colors.white, width: 2.5),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF0E2247).withOpacity(0.12),
-                blurRadius: 22,
-                offset: const Offset(0, 9),
+        CircleAvatar(
+          radius: 22.r,
+          backgroundColor: const Color(0xFFE6EFF7),
+          child: Icon(Icons.person_outline, color: _navy, size: 23.w),
+        ),
+        SizedBox(width: 10.w),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name?.isNotEmpty == true ? name! : 'visitor'.tr(),
+                softWrap: true,
+                style: TextStyle(
+                  color: _ink,
+                  fontSize: 13.sp,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              SizedBox(height: 4.h),
+              Text(
+                date == null
+                    ? 'expected_arrival_unavailable'.tr()
+                    : _formatArrival(date),
+                softWrap: true,
+                style: TextStyle(color: _muted, fontSize: 11.5.sp),
               ),
             ],
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(22.r),
-            child: _bannerImages.isEmpty
-                ? _bannerEmptyState()
-                : PageView.builder(
-                    controller: _pageController,
-                    itemCount: _bannerImages.length,
-                    onPageChanged: (index) {
-                      if (mounted) setState(() => _currentPage = index);
-                    },
-                    itemBuilder: (context, index) {
-                      return Image.network(
-                        _bannerImages[index],
-                        width: double.infinity,
-                        height: double.infinity,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return Container(
-                            color: const Color(0xFFEFF3F8),
-                            alignment: Alignment.center,
-                            child: const CircularProgressIndicator(
-                              strokeWidth: 2.2,
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return _bannerEmptyState(
-                            title: 'failed_to_load_image'.tr(),
-                            icon: Icons.broken_image_outlined,
-                          );
-                        },
-                      );
-                    },
-                  ),
-          ),
         ),
-        SizedBox(height: 10.h),
-        if (_bannerImages.isNotEmpty)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              _bannerImages.length,
-              (index) => AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                margin: EdgeInsets.symmetric(horizontal: 4.w),
-                width: _currentPage == index ? 8.w : 7.w,
-                height: _currentPage == index ? 8.w : 7.w,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _currentPage == index
-                      ? _blue
-                      : const Color(0xFFD6DAE2),
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
 
-  Widget _bannerEmptyState({
-    String? title,
-    IconData icon = Icons.apartment_rounded,
-  }) {
-    return Container(
-      color: const Color(0xFFF0F4F9),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: const Color(0xFF9BA8BA), size: 44.w),
-          SizedBox(height: 8.h),
-          Text(
-            title ?? 'no_images_available'.tr(),
-            style: TextStyle(
-              color: const Color(0xFF75849A),
-              fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
+  String _formatArrival(DateTime date) =>
+      '${date.day}/${date.month} · ${TimeOfDay.fromDateTime(date).format(context)}';
+
+  DateTime? _visitorArrival(Object? value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    return null;
   }
 
-  Widget _buildSummaryCards() {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.w),
-      child: Row(
-        children: [
-          Expanded(
-            child: _summaryCard(
-              icon: Icons.receipt_long_rounded,
-              iconColor: const Color(0xFF08A760),
-              iconBg: const Color(0xFFE2F8EA),
-              value: _pendingBillAmount > 0
-                  ? '₹${_pendingBillAmount.toStringAsFixed(0)}'
-                  : '₹0',
-              label: 'billing'.tr(),
-              onTap: () => widget.onTabChange?.call(2),
-            ),
-          ),
-          SizedBox(width: 10.w),
-          Expanded(
-            child: _summaryCard(
-              icon: Icons.groups_2_outlined,
-              iconColor: const Color(0xFF7848F5),
-              iconBg: const Color(0xFFEDE5FF),
-              value: '$_visitorTodayCount',
-              label: 'visitors'.tr(),
-              onTap: () => widget.onTabChange?.call(1),
-            ),
-          ),
-          SizedBox(width: 10.w),
-          Expanded(
-            child: _summaryCard(
-              icon: Icons.support_agent_rounded,
-              iconColor: const Color(0xFF1568E9),
-              iconBg: const Color(0xFFE7F0FF),
-              value: '$_openComplaintCount',
-              label: 'complaints'.tr(),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ComplaintsScreen()),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _informationEmpty(IconData icon, String label) => Center(
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, color: _muted.withValues(alpha: .6), size: 27.w),
+        SizedBox(height: 5.h),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: _muted, fontSize: 11.5.sp),
+        ),
+      ],
+    ),
+  );
 
-  Widget _summaryCard({
-    required IconData icon,
-    required Color iconColor,
-    required Color iconBg,
-    required String value,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22.r),
-        child: Container(
-          constraints: BoxConstraints(minHeight: 108.h),
-          padding: EdgeInsets.fromLTRB(12.w, 12.h, 10.w, 12.h),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(22.r),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF1A3A64).withOpacity(0.075),
-                blurRadius: 18,
-                offset: const Offset(0, 7),
-              ),
-            ],
+  Widget _buildFacilityBanner() => Padding(
+    padding: EdgeInsets.symmetric(horizontal: 16.w),
+    child: InkWell(
+      onTap: () => _navigateToTab(1),
+      borderRadius: BorderRadius.circular(22.r),
+      child: Container(
+        height: 106.h * MediaQuery.textScalerOf(context).scale(1),
+        padding: EdgeInsets.symmetric(horizontal: 18.w),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22.r),
+          color: const Color(0xFFDCE8F0),
+          image: DecorationImage(
+            image: _bannerImages.isEmpty
+                ? const AssetImage('assets/hominode_residential_hero.jpg')
+                : NetworkImage(_bannerImages.first),
+            fit: BoxFit.cover,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40.w,
-                height: 40.w,
+          boxShadow: [
+            BoxShadow(
+              color: _navy.withValues(alpha: .08),
+              blurRadius: 13,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 9.h),
                 decoration: BoxDecoration(
-                  color: iconBg,
-                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: .78),
+                  borderRadius: BorderRadius.circular(16.r),
                 ),
-                child: Icon(icon, color: iconColor, size: 24.w),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'book_a_facility'.tr(),
+                      style: TextStyle(
+                        color: _ink,
+                        fontSize: 17.sp,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      'explore_community_amenities'.tr(),
+                      softWrap: true,
+                      style: TextStyle(color: _muted, fontSize: 11.5.sp),
+                    ),
+                  ],
+                ),
               ),
-              SizedBox(height: 10.h),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          value,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: iconColor,
-                            fontSize: 18.sp,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(height: 2.h),
-                        Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: const Color(0xFF34445D),
-                            fontSize: 12.sp,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    width: 29.w,
-                    height: 29.w,
-                    decoration: BoxDecoration(
-                      color: iconBg.withOpacity(0.78),
-                      borderRadius: BorderRadius.circular(10.r),
-                    ),
-                    child: Icon(
-                      Icons.chevron_right_rounded,
-                      color: iconColor,
-                      size: 21.w,
-                    ),
-                  ),
-                ],
+            ),
+            SizedBox(width: 8.w),
+            Container(
+              width: 42.w,
+              height: 42.w,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .86),
+                shape: BoxShape.circle,
               ),
-            ],
-          ),
+              child: Icon(
+                Icons.arrow_forward_rounded,
+                color: _navy,
+                size: 22.w,
+              ),
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 
   Future<void> _openCommunityWallIfAllowed() async {
     final tenantResolution = context.read<TenantResolutionService>();
@@ -741,133 +777,167 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (communityId == null || communityId.trim().isEmpty) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Your community could not be resolved. Please try again.',
-          ),
-        ),
+      _communityWallFeedback.showNotice(
+        context: context,
+        message: 'community_resolution_retry'.tr(),
       );
       return;
     }
 
-    try {
-      final entitlement = await ResidentSubscriptionEntitlementService()
-          .getEntitlement(communityId);
-
-      if (!mounted) return;
-
-      if (entitlement?.canUseFeature('communityWall') != true) {
-        await showDialog<void>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Community Wall unavailable'),
-            content: const Text(
-              'Community Wall is available with Hominode Plus and Pro.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('OK'),
+    var accessStatus = CommunityWallAccessStatus.featureUnavailable;
+    await _communityWallFeedback.run(
+      context: context,
+      operation: 'home/community-wall-entitlement',
+      verify: () async {
+        final entitlement = await ResidentSubscriptionEntitlementService()
+            .getEntitlement(communityId);
+        accessStatus = CommunityWallEntitlementPolicy.evaluate(entitlement);
+      },
+      onFailure: (error) {
+        if (CommunityWallEntitlementPolicy.classifyFailure(error) ==
+            CommunityWallVerificationFailure.missingSubscription) {
+          _communityWallFeedback.showNotice(
+            context: context,
+            message: 'community_subscription_not_configured'.tr(),
+          );
+        } else {
+          _communityWallFeedback.showRetryableNotice(
+            context: context,
+            message: 'community_wall_verification_error'.tr(),
+            retryLabel: 'retry'.tr(),
+            onRetry: () => unawaited(_openCommunityWallIfAllowed()),
+          );
+        }
+      },
+      onSuccess: () {
+        if (accessStatus != CommunityWallAccessStatus.allowed) {
+          showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text('community_unavailable_title'.tr()),
+              content: Text(
+                accessStatus == CommunityWallAccessStatus.subscriptionInactive
+                    ? 'community_subscription_inactive'.tr()
+                    : 'community_wall_restricted'.tr(),
               ),
-            ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text('ok'.tr()),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+
+        _prepareForDashboardNavigation();
+        unawaited(
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => const CommunityWallScreen(),
+            ),
           ),
         );
-        return;
-      }
+      },
+    );
+  }
 
-      await Navigator.push(
-        context,
-        MaterialPageRoute<void>(builder: (_) => const CommunityWallScreen()),
-      );
-    } catch (_) {
-      if (!mounted) return;
+  void _openVisitors() {
+    _prepareForDashboardNavigation();
+    openResidentHomeVisitors(context);
+  }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Community Wall availability could not be verified. Please try again.',
-          ),
-        ),
-      );
-    }
+  void _openBilling() {
+    _prepareForDashboardNavigation();
+    openResidentHomeBillingRoute(context);
   }
 
   Widget _buildQuickAccessSection() {
-    final items = <_QuickAccessItemData>[
-      _QuickAccessItemData(
+    final items = <ResidentHomeAction>[
+      ResidentHomeAction(
         icon: Icons.groups_2_outlined,
         label: 'visitors'.tr(),
         iconColor: const Color(0xFF1568E9),
         backgroundColor: const Color(0xFFE7F0FF),
-        onTap: () => widget.onTabChange?.call(1),
+        onTap: _openVisitors,
       ),
-      _QuickAccessItemData(
-        icon: Icons.receipt_long_outlined,
+      ResidentHomeAction(
+        icon: Icons.event_available_outlined,
+        label: 'amenities'.tr(),
+        iconColor: const Color(0xFF08A760),
+        backgroundColor: const Color(0xFFE2F8EA),
+        onTap: () => _navigateToTab(1),
+      ),
+      ResidentHomeAction(
+        icon: Icons.credit_card_outlined,
         label: 'billing'.tr(),
         iconColor: const Color(0xFF08A760),
         backgroundColor: const Color(0xFFE2F8EA),
-        onTap: () => widget.onTabChange?.call(2),
+        onTap: () => _navigateToTab(3),
       ),
-      _QuickAccessItemData(
-        icon: Icons.calendar_month_rounded,
-        label: 'events'.tr(),
-        iconColor: const Color(0xFF7848F5),
-        backgroundColor: const Color(0xFFEDE5FF),
-        onTap: () => widget.onTabChange?.call(3),
-      ),
-      _QuickAccessItemData(
-        icon: Icons.support_agent_rounded,
-        label: 'complaints'.tr(),
-        iconColor: const Color(0xFFF26A21),
-        backgroundColor: const Color(0xFFFFEFE4),
+      ResidentHomeAction(
+        icon: Icons.campaign_outlined,
+        label: 'announcements'.tr(),
+        iconColor: const Color(0xFF1568E9),
+        backgroundColor: const Color(0xFFE7F0FF),
         onTap: () {
+          _prepareForDashboardNavigation();
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const ComplaintsScreen()),
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  const EventsAnnouncementsScreen(announcementsOnly: true),
+            ),
           );
         },
       ),
-      _QuickAccessItemData(
-        icon: Icons.chat_bubble_outline_rounded,
-        label: 'messages'.tr(),
-        iconColor: const Color(0xFFF26A21),
-        backgroundColor: const Color(0xFFFFEFE4),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MessagesScreenEnhanced()),
-          );
-        },
-      ),
-      _QuickAccessItemData(
+      ResidentHomeAction(
         icon: Icons.groups_rounded,
         label: 'community_wall'.tr(),
         iconColor: const Color(0xFF7848F5),
         backgroundColor: const Color(0xFFEDE5FF),
         onTap: _openCommunityWallIfAllowed,
       ),
-      _QuickAccessItemData(
-        icon: Icons.fitness_center_outlined,
-        label: 'amenities'.tr(),
-        iconColor: const Color(0xFF08A760),
-        backgroundColor: const Color(0xFFE2F8EA),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AmenitiesBookingScreen()),
-          );
-        },
-      ),
-      _QuickAccessItemData(
-        icon: Icons.shopping_bag_outlined,
-        label: 'marketplace'.tr(),
+      ResidentHomeAction(
+        icon: Icons.chat_bubble_outline_rounded,
+        label: 'messages'.tr(),
         iconColor: const Color(0xFF1568E9),
         backgroundColor: const Color(0xFFE7F0FF),
         onTap: () {
+          _prepareForDashboardNavigation();
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const MarketplaceScreen()),
+            MaterialPageRoute<void>(
+              builder: (_) => const MessagesScreenEnhanced(),
+            ),
+          );
+        },
+      ),
+      ResidentHomeAction(
+        icon: Icons.support_agent_rounded,
+        label: 'complaints'.tr(),
+        iconColor: const Color(0xFFF26A21),
+        backgroundColor: const Color(0xFFFFEFE4),
+        onTap: () {
+          _prepareForDashboardNavigation();
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(builder: (_) => const ComplaintsScreen()),
+          );
+        },
+      ),
+      ResidentHomeAction(
+        icon: Icons.shield_outlined,
+        label: 'security'.tr(),
+        iconColor: const Color(0xFF1558D6),
+        backgroundColor: const Color(0xFFE7F0FF),
+        onTap: () {
+          _prepareForDashboardNavigation();
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(builder: (_) => const EmergencySosScreen()),
           );
         },
       ),
@@ -875,97 +945,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 16.w),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Text(
-                'quick_access'.tr(),
-                style: TextStyle(
-                  color: _ink,
-                  fontSize: 17.sp,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const Spacer(),
-              // Text(
-              //   'View All',
-              //   style: TextStyle(
-              //     color: _blue,
-              //     fontSize: 13.sp,
-              //     fontWeight: FontWeight.w700,
-              //   ),
-              // ),
-            ],
-          ),
-          SizedBox(height: 12.h),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: items.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 4,
-              crossAxisSpacing: 8.w,
-              mainAxisSpacing: 10.h,
-              childAspectRatio: 0.87,
-            ),
-            itemBuilder: (context, index) => _quickAccessCard(items[index]),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _quickAccessCard(_QuickAccessItemData item) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: item.onTap,
-        borderRadius: BorderRadius.circular(18.r),
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 11.h),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18.r),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF193A65).withOpacity(0.055),
-                blurRadius: 14,
-                offset: const Offset(0, 5),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 45.w,
-                height: 45.w,
-                decoration: BoxDecoration(
-                  color: item.backgroundColor,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(item.icon, color: item.iconColor, size: 24.w),
-              ),
-              SizedBox(height: 8.h),
-              Flexible(
-                child: Text(
-                  item.label,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _ink,
-                    fontSize: 11.5.sp,
-                    height: 1.05,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      child: ResidentHomeQuickActions(items: items, title: 'quick_access'.tr()),
     );
   }
 
@@ -980,7 +960,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           borderRadius: BorderRadius.circular(20.r),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF193A65).withOpacity(0.06),
+              color: const Color(0xFF193A65).withValues(alpha: 0.06),
               blurRadius: 16,
               offset: const Offset(0, 6),
             ),
@@ -1075,7 +1055,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'No recent activities',
+                  'no_recent_activities'.tr(),
                   style: TextStyle(
                     color: _ink,
                     fontSize: 14.sp,
@@ -1084,7 +1064,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  "You're all caught up!",
+                  'you_are_all_caught_up'.tr(),
                   style: TextStyle(color: _muted, fontSize: 12.sp),
                 ),
               ],
@@ -1104,6 +1084,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
       debugPrint('Recent activity error: $e');
       return [];
     }
+  }
+
+  String _localizedActivityTitle(dynamic activity) {
+    final data = activity.data as Map<String, dynamic>? ?? const {};
+    switch (activity.activityType) {
+      case 'booking':
+        return 'activity_booking_title'.tr(
+          namedArgs: {'name': (data['amenityName'] ?? 'amenity').toString()},
+        );
+      case 'visitor':
+        return 'activity_visitor_title'.tr(
+          namedArgs: {'name': (data['visitorName'] ?? 'unknown').toString()},
+        );
+      case 'complaint':
+        return 'activity_complaint_title'.tr(
+          namedArgs: {'category': (data['category'] ?? 'general').toString()},
+        );
+      default:
+        return activity.title as String;
+    }
+  }
+
+  String _localizedActivitySubtitle(dynamic activity) {
+    final data = activity.data as Map<String, dynamic>? ?? const {};
+    final date = _localizedRelativeTime(activity.timestamp as DateTime);
+    if (activity.activityType == 'visitor') {
+      final phone = data['visitorPhone']?.toString() ?? '';
+      return phone.isEmpty ? date : '$phone · $date';
+    }
+    if (activity.activityType == 'complaint') {
+      final description = data['description']?.toString() ?? '';
+      return description.isEmpty ? date : '$description · $date';
+    }
+    return date;
+  }
+
+  String _localizedRelativeTime(DateTime date) {
+    final difference = DateTime.now().difference(date);
+    if (difference.inMinutes < 1) return 'just_now'.tr();
+    if (difference.inMinutes < 60)
+      return 'minutes_ago'.tr(namedArgs: {'count': '${difference.inMinutes}'});
+    if (difference.inHours < 24)
+      return 'hours_ago'.tr(namedArgs: {'count': '${difference.inHours}'});
+    if (difference.inDays == 1) return 'yesterday'.tr();
+    if (difference.inDays < 7)
+      return 'days_ago'.tr(namedArgs: {'count': '${difference.inDays}'});
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  String _localizedActivityStatus(String status) {
+    final key = switch (status.toLowerCase()) {
+      'pending' => 'pending',
+      'confirmed' => 'confirmed',
+      'approved' => 'approved',
+      'received' => 'received',
+      'rejected' => 'rejected',
+      'cancelled' => 'cancelled',
+      'paid' || 'settled' => 'paid',
+      'partially_paid' || 'partially paid' => 'partially_paid',
+      'overdue' => 'overdue',
+      'checked_in' || 'checked in' => 'visitor_status_checked_in',
+      'checked_out' || 'checked out' => 'visitor_status_checked_out',
+      'entry_denied' || 'entry denied' => 'visitor_status_entry_denied',
+      'open' => 'open',
+      'in_progress' || 'in progress' => 'in_progress',
+      'resolved' => 'resolved',
+      'closed' => 'closed',
+      _ => null,
+    };
+    return key == null ? status : key.tr();
   }
 
   Widget _activityItemFromData(dynamic activity) {
@@ -1167,9 +1217,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                activity.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                _localizedActivityTitle(activity),
+                softWrap: true,
                 style: TextStyle(
                   color: _ink,
                   fontSize: 13.sp,
@@ -1178,9 +1227,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               SizedBox(height: 2.h),
               Text(
-                activity.subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                _localizedActivitySubtitle(activity),
+                softWrap: true,
                 style: TextStyle(
                   color: _muted,
                   fontSize: 11.5.sp,
@@ -1198,7 +1246,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             borderRadius: BorderRadius.circular(9.r),
           ),
           child: Text(
-            activity.statusText,
+            _localizedActivityStatus(activity.statusText),
             style: TextStyle(
               color: statusColor,
               fontSize: 10.5.sp,
@@ -1209,20 +1257,4 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
-}
-
-class _QuickAccessItemData {
-  final IconData icon;
-  final String label;
-  final Color iconColor;
-  final Color backgroundColor;
-  final VoidCallback onTap;
-
-  const _QuickAccessItemData({
-    required this.icon,
-    required this.label,
-    required this.iconColor,
-    required this.backgroundColor,
-    required this.onTap,
-  });
 }

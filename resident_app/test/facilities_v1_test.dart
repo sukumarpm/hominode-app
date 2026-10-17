@@ -6,15 +6,32 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hominode_entitlements/hominode_entitlements.dart';
+import 'package:provider/provider.dart';
 import 'package:resident_app/src/modals/booking_modal.dart';
 import 'package:resident_app/src/models/amenity.dart';
+import 'package:resident_app/src/models/booking.dart';
 import 'package:resident_app/src/screens/amenities_booking_screen.dart';
 import 'package:resident_app/src/services/booking_firestore_service.dart';
+import 'package:resident_app/src/services/tenant_resolution_service.dart';
 import 'package:resident_app/src/widgets/facility_information.dart';
+
+import 'localization_test_app.dart';
+
+class FixedCommunityTenantResolutionService extends TenantResolutionService {
+  FixedCommunityTenantResolutionService({
+    required FirebaseAuth auth,
+    required FirebaseFirestore firestore,
+  }) : super(auth: auth, firestore: firestore);
+
+  @override
+  String? get communityId => 'community-a';
+}
 
 // Read-only Firestore double: records actual query constraints. Any attempted
 // write or unsupported operation fails; this does not simulate security rules.
@@ -213,9 +230,15 @@ const profile = <String, dynamic>{
 };
 
 class ModalService implements BookingFirestoreService {
-  ModalService(this.details);
+  ModalService(this.details, {this.slotResults = const {}});
   final Stream<AmenityModel?> details;
+  final Map<String, Map<String, dynamic>> slotResults;
   int writes = 0;
+  @override
+  Stream<List<AmenityModel>> streamAmenitiesRealtime() =>
+      details.map((amenity) => amenity == null ? [] : [amenity]);
+  @override
+  Stream<List<BookingModel>> streamMyBookingsRealtime() => Stream.value([]);
   @override
   Stream<AmenityModel?> streamAmenityDetails(String id) => details;
   @override
@@ -243,7 +266,7 @@ class ModalService implements BookingFirestoreService {
     required String amenityId,
     required DateTime date,
     int numberOfPeople = 1,
-  }) async => <String, Map<String, dynamic>>{};
+  }) async => slotResults;
   @override
   dynamic noSuchMethod(Invocation invocation) {
     writes++;
@@ -255,21 +278,61 @@ Future<void> pumpView(
   WidgetTester tester,
   Widget child, {
   bool settle = true,
+  double width = 390,
+  double height = 844,
+  double textScale = 1,
 }) async {
-  tester.view.physicalSize = const Size(390, 844);
+  resetTestLocalizationPreferences();
+  tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
-    ScreenUtilInit(
-      designSize: const Size(390, 844),
-      builder: (_, _) => MaterialApp(home: Scaffold(body: child)),
+    withEnglishLocalization(
+      (localizationContext) => ScreenUtilInit(
+        designSize: const Size(390, 844),
+        builder: (_, _) => localizedMaterialApp(
+          localizationContext,
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, height),
+              textScaler: TextScaler.linear(textScale),
+            ),
+            child: Scaffold(body: child),
+          ),
+        ),
+      ),
     ),
   );
   if (settle) await tester.pumpAndSettle();
 }
 
+// Booking availability streams can briefly show an indeterminate progress
+// indicator, which intentionally keeps scheduling frames. Pump to a concrete
+// state produced by the injected service instead of waiting for animations to
+// stop or weakening the state assertion.
+Future<void> pumpUntilVisible(WidgetTester tester, Finder expected) async {
+  for (var frame = 0; frame < 20; frame++) {
+    await tester.pump(const Duration(milliseconds: 50));
+    if (expected.evaluate().isNotEmpty) return;
+  }
+  expect(expected, findsOneWidget);
+}
+
+Future<void> withFacilityImageHttpClient(Future<void> Function() body) async {
+  final originalProvider = debugNetworkImageHttpClientProvider;
+  debugNetworkImageHttpClientProvider = () => ImageHttpClient();
+  try {
+    await body();
+  } finally {
+    debugNetworkImageHttpClientProvider = originalProvider;
+    PaintingBinding.instance.imageCache.clear();
+  }
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(initializeTestLocalization);
   late ReadStore store;
   late ReadAuth auth;
   late BookingFirestoreService service;
@@ -289,6 +352,95 @@ void main() {
   tearDown(() async {
     await store.changes.close();
     await auth.changes.close();
+  });
+
+  Future<void> tapFacilityWithEntitlementLoader(
+    WidgetTester tester,
+    Future<HominodeEntitlement?> Function(String communityId) loader,
+  ) async {
+    final bookingService = ModalService(
+      Stream.value(AmenityModel.fromMap('a', canonical)),
+    );
+    await pumpView(
+      tester,
+      ChangeNotifierProvider<TenantResolutionService>.value(
+        value: FixedCommunityTenantResolutionService(
+          auth: auth,
+          firestore: store,
+        ),
+        child: AmenitiesBookingScreen(
+          bookingService: bookingService,
+          entitlementLoader: loader,
+        ),
+      ),
+      settle: false,
+    );
+    await pumpUntilVisible(tester, find.text('View details & book'));
+    await tester.tap(find.text('View details & book'));
+    await tester.pumpAndSettle();
+    expect(bookingService.writes, 0);
+  }
+
+  testWidgets('missing community subscription shows its localized guidance', (
+    tester,
+  ) async {
+    var receivedCommunityId = '';
+    await tapFacilityWithEntitlementLoader(tester, (communityId) async {
+      receivedCommunityId = communityId;
+      throw FirebaseFunctionsException(
+        code: 'failed-precondition',
+        message: 'This community does not have a subscription.',
+      );
+    });
+
+    expect(receivedCommunityId, 'community-a');
+    expect(
+      find.text(
+        'This community subscription is not configured. Please contact your community administrator.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(BookingModal), findsNothing);
+  });
+
+  testWidgets(
+    'valid but noneligible plan retains the plan restriction dialog',
+    (tester) async {
+      await tapFacilityWithEntitlementLoader(
+        tester,
+        (communityId) async => HominodeEntitlement(
+          communityId: communityId,
+          planId: 'essential',
+          status: HominodeSubscriptionStatus.active,
+          features: const {'facilityBooking': false},
+          limits: const {},
+        ),
+      );
+
+      expect(find.text('Facility booking unavailable'), findsOneWidget);
+      expect(
+        find.text('Facility booking is available with Hominode Plus and Pro.'),
+        findsOneWidget,
+      );
+      expect(find.byType(BookingModal), findsNothing);
+    },
+  );
+
+  testWidgets('unexpected entitlement error keeps the generic retry message', (
+    tester,
+  ) async {
+    await tapFacilityWithEntitlementLoader(tester, (communityId) async {
+      throw StateError('temporary entitlement service error');
+    });
+
+    expect(
+      find.text(
+        'Facility booking access could not be verified. Please try again.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('subscription is not configured'), findsNothing);
+    expect(find.byType(BookingModal), findsNothing);
   });
 
   test(
@@ -423,40 +575,40 @@ void main() {
       expect(amenity.allowMultipleBookings, isTrue);
     },
   );
-  test('managed facility images preserve order and override legacy primary', () {
-    final amenity = AmenityModel.fromMap('a', {
-      ...canonical,
-      'imageUrl': 'https://example.com/legacy.jpg',
-      'images': [
-        {
-          'url': 'https://example.com/first.jpg',
-          'storagePath': 'facility_images/community-a/a/first.jpg',
-          'name': 'first.jpg',
-        },
-        {'url': 'bad'},
-        {
-          'url': 'https://example.com/second.webp',
-          'storagePath': 'facility_images/community-a/a/second.webp',
-          'name': 'second.webp',
-        },
-      ],
-    });
+  test(
+    'managed facility images preserve order and override legacy primary',
+    () {
+      final amenity = AmenityModel.fromMap('a', {
+        ...canonical,
+        'imageUrl': 'https://example.com/legacy.jpg',
+        'images': [
+          {
+            'url': 'https://example.com/first.jpg',
+            'storagePath': 'facility_images/community-a/a/first.jpg',
+            'name': 'first.jpg',
+          },
+          {'url': 'bad'},
+          {
+            'url': 'https://example.com/second.webp',
+            'storagePath': 'facility_images/community-a/a/second.webp',
+            'name': 'second.webp',
+          },
+        ],
+      });
 
-    expect(
-      amenity.images.map((image) => image.url).toList(),
-      [
+      expect(amenity.images.map((image) => image.url).toList(), [
         'https://example.com/first.jpg',
         'https://example.com/second.webp',
-      ],
-    );
-    expect(amenity.primaryImageUrl, 'https://example.com/first.jpg');
-    expect(amenity.imageUrl, 'https://example.com/legacy.jpg');
-    expect(amenity.hasMultipleImages, isTrue);
-    expect(
-      amenity.images.first.storagePath,
-      'facility_images/community-a/a/first.jpg',
-    );
-  });
+      ]);
+      expect(amenity.primaryImageUrl, 'https://example.com/first.jpg');
+      expect(amenity.imageUrl, 'https://example.com/legacy.jpg');
+      expect(amenity.hasMultipleImages, isTrue);
+      expect(
+        amenity.images.first.storagePath,
+        'facility_images/community-a/a/first.jpg',
+      );
+    },
+  );
 
   test('invalid or absent managed images fall back to legacy imageUrl', () {
     final invalidManaged = AmenityModel.fromMap('a', {
@@ -741,11 +893,75 @@ void main() {
             child: AmenityCard(amenity: amenity),
           ),
         ),
+        width: 320,
+        textScale: 1.35,
       );
       expect(find.text('Tower Two'), findsOneWidget);
       expect(find.text('A quiet place to relax'), findsOneWidget);
       expect(find.text('₹125.50/day'), findsOneWidget);
       expect(find.byIcon(Icons.fitness_center), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.getSize(find.byType(FacilityImage)).height,
+        lessThanOrEqualTo(140),
+      );
+    },
+  );
+  testWidgets('no-photo facility uses the approved architectural fallback', (
+    tester,
+  ) async {
+    final amenity = AmenityModel.fromMap('a', {
+      ...canonical,
+      'imageUrl': null,
+      'images': const [],
+    });
+    await pumpView(tester, FacilityImage(amenity: amenity, height: 132));
+
+    expect(
+      find.byKey(const ValueKey('facility-image-fallback')),
+      findsOneWidget,
+    );
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byIcon(Icons.fitness_center), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets(
+    'booking history card stays readable at narrow width and text scale',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(390, 844),
+          builder: (_, _) => MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(1.25)),
+              child: Scaffold(
+                backgroundColor: const Color(0xFFF4F7FB),
+                body: SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: BookingCard(
+                    booking: BookingModel(
+                      amenityId: 'pool',
+                      amenityName: 'Community Swimming Pool',
+                      date: DateTime(2026, 10, 20),
+                      timeSlot: '10:30 AM - 12:00 PM',
+                      status: 'confirmed',
+                      userId: 'resident-test',
+                    ),
+                    onCancel: () {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Community Swimming Pool'), findsOneWidget);
+      expect(find.text('Confirmed'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -772,40 +988,49 @@ void main() {
       );
       expect(find.text('Capacity: 12 people'), findsOneWidget);
       expect(find.textContaining('6:00 AM - 8:00 PM'), findsNothing);
-      expect(find.byType(Image), findsNothing);
+      expect(
+        find.byKey(const ValueKey('facility-image-fallback')),
+        findsOneWidget,
+      );
     },
   );
   testWidgets('multi-image facility renders count and carousel navigation', (
     tester,
   ) async {
-    final amenity = AmenityModel.fromMap('a', {
-      ...canonical,
-      'images': [
-        {
-          'url': 'https://example.com/first.jpg',
-          'storagePath': 'facility_images/community-a/a/first.jpg',
-        },
-        {
-          'url': 'https://example.com/second.jpg',
-          'storagePath': 'facility_images/community-a/a/second.jpg',
-        },
-      ],
+    // Keep image completion deterministic and independent of HTTP/network state.
+    await withFacilityImageHttpClient(() async {
+      final amenity = AmenityModel.fromMap('a', {
+        ...canonical,
+        'images': [
+          {
+            'url': 'https://example.com/first.jpg',
+            'storagePath': 'facility_images/community-a/a/first.jpg',
+          },
+          {
+            'url': 'https://example.com/second.jpg',
+            'storagePath': 'facility_images/community-a/a/second.jpg',
+          },
+        ],
+      });
+
+      await pumpView(tester, FacilityImage(amenity: amenity), settle: false);
+
+      await pumpUntilVisible(tester, find.byType(FacilityImage));
+      expect(amenity.images, hasLength(2));
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.byTooltip('Next facility photo'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Next facility photo'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Previous facility photo'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
-
-    await pumpView(
-      tester,
-      FacilityImage(amenity: amenity),
-      settle: false,
-    );
-
-    expect(find.text('1 / 2'), findsOneWidget);
-    expect(find.byKey(const ValueKey('facility-photo-next')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('facility-photo-next')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('2 / 2'), findsOneWidget);
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('valid image is loaded and network failure falls back to icon', (
@@ -816,42 +1041,42 @@ void main() {
       tester,
       FacilityImage(amenity: AmenityModel.fromMap('a', canonical)),
     );
-    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(Image), findsNWidgets(2));
     await tester.runAsync(
       () async => Future<void>.delayed(const Duration(milliseconds: 30)),
     );
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.fitness_center), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('facility-image-fallback')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
   testWidgets('usable image decodes successfully', (tester) async {
-    debugNetworkImageHttpClientProvider = () => ImageHttpClient();
-    addTearDown(() {
-      debugNetworkImageHttpClientProvider = null;
-      PaintingBinding.instance.imageCache.clear();
+    await withFacilityImageHttpClient(() async {
+      await pumpView(
+        tester,
+        FacilityImage(
+          amenity: AmenityModel.fromMap('a', {
+            ...canonical,
+            'imageUrl': 'https://example.com/success.png',
+          }),
+        ),
+      );
+      await tester.runAsync(
+        () async => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+      final raw = tester.widget<RawImage>(find.byType(RawImage));
+      expect(raw.image, isNotNull);
+      expect(tester.takeException(), isNull);
     });
-    await pumpView(
-      tester,
-      FacilityImage(
-        amenity: AmenityModel.fromMap('a', {
-          ...canonical,
-          'imageUrl': 'https://example.com/success.png',
-        }),
-      ),
-    );
-    await tester.runAsync(
-      () async => Future<void>.delayed(const Duration(milliseconds: 50)),
-    );
-    await tester.pumpAndSettle();
-    final raw = tester.widget<RawImage>(find.byType(RawImage));
-    debugNetworkImageHttpClientProvider = null;
-    expect(raw.image, isNotNull);
-    expect(tester.takeException(), isNull);
   });
   testWidgets(
     'modal rejects stale/unavailable details and never invokes booking writes',
     (tester) async {
-      final controller = StreamController<AmenityModel?>.broadcast();
+      final controller = StreamController<AmenityModel?>.broadcast(sync: true);
       final modalService = ModalService(controller.stream);
       final adapter = Amenity(
         id: 'a',
@@ -875,8 +1100,12 @@ void main() {
         ),
         settle: false,
       );
+      await pumpUntilVisible(tester, find.byType(BookingModal));
       controller.add(null);
-      await tester.pumpAndSettle();
+      await pumpUntilVisible(
+        tester,
+        find.text('This facility is unavailable or no longer exists.'),
+      );
       expect(
         find.text('This facility is unavailable or no longer exists.'),
         findsOneWidget,
@@ -889,15 +1118,22 @@ void main() {
           ...canonical,
           'imageUrl': null,
           'isFree': true,
+          'pricingMode': 'free',
+          'pricePerDay': 0,
         }),
       );
-      await tester.pumpAndSettle();
+      // The English locale intentionally renders the translated label as
+      // "FREE" (uppercase) in assets/translations/en.json.
+      await pumpUntilVisible(tester, find.text('Price: FREE'));
       expect(tester.takeException(), isNull);
-      expect(find.text('Price: Free'), findsOneWidget);
+      expect(find.text('Price: FREE'), findsOneWidget);
       expect(find.text('Building: Tower Two'), findsOneWidget);
       expect(find.textContaining('6:00 AM - 8:00 PM'), findsNothing);
       controller.add(null);
-      await tester.pumpAndSettle();
+      await pumpUntilVisible(
+        tester,
+        find.text('This facility is unavailable or no longer exists.'),
+      );
       expect(
         find.text('This facility is unavailable or no longer exists.'),
         findsOneWidget,
@@ -909,6 +1145,147 @@ void main() {
       await tester.pump();
     },
   );
+
+  test('configured time slots are not represented as live availability', () {
+    final amenity = AmenityModel.fromMap('a', canonical);
+    expect(amenity.timeSlotsDisplay, '2 configured time slots');
+    expect(amenity.timeSlotsDisplay, isNot(contains('available')));
+  });
+
+  testWidgets('unverified slot availability fails closed for booking', (
+    tester,
+  ) async {
+    final controller = StreamController<AmenityModel?>.broadcast(sync: true);
+    final modalService = ModalService(controller.stream);
+    final adapter = Amenity(
+      id: 'a',
+      name: 'Wellness Room',
+      price: '₹125.50/day',
+      isAvailable: true,
+      iconName: 'pool',
+      backgroundColor: '#fff',
+      iconColor: '#000',
+    );
+    await pumpView(
+      tester,
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(390, 1600),
+          textScaler: TextScaler.linear(0.8),
+        ),
+        child: BookingModal(amenity: adapter, bookingService: modalService),
+      ),
+      settle: false,
+      height: 1600,
+    );
+    await pumpUntilVisible(tester, find.byType(BookingModal));
+    controller.add(AmenityModel.fromMap('a', canonical));
+    await pumpUntilVisible(
+      tester,
+      find.textContaining('availability could not be verified'),
+    );
+
+    expect(
+      find.textContaining('availability could not be verified'),
+      findsOneWidget,
+    );
+    final confirm = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, 'Confirm Booking'),
+    );
+    expect(confirm.onPressed, isNull);
+    expect(modalService.writes, 0);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    await controller.close();
+  });
+
+  testWidgets('verified slot availability enables selection and confirmation', (
+    tester,
+  ) async {
+    final controller = StreamController<AmenityModel?>.broadcast(sync: true);
+    final amenity = AmenityModel.fromMap('a', canonical);
+    final modalService = ModalService(
+      controller.stream,
+      slotResults: {
+        for (final slot in amenity.timeSlots)
+          slot: {'available': true, 'availabilityVerified': true},
+      },
+    );
+    final adapter = Amenity(
+      id: 'a',
+      name: 'Wellness Room',
+      price: '₹125.50/day',
+      isAvailable: true,
+      iconName: 'pool',
+      backgroundColor: '#fff',
+      iconColor: '#000',
+    );
+    await pumpView(
+      tester,
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(390, 1600),
+          textScaler: TextScaler.linear(0.8),
+        ),
+        child: BookingModal(amenity: adapter, bookingService: modalService),
+      ),
+      settle: false,
+      height: 1600,
+    );
+    await pumpUntilVisible(tester, find.byType(BookingModal));
+    controller.add(amenity);
+    await pumpUntilVisible(tester, find.text(amenity.timeSlots.first));
+
+    await tester.tap(find.text(amenity.timeSlots.first).last);
+    await tester.pump(const Duration(milliseconds: 250));
+    final confirm = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, 'Confirm Booking'),
+    );
+    expect(confirm.onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    await controller.close();
+  });
+
+  for (final width in [320.0, 390.0]) {
+    testWidgets('Facilities layout is compact at ${width.toInt()}px in RTL', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final facility = AmenityModel.fromMap('a', canonical);
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(390, 844),
+          builder: (_, _) => MaterialApp(
+            home: Directionality(
+              textDirection: TextDirection.rtl,
+              child: MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 844),
+                  textScaler: const TextScaler.linear(1.4),
+                ),
+                child: AmenitiesBookingScreen(
+                  bookingService: ModalService(Stream.value(facility)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final appBarBottom = tester.getBottomLeft(find.byType(AppBar)).dy;
+      final sectionTop = tester.getTopLeft(find.text('Available Amenities')).dy;
+      expect(sectionTop - appBarBottom, lessThan(32));
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
 
 class ImageHttpClient implements HttpClient {

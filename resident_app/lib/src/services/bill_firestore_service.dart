@@ -82,11 +82,6 @@ class BillFirestoreService {
       return;
     }
 
-    print('💳 Streaming payments for bill: $billId');
-    print('   communityId: ${scope.communityId}');
-    print('   flatId: ${scope.flatId}');
-    print('   userId: ${user.uid}');
-
     yield* firestore
         .collection(paymentsCollection)
         .where('communityId', isEqualTo: scope.communityId)
@@ -96,7 +91,6 @@ class BillFirestoreService {
         .snapshots()
         .map((snapshot) {
           if (snapshot.docs.isEmpty) {
-            print('💳 No payment submissions found');
             return null;
           }
 
@@ -116,11 +110,6 @@ class BillFirestoreService {
 
           final data = Map<String, dynamic>.from(docs.first.data());
           data['id'] = docs.first.id;
-
-          print(
-            '💳 Latest payment: ${docs.first.id}, '
-            'status=${data['status']}',
-          );
 
           return data;
         });
@@ -170,7 +159,6 @@ class BillFirestoreService {
       final userData = await userDataService.getCurrentUserData();
 
       if (userData == null) {
-        print('❌ BillService: User data not found');
         return null;
       }
 
@@ -181,14 +169,11 @@ class BillFirestoreService {
           flatId.isEmpty ||
           communityId == null ||
           communityId.isEmpty) {
-        print('⚠️ BillService: Community or flat not assigned to user');
         return null;
       }
 
-      print('✅ BillService: Found flatId: $flatId');
       return (communityId: communityId, flatId: flatId);
-    } catch (e) {
-      print('❌ BillService: Error fetching flatId: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -407,11 +392,7 @@ class BillFirestoreService {
         allocationEvents: allocationEvents,
         transactions: transactions,
       );
-    } catch (error) {
-      print(
-        '⚠️ Unable to load V2 settlement display metadata '
-        'for bill $billId: $error',
-      );
+    } catch (_) {
       return bill;
     }
   }
@@ -422,12 +403,8 @@ class BillFirestoreService {
       final scope = await _getResidentScope();
 
       if (scope == null) {
-        print('❌ BillService: Cannot fetch bills - No flatId');
         return [];
       }
-
-      print('📋 BillService: Fetching bills by flatId');
-      print('   flatId: ${scope.flatId}');
 
       // Use Firestore .where() for server-side filtering by flatId
       final snapshot = await firestore
@@ -435,8 +412,6 @@ class BillFirestoreService {
           .where('communityId', isEqualTo: scope.communityId)
           .where('flatId', isEqualTo: scope.flatId)
           .get();
-
-      print('   ✓ Applied communityId and flatId tenant filters');
 
       final bills = snapshot.docs.map((doc) {
         return normalizeBillDocument(doc.data(), doc.id);
@@ -449,11 +424,8 @@ class BillFirestoreService {
         return bDate.compareTo(aDate);
       });
 
-      print('✅ BillService: Fetched ${bills.length} bills by flatId');
       return bills;
-    } catch (e, stackTrace) {
-      print('❌ BillService: Error fetching bills: $e');
-      print('   Stack trace: $stackTrace');
+    } catch (_) {
       return [];
     }
   }
@@ -465,19 +437,14 @@ class BillFirestoreService {
     try {
       // Return cached bill if valid and not forcing refresh
       if (!forceRefresh && _isCacheValid && _cachedCurrentBill != null) {
-        print('⚡ BillService: Returning cached current bill');
         return _cachedCurrentBill;
       }
 
       final scope = await _getResidentScope();
 
       if (scope == null) {
-        print('❌ BillService: Cannot fetch current bill - No flatId');
         return null;
       }
-
-      print('📋 BillService: Fetching pending bill by flatId');
-      print('   flatId: ${scope.flatId}');
 
       // Use Firestore .where() for server-side filtering by flatId
       final snapshot = await firestore
@@ -487,10 +454,7 @@ class BillFirestoreService {
           .where('flatId', isEqualTo: scope.flatId)
           .get();
 
-      print('   ✓ Applied communityId and flatId tenant filters');
-
       if (snapshot.docs.isEmpty) {
-        print('ℹ️ BillService: No pending bills found');
         _cachedCurrentBill = null;
         _lastFetchTime = DateTime.now();
         return null;
@@ -515,13 +479,8 @@ class BillFirestoreService {
       _cachedCurrentBill = data;
       _lastFetchTime = DateTime.now();
 
-      print('✅ BillService: Found current bill (cached)');
-      print('   Amount: ${data['amount']}');
-      print('   Month: ${data['month']}');
       return data;
-    } catch (e, stackTrace) {
-      print('❌ BillService: Error fetching current bill: $e');
-      print('   Stack trace: $stackTrace');
+    } catch (_) {
       return null;
     }
   }
@@ -533,19 +492,14 @@ class BillFirestoreService {
     try {
       // Return cached history if valid and not forcing refresh
       if (!forceRefresh && _isCacheValid && _cachedPaymentHistory != null) {
-        print('⚡ BillService: Returning cached payment history');
         return _cachedPaymentHistory!;
       }
 
       final scope = await _getResidentScope();
 
       if (scope == null) {
-        print('❌ Cannot fetch payment history: No flatId');
         return [];
       }
-
-      print('📋 Fetching payment history by flatId');
-      print('   flatId: ${scope.flatId}');
 
       // Use Firestore .where() for server-side filtering by flatId
       final snapshot = await firestore
@@ -554,8 +508,6 @@ class BillFirestoreService {
           .where('status', isEqualTo: 'paid')
           .where('flatId', isEqualTo: scope.flatId)
           .get();
-
-      print('   ✓ Applied communityId and flatId tenant filters');
 
       final payments = snapshot.docs.map((doc) {
         return normalizeBillDocument(doc.data(), doc.id);
@@ -579,12 +531,8 @@ class BillFirestoreService {
       _cachedPaymentHistory = limitedPayments;
       _lastFetchTime = DateTime.now();
 
-      print(
-        '✅ Fetched ${limitedPayments.length} payment history records by flatId',
-      );
       return limitedPayments;
-    } catch (e) {
-      print('❌ Error fetching payment history: $e');
+    } catch (_) {
       return [];
     }
   }
@@ -599,14 +547,9 @@ class BillFirestoreService {
     final scope = await _getResidentScope();
 
     if (scope == null) {
-      print('❌ Cannot stream bills: No flatId');
       yield [];
       return;
     }
-
-    print('📡 Streaming bills by flatId');
-    print('   flatId: ${scope.flatId}');
-    print('   ✓ Applied communityId and flatId tenant filters');
 
     // Use Firestore .where() for server-side filtering by flatId
     yield* firestore
@@ -632,7 +575,6 @@ class BillFirestoreService {
             return bDate.compareTo(aDate);
           });
 
-          print('📡 Streamed ${bills.length} bills by flatId');
           return bills;
         });
   }

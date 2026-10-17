@@ -8,6 +8,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../services/user_data_service.dart';
 import '../widgets/skeleton_loader.dart';
+import '../widgets/resident_visitor_page_background.dart';
 
 // ============================================================================
 // MY BOOKINGS SCREEN
@@ -134,109 +135,119 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
       appBar: AppBar(
         title: Text('my_bookings'.tr()),
-        backgroundColor: const Color(0xFF0E4778),
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: const Color(0xFF172B4D),
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: TextStyle(
+          color: const Color(0xFF172B4D),
+          fontSize: 20.sp,
+          fontWeight: FontWeight.w700,
+        ),
       ),
-      body: _userId == null
-          ? const Center(child: Text('Unable to load bookings'))
-          : Column(
-              children: [
-                // Tab selector
-                Container(
-                  padding: EdgeInsets.all(16.w),
-                  child: Row(
-                    children: [
-                      _buildTabButton('upcoming'.tr(), 'upcoming'),
-                      SizedBox(width: 8.w),
-                      _buildTabButton('completed'.tr(), 'completed'),
-                      SizedBox(width: 8.w),
-                      _buildTabButton('cancelled'.tr(), 'cancelled'),
-                    ],
+      body: ResidentVisitorPageBackground(
+        child: _userId == null
+            ? const Center(child: Text('Unable to load bookings'))
+            : Column(
+                children: [
+                  // Tab selector
+                  Container(
+                    padding: EdgeInsets.all(16.w),
+                    child: Row(
+                      children: [
+                        _buildTabButton('upcoming'.tr(), 'upcoming'),
+                        SizedBox(width: 8.w),
+                        _buildTabButton('completed'.tr(), 'completed'),
+                        SizedBox(width: 8.w),
+                        _buildTabButton('cancelled'.tr(), 'cancelled'),
+                      ],
+                    ),
                   ),
-                ),
-                // Bookings list
-                Expanded(
-                  child: StreamBuilder<List<Map<String, dynamic>>>(
-                    stream: _bookingsStream,
-                    builder: (context, snapshot) {
-                      // Loading state
-                      if (snapshot.connectionState == ConnectionState.waiting) {
+                  // Bookings list
+                  Expanded(
+                    child: StreamBuilder<List<Map<String, dynamic>>>(
+                      stream: _bookingsStream,
+                      builder: (context, snapshot) {
+                        // Loading state
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return ListView.builder(
+                            padding: EdgeInsets.all(16.w),
+                            itemCount: 3,
+                            itemBuilder: (context, index) => Padding(
+                              padding: EdgeInsets.only(bottom: 12.h),
+                              child: SkeletonLoader(
+                                width: double.infinity,
+                                height: 140,
+                                borderRadius: BorderRadius.circular(12.0.r),
+                              ),
+                            ),
+                          );
+                        }
+
+                        // Error state
+                        if (snapshot.hasError) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.error_outline,
+                                  size: 48.w,
+                                  color: Colors.red,
+                                ),
+                                SizedBox(height: 16.h),
+                                Text('Error: ${snapshot.error}'),
+                              ],
+                            ),
+                          );
+                        }
+
+                        final allBookings = snapshot.data ?? [];
+                        final filteredBookings = _filterBookings(allBookings);
+
+                        // Empty state
+                        if (filteredBookings.isEmpty) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.bookmark_outline,
+                                  size: 64.w,
+                                  color: Colors.grey[300],
+                                ),
+                                SizedBox(height: 16.h),
+                                Text(
+                                  'No $_selectedTab bookings',
+                                  style: TextStyle(
+                                    fontSize: 16.sp,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        // Bookings list
                         return ListView.builder(
                           padding: EdgeInsets.all(16.w),
-                          itemCount: 3,
-                          itemBuilder: (context, index) => Padding(
-                            padding: EdgeInsets.only(bottom: 12.h),
-                            child: SkeletonLoader(
-                              width: double.infinity,
-                              height: 140,
-                              borderRadius: BorderRadius.circular(12.0.r),
-                            ),
-                          ),
+                          itemCount: filteredBookings.length,
+                          itemBuilder: (context, index) {
+                            final booking = filteredBookings[index];
+                            return _buildBookingCard(context, booking);
+                          },
                         );
-                      }
-
-                      // Error state
-                      if (snapshot.hasError) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.error_outline,
-                                size: 48.w,
-                                color: Colors.red,
-                              ),
-                              SizedBox(height: 16.h),
-                              Text('Error: ${snapshot.error}'),
-                            ],
-                          ),
-                        );
-                      }
-
-                      final allBookings = snapshot.data ?? [];
-                      final filteredBookings = _filterBookings(allBookings);
-
-                      // Empty state
-                      if (filteredBookings.isEmpty) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.bookmark_outline,
-                                size: 64.w,
-                                color: Colors.grey[300],
-                              ),
-                              SizedBox(height: 16.h),
-                              Text(
-                                'No $_selectedTab bookings',
-                                style: TextStyle(
-                                  fontSize: 16.sp,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      // Bookings list
-                      return ListView.builder(
-                        padding: EdgeInsets.all(16.w),
-                        itemCount: filteredBookings.length,
-                        itemBuilder: (context, index) {
-                          final booking = filteredBookings[index];
-                          return _buildBookingCard(context, booking);
-                        },
-                      );
-                    },
+                      },
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -249,16 +260,30 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         child: Container(
           padding: EdgeInsets.symmetric(vertical: 8.h),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF0E4778) : Colors.grey[200],
-            borderRadius: BorderRadius.circular(8.r),
+            color: isSelected
+                ? const Color(0xFF172B4D)
+                : Colors.white.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(18.r),
+            border: Border.all(
+              color: isSelected ? Colors.transparent : const Color(0xFFDCE5EF),
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF172B4D).withValues(alpha: 0.12),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
           ),
           child: Text(
             label,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 12.sp,
+              fontSize: 13.sp,
               fontWeight: FontWeight.w600,
-              color: isSelected ? Colors.white : Colors.grey[700],
+              color: isSelected ? Colors.white : const Color(0xFF52627A),
             ),
           ),
         ),
@@ -273,7 +298,12 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
 
     return Card(
       margin: EdgeInsets.only(bottom: 12.h),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
+      elevation: 0,
+      color: Colors.white.withValues(alpha: 0.92),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20.r),
+        side: const BorderSide(color: Color(0xFFE2EAF3)),
+      ),
       child: InkWell(
         onTap: () => _showBookingDetails(context, booking),
         borderRadius: BorderRadius.circular(12.r),
@@ -307,14 +337,15 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                           booking['amenityName'] ?? 'Amenity',
                           style: TextStyle(
                             fontSize: 16.sp,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF172B4D),
                           ),
                         ),
                         Text(
                           '${booking['numberOfPeople']} people',
                           style: TextStyle(
                             fontSize: 13.sp,
-                            color: Colors.grey[600],
+                            color: const Color(0xFF64748B),
                           ),
                         ),
                       ],

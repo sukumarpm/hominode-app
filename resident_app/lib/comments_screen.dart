@@ -6,11 +6,12 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'src/models/post.dart';
 import 'src/services/post_firestore_service.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
-const kPrimaryBlue = Color(0xFF0E4778);
-const kBlackText = Color(0xFF111111);
-const kGrayText = Color(0xFF8C8C8C);
-const kDivider = Color(0xFFE6E6E6);
+const kPrimaryBlue = Color(0xFF172B4D);
+const kBlackText = Color(0xFF172B4D);
+const kGrayText = Color(0xFF52627A);
+const kDivider = Color(0xFFE2EAF3);
 
 class CommentsScreen extends StatefulWidget {
   final Post post;
@@ -93,63 +94,76 @@ class _CommentsScreenState extends State<CommentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: const Color(0xFFF4F7FB),
       appBar: AppBar(
-        backgroundColor: kPrimaryBlue,
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: kPrimaryBlue,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios, color: Colors.white, size: 20.w),
+          icon: Icon(Icons.arrow_back_ios, color: kPrimaryBlue, size: 20.w),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           'Comments',
           style: TextStyle(
-            color: Colors.white,
+            color: kPrimaryBlue,
             fontSize: 18.sp,
             fontWeight: FontWeight.w600,
           ),
         ),
       ),
-      body: Column(
-        children: [
-          // Post preview
-          _buildPostPreview(),
+      body: ResidentVisitorPageBackground(
+        child: Column(
+          children: [
+            // Post preview
+            _buildPostPreview(),
 
-          // Comments list
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _comments.isEmpty
-                ? Center(
-                    child: Text(
-                      'No comments yet.\nBe the first to comment!',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 16.sp, color: kGrayText),
+            // Comments list
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _comments.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No comments yet.\nBe the first to comment!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 16.sp, color: kGrayText),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: EdgeInsets.symmetric(vertical: 8.h),
+                      itemCount: _comments.length,
+                      itemBuilder: (context, index) {
+                        final comment = _comments[index];
+                        return _buildCommentItem(comment);
+                      },
                     ),
-                  )
-                : ListView.builder(
-                    padding: EdgeInsets.symmetric(vertical: 8.h),
-                    itemCount: _comments.length,
-                    itemBuilder: (context, index) {
-                      final comment = _comments[index];
-                      return _buildCommentItem(comment);
-                    },
-                  ),
-          ),
+            ),
 
-          // Comment input
-          _buildCommentInput(),
-        ],
+            // Comment input
+            _buildCommentInput(),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildPostPreview() {
     return Container(
+      margin: EdgeInsets.fromLTRB(12.w, 8.h, 12.w, 6.h),
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: kDivider, width: 1)),
+        color: Colors.white.withValues(alpha: .96),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: kDivider),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF172B4D).withValues(alpha: .04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,8 +198,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
                 SizedBox(height: 4.h),
                 Text(
                   widget.post.content,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
                   style: TextStyle(fontSize: 14.sp, color: kGrayText),
                 ),
               ],
@@ -220,7 +233,13 @@ class _CommentsScreenState extends State<CommentsScreen> {
     }
 
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+      margin: EdgeInsets.symmetric(horizontal: 12.w, vertical: 5.h),
+      padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .94),
+        borderRadius: BorderRadius.circular(16.r),
+        border: Border.all(color: kDivider),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -249,7 +268,10 @@ class _CommentsScreenState extends State<CommentsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  spacing: 8.w,
+                  runSpacing: 3.h,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       authorName,
@@ -259,7 +281,6 @@ class _CommentsScreenState extends State<CommentsScreen> {
                         color: kBlackText,
                       ),
                     ),
-                    SizedBox(width: 8.w),
                     Text(
                       timeAgo,
                       style: TextStyle(fontSize: 12.sp, color: kGrayText),
@@ -285,10 +306,19 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   Widget _buildCommentInput() {
     return Container(
-      padding: EdgeInsets.all(16.w),
+      margin: EdgeInsets.fromLTRB(12.w, 6.h, 12.w, 10.h),
+      padding: EdgeInsets.all(12.w),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: kDivider, width: 1)),
+        color: Colors.white.withValues(alpha: .97),
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(color: kDivider),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF172B4D).withValues(alpha: .05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: SafeArea(
         child: Row(

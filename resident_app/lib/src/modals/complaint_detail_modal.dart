@@ -14,17 +14,17 @@ import 'dart:convert';
 // ============================================================================
 // COLOR TOKENS
 // ============================================================================
-const kPrimary = Color(0xFF0E4778);
-const kModalBackground = Color(0xFFFFFFFF);
+const kPrimary = Color(0xFF172B4D);
+const kModalBackground = Color(0xFFFCFDFE);
 const kOverlayDim = Color(0x5C000000); // rgba(0,0,0,0.36)
 const kStatusInProgressBg = Color(0xFFFFF3E6);
 const kStatusInProgressText = Color(0xFFFF7A00);
 const kTimelineDone = Color(0xFF1DB954);
 const kTimelineInProgress = Color(0xFFFF7A00);
 const kTimelinePending = Color(0xFFC4C4C4);
-const kTextTitle = Color(0xFF111111);
-const kTextMuted = Color(0xFF7A7A7A);
-const kCardBorder = Color(0xFFE6E6E6);
+const kTextTitle = Color(0xFF172B4D);
+const kTextMuted = Color(0xFF52627A);
+const kCardBorder = Color(0xFFDCE5EF);
 
 // ============================================================================
 // TIMELINE STATUS ENUM

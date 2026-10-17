@@ -19,14 +19,14 @@ class VehicleCard extends StatelessWidget {
     return Container(
       margin: EdgeInsets.only(bottom: 12.h),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: const Color(0xFFE2EAF3)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: const Color(0xFF172B4D).withValues(alpha: 0.05),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -34,7 +34,7 @@ class VehicleCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16.r),
+          borderRadius: BorderRadius.circular(20.r),
           child: Padding(
             padding: EdgeInsets.all(16.w),
             child: Row(
@@ -49,7 +49,7 @@ class VehicleCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.directions_car,
-                    color: Color(0xFF0E4778),
+                    color: const Color(0xFF172B4D),
                     size: 24.w,
                   ),
                 ),
@@ -64,7 +64,7 @@ class VehicleCard extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 17.sp,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF1F2937),
+                          color: const Color(0xFF172B4D),
                           height: 1.3,
                         ),
                       ),
@@ -73,7 +73,7 @@ class VehicleCard extends StatelessWidget {
                         '${vehicle.type} • ${vehicle.plateNumber}',
                         style: TextStyle(
                           fontSize: 14.sp,
-                          color: Color(0xFF6B7280),
+                          color: const Color(0xFF52627A),
                           height: 1.3,
                         ),
                       ),

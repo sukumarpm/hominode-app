@@ -25,6 +25,23 @@ enum ResidentDirectUpiFailure {
   receiptInvalid,
   proofPreparationFailed,
   proofUploadFailed,
+  invalidPaymentAmount,
+}
+
+/// Keep flexible proof claims disabled until the compatible backend and both
+/// Admin review clients are deployed.
+const bool flexibleResidentV2PaymentAmountsEnabled = false;
+
+int? parseResidentInrMinorUnits(String input) {
+  final value = input.trim();
+  final match = RegExp(r'^(?:0|[1-9]\d*)(?:\.(\d{1,2}))?$').firstMatch(value);
+  if (match == null) return null;
+  final whole = int.tryParse(value.split('.').first);
+  final paiseText = match.group(1) ?? '';
+  final paise = int.tryParse(paiseText.padRight(2, '0')) ?? 0;
+  if (whole == null || whole > 90071992547409) return null;
+  final minor = whole * 100 + paise;
+  return minor > 0 && minor <= 9007199254740991 ? minor : null;
 }
 
 class ResidentDirectUpiException implements Exception {
@@ -35,7 +52,7 @@ class ResidentDirectUpiException implements Exception {
   String get message => switch (failure) {
     ResidentDirectUpiFailure.unauthenticated => 'Please sign in again.',
     ResidentDirectUpiFailure.scopeUnavailable =>
-      'Resident payment scope is unavailable.',
+      'Your payment details are unavailable.',
     ResidentDirectUpiFailure.billUnavailable => 'This bill is unavailable.',
     ResidentDirectUpiFailure.billOwnershipMismatch =>
       'This bill does not belong to this account.',
@@ -53,13 +70,15 @@ class ResidentDirectUpiException implements Exception {
     ResidentDirectUpiFailure.billRevisionChanged =>
       'This bill has changed. Refresh it before submitting payment proof.',
     ResidentDirectUpiFailure.v2ProofSubmissionRequired =>
-      'This bill requires the V2 payment proof flow.',
+      'Please reopen this bill from Billing to submit payment proof.',
     ResidentDirectUpiFailure.receiptInvalid =>
       'Choose a supported receipt image smaller than 10 MB.',
     ResidentDirectUpiFailure.proofPreparationFailed =>
       'Payment proof preparation could not be confirmed. Retry the same attempt.',
     ResidentDirectUpiFailure.proofUploadFailed =>
       'Receipt upload could not be confirmed. Retry this attempt. Your payment has not been verified.',
+    ResidentDirectUpiFailure.invalidPaymentAmount =>
+      'Enter a valid INR amount with up to two decimal places.',
     ResidentDirectUpiFailure.paymentProofStatusUnavailable =>
       'Payment proof status could not be checked. Please try again.',
   };
@@ -158,6 +177,8 @@ class DirectUpiPaymentPreparation {
     this.schemaVersion,
     this.residentId,
     this.amountMinor,
+    this.paymentAmountMinor,
+    this.amountContractVersion,
     this.outstandingAmountMinor,
     this.currentRevisionId,
   });
@@ -171,6 +192,8 @@ class DirectUpiPaymentPreparation {
   final int? schemaVersion;
   final String? residentId;
   final int? amountMinor;
+  final int? paymentAmountMinor;
+  final int? amountContractVersion;
   final int? outstandingAmountMinor;
   final String? currentRevisionId;
   bool get isV2 => schemaVersion == 2;
@@ -216,7 +239,11 @@ class ResidentDirectUpiService {
   final FirebaseFunctions? _functions;
   final FirebaseStorage? _storage;
 
-  Future<DirectUpiPaymentPreparation> preparePayment(String billId) async {
+  Future<DirectUpiPaymentPreparation> preparePayment(
+    String billId, {
+    int? submittedAmountMinor,
+    bool allowFlexibleAmounts = flexibleResidentV2PaymentAmountsEnabled,
+  }) async {
     final id = billId.trim();
     if (id.isEmpty || id != billId || id.contains('/')) {
       throw const ResidentDirectUpiException(
@@ -259,13 +286,24 @@ class ResidentDirectUpiService {
 
     final isV2 = bill['schemaVersion'] == 2;
     final outstanding = isV2 ? bill['outstandingAmountMinor'] as int : null;
+    final paymentAmountMinor = isV2
+        ? (submittedAmountMinor ?? outstanding!)
+        : null;
+    if (isV2 &&
+        (!_safeMinor(paymentAmountMinor) ||
+            paymentAmountMinor == 0 ||
+            (!allowFlexibleAmounts && paymentAmountMinor != outstanding))) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.invalidPaymentAmount,
+      );
+    }
     // The decimal double is compatibility display data only. URI/payload money
     // is derived from integer paise, without floating-point rounding.
     final amount = isV2
-        ? outstanding! / 100
+        ? paymentAmountMinor! / 100
         : (bill['amount'] as num).toDouble();
     final amountText = isV2
-        ? _inrText(outstanding!)
+        ? _inrText(paymentAmountMinor!)
         : amount.toStringAsFixed(2);
     final vpa = config.directUpi.vpa!;
     final payeeName = config.directUpi.payeeName!;
@@ -290,6 +328,8 @@ class ResidentDirectUpiService {
       schemaVersion: isV2 ? 2 : null,
       residentId: isV2 ? scope.uid : null,
       amountMinor: isV2 ? bill['amountMinor'] as int : null,
+      paymentAmountMinor: paymentAmountMinor,
+      amountContractVersion: isV2 && allowFlexibleAmounts ? 2 : null,
       outstandingAmountMinor: outstanding,
       currentRevisionId: isV2 ? bill['currentRevisionId'] as String : null,
     );
@@ -409,6 +449,8 @@ class ResidentDirectUpiService {
     if (!preparation.isV2 ||
         !_safeMinor(preparation.outstandingAmountMinor) ||
         preparation.outstandingAmountMinor == 0 ||
+        !_safeMinor(preparation.paymentAmountMinor) ||
+        preparation.paymentAmountMinor == 0 ||
         !_validId(preparation.currentRevisionId) ||
         !_validId(preparation.residentId) ||
         !_validId(preparation.communityId) ||
@@ -464,15 +506,31 @@ class ResidentDirectUpiService {
       // Refresh terms, pending proofs and community UPI settings immediately
       // before reserving. Once requested, retain the original submitted intent
       // on retry: the backend may already have created its pending proof.
-      final fresh = await preparePayment(preparation.billId);
-      if (!fresh.isV2 ||
-          fresh.residentId != preparation.residentId ||
-          fresh.communityId != preparation.communityId ||
-          fresh.currentRevisionId != preparation.currentRevisionId ||
-          fresh.outstandingAmountMinor != preparation.outstandingAmountMinor ||
-          fresh.amountMinor != preparation.amountMinor ||
-          fresh.vpa != preparation.vpa ||
-          fresh.payeeName != preparation.payeeName) {
+      late final DirectUpiPaymentPreparation refreshed;
+      try {
+        refreshed = await preparePayment(
+          preparation.billId,
+          submittedAmountMinor: preparation.paymentAmountMinor,
+          allowFlexibleAmounts: preparation.amountContractVersion == 2,
+        );
+      } on ResidentDirectUpiException catch (error) {
+        if (error.failure == ResidentDirectUpiFailure.invalidPaymentAmount) {
+          throw const ResidentDirectUpiException(
+            ResidentDirectUpiFailure.billRevisionChanged,
+          );
+        }
+        rethrow;
+      }
+      if (!refreshed.isV2 ||
+          refreshed.residentId != preparation.residentId ||
+          refreshed.communityId != preparation.communityId ||
+          refreshed.currentRevisionId != preparation.currentRevisionId ||
+          refreshed.outstandingAmountMinor !=
+              preparation.outstandingAmountMinor ||
+          refreshed.paymentAmountMinor != preparation.paymentAmountMinor ||
+          refreshed.amountMinor != preparation.amountMinor ||
+          refreshed.vpa != preparation.vpa ||
+          refreshed.payeeName != preparation.payeeName) {
         throw const ResidentDirectUpiException(
           ResidentDirectUpiFailure.billRevisionChanged,
         );
@@ -480,7 +538,8 @@ class ResidentDirectUpiService {
     }
     final payload = <String, dynamic>{
       'billId': preparation.billId,
-      'submittedAmountMinor': preparation.outstandingAmountMinor,
+      'submittedAmountMinor': preparation.paymentAmountMinor,
+      if (preparation.amountContractVersion == 2) 'amountContractVersion': 2,
       'submittedBillRevisionId': preparation.currentRevisionId,
       'idempotencyKey': attempt.idempotencyKey,
       'receiptExtension': attempt.receiptExtension,

@@ -5,11 +5,80 @@ import 'package:hominode_notifications/hominode_notifications.dart';
 import 'package:hominode_sos/hominode_sos.dart';
 
 import '../screens/notifications_screen.dart';
+import '../../resident_billing_statement_screen.dart';
 
 final residentNotificationNavigatorKey = GlobalKey<NavigatorState>();
 
+enum ResidentNotificationDestination { billing, sos, notifications }
+
+class ResidentNotificationTapGuard {
+  final Set<String> _inFlight = <String>{};
+  final Set<String> _handled = <String>{};
+
+  bool begin(String key) => !_handled.contains(key) && _inFlight.add(key);
+
+  void complete(String key) {
+    _inFlight.remove(key);
+    _handled.add(key);
+    if (_handled.length > 100) _handled.remove(_handled.first);
+  }
+
+  void release(String key) => _inFlight.remove(key);
+}
+
 class ResidentNotificationRouter {
   const ResidentNotificationRouter._();
+
+  static final ResidentNotificationTapGuard _tapGuard =
+      ResidentNotificationTapGuard();
+  static const Set<String> _billingEventTypes = {
+    'payment_proof_submitted',
+    'payment_proof_verified',
+    'payment_proof_rejected',
+    'offline_payment_settled',
+  };
+
+  @visibleForTesting
+  static bool isAuthorizedNotification({
+    required String uid,
+    required String payloadCommunityId,
+    required Map<String, dynamic>? profile,
+    required Map<String, dynamic>? notification,
+  }) {
+    final canonicalCommunityId = profile?['communityId'];
+    return profile != null &&
+        profile['uid'] == uid &&
+        profile['role'] == 'resident' &&
+        profile['approvalStatus'] == 'approved' &&
+        profile['isActive'] == true &&
+        (profile['status'] == null || profile['status'] == 'active') &&
+        canonicalCommunityId == payloadCommunityId &&
+        notification != null &&
+        notification['recipientId'] == uid &&
+        notification['communityId'] == canonicalCommunityId &&
+        notification['audience'] == 'resident' &&
+        notification['role'] == 'resident' &&
+        notification['appId'] == 'resident';
+  }
+
+  @visibleForTesting
+  static ResidentNotificationDestination destinationForNotification(
+    Map<String, dynamic> notification, {
+    bool isSos = false,
+  }) {
+    final data = notification['data'];
+    final eventType = notification['eventType'];
+    if (notification['type'] == 'payment' &&
+        eventType is String &&
+        _billingEventTypes.contains(eventType) &&
+        data is Map &&
+        data['route'] == 'billing') {
+      return ResidentNotificationDestination.billing;
+    }
+    return isSos
+        ? ResidentNotificationDestination.sos
+        : ResidentNotificationDestination.notifications;
+  }
 
   static Future<NavigatorState?> _waitForNavigator() async {
     for (var attempt = 0; attempt < 20; attempt++) {
@@ -26,56 +95,71 @@ class ResidentNotificationRouter {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final firestore = FirebaseFirestore.instance;
-    final results = await Future.wait([
-      firestore
-          .collection('users')
-          .doc(user.uid)
-          .get(const GetOptions(source: Source.server)),
-      firestore
-          .collection('notifications')
-          .doc(payload.entityId)
-          .get(const GetOptions(source: Source.server)),
-    ]);
-    final profile = results[0].data();
-    final notification = results[1].data();
-    final canonicalCommunityId = profile?['communityId'];
+    final tapKey = payload.dedupeKey;
+    if (!_tapGuard.begin(tapKey)) return;
 
-    final authorized =
-        profile != null &&
-        profile['uid'] == user.uid &&
-        profile['role'] == 'resident' &&
-        profile['approvalStatus'] == 'approved' &&
-        profile['isActive'] == true &&
-        (profile['status'] == null || profile['status'] == 'active') &&
-        canonicalCommunityId == payload.communityId &&
-        notification != null &&
-        notification['recipientId'] == user.uid &&
-        notification['communityId'] == canonicalCommunityId &&
-        notification['audience'] == 'resident' &&
-        notification['role'] == 'resident' &&
-        notification['appId'] == 'resident';
-    if (!authorized) return;
-    final navigator = await _waitForNavigator();
-    if (navigator == null) {
-      throw StateError('Resident navigation is not ready.');
-    }
-    final sosId = sosAlertIdFromNotification(notification);
-    if (sosId != null) {
-      await navigator.push(
-        MaterialPageRoute<void>(
-          builder: (_) => SosDetailPage(
-            communityId: payload.communityId,
-            alertId: sosId,
-            responder: false,
-          ),
-        ),
+    try {
+      final firestore = FirebaseFirestore.instance;
+      final results = await Future.wait([
+        firestore
+            .collection('users')
+            .doc(user.uid)
+            .get(const GetOptions(source: Source.server)),
+        firestore
+            .collection('notifications')
+            .doc(payload.entityId)
+            .get(const GetOptions(source: Source.server)),
+      ]);
+      final profile = results[0].data();
+      final notification = results[1].data();
+      if (FirebaseAuth.instance.currentUser?.uid != user.uid ||
+          notification == null ||
+          !isAuthorizedNotification(
+            uid: user.uid,
+            payloadCommunityId: payload.communityId,
+            profile: profile,
+            notification: notification,
+          )) {
+        return;
+      }
+
+      final navigator = await _waitForNavigator();
+      if (navigator == null) {
+        throw StateError('Resident navigation is not ready.');
+      }
+      if (FirebaseAuth.instance.currentUser?.uid != user.uid) return;
+
+      final sosId = sosAlertIdFromNotification(notification);
+      final destination = destinationForNotification(
+        notification,
+        isSos: sosId != null,
       );
-      return;
-    }
+      if (destination == ResidentNotificationDestination.billing) {
+        await navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => const ResidentBillingStatementScreen(),
+          ),
+        );
+      } else if (destination == ResidentNotificationDestination.sos &&
+          sosId != null) {
+        await navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => SosDetailPage(
+              communityId: payload.communityId,
+              alertId: sosId,
+              responder: false,
+            ),
+          ),
+        );
+      } else {
+        await navigator.push(
+          MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
+        );
+      }
 
-    await navigator.push(
-      MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
-    );
+      _tapGuard.complete(tapKey);
+    } finally {
+      _tapGuard.release(tapKey);
+    }
   }
 }

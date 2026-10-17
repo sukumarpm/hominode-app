@@ -24,19 +24,21 @@ import 'src/services/firebase_auth_service.dart';
 import 'src/services/organization_service.dart';
 import 'src/services/profile_image_service.dart';
 import 'src/services/tenant_resolution_service.dart';
+import 'src/widgets/resident_profile_back_button.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
 // ============================================================================
 // THEME CONSTANTS
 // ============================================================================
-const Color kPrimaryBlue = Color(0xFF0E4778);
+const Color kPrimaryBlue = Color(0xFF172B4D);
 const Color kCardWhite = Color(0xFFFFFFFF);
-const Color kBackgroundGrey = Color(0xFFF7F7F7);
-const Color kBorderColor = Color(0xFFE6E6E6);
-const Color kTextPrimary = Color(0xFF111111);
-const Color kTextMuted = Color(0xFF9B9B9B);
+const Color kBackgroundGrey = Color(0xFFF4F7FB);
+const Color kBorderColor = Color(0xFFE2EAF3);
+const Color kTextPrimary = Color(0xFF172B4D);
+const Color kTextMuted = Color(0xFF64748B);
 const double kPadding = 16.0;
 const double kGap = 12.0;
-const double kCardRadius = 12.0;
+const double kCardRadius = 18.0;
 
 // ============================================================================
 // PROFILE SCREEN
@@ -44,7 +46,7 @@ const double kCardRadius = 12.0;
 class ProfileScreen extends StatefulWidget {
   final bool showBackButton;
 
-  const ProfileScreen({super.key, this.showBackButton = false});
+  const ProfileScreen({super.key, this.showBackButton = true});
 
   static MaterialPageRoute route() {
     return MaterialPageRoute(
@@ -61,7 +63,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _organizationService = OrganizationService();
   final _eventsService = AnnouncementsEventsService();
   Map<String, dynamic>? _userProfile;
-  String _organizationName = 'Your Apartment'; // Default fallback
+  String? _organizationName;
   bool _isLoading = true;
   late bool _isLoggingOut = false;
   String? _userId; // Track user ID for image streaming
@@ -100,10 +102,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (mounted) {
           setState(() => _isLoading = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'User profile not found. Please contact administrator.',
-              ),
+            SnackBar(
+              content: Text('profile_not_found_contact_admin'.tr()),
               backgroundColor: Colors.red,
               duration: Duration(seconds: 3),
             ),
@@ -128,7 +128,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Object error,
             ) {
               print('⚠️ Could not fetch organization name: $error');
-              return 'Your Apartment';
+              return '';
             });
       final eventsFuture = _eventsService
           .getVisibleEventsCount(communityId)
@@ -157,11 +157,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() {
           _userId = userId; // Store user ID for image streaming
           _userProfile = {
-            'name': userData['name'] ?? 'User',
+            'name': userData['name'],
             'email': userData['email'] ?? '',
             'phone': userData['phone'] ?? '',
-            'flatNumber':
-                userData['flatLabel'] ?? userData['flatId'] ?? 'Not Set',
+            'flatNumber': userData['flatLabel'] ?? userData['flatId'],
           };
           _organizationName = organizationName;
           _points = points;
@@ -181,7 +180,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading profile: $e'),
+            content: Text('profile_load_error'.tr()),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),
@@ -190,9 +189,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  String get _userName => _userProfile?['name'] ?? 'User';
   String get _userPhone => _userProfile?['phone'] ?? '';
-  String get _userFlat => _userProfile?['flatNumber'] ?? 'Not Set';
 
   @override
   Widget build(BuildContext context) {
@@ -200,182 +197,170 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (context, languageProvider, _) {
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: const SystemUiOverlayStyle(
-            statusBarColor: Colors.black,
-            statusBarIconBrightness: Brightness.light,
-            statusBarBrightness: Brightness.dark,
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
           ),
           child: Scaffold(
-            backgroundColor: Colors.black,
-            body: Column(
-              children: [
-                Container(
-                  color: Colors.black,
-                  height: MediaQuery.of(context).padding.top,
-                ),
-                Expanded(
-                  child: Container(
-                    color: kBackgroundGrey,
-                    child: _isLoading
-                        ? const Center(child: CircularProgressIndicator())
-                        : SingleChildScrollView(
-                            child: Column(
-                              children: [
-                                _buildHeader(),
-                                _buildStatsRow(),
-                                Padding(
-                                  padding: const EdgeInsets.all(kPadding),
-                                  child: Column(
-                                    children: [
-                                      _buildSettingCard(
-                                        icon: Icons.person_outline,
-                                        iconBg: const Color(0xFFDBEAFE),
-                                        iconColor: const Color(0xFF3B82F6),
-                                        title: 'edit_profile'.tr(),
-                                        onTap: () => _showEditProfile(context),
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.people_outline,
-                                        iconBg: const Color(0xFFEDE9FF),
-                                        iconColor: const Color(0xFF8B5CF6),
-                                        title: 'family_members_vehicles'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const FamilyVehiclesScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.cleaning_services_outlined,
-                                        iconBg: const Color(0xFFFFF3E8),
-                                        iconColor: const Color(0xFFF97316),
-                                        title: 'domestic_staff'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const DomesticStaffScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.bookmark_outline,
-                                        iconBg: const Color(0xFFFCE7F3),
-                                        iconColor: const Color(0xFFEC4899),
-                                        title: 'my_bookings'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const MyBookingsScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.description_outlined,
-                                        iconBg: const Color(0xFFDCFCE7),
-                                        iconColor: const Color(0xFF16A34A),
-                                        title: 'documents_circulars'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const DocumentsCircularsScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.groups_outlined,
-                                        iconBg: const Color(0xFFEDE9FF),
-                                        iconColor: const Color(0xFF8B5CF6),
-                                        title: 'community_wall'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const CommunityWallScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.shopping_bag_outlined,
-                                        iconBg: const Color(0xFFFFF9E6),
-                                        iconColor: const Color(0xFFFDB022),
-                                        title: 'marketplace'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const MarketplaceScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.notifications_outlined,
-                                        iconBg: const Color(0xFFF3F4F6),
-                                        iconColor: const Color(0xFF6B7280),
-                                        title: 'notifications'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const NotificationsSettingsScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(height: kGap),
-                                      _buildSettingCard(
-                                        icon: Icons.settings_outlined,
-                                        iconBg: const Color(0xFFF3F4F6),
-                                        iconColor: const Color(0xFF6B7280),
-                                        title: 'settings'.tr(),
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const AppSettingsScreen(),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      SizedBox(height: 24.h),
-                                      _buildLogoutButton(
-                                        context,
-                                        languageProvider,
-                                      ),
-                                      SizedBox(height: 100.h),
-                                    ],
+            backgroundColor: kBackgroundGrey,
+            body: ResidentVisitorPageBackground(
+              child: SafeArea(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _buildHeader(context),
+                            _buildStatsRow(),
+                            Padding(
+                              padding: const EdgeInsets.all(kPadding),
+                              child: Column(
+                                children: [
+                                  _buildSettingCard(
+                                    icon: Icons.person_outline,
+                                    iconBg: const Color(0xFFDBEAFE),
+                                    iconColor: const Color(0xFF3B82F6),
+                                    title: 'edit_profile'.tr(),
+                                    onTap: () => _showEditProfile(context),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.people_outline,
+                                    iconBg: const Color(0xFFEDE9FF),
+                                    iconColor: const Color(0xFF8B5CF6),
+                                    title: 'family_members_vehicles'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const FamilyVehiclesScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.cleaning_services_outlined,
+                                    iconBg: const Color(0xFFFFF3E8),
+                                    iconColor: const Color(0xFFF97316),
+                                    title: 'domestic_staff'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const DomesticStaffScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.bookmark_outline,
+                                    iconBg: const Color(0xFFFCE7F3),
+                                    iconColor: const Color(0xFFEC4899),
+                                    title: 'my_bookings'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const MyBookingsScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.description_outlined,
+                                    iconBg: const Color(0xFFDCFCE7),
+                                    iconColor: const Color(0xFF16A34A),
+                                    title: 'documents_circulars'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const DocumentsCircularsScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.groups_outlined,
+                                    iconBg: const Color(0xFFEDE9FF),
+                                    iconColor: const Color(0xFF8B5CF6),
+                                    title: 'community_wall'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const CommunityWallScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.shopping_bag_outlined,
+                                    iconBg: const Color(0xFFFFF9E6),
+                                    iconColor: const Color(0xFFFDB022),
+                                    title: 'marketplace'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const MarketplaceScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.notifications_outlined,
+                                    iconBg: const Color(0xFFF3F4F6),
+                                    iconColor: const Color(0xFF6B7280),
+                                    title: 'notifications'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const NotificationsSettingsScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(height: kGap),
+                                  _buildSettingCard(
+                                    icon: Icons.settings_outlined,
+                                    iconBg: const Color(0xFFF3F4F6),
+                                    iconColor: const Color(0xFF6B7280),
+                                    title: 'settings'.tr(),
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const AppSettingsScreen(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  SizedBox(height: 24.h),
+                                  _buildLogoutButton(context, languageProvider),
+                                  SizedBox(height: 100.h),
+                                ],
+                              ),
                             ),
-                          ),
-                  ),
-                ),
-              ],
+                          ],
+                        ),
+                      ),
+              ),
             ),
           ),
         );
@@ -383,44 +368,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
     return Container(
       width: double.infinity,
+      margin: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 0),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
-        ),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24.r),
-          bottomRight: Radius.circular(24.r),
-        ),
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(24.r),
+        border: Border.all(color: kBorderColor),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF172B4D).withValues(alpha: 0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Padding(
-        padding: EdgeInsets.fromLTRB(20.w, 16.h, 20.w, 24.h),
+        padding: EdgeInsets.fromLTRB(20.w, 20.h, 20.w, 20.h),
         child: Column(
           children: [
             // Time and status bar placeholder
-            SizedBox(height: 8.h),
-
             // Avatar and user info with real-time image streaming
             Row(
               children: [
-                if (widget.showBackButton && Navigator.canPop(context)) ...[
-                  IconButton(
-                    onPressed: () => Navigator.maybePop(context),
-                    icon: Icon(
-                      Icons.arrow_back_ios,
-                      color: Colors.white,
-                      size: 20.w,
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: BoxConstraints(
-                      minWidth: 40.w,
-                      minHeight: 44.h,
-                    ),
-                  ),
+                if (widget.showBackButton) ...[
+                  const ResidentProfileBackButton(),
                   SizedBox(width: 8.w),
                 ],
                 // StreamBuilder for real-time image fetching
@@ -445,7 +418,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
                                   valueColor: AlwaysStoppedAnimation<Color>(
-                                    Color(0xFF0E4778),
+                                    kPrimaryBlue,
                                   ),
                                 ),
                               ),
@@ -461,7 +434,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               child: Icon(
                                 Icons.person,
                                 size: 32.w,
-                                color: Color(0xFF0E4778),
+                                color: kPrimaryBlue,
                               ),
                             );
                           }
@@ -488,7 +461,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             child: Icon(
                               Icons.person,
                               size: 32.w,
-                              color: Color(0xFF0E4778),
+                              color: kPrimaryBlue,
                             ),
                           );
                         },
@@ -499,7 +472,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: Icon(
                           Icons.person,
                           size: 32.w,
-                          color: Color(0xFF0E4778),
+                          color: kPrimaryBlue,
                         ),
                       ),
                 SizedBox(width: 12.w),
@@ -508,22 +481,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _userName,
+                        _displayValue(
+                          context,
+                          _userProfile?['name'],
+                          fallbackKey: 'resident',
+                        ),
                         style: TextStyle(
-                          color: Colors.white,
+                          color: kTextPrimary,
                           fontSize: 18.sp,
                           fontWeight: FontWeight.w600,
                         ),
-                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
                       ),
                       if (_userPhone.isNotEmpty) ...[
                         SizedBox(height: 2.h),
                         Text(
                           _userPhone,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.8),
-                            fontSize: 13.sp,
-                          ),
+                          style: TextStyle(color: kTextMuted, fontSize: 13.sp),
                         ),
                       ],
                     ],
@@ -538,28 +512,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Container(
               padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12.r),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.2),
-                  width: 1,
-                ),
+                color: const Color(0xFFF4F7FB),
+                borderRadius: BorderRadius.circular(16.r),
+                border: Border.all(color: kBorderColor),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _organizationName, // Dynamic organization name
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
-                      fontSize: 12.sp,
-                    ),
+                    _displayValue(
+                      context,
+                      _organizationName,
+                      fallbackKey: 'your_apartment',
+                    ), // Dynamic organization name
+                    style: TextStyle(color: kTextMuted, fontSize: 12.sp),
                   ),
                   SizedBox(height: 4.h),
                   Text(
-                    _userFlat,
+                    _displayValue(
+                      context,
+                      _userProfile?['flatNumber'],
+                      fallbackKey: 'not_set',
+                    ),
                     style: TextStyle(
-                      color: Colors.white,
+                      color: kTextPrimary,
                       fontSize: 15.sp,
                       fontWeight: FontWeight.w600,
                     ),
@@ -573,6 +549,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  String _displayValue(
+    BuildContext context,
+    Object? value, {
+    required String fallbackKey,
+  }) {
+    if (value is String && value.trim().isNotEmpty) return value;
+    return fallbackKey.tr(context: context);
+  }
+
   Widget _buildStatsRow() {
     return Padding(
       padding: const EdgeInsets.all(kPadding),
@@ -581,7 +566,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Expanded(
             child: _buildStatTile(
               value: '$_points',
-              label: 'Points',
+              label: 'points'.tr(),
               gradient: const LinearGradient(
                 colors: [Color(0xFFE8FDEB), Color(0xFFD1FAE5)],
               ),
@@ -592,7 +577,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Expanded(
             child: _buildStatTile(
               value: '$_eventsCount',
-              label: 'Events',
+              label: 'events'.tr(),
               gradient: const LinearGradient(
                 colors: [Color(0xFFF3E8FF), Color(0xFFEDE9FF)],
               ),
@@ -603,7 +588,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Expanded(
             child: _buildStatTile(
               value: '$_badges',
-              label: 'Badges',
+              label: 'badges'.tr(),
               gradient: const LinearGradient(
                 colors: [Color(0xFFDBEAFE), Color(0xFFDBEAFE)],
               ),
@@ -659,7 +644,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: kCardWhite,
+      color: kCardWhite.withValues(alpha: 0.94),
       borderRadius: BorderRadius.circular(kCardRadius),
       child: InkWell(
         onTap: onTap,
@@ -756,20 +741,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        title: Text('logout'.tr()),
+        content: Text('logout_confirm_prompt'.tr()),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12.r),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('cancel'.tr()),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: kPrimaryBlue),
-            child: const Text('Logout'),
+            child: Text('logout'.tr()),
           ),
         ],
       ),
@@ -794,9 +779,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _isLoggingOut = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to logout. Please try again.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('logout_error'.tr())));
     }
   }
 

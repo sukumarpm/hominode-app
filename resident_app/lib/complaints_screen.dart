@@ -9,8 +9,8 @@ import 'src/services/complaints_service.dart';
 import 'src/services/staff_firestore_service.dart';
 import 'src/modals/create_complaint_modal.dart';
 import 'src/modals/complaint_detail_modal.dart';
-import 'src/components/standard_screen.dart';
 import 'src/components/app_segmented_control.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
 const kPrimaryBlue = Color(0xFF0E4778);
 const kPendingRed = Color(0xFFDC2626);
@@ -256,84 +256,97 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
         : _completedComplaints;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
-      body: StandardScreen(
-        title: 'Complaints & Requests',
-        onBackPressed: () => Navigator.maybePop(context),
-        isScrollable: false,
-        padding: EdgeInsets.zero,
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                children: [
-                  SizedBox(height: 20.h),
+      backgroundColor: const Color(0xFFF4F7FB),
+      appBar: AppBar(
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: const Color(0xFF172B4D),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        title: const Text('Complaints & Requests'),
+        titleTextStyle: TextStyle(
+          color: const Color(0xFF172B4D),
+          fontSize: 20.sp,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      body: ResidentVisitorPageBackground(
+        child: SafeArea(
+          top: false,
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  children: [
+                    SizedBox(height: 20.h),
 
-                  // Segmented Control
-                  AppSegmentedControl(
-                    segments: const ['Active', 'History'],
-                    selectedIndex: _selectedTabIndex,
-                    onChanged: (index) {
-                      setState(() {
-                        _selectedTabIndex = index;
-                      });
-                    },
-                  ),
+                    // Segmented Control
+                    AppSegmentedControl(
+                      segments: const ['Active', 'History'],
+                      selectedIndex: _selectedTabIndex,
+                      onChanged: (index) {
+                        setState(() {
+                          _selectedTabIndex = index;
+                        });
+                      },
+                    ),
 
-                  SizedBox(height: 20.h),
+                    SizedBox(height: 20.h),
 
-                  // Content
-                  Expanded(
-                    child: RefreshIndicator(
-                      onRefresh: _loadComplaints,
-                      child: SingleChildScrollView(
-                        child: Column(
-                          children: [
-                            // Status summary cards (only for active tab)
-                            if (_selectedTabIndex == 0) _buildStatusSummary(),
+                    // Content
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadComplaints,
+                        child: SingleChildScrollView(
+                          child: Column(
+                            children: [
+                              // Status summary cards (only for active tab)
+                              if (_selectedTabIndex == 0) _buildStatusSummary(),
 
-                            // Complaints list
-                            Padding(
-                              padding: EdgeInsets.all(16.w),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _selectedTabIndex == 0
-                                        ? 'Active Complaints'
-                                        : 'Complaint History',
-                                    style: TextStyle(
-                                      fontSize: 18.sp,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF111111),
-                                    ),
-                                  ),
-                                  SizedBox(height: 16.h),
-                                  if (displayComplaints.isEmpty)
-                                    _buildEmptyState()
-                                  else
-                                    ...displayComplaints.map(
-                                      (complaint) => Padding(
-                                        padding: EdgeInsets.only(bottom: 16.h),
-                                        child: _buildComplaintCard(complaint),
+                              // Complaints list
+                              Padding(
+                                padding: EdgeInsets.all(16.w),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _selectedTabIndex == 0
+                                          ? 'Active Complaints'
+                                          : 'Complaint History',
+                                      style: TextStyle(
+                                        fontSize: 18.sp,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF172B4D),
                                       ),
                                     ),
-                                  SizedBox(height: 80.h), // Space for FAB
-                                ],
+                                    SizedBox(height: 16.h),
+                                    if (displayComplaints.isEmpty)
+                                      _buildEmptyState()
+                                    else
+                                      ...displayComplaints.map(
+                                        (complaint) => Padding(
+                                          padding: EdgeInsets.only(
+                                            bottom: 16.h,
+                                          ),
+                                          child: _buildComplaintCard(complaint),
+                                        ),
+                                      ),
+                                    SizedBox(height: 80.h), // Space for FAB
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           showCreateComplaintModal(context, onCreated: _handleComplaintCreated);
         },
-        backgroundColor: kPrimaryBlue,
+        backgroundColor: const Color(0xFF172B4D),
         child: Icon(Icons.add, color: Colors.white, size: 28.w),
       ),
     );
@@ -370,44 +383,6 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                   : 'Completed complaints will appear here',
               style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
               textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOldHeader() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E4778), Color(0xFF061C4C)],
-        ),
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24.r),
-          bottomRight: Radius.circular(24.r),
-        ),
-      ),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(8.w, 16.h, 16.w, 20.h),
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: Icon(Icons.arrow_back_ios, color: Colors.white, size: 20.w),
-              padding: EdgeInsets.all(8.w),
-            ),
-            SizedBox(width: 4.w),
-            Text(
-              'Complaints & Requests',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20.sp,
-                fontWeight: FontWeight.w600,
-              ),
             ),
           ],
         ),
@@ -511,13 +486,14 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
       child: Container(
         padding: EdgeInsets.all(16.w),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.white.withValues(alpha: 0.94),
           borderRadius: BorderRadius.circular(16.r),
+          border: Border.all(color: const Color(0xFFE2EAF3)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 2),
+              color: const Color(0xFF172B4D).withValues(alpha: 0.06),
+              blurRadius: 18,
+              offset: const Offset(0, 5),
             ),
           ],
         ),
@@ -556,7 +532,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                               style: TextStyle(
                                 fontSize: 16.sp,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF111111),
+                                color: Color(0xFF172B4D),
                               ),
                             ),
                           ),
@@ -568,7 +544,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                         complaint.description,
                         style: TextStyle(
                           fontSize: 14.sp,
-                          color: Color(0xFF9CA3AF),
+                          color: Color(0xFF52627A),
                         ),
                       ),
                       SizedBox(height: 8.h),
@@ -576,7 +552,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                         '${complaint.categoryDisplayName} • ${complaint.formattedDate}',
                         style: TextStyle(
                           fontSize: 13.sp,
-                          color: Color(0xFF9CA3AF),
+                          color: Color(0xFF64748B),
                         ),
                       ),
                     ],

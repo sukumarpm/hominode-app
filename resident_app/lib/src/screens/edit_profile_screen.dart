@@ -2,18 +2,22 @@
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../components/standard_screen.dart';
 import '../services/profile_image_service.dart';
 import '../services/user_data_service.dart';
+import '../widgets/resident_visitor_page_background.dart';
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({super.key});
+  const EditProfileScreen({super.key, this.profileLoader});
+
+  @visibleForTesting
+  final Future<Map<String, dynamic>?> Function()? profileLoader;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -21,7 +25,7 @@ class EditProfileScreen extends StatefulWidget {
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _userDataService = UserDataService();
+  late final UserDataService? _userDataService;
 
   late TextEditingController _nameController;
   late TextEditingController _emailController;
@@ -37,6 +41,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
+    _userDataService = widget.profileLoader == null ? UserDataService() : null;
     _nameController = TextEditingController();
     _emailController = TextEditingController();
     _phoneController = TextEditingController();
@@ -51,9 +56,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       // STEP 1: Fetch user data from Firestore
       print('📥 STEP 1: Fetching user data from Firestore...');
-      var userData = await _userDataService.getCurrentUserData(
-        forceRefresh: true,
-      );
+      var userData = widget.profileLoader != null
+          ? await widget.profileLoader!()
+          : await _userDataService!.getCurrentUserData(forceRefresh: true);
 
       // If first attempt fails, try getting from SharedPreferences user_id
       if (userData == null) {
@@ -84,10 +89,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'User profile not found. Please contact administrator.',
-              ),
+            SnackBar(
+              content: Text('profile_not_found_contact_admin'.tr()),
               backgroundColor: Colors.red,
               duration: Duration(seconds: 3),
             ),
@@ -131,7 +134,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading profile: $e'),
+            content: Text('edit_profile_load_error'.tr()),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),
@@ -151,68 +154,105 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return StandardScreen(
-      title: 'Edit Profile',
-      isScrollable: true,
-      padding: EdgeInsets.all(16.w),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  _buildPhotoSection(),
-                  SizedBox(height: 24.h),
-                  _buildTextField(
-                    label: 'Full Name',
-                    controller: _nameController,
-                    hint: 'Enter your name',
-                    icon: Icons.person_outline,
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        title: Text('edit_profile_title'.tr()),
+        backgroundColor: Colors.white.withValues(alpha: 0.82),
+        foregroundColor: const Color(0xFF172B4D),
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: TextStyle(
+          color: const Color(0xFF172B4D),
+          fontSize: 20.sp,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      body: ResidentVisitorPageBackground(
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(16.w),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : Container(
+                    padding: EdgeInsets.all(18.w),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.96),
+                      borderRadius: BorderRadius.circular(22.r),
+                      border: Border.all(color: const Color(0xFFE2EAF3)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(
+                            0xFF172B4D,
+                          ).withValues(alpha: 0.05),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        children: [
+                          _buildPhotoSection(),
+                          SizedBox(height: 24.h),
+                          _buildTextField(
+                            label: 'full_name'.tr(),
+                            controller: _nameController,
+                            hint: 'enter_your_name'.tr(),
+                            icon: Icons.person_outline,
+                          ),
+                          SizedBox(height: 16.h),
+                          _buildTextField(
+                            label: 'email'.tr(),
+                            controller: _emailController,
+                            hint: 'enter_your_email'.tr(),
+                            icon: Icons.email_outlined,
+                            keyboardType: TextInputType.emailAddress,
+                            enabled: true, // Enabled for editing
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'email_required'.tr();
+                              }
+                              final emailRegex = RegExp(
+                                r'^[a-zA-Z0-9.]+@[a-zA-Z0-9]+\.[a-zA-Z]+',
+                              );
+                              if (!emailRegex.hasMatch(value.trim())) {
+                                return 'invalid_email_address'.tr();
+                              }
+                              return null;
+                            },
+                          ),
+                          SizedBox(height: 16.h),
+                          _buildTextField(
+                            label: 'phone'.tr(),
+                            controller: _phoneController,
+                            hint: 'enter_your_phone'.tr(),
+                            icon: Icons.phone_outlined,
+                            keyboardType: TextInputType.phone,
+                            enabled:
+                                false, // Phone changes require OTP re-verification
+                          ),
+                          SizedBox(height: 16.h),
+                          _buildTextField(
+                            label: 'flat_number'.tr(),
+                            controller: _flatNumberController,
+                            hint: 'flat_number_example'.tr(),
+                            icon: Icons.home_outlined,
+                            enabled:
+                                false, // Flat/unit assignment is managed by Admin
+                          ),
+                          SizedBox(height: 32.h),
+                          _buildSaveButton(),
+                          SizedBox(height: 20.h),
+                        ],
+                      ),
+                    ),
                   ),
-                  SizedBox(height: 16.h),
-                  _buildTextField(
-                    label: 'Email',
-                    controller: _emailController,
-                    hint: 'Enter your email',
-                    icon: Icons.email_outlined,
-                    keyboardType: TextInputType.emailAddress,
-                    enabled: true, // Enabled for editing
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Email is required';
-                      }
-                      final emailRegex = RegExp(
-                        r'^[a-zA-Z0-9.]+@[a-zA-Z0-9]+\.[a-zA-Z]+',
-                      );
-                      if (!emailRegex.hasMatch(value.trim())) {
-                        return 'Enter a valid email address';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: 16.h),
-                  _buildTextField(
-                    label: 'Phone',
-                    controller: _phoneController,
-                    hint: 'Enter your phone',
-                    icon: Icons.phone_outlined,
-                    keyboardType: TextInputType.phone,
-                    enabled: false, // Phone changes require OTP re-verification
-                  ),
-                  SizedBox(height: 16.h),
-                  _buildTextField(
-                    label: 'Flat Number',
-                    controller: _flatNumberController,
-                    hint: 'e.g., A-101',
-                    icon: Icons.home_outlined,
-                    enabled: false, // Flat/unit assignment is managed by Admin
-                  ),
-                  SizedBox(height: 32.h),
-                  _buildSaveButton(),
-                  SizedBox(height: 20.h),
-                ],
-              ),
-            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -267,7 +307,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
           SizedBox(height: 12.h),
           Text(
-            'Tap to change photo',
+            'tap_to_change_photo'.tr(),
             style: TextStyle(fontSize: 14.sp, color: Colors.grey[600]),
           ),
         ],
@@ -307,7 +347,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               (value) {
                 if (!enabled) return null;
                 if (value == null || value.trim().isEmpty) {
-                  return '$label is required';
+                  return 'field_required'.tr(namedArgs: {'field': label});
                 }
                 return null;
               },
@@ -366,7 +406,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
               )
             : Text(
-                'Save Changes',
+                'save_changes'.tr(),
                 style: TextStyle(
                   fontSize: 16.sp,
                   fontWeight: FontWeight.w600,
@@ -401,7 +441,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
                 SizedBox(height: 20.h),
                 Text(
-                  'Select Photo Source',
+                  'select_photo_source'.tr(),
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w600,
@@ -421,8 +461,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       color: Color(0xFF0E4778),
                     ),
                   ),
-                  title: const Text('Camera'),
-                  subtitle: const Text('Take a new photo'),
+                  title: Text('camera'.tr()),
+                  subtitle: Text('take_new_photo'.tr()),
                   onTap: () => Navigator.pop(context, ImageSource.camera),
                 ),
                 SizedBox(height: 8.h),
@@ -439,8 +479,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       color: Color(0xFF16A34A),
                     ),
                   ),
-                  title: const Text('Gallery'),
-                  subtitle: const Text('Choose from gallery'),
+                  title: Text('gallery'.tr()),
+                  subtitle: Text('choose_from_gallery'.tr()),
                   onTap: () => Navigator.pop(context, ImageSource.gallery),
                 ),
               ],
@@ -464,14 +504,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           });
         }
       }
-    } catch (e) {
+    } catch (_) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      ).showSnackBar(SnackBar(content: Text('photo_selection_error'.tr())));
     }
   }
 
-  
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -501,7 +540,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Image upload failed: ${imageResult.message}'),
+                content: Text('profile_photo_upload_failed'.tr()),
                 backgroundColor: Colors.orange,
                 duration: const Duration(seconds: 2),
               ),
@@ -512,10 +551,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // STEP 3: Update Firestore Document directly
       print('💾 Updating user data in Firestore...');
-      final success = await _userDataService.updateUserData(updates);
+      final success = await _userDataService!.updateUserData(updates);
 
       if (!success) {
-        throw Exception('Failed to update profile in Firestore');
+        throw Exception('Profile update failed');
       }
 
       // STEP 4: Force refresh image cache if needed
@@ -533,8 +572,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Profile updated successfully'),
+          SnackBar(
+            content: Text('profile_updated_successfully'.tr()),
             backgroundColor: Color(0xFF22C55E),
             duration: Duration(seconds: 2),
           ),
@@ -548,7 +587,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to update profile: ${e.toString()}'),
+            content: Text('profile_update_failed'.tr()),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),

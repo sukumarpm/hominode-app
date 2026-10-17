@@ -27,7 +27,9 @@ class PostActionsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Wrap(
+      spacing: 16.w,
+      runSpacing: 4.h,
       children: [
         // Like button
         InkWell(
@@ -56,8 +58,6 @@ class PostActionsRow extends StatelessWidget {
           ),
         ),
 
-        SizedBox(width: 20.w),
-
         // Comment button
         InkWell(
           onTap: onCommentPressed,
@@ -80,8 +80,6 @@ class PostActionsRow extends StatelessWidget {
             ),
           ),
         ),
-
-        SizedBox(width: 20.w),
 
         // Share button
         InkWell(

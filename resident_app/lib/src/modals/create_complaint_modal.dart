@@ -12,15 +12,15 @@ import '../services/complaint_image_service.dart';
 // ============================================================================
 // THEME CONSTANTS
 // ============================================================================
-const Color kPrimary = Color(0xFF0E4778);
-const Color kModalBackground = Color(0xFFFFFFFF);
+const Color kPrimary = Color(0xFF172B4D);
+const Color kModalBackground = Color(0xFFFCFDFE);
 const Color kOverlayDim = Color(0x5C000000); // rgba(0,0,0,0.36)
-const Color kInputBorder = Color(0xFFE6E6E6);
+const Color kInputBorder = Color(0xFFDCE5EF);
 const Color kPlaceholderText = Color(0xFFBDBDBD);
 const Color kHeaderText = Color(0xFF111111);
 const Color kLabelText = Color(0xFF111111);
 const Color kErrorText = Color(0xFFEF4444);
-const double kModalRadius = 16.0;
+const double kModalRadius = 22.0;
 const double kInputRadius = 8.0;
 
 // ============================================================================

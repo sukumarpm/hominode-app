@@ -14,6 +14,7 @@ class AccessControlResult {
   final String? buildingId;
   final String? message;
   final Map<String, dynamic>? userData;
+  final bool isTransient;
 
   const AccessControlResult({
     required this.state,
@@ -21,6 +22,7 @@ class AccessControlResult {
     this.buildingId,
     this.message,
     this.userData,
+    this.isTransient = false,
   });
 
   bool get hasAccess => state == FlatAccessState.granted;
@@ -51,8 +53,15 @@ class AccessControlResult {
     return AccessControlResult(state: FlatAccessState.denied, message: message);
   }
 
-  factory AccessControlResult.error({required String message}) {
-    return AccessControlResult(state: FlatAccessState.error, message: message);
+  factory AccessControlResult.error({
+    required String message,
+    bool isTransient = false,
+  }) {
+    return AccessControlResult(
+      state: FlatAccessState.error,
+      message: message,
+      isTransient: isTransient,
+    );
   }
 }
 
@@ -109,11 +118,11 @@ class FlatAccessControlService {
       _cachedUserId = userId;
 
       return result;
-    } catch (e, stackTrace) {
-      debugPrint('Flat access check failed: $e');
-      debugPrintStack(stackTrace: stackTrace);
+    } catch (error) {
+      _logSafeFailure('flat-access/profile-read', error);
       return AccessControlResult.error(
         message: 'Error checking access. Please try again.',
+        isTransient: true,
       );
     }
   }
@@ -151,17 +160,26 @@ class FlatAccessControlService {
           _cachedUserId = userId;
 
           return result;
-        } catch (e) {
+        } catch (error) {
+          _logSafeFailure('flat-access/profile-snapshot', error);
           return AccessControlResult.error(
             message: 'Error processing user data. Please try again.',
           );
         }
       });
-    } catch (e) {
+    } catch (error) {
+      _logSafeFailure('flat-access/profile-stream', error);
       yield AccessControlResult.error(
         message: 'Error checking access. Please try again.',
+        isTransient: true,
       );
     }
+  }
+
+  void _logSafeFailure(String operation, Object error) {
+    if (!kDebugMode) return;
+    final code = error is FirebaseException ? error.code : error.runtimeType;
+    debugPrint('[$operation] verification failed ($code).');
   }
 
   @visibleForTesting

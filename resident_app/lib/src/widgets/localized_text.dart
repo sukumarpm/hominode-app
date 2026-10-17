@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../providers/language_provider.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 /// Localized Text Widget
 /// Automatically rebuilds when language changes
@@ -24,17 +23,13 @@ class LocalizedText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        final text = languageProvider.translate(translationKey, params: params);
-        return Text(
-          text,
-          style: style,
-          textAlign: textAlign,
-          maxLines: maxLines,
-          overflow: overflow,
-        );
-      },
+    Localizations.localeOf(context);
+    return Text(
+      translationKey.tr(namedArgs: params),
+      style: style,
+      textAlign: textAlign,
+      maxLines: maxLines,
+      overflow: overflow,
     );
   }
 }
@@ -56,15 +51,11 @@ class LocalizedButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        final text = languageProvider.translate(translationKey, params: params);
-        return ElevatedButton(
-          onPressed: onPressed,
-          style: style,
-          child: Text(text),
-        );
-      },
+    Localizations.localeOf(context);
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: style,
+      child: Text(translationKey.tr(namedArgs: params)),
     );
   }
 }
@@ -86,17 +77,10 @@ class LocalizedTextButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        final text = languageProvider.translate(translationKey, params: params);
-        return TextButton(
-          onPressed: onPressed,
-          child: Text(
-            text,
-            style: style,
-          ),
-        );
-      },
+    Localizations.localeOf(context);
+    return TextButton(
+      onPressed: onPressed,
+      child: Text(translationKey.tr(namedArgs: params), style: style),
     );
   }
 }
@@ -118,15 +102,11 @@ class LocalizedOutlinedButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        final text = languageProvider.translate(translationKey, params: params);
-        return OutlinedButton(
-          onPressed: onPressed,
-          style: style,
-          child: Text(text),
-        );
-      },
+    Localizations.localeOf(context);
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: style,
+      child: Text(translationKey.tr(namedArgs: params)),
     );
   }
 }
@@ -146,17 +126,11 @@ class LocalizedAppBarTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        final text = languageProvider.translate(translationKey, params: params);
-        return Text(
-          text,
-          style: style ?? const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-          ),
-        );
-      },
+    Localizations.localeOf(context);
+    return Text(
+      translationKey.tr(namedArgs: params),
+      style:
+          style ?? const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
     );
   }
 }
@@ -176,14 +150,10 @@ class LocalizedTooltip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        final text = languageProvider.translate(translationKey, params: params);
-        return Tooltip(
-          message: text,
-          child: child,
-        );
-      },
+    Localizations.localeOf(context);
+    return Tooltip(
+      message: translationKey.tr(namedArgs: params),
+      child: child,
     );
   }
 }

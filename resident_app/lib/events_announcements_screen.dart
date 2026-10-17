@@ -3,22 +3,20 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:provider/provider.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'src/components/app_segmented_control.dart';
-import 'src/components/standard_screen.dart';
 import 'src/models/announcement_model.dart';
 import 'src/models/event_model.dart';
 import 'src/services/announcements_events_service.dart';
-import 'src/providers/language_provider.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
 // Design Constants
-const kPrimaryBlue = Color(0xFF0E4778);
-const kSectionTitle = Color(0xFF111827);
-const kSubtitle = Color(0xFF6B7280);
+const kPrimaryBlue = Color(0xFF172B4D);
+const kSectionTitle = Color(0xFF172B4D);
+const kSubtitle = Color(0xFF52627A);
 const kCardBackground = Color(0xFFFFFFFF);
 const kDivider = Color(0xFFE6E6E6);
-const kCardRadius = 12.0;
+const kCardRadius = 20.0;
 const kSpacing = 16.0;
 
 // Priority colors
@@ -30,7 +28,16 @@ const kLowPriorityBg = Color(0xFFD1FAE5);
 const kLowPriorityText = Color(0xFF10B981);
 
 class EventsAnnouncementsScreen extends StatefulWidget {
-  const EventsAnnouncementsScreen({super.key});
+  const EventsAnnouncementsScreen({
+    super.key,
+    this.eventsOnly = false,
+    this.announcementsOnly = false,
+    this.service,
+  });
+
+  final bool eventsOnly;
+  final bool announcementsOnly;
+  final AnnouncementsEventsService? service;
 
   @override
   State<EventsAnnouncementsScreen> createState() =>
@@ -39,47 +46,95 @@ class EventsAnnouncementsScreen extends StatefulWidget {
 
 class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   int _selectedTab = 0; // 0: Announcements, 1: Events
-  final _service = AnnouncementsEventsService();
+  late final AnnouncementsEventsService _service;
 
   @override
-  Widget build(BuildContext context) {
-    return Consumer<LanguageProvider>(
-      builder: (context, languageProvider, _) {
-        return StandardScreen(
-          title: 'events'.tr(),
-          showBackButton: false,
-          isScrollable: false,
-          padding: EdgeInsets.zero,
-          body: Column(
-            children: [
-              SizedBox(height: 20.h),
+  void initState() {
+    super.initState();
+    _service = widget.service ?? AnnouncementsEventsService();
+    if (widget.eventsOnly) _selectedTab = 1;
+  }
 
-              // Segmented Control
-              AppSegmentedControl(
-                segments: ['announcements'.tr(), 'events'.tr()],
-                selectedIndex: _selectedTab,
-                onChanged: (index) {
-                  setState(() => _selectedTab = index);
-                },
-              ),
-
-              SizedBox(height: 20.h),
-
-              // Content
-              Expanded(
-                child: _selectedTab == 0
-                    ? _buildAnnouncementsTab(languageProvider)
-                    : _buildEventsTab(languageProvider),
+  Future<void> _selectTab(int index) async {
+    if (index == 1) {
+      final communityId = await _service.currentCommunityId();
+      if (!mounted) return;
+      if (communityId == null || !await _service.eventsAllowed(communityId)) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text('events_unavailable_title'.tr()),
+            content: Text('events_restricted'.tr()),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text('ok'.tr()),
               ),
             ],
           ),
         );
-      },
+        return;
+      }
+    }
+    if (mounted) setState(() => _selectedTab = index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showAnnouncementsTitle =
+        widget.announcementsOnly || (!widget.eventsOnly && _selectedTab == 0);
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
+      appBar: AppBar(
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: kSectionTitle,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          showAnnouncementsTitle ? 'announcements'.tr() : 'events'.tr(),
+          style: TextStyle(
+            color: kSectionTitle,
+            fontSize: 20.sp,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      body: ResidentVisitorPageBackground(
+        child: Column(
+          children: [
+            SizedBox(height: 14.h),
+
+            // Segmented Control
+            if (!widget.eventsOnly && !widget.announcementsOnly)
+              AppSegmentedControl(
+                segments: ['announcements'.tr(), 'events'.tr()],
+                selectedIndex: _selectedTab,
+                onChanged: (index) {
+                  _selectTab(index);
+                },
+              ),
+
+            SizedBox(height: 14.h),
+
+            // Content
+            Expanded(
+              child: widget.eventsOnly
+                  ? _buildEventsTab()
+                  : widget.announcementsOnly
+                  ? _buildAnnouncementsTab()
+                  : _selectedTab == 0
+                  ? _buildAnnouncementsTab()
+                  : _buildEventsTab(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   /// Announcements Tab
-  Widget _buildAnnouncementsTab(LanguageProvider languageProvider) {
+  Widget _buildAnnouncementsTab() {
     return StreamBuilder<List<AnnouncementModel>>(
       stream: _service.streamAnnouncements(),
       builder: (context, snapshot) {
@@ -98,20 +153,24 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.error_outline, size: 64.w, color: Colors.grey[400]),
+                Icon(
+                  Icons.error_outline,
+                  size: 56.w,
+                  color: const Color(0xFF9AABC0),
+                ),
                 SizedBox(height: 16.h),
                 Text(
                   'error_loading_announcements'.tr(),
                   style: TextStyle(
                     fontSize: 16.sp,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey[700],
+                    color: kSectionTitle,
                   ),
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Please try again later',
-                  style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
+                  'please_try_again_later'.tr(),
+                  style: TextStyle(fontSize: 14.sp, color: kSubtitle),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -130,21 +189,21 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                 Icon(
                   Icons.campaign_outlined,
                   size: 64.w,
-                  color: Colors.grey[400],
+                  color: const Color(0xFF9AABC0),
                 ),
                 SizedBox(height: 16.h),
                 Text(
-                  'No Announcements',
+                  'no_announcements'.tr(),
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey[700],
+                    color: kSectionTitle,
                   ),
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Check back later for updates',
-                  style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
+                  'check_back_announcements'.tr(),
+                  style: TextStyle(fontSize: 14.sp, color: kSubtitle),
                 ),
               ],
             ),
@@ -153,7 +212,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
 
         // List of announcements
         return ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: kSpacing),
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 20.h),
           itemCount: announcements.length,
           itemBuilder: (context, index) {
             return _buildAnnouncementCard(announcements[index]);
@@ -164,7 +223,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   }
 
   /// Events Tab
-  Widget _buildEventsTab(LanguageProvider languageProvider) {
+  Widget _buildEventsTab() {
     return StreamBuilder<List<EventModel>>(
       stream: _service.streamEvents(),
       builder: (context, snapshot) {
@@ -183,20 +242,24 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.error_outline, size: 64.w, color: Colors.grey[400]),
+                Icon(
+                  Icons.error_outline,
+                  size: 56.w,
+                  color: const Color(0xFF9AABC0),
+                ),
                 SizedBox(height: 16.h),
                 Text(
                   'error_loading_events'.tr(),
                   style: TextStyle(
                     fontSize: 16.sp,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey[700],
+                    color: kSectionTitle,
                   ),
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Please try again later',
-                  style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
+                  'please_try_again_later'.tr(),
+                  style: TextStyle(fontSize: 14.sp, color: kSubtitle),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -212,20 +275,24 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.event_outlined, size: 64.w, color: Colors.grey[400]),
+                Icon(
+                  Icons.event_outlined,
+                  size: 56.w,
+                  color: const Color(0xFF9AABC0),
+                ),
                 SizedBox(height: 16.h),
                 Text(
-                  'No Events',
+                  'no_events'.tr(),
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey[700],
+                    color: kSectionTitle,
                   ),
                 ),
                 SizedBox(height: 8.h),
                 Text(
-                  'Check back later for upcoming events',
-                  style: TextStyle(fontSize: 14.sp, color: Colors.grey[500]),
+                  'check_back_events'.tr(),
+                  style: TextStyle(fontSize: 14.sp, color: kSubtitle),
                 ),
               ],
             ),
@@ -234,7 +301,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
 
         // List of events
         return ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: kSpacing),
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 20.h),
           itemCount: events.length,
           itemBuilder: (context, index) {
             return _buildEventCard(events[index]);
@@ -250,12 +317,12 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       margin: EdgeInsets.only(bottom: 16.h),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withValues(alpha: 0.96),
         borderRadius: BorderRadius.circular(18.r),
         border: Border.all(color: const Color(0xFFE5EAF0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: const Color(0xFF172B4D).withValues(alpha: 0.05),
             blurRadius: 18,
             offset: const Offset(0, 6),
           ),
@@ -266,7 +333,22 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            if (announcement.attachments.isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12.r),
+                child: Image.network(
+                  announcement.attachments.first,
+                  width: double.infinity,
+                  height: 170.h,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            if (announcement.attachments.isNotEmpty) SizedBox(height: 12.h),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8.w,
+              runSpacing: 8.h,
               children: [
                 Container(
                   padding: EdgeInsets.symmetric(
@@ -274,11 +356,11 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                     vertical: 5.h,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFEAF3FF),
+                    color: const Color(0xFFEEF2F6),
                     borderRadius: BorderRadius.circular(20.r),
                   ),
                   child: Text(
-                    announcement.category,
+                    _localizedCategory(announcement.category),
                     style: TextStyle(
                       fontSize: 11.sp,
                       fontWeight: FontWeight.w700,
@@ -288,7 +370,6 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                 ),
                 SizedBox(width: 8.w),
                 _buildPriorityBadge(announcement.priority),
-                const Spacer(),
                 Icon(Icons.campaign_outlined, size: 20.w, color: kPrimaryBlue),
               ],
             ),
@@ -306,8 +387,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
             Text(
               announcement.description,
               style: TextStyle(fontSize: 14.sp, color: kSubtitle, height: 1.5),
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
             ),
             SizedBox(height: 14.h),
             const Divider(height: 1, color: Color(0xFFEEF1F5)),
@@ -338,7 +418,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       margin: EdgeInsets.only(bottom: 18.h),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withValues(alpha: .96),
         borderRadius: BorderRadius.circular(20.r),
         border: Border.all(color: const Color(0xFFE3E9F0)),
         boxShadow: [
@@ -360,7 +440,10 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8.w,
+                  runSpacing: 8.h,
                   children: [
                     Container(
                       padding: EdgeInsets.symmetric(
@@ -368,11 +451,11 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                         vertical: 5.h,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFEAF3FF),
+                        color: const Color(0xFFEEF2F6),
                         borderRadius: BorderRadius.circular(20.r),
                       ),
                       child: Text(
-                        event.category,
+                        _localizedCategory(event.category),
                         style: TextStyle(
                           fontSize: 11.sp,
                           fontWeight: FontWeight.w700,
@@ -406,8 +489,7 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                       color: kSubtitle,
                       height: 1.5,
                     ),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
+                    softWrap: true,
                   ),
                 ],
 
@@ -428,7 +510,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                     if (event.totalCapacity != null && event.totalCapacity! > 0)
                       _eventMeta(
                         Icons.groups_outlined,
-                        '${event.totalCapacity} capacity',
+                        'event_capacity'.tr(
+                          namedArgs: {'count': '${event.totalCapacity}'},
+                        ),
                       ),
                   ],
                 ),
@@ -437,20 +521,28 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                 const Divider(height: 1, color: Color(0xFFEEF1F5)),
                 SizedBox(height: 12.h),
 
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8.w,
+                  runSpacing: 4.h,
                   children: [
                     Icon(Icons.schedule_outlined, size: 15.w, color: kSubtitle),
                     SizedBox(width: 5.w),
                     Text(
-                      'Posted ${_formatDate(event.createdAt)}',
+                      'posted_date'.tr(
+                        namedArgs: {'date': _formatDate(event.createdAt)},
+                      ),
                       style: TextStyle(fontSize: 12.sp, color: kSubtitle),
                     ),
-                    const Spacer(),
                     if (event.imageUrls.length > 1)
                       TextButton.icon(
                         onPressed: () => _showEventGallery(event.imageUrls),
                         icon: const Icon(Icons.photo_library_outlined),
-                        label: Text('${event.imageUrls.length} photos'),
+                        label: Text(
+                          'photo_count'.tr(
+                            namedArgs: {'count': '${event.imageUrls.length}'},
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -607,6 +699,20 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
     );
   }
 
+  String _localizedCategory(String category) {
+    final key = switch (category.toLowerCase()) {
+      'maintenance' => 'maintenance',
+      'event' => 'event',
+      'emergency' => 'emergency',
+      'urgent' => 'urgent',
+      'billing' => 'billing',
+      'security' => 'security',
+      'general' => 'general',
+      _ => null,
+    };
+    return key == null ? category : key.tr();
+  }
+
   /// Priority Badge
   Widget _buildPriorityBadge(String priority) {
     Color bgColor;
@@ -617,17 +723,17 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       case 'high':
         bgColor = kHighPriorityBg;
         textColor = kHighPriorityText;
-        label = 'High';
+        label = 'high'.tr();
         break;
       case 'low':
         bgColor = kLowPriorityBg;
         textColor = kLowPriorityText;
-        label = 'Low';
+        label = 'low'.tr();
         break;
       default:
         bgColor = kMediumPriorityBg;
         textColor = kMediumPriorityText;
-        label = 'Medium';
+        label = 'medium'.tr();
     }
 
     return Container(
@@ -657,23 +763,23 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       case 'upcoming':
         bgColor = kMediumPriorityBg;
         textColor = kMediumPriorityText;
-        label = 'Upcoming';
+        label = 'upcoming'.tr();
         break;
       case 'active':
       case 'ongoing':
         bgColor = kLowPriorityBg;
         textColor = kLowPriorityText;
-        label = 'Active';
+        label = 'active'.tr();
         break;
       case 'completed':
         bgColor = Colors.grey[200]!;
         textColor = Colors.grey[700]!;
-        label = 'Completed';
+        label = 'completed'.tr();
         break;
       case 'cancelled':
         bgColor = kHighPriorityBg;
         textColor = kHighPriorityText;
-        label = 'Cancelled';
+        label = 'cancelled'.tr();
         break;
       default:
         bgColor = Colors.grey[200]!;
@@ -704,18 +810,21 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
     final difference = now.difference(date);
 
     if (difference.inDays == 0) {
-      return 'Today';
+      return 'today'.tr();
     } else if (difference.inDays == 1) {
-      return 'Yesterday';
+      return 'yesterday'.tr();
     } else if (difference.inDays < 7) {
-      return '${difference.inDays} days ago';
+      return 'days_ago'.tr(namedArgs: {'count': '${difference.inDays}'});
     } else {
-      return DateFormat('MMM d, yyyy').format(date);
+      return DateFormat('MMM d, yyyy', context.locale.toString()).format(date);
     }
   }
 
   /// Format event date
   String _formatEventDate(DateTime date) {
-    return DateFormat('MMM d, yyyy • h:mm a').format(date);
+    return DateFormat(
+      'MMM d, yyyy • h:mm a',
+      context.locale.toString(),
+    ).format(date);
   }
 }

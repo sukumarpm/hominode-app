@@ -1,8 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import 'src/services/bill_firestore_service.dart';
 import 'src/utils/payment_method.dart';
+import 'src/widgets/resident_visitor_page_background.dart';
 
 class PaymentHistoryScreen extends StatelessWidget {
   const PaymentHistoryScreen({super.key, required this.paidBills});
@@ -15,21 +17,24 @@ class PaymentHistoryScreen extends StatelessWidget {
       ..sort(_newestPaymentFirst);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: const Color(0xFFF7F9FD),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E4778),
-        foregroundColor: Colors.white,
-        title: const Text('Payment History'),
+        backgroundColor: Colors.white.withValues(alpha: .82),
+        foregroundColor: const Color(0xFF0E2247),
+        elevation: 0,
+        title: Text('payment_history'.tr()),
       ),
-      body: history.isEmpty
-          ? const Center(child: Text('No payment history'))
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: history.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) =>
-                  _PaymentHistoryCard(bill: history[index]),
-            ),
+      body: ResidentVisitorPageBackground(
+        child: history.isEmpty
+            ? Center(child: Text('no_payment_history'.tr()))
+            : ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: history.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) =>
+                    _PaymentHistoryCard(bill: history[index]),
+              ),
+      ),
     );
   }
 }
@@ -52,9 +57,12 @@ class _PaymentHistoryCard extends StatelessWidget {
         _nonEmptyString(bill['paymentReference']) ??
         _nonEmptyString(bill['transactionId']);
     final paymentMethod = normalizePaymentMethod(bill['paymentMethod']);
-    final billingPeriod = _displayBillingPeriod(bill['billingPeriod']);
+    final billingPeriod = _displayBillingPeriod(
+      bill['billingPeriod'],
+      context.locale.toString(),
+    );
     final period = isV2
-        ? billingPeriod ?? 'Paid bill'
+        ? billingPeriod ?? 'paid_bill'.tr()
         : [if (month != null) month, if (year != null) year].join(' ');
     final amountText = isV2
         ? BillFirestoreService.formatV2BillMinorUnits(bill, bill['amountMinor'])
@@ -64,6 +72,12 @@ class _PaymentHistoryCard extends StatelessWidget {
 
     return Card(
       margin: EdgeInsets.zero,
+      color: Colors.white.withValues(alpha: .94),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: const BorderSide(color: Colors.white, width: 1.2),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -76,7 +90,7 @@ class _PaymentHistoryCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    period.isNotEmpty ? period : 'Paid bill',
+                    period.isNotEmpty ? period : 'paid_bill'.tr(),
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -93,18 +107,28 @@ class _PaymentHistoryCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _DetailRow(
-              label: 'Payment date',
-              value: paidAt == null ? 'Not recorded' : _formatDate(paidAt),
+              label: 'payment_date'.tr(),
+              value: paidAt == null
+                  ? 'not_recorded'.tr()
+                  : _formatDate(paidAt, context.locale.toString()),
             ),
-            _DetailRow(label: 'Payment method', value: paymentMethod),
-            if (billId != null)
-              _DetailRow(label: 'Bill reference', value: billId),
             _DetailRow(
-              label: 'Status',
-              value: status == null ? 'Not recorded' : _titleCase(status),
+              label: 'payment_method'.tr(),
+              value: _localizedPaymentMethod(paymentMethod),
+            ),
+            if (billId != null)
+              _DetailRow(label: 'bill_reference'.tr(), value: billId),
+            _DetailRow(
+              label: 'status'.tr(),
+              value: status == null
+                  ? 'not_recorded'.tr()
+                  : _localizedPaymentStatus(status),
             ),
             if (paymentReference != null)
-              _DetailRow(label: 'Payment reference', value: paymentReference),
+              _DetailRow(
+                label: 'payment_reference'.tr(),
+                value: paymentReference,
+              ),
           ],
         ),
       ),
@@ -112,26 +136,14 @@ class _PaymentHistoryCard extends StatelessWidget {
   }
 }
 
-String? _displayBillingPeriod(Object? value) {
+String? _displayBillingPeriod(Object? value, String locale) {
   if (value is! String || !RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(value)) {
     return null;
   }
-  const months = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
   final pieces = value.split('-');
-  return '${months[int.parse(pieces[1]) - 1]} ${pieces[0]}';
+  return DateFormat.yMMMM(
+    locale,
+  ).format(DateTime(int.parse(pieces[0]), int.parse(pieces[1])));
 }
 
 class _DetailRow extends StatelessWidget {
@@ -185,24 +197,30 @@ String? _nonEmptyString(Object? value) {
   return trimmed.isEmpty ? null : trimmed;
 }
 
-String _formatDate(DateTime date) {
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  return '${months[date.month - 1]} ${date.day}, ${date.year}';
+String _formatDate(DateTime date, String locale) {
+  return DateFormat.yMMMd(locale).format(date);
 }
 
-String _titleCase(String value) {
-  return '${value[0].toUpperCase()}${value.substring(1).toLowerCase()}';
+String _localizedPaymentMethod(String label) => switch (label) {
+  'UPI' => 'UPI',
+  'Cash' => 'cash'.tr(),
+  'Bank Transfer' => 'bank_transfer'.tr(),
+  'Cheque' => 'cheque'.tr(),
+  'Manual' => 'manual'.tr(),
+  'External' => 'external'.tr(),
+  'Not recorded' => 'not_recorded'.tr(),
+  _ => label,
+};
+
+String _localizedPaymentStatus(String status) {
+  final key = switch (status.toLowerCase()) {
+    'paid' || 'settled' => 'paid',
+    'pending' => 'pending',
+    'partially_paid' => 'partially_paid',
+    'overdue' => 'overdue',
+    'rejected' || 'failed' => 'rejected',
+    'cancelled' || 'canceled' => 'cancelled',
+    _ => null,
+  };
+  return key == null ? status : key.tr();
 }

@@ -8,6 +8,7 @@ import 'package:hominode_legal/hominode_legal.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/language_provider.dart';
+import '../widgets/resident_visitor_page_background.dart';
 
 // ============================================================================
 // APP SETTINGS SCREEN
@@ -28,45 +29,57 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, _) {
         return Scaffold(
+          backgroundColor: Colors.transparent,
           appBar: AppBar(
             title: Text('settings'.tr()),
-            backgroundColor: const Color(0xFF0E4778),
-            foregroundColor: Colors.white,
+            backgroundColor: Colors.white.withValues(alpha: 0.82),
+            foregroundColor: const Color(0xFF172B4D),
             elevation: 0,
+            surfaceTintColor: Colors.transparent,
+            titleTextStyle: TextStyle(
+              color: const Color(0xFF172B4D),
+              fontSize: 20.sp,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          body: SingleChildScrollView(
-            child: Column(
-              children: [
-                // Language Settings Section
-                _buildSectionHeader(context, 'language'),
-                _buildLanguageSection(context),
+          body: ResidentVisitorPageBackground(
+            child: SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // Language Settings Section
+                    _buildSectionHeader(context, 'language'),
+                    _buildLanguageSection(context),
 
-                const Divider(height: 32),
+                    const Divider(height: 32),
 
-                // Notification Settings Section
-                _buildSectionHeader(context, 'notifications'),
-                _buildNotificationSettings(context),
+                    // Notification Settings Section
+                    _buildSectionHeader(context, 'notifications'),
+                    _buildNotificationSettings(context),
 
-                const Divider(height: 32),
+                    const Divider(height: 32),
 
-                // Security Settings Section
-                _buildSectionHeader(context, 'settings_security'),
-                _buildSecuritySettings(context),
+                    // Security Settings Section
+                    _buildSectionHeader(context, 'settings_security'),
+                    _buildSecuritySettings(context),
 
-                const Divider(height: 32),
+                    const Divider(height: 32),
 
-                // Privacy Settings Section
-                _buildSectionHeader(context, 'settings_privacy'),
-                _buildPrivacySettings(context),
+                    // Privacy Settings Section
+                    _buildSectionHeader(context, 'settings_privacy'),
+                    _buildPrivacySettings(context),
 
-                const Divider(height: 32),
+                    const Divider(height: 32),
 
-                // About Section
-                _buildSectionHeader(context, 'about'),
-                _buildAboutSection(context),
+                    // About Section
+                    _buildSectionHeader(context, 'about'),
+                    _buildAboutSection(context),
 
-                SizedBox(height: 32.h),
-              ],
+                    SizedBox(height: 32.h),
+                  ],
+                ),
+              ),
             ),
           ),
         );
@@ -78,6 +91,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   // LANGUAGE SECTION
   // ========================================================================
   Widget _buildLanguageSection(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
       child: Consumer<LanguageProvider>(
@@ -87,7 +101,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              childAspectRatio: 1.8, // Adjusted ratio to give enough height
+              mainAxisExtent: (textScale > 1.2 ? 126 : 108).h,
               crossAxisSpacing: 12.w,
               mainAxisSpacing: 12.h,
             ),
@@ -105,14 +119,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? const Color(0xFF0E4778)
-                        : Colors.grey[100],
-                    borderRadius: BorderRadius.circular(12.r),
+                        ? const Color(0xFF172B4D)
+                        : Colors.white.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(18.r),
                     border: Border.all(
                       color: isSelected
-                          ? const Color(0xFF0E4778)
-                          : Colors.grey[300]!,
-                      width: 2,
+                          ? const Color(0xFF172B4D)
+                          : const Color(0xFFE2EAF3),
+                      width: 1.2,
                     ),
                   ),
                   child: Column(
@@ -129,11 +143,13 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                         style: TextStyle(
                           fontSize: 13.sp,
                           fontWeight: FontWeight.w600,
-                          color: isSelected ? Colors.white : Colors.black,
+                          color: isSelected
+                              ? Colors.white
+                              : const Color(0xFF172B4D),
                         ),
                         textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                        softWrap: true,
                       ),
                     ],
                   ),
@@ -153,6 +169,9 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       'hi': '🇮🇳',
       'es': '🇪🇸',
       'ar': '🇸🇦',
+      'ml': '🇮🇳',
+      'te': '🇮🇳',
+      'kn': '🇮🇳',
     };
     return flagMap[languageCode] ?? '🌐';
   }
@@ -174,7 +193,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               onChanged: (value) {
                 setState(() => _notificationsEnabled = value);
               },
-              activeThumbColor: const Color(0xFF0E4778),
+              activeThumbColor: const Color(0xFF172B4D),
             ),
           ),
           _buildSettingsTile(
@@ -184,7 +203,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             trailing: Switch(
               value: true,
               onChanged: (value) {},
-              activeThumbColor: const Color(0xFF0E4778),
+              activeThumbColor: const Color(0xFF172B4D),
             ),
           ),
           _buildSettingsTile(
@@ -194,7 +213,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             trailing: Switch(
               value: false,
               onChanged: (value) {},
-              activeThumbColor: const Color(0xFF0E4778),
+              activeThumbColor: const Color(0xFF172B4D),
             ),
           ),
         ],
@@ -219,7 +238,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               onChanged: (value) {
                 setState(() => _twoFactorEnabled = value);
               },
-              activeThumbColor: const Color(0xFF0E4778),
+              activeThumbColor: const Color(0xFF172B4D),
             ),
           ),
           _buildSettingsTile(
@@ -333,7 +352,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           style: TextStyle(
             fontSize: 16.sp,
             fontWeight: FontWeight.w600,
-            color: const Color(0xFF0E4778),
+            color: const Color(0xFF172B4D),
           ),
         ),
       ),
@@ -347,19 +366,34 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     Widget? trailing,
     VoidCallback? onTap,
   }) {
-    return ListTile(
-      leading: Icon(icon, color: const Color(0xFF0E4778)),
-      title: Text(
-        title,
-        style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600),
+    return Container(
+      margin: EdgeInsets.only(bottom: 8.h),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: const Color(0xFFE2EAF3)),
       ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(fontSize: 12.sp, color: Colors.grey[600]),
+      child: ListTile(
+        leading: Icon(icon, color: const Color(0xFF172B4D)),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 14.sp,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF172B4D),
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(fontSize: 12.sp, color: const Color(0xFF64748B)),
+        ),
+        trailing: trailing,
+        onTap: onTap,
+        contentPadding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 8.h),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18.r),
+        ),
       ),
-      trailing: trailing,
-      onTap: onTap,
-      contentPadding: EdgeInsets.symmetric(vertical: 8.h),
     );
   }
 
@@ -487,7 +521,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0E4778),
+              backgroundColor: const Color(0xFF172B4D),
             ),
             child: Text('send'.tr()),
           ),

@@ -561,6 +561,7 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
                 child: TextField(
                   controller: _otpController,
                   focusNode: _otpFocusNode,
+                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
                   keyboardType: TextInputType.number,
                   maxLength: 6,
                   autofocus: true,
