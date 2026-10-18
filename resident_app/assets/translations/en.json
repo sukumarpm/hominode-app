@@ -527,5 +527,6 @@
   "bill_reference": "Bill reference",
   "paid_bill": "Paid bill",
   "price_value": "Price: {price}",
-  "capacity_value": "Capacity: {count} people"
+  "capacity_value": "Capacity: {count} people",
+  "profile_device_verification_failed": "Device verification failed. Restart the app and retry. If this continues, contact support."
 }

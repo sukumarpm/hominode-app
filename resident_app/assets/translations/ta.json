@@ -527,5 +527,6 @@
   "bill_reference": "பில் குறிப்பு",
   "paid_bill": "செலுத்திய பில்",
   "price_value": "விலை: {price}",
-  "capacity_value": "திறன்: {count} பேர்"
+  "capacity_value": "திறன்: {count} பேர்",
+  "profile_device_verification_failed": "சாதனச் சரிபார்ப்பு தோல்வியடைந்தது. செயலியை மீண்டும் திறந்து முயலவும். தொடர்ந்தால் உதவியைத் தொடர்புகொள்ளவும்."
 }

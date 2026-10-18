@@ -527,5 +527,6 @@
   "bill_reference": "ಬಿಲ್ ಉಲ್ಲೇಖ",
   "paid_bill": "ಪಾವತಿಸಿದ ಬಿಲ್",
   "price_value": "ಬೆಲೆ: {price}",
-  "capacity_value": "ಸಾಮರ್ಥ್ಯ: {count} ಜನರು"
+  "capacity_value": "ಸಾಮರ್ಥ್ಯ: {count} ಜನರು",
+  "profile_device_verification_failed": "ಸಾಧನ ಪರಿಶೀಲನೆ ವಿಫಲವಾಗಿದೆ. ಆ್ಯಪ್ ಮರುಪ್ರಾರಂಭಿಸಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ. ಸಮಸ್ಯೆ ಮುಂದುವರಿದರೆ ಬೆಂಬಲವನ್ನು ಸಂಪರ್ಕಿಸಿ."
 }

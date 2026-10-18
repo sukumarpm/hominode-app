@@ -527,5 +527,6 @@
   "bill_reference": "مرجع الفاتورة",
   "paid_bill": "فاتورة مدفوعة",
   "price_value": "السعر: {price}",
-  "capacity_value": "السعة: {count} أشخاص"
+  "capacity_value": "السعة: {count} أشخاص",
+  "profile_device_verification_failed": "فشل التحقق من الجهاز. أعد تشغيل التطبيق وحاول مجددًا. إذا استمرت المشكلة، تواصل مع الدعم."
 }

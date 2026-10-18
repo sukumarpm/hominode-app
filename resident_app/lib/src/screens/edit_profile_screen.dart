@@ -3,23 +3,33 @@ import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/edit_profile_screen.dart
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:easy_localization/easy_localization.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/profile_image_service.dart';
+import '../services/profile_diagnostics.dart';
 import '../services/user_data_service.dart';
 import '../widgets/resident_visitor_page_background.dart';
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({super.key, this.profileLoader});
+  const EditProfileScreen({
+    super.key,
+    this.profileLoader,
+    this.profileSaver,
+    this.photoUploader,
+    this.photoPicker,
+  });
 
   @visibleForTesting
   final Future<Map<String, dynamic>?> Function()? profileLoader;
+  @visibleForTesting
+  final Future<bool> Function(Map<String, dynamic>)? profileSaver;
+  @visibleForTesting
+  final Future<ProfileImageResult> Function(String)? photoUploader;
+  @visibleForTesting
+  final Future<String?> Function()? photoPicker;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -52,96 +62,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _loadUserProfile() async {
-    print('🔵 EDIT PROFILE LOAD FLOW: Starting...');
-    setState(() => _isLoading = true);
-
     try {
-      // STEP 1: Fetch user data from Firestore
-      print('📥 STEP 1: Fetching user data from Firestore...');
-      var userData = widget.profileLoader != null
+      final data = widget.profileLoader != null
           ? await widget.profileLoader!()
           : await _userDataService!.getCurrentUserData(forceRefresh: true);
-
-      // If first attempt fails, try getting from SharedPreferences user_id
-      if (userData == null) {
-        print('⚠️  First attempt failed, trying alternative method...');
-        final prefs = await SharedPreferences.getInstance();
-        final userId = prefs.getString('user_id');
-
-        if (userId != null) {
-          print('   Trying to fetch with user_id: $userId');
-          userData = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(userId)
-              .get()
-              .then((doc) {
-                if (doc.exists) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  data['id'] = doc.id;
-                  return data;
-                }
-                return null;
-              });
-        }
-      }
-
-      if (userData == null) {
-        print('❌ STEP 1 FAILED: No user data found');
-        setState(() => _isLoading = false);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('profile_not_found_contact_admin'.tr()),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
-        return;
-      }
-
-      print('✅ STEP 1 PASSED: User data loaded');
-      print('   Name: ${userData['name']}');
-      print('   Email: ${userData['email']}');
-      print('   Phone: ${userData['phone']}');
-      print('   Flat: ${userData['flatLabel'] ?? userData['flatId']}');
-
-      // STEP 2: Populate form fields
-      print('🎨 STEP 2: Populating form fields...');
-      if (mounted) {
-        setState(() {
-          _nameController.text = userData?['name'] ?? '';
-          _emailController.text =
-              userData?['email'] ??
-              FirebaseAuth.instance.currentUser?.email ??
-              '';
-          _phoneController.text = residentDisplayPhone(userData);
-          _flatNumberController.text =
-              userData?['flatLabel'] ?? userData?['flatId'] ?? '';
-          _photoUrl = userData?['profileImage'] ?? userData?['photoURL'];
-          _isLoading = false;
-        });
-
-        print('✅ STEP 2 PASSED: Form fields populated');
-        print('');
-        print('✅ EDIT PROFILE LOAD FLOW: COMPLETE');
-      }
-    } catch (e, stackTrace) {
-      print('❌ ERROR in EDIT PROFILE LOAD FLOW: $e');
-      print('   Stack trace: $stackTrace');
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        if (data == null) return;
+        _nameController.text = data['name'] as String? ?? '';
+        _emailController.text = data['email'] as String? ?? '';
+        _phoneController.text = residentDisplayPhone(data);
+        _flatNumberController.text =
+            data['flatLabel'] as String? ?? data['flatId'] as String? ?? '';
+        _photoUrl = ProfileImageService.fromData(data).imageUrl;
+      });
+      if (data == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('edit_profile_load_error'.tr()),
+            content: Text('profile_not_found_contact_admin'.tr()),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
           ),
         );
       }
+    } catch (error) {
+      logProfileFailure('profile-load', error);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('edit_profile_load_error'.tr()),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -279,6 +232,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ? Image(
                           image: residentImageProvider(_photoUrl!),
                           fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => const Icon(Icons.person),
                         )
                       : Icon(
                           Icons.person,
@@ -424,6 +378,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _pickPhoto() async {
     try {
+      if (widget.photoPicker != null) {
+        final path = await widget.photoPicker!();
+        if (mounted && path != null) setState(() => _photoFile = File(path));
+        return;
+      }
       final ImageSource? source = await showModalBottomSheet<ImageSource>(
         context: context,
         backgroundColor: Colors.white,
@@ -510,6 +469,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       }
     } catch (_) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('photo_selection_error'.tr())));
@@ -519,7 +479,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
 
-    print('🔵 EDIT PROFILE SAVE FLOW: Starting...');
+    debugPrint('Resident profile: stage=save-start');
     setState(() => _isSaving = true);
 
     try {
@@ -527,53 +487,52 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final newEmail = _emailController.text.trim();
 
       // STEP 1: Prepare updates for Firestore
-      print('📋 Preparing profile updates for Firestore...');
+      debugPrint('Resident profile: stage=display-fields');
       final updates = <String, dynamic>{'name': newName, 'email': newEmail};
 
       // STEP 2: Upload image if selected
-      String? uploadedImageUrl;
       if (_photoFile != null) {
-        final imageResult = await ProfileImageService.instance
-            .uploadProfileImage(imagePath: _photoFile!.path);
+        final imageResult = widget.photoUploader != null
+            ? await widget.photoUploader!(_photoFile!.path)
+            : await ProfileImageService.instance.uploadProfileImage(
+                imagePath: _photoFile!.path,
+              );
 
         if (imageResult.success && imageResult.imageUrl != null) {
-          uploadedImageUrl = imageResult.imageUrl;
-
           _photoUrl = imageResult.imageUrl;
           _photoFile = null;
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('profile_photo_upload_failed'.tr()),
+                content: Text(
+                  (imageResult.errorCode == 'APP_CHECK_UNAVAILABLE'
+                          ? 'profile_device_verification_failed'
+                          : 'profile_photo_upload_failed')
+                      .tr(),
+                ),
                 backgroundColor: Colors.orange,
                 duration: const Duration(seconds: 2),
               ),
             );
           }
-          throw StateError('Profile photo save was not confirmed.');
+          if (mounted) setState(() => _isSaving = false);
+          return;
         }
       }
 
       // Profile image pointers are already committed by the authorized callable.
       // STEP 3: Update Firestore Document directly
-      print('💾 Updating user data in Firestore...');
-      final success = await _userDataService!.updateUserData(updates);
+      debugPrint('Resident profile: stage=profile-write');
+      final success = widget.profileSaver != null
+          ? await widget.profileSaver!(updates)
+          : await _userDataService!.updateUserData(updates);
 
       if (!success) {
         throw Exception('Profile update failed');
       }
 
-      // STEP 4: Force refresh image cache if needed
-      if (uploadedImageUrl != null) {
-        final userId = await _getUserId();
-        if (userId != null) {
-          await ProfileImageService.instance.forceRefreshProfileImage(
-            userId: userId,
-          );
-        }
-      }
-
+      if (!mounted) return;
       setState(() => _isSaving = false);
 
       if (mounted) {
@@ -586,9 +545,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         );
       }
-    } catch (e) {
-      print('❌ ERROR in EDIT PROFILE SAVE FLOW: $e');
-
+    } catch (error) {
+      logProfileFailure('profile-save', error);
+      if (!mounted) return;
       setState(() => _isSaving = false);
 
       if (mounted) {
@@ -600,26 +559,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         );
       }
-    }
-  }
-
-  Future<String?> _getUserId() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      var userId = prefs.getString('user_id');
-
-      if (userId == null) {
-        final firebaseUser = FirebaseAuth.instance.currentUser;
-        if (firebaseUser != null) {
-          userId = firebaseUser.uid;
-          await prefs.setString('user_id', userId);
-        }
-      }
-
-      return userId;
-    } catch (e) {
-      print('⚠️  Error getting user ID: $e');
-      return null;
     }
   }
 }

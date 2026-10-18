@@ -527,5 +527,6 @@
   "bill_reference": "बिल संदर्भ",
   "paid_bill": "भुगतान किया गया बिल",
   "price_value": "मूल्य: {price}",
-  "capacity_value": "क्षमता: {count} लोग"
+  "capacity_value": "क्षमता: {count} लोग",
+  "profile_device_verification_failed": "डिवाइस सत्यापन विफल हुआ। ऐप फिर से खोलकर प्रयास करें। समस्या बनी रहे तो सहायता से संपर्क करें।"
 }

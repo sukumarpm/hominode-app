@@ -527,5 +527,6 @@
   "bill_reference": "ബിൽ റഫറൻസ്",
   "paid_bill": "അടച്ച ബിൽ",
   "price_value": "വില: {price}",
-  "capacity_value": "ശേഷി: {count} പേർ"
+  "capacity_value": "ശേഷി: {count} പേർ",
+  "profile_device_verification_failed": "ഉപകരണ പരിശോധന പരാജയപ്പെട്ടു. ആപ്പ് വീണ്ടും തുറന്ന് ശ്രമിക്കുക. പ്രശ്നം തുടരുകയാണെങ്കിൽ സഹായവുമായി ബന്ധപ്പെടുക."
 }

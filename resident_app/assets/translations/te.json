@@ -527,5 +527,6 @@
   "bill_reference": "బిల్లు రిఫరెన్స్",
   "paid_bill": "చెల్లించిన బిల్లు",
   "price_value": "ధర: {price}",
-  "capacity_value": "సామర్థ్యం: {count} మంది"
+  "capacity_value": "సామర్థ్యం: {count} మంది",
+  "profile_device_verification_failed": "పరికర ధృవీకరణ విఫలమైంది. యాప్‌ను మళ్లీ ప్రారంభించి ప్రయత్నించండి. సమస్య కొనసాగితే సహాయాన్ని సంప్రదించండి."
 }

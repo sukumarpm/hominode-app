@@ -2,6 +2,8 @@
 // User Data Service - Fetches and manages user data from Firestore
 
 import '../utils/resident_phone.dart';
+import 'profile_diagnostics.dart';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firestore_auth_service.dart';
@@ -12,12 +14,20 @@ class UserDataService {
   // Singleton pattern
   static final UserDataService instance = UserDataService._internal();
   factory UserDataService() => instance;
-  UserDataService._internal();
-
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  UserDataService._internal()
+    : _auth = FirebaseAuth.instance,
+      _writeUser = null;
+  @visibleForTesting
+  UserDataService.forTesting({
+    required FirebaseAuth auth,
+    required Future<void> Function(String, Map<String, dynamic>) writeUser,
+  }) : _auth = auth,
+       _writeUser = writeUser;
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
+  final FirebaseAuth _auth;
+  final Future<void> Function(String, Map<String, dynamic>)? _writeUser;
   final FirestoreAuthService _authService = FirestoreAuthService();
-  
+
   // Cache user data
   Map<String, dynamic>? _cachedUserData;
   String? _cachedUserId;
@@ -25,120 +35,24 @@ class UserDataService {
   /// Get current user data
   /// Returns cached data if available, otherwise fetches from Firestore
   /// Follows the standardized flow function pattern
-  Future<Map<String, dynamic>?> getCurrentUserData({bool forceRefresh = false}) async {
+  Future<Map<String, dynamic>?> getCurrentUserData({
+    bool forceRefresh = false,
+  }) async {
     try {
-      print('🔵 USER DATA FETCH FLOW: Starting...');
-      
-      // STEP 1: Validate Authentication
-      print('🔐 STEP 1: Validating user authentication...');
-      final firebaseUser = _auth.currentUser;
-      
-      if (firebaseUser == null) {
-        print('❌ STEP 1 FAILED: No user logged in - Firebase Auth user is null');
-        return null;
-      }
-      
-      print('✅ STEP 1 PASSED: User authenticated');
-      print('   Firebase Auth UID: ${firebaseUser.uid}');
-      
-      // STEP 2: Check Cache
-      print('💾 STEP 2: Checking cache...');
-      if (!forceRefresh && _cachedUserId == firebaseUser.uid && _cachedUserData != null) {
-        print('✅ STEP 2 PASSED: Returning cached user data');
+      final user = _auth.currentUser;
+      if (user == null) return null;
+      if (!forceRefresh && _cachedUserId == user.uid && _cachedUserData != null)
         return _cachedUserData;
-      }
-      print('✅ STEP 2 PASSED: Cache miss or refresh requested');
-
-      // STEP 3: Fetch from Firestore
-      print('📥 STEP 3: Fetching user data from Firestore...');
-      print('   Collection: users');
-      print('   Document ID: ${firebaseUser.uid}');
-
-      final doc = await _firestore.collection('users').doc(firebaseUser.uid).get();
-
-      if (!doc.exists) {
-        print('❌ STEP 3 FAILED: User document not found');
-        print('');
-        print('🔧 SOLUTION: Create user document in Firebase Console');
-        print('   1. Go to Firebase Console → Firestore Database');
-        print('   2. Open "users" collection');
-        print('   3. Create document with ID: ${firebaseUser.uid}');
-        print('   4. Add these fields:');
-        print('      - id: "${firebaseUser.uid}"');
-        print('      - authUid: "${firebaseUser.uid}"');
-        print('      - email: "${firebaseUser.email}"');
-        print('      - name: "Your Name"');
-        print('      - phone: "+1234567890"');
-        print('      - buildingId: "building1"');
-        print('      - flatId: "flat101"');
-        print('      - flatLabel: "A-101"');
-        print('      - role: "resident"');
-        print('');
-        return null;
-      }
-
-      final userData = doc.data();
-      
-      if (userData == null) {
-        print('❌ STEP 3 FAILED: User document exists but has no data');
-        return null;
-      }
-      
-      print('✅ STEP 3 PASSED: Document fetched from Firestore');
-      
-      // STEP 4: Validate and Enrich Data
-      print('📋 STEP 4: Validating and enriching user data...');
-      
-      // Add document ID to the data
-      userData['id'] = doc.id;
-      
-      // Validate required fields
-      final missingFields = <String>[];
-      if (userData['buildingId'] == null) missingFields.add('buildingId');
-      if (userData['flatId'] == null) missingFields.add('flatId');
-      if (userData['role'] == null) missingFields.add('role');
-      
-      if (missingFields.isNotEmpty) {
-        print('⚠️  WARNING: User document missing required fields: ${missingFields.join(", ")}');
-        print('   Add these fields in Firebase Console to fix permission errors');
-      }
-      
-      print('✅ STEP 4 PASSED: Data validated');
-      
-      // STEP 5: Cache and Return
-      print('💾 STEP 5: Caching user data...');
-      _cachedUserData = userData;
-      _cachedUserId = firebaseUser.uid;
-      
-      print('✅ STEP 5 PASSED: Data cached');
-      print('');
-      print('✅ USER DATA FETCH FLOW: COMPLETE');
-      print('   ID: ${userData['id']}');
-      print('   Name: ${userData['name'] ?? "Missing"}');
-      print('   Email: ${userData['email'] ?? "Missing"}');
-      print('   Phone: ${userData['phone'] ?? "Missing"}');
-      print('   Flat: ${userData['flatLabel'] ?? userData['flatId'] ?? "Missing"}');
-      print('   Building ID: ${userData['buildingId'] ?? "❌ MISSING"}');
-      print('   Role: ${userData['role'] ?? "❌ MISSING"}');
-      print('');
-
-      return userData;
-    } catch (e, stackTrace) {
-      print('❌ ERROR in USER DATA FETCH FLOW: $e');
-      print('   Stack trace: $stackTrace');
-      
-      if (e.toString().contains('permission-denied')) {
-        print('');
-        print('🔧 PERMISSION DENIED ERROR');
-        print('   This means either:');
-        print('   1. User document does not exist in Firestore');
-        print('   2. Firestore security rules are not deployed');
-        print('   3. User document is missing required fields');
-        print('');
-        print('   📖 Read: DO_THIS_NOW_PERMISSION_FIX.md for solution');
-        print('');
-      }
-      
+      final doc = await _firestore.collection('users').doc(user.uid).get();
+      if (_auth.currentUser?.uid != user.uid || !doc.exists) return null;
+      final data = doc.data();
+      if (data == null) return null;
+      data['id'] = doc.id;
+      _cachedUserData = data;
+      _cachedUserId = user.uid;
+      return data;
+    } catch (error) {
+      logProfileFailure('profile-read', error);
       return null;
     }
   }
@@ -199,47 +113,37 @@ class UserDataService {
 
   /// Update user data in Firestore
   Future<bool> updateUserData(Map<String, dynamic> updates) async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+    final fields = Map<String, dynamic>.of(updates)
+      ..['updatedAt'] = FieldValue.serverTimestamp();
     try {
-      final userId = await _authService.getCurrentUserId();
-      
-      if (userId == null) {
-        print('❌ No user logged in');
-        return false;
+      if (_writeUser != null) {
+        await _writeUser(user.uid, fields);
+      } else {
+        await _firestore.collection('users').doc(user.uid).update(fields);
       }
-
-      print('📤 Updating user data in Firestore...');
-
-      // Add timestamp
-      updates['updatedAt'] = FieldValue.serverTimestamp();
-
-      // Update in Firestore
-      await _firestore.collection('users').doc(userId).update(updates);
-
-      // Also update Firebase Auth profile if name or photo changed
-      final firebaseUser = _auth.currentUser;
-      if (firebaseUser != null) {
-        if (updates.containsKey('name')) {
-          await firebaseUser.updateDisplayName(updates['name']);
-          print('✅ Updated Firebase Auth display name');
-        }
-        if (updates.containsKey('profileImage') || updates.containsKey('photoURL')) {
-          final photoUrl = updates['profileImage'] ?? updates['photoURL'];
-          if (photoUrl != null) {
-            await firebaseUser.updatePhotoURL(photoUrl);
-            print('✅ Updated Firebase Auth photo URL');
-          }
-        }
-      }
-
-      // Clear cache to force refresh
-      _cachedUserData = null;
-
-      print('✅ User data updated successfully');
-      return true;
-    } catch (e) {
-      print('❌ Error updating user data: $e');
+    } catch (error) {
+      logProfileFailure('profile-write', error);
       return false;
     }
+    // Firestore is the source of truth. An optional Auth display-name sync must
+    // not report an already committed profile update as a failed save.
+    _cachedUserData = null;
+    _cachedUserId = null;
+    try {
+      if (_auth.currentUser?.uid == user.uid && updates.containsKey('name')) {
+        await user.updateDisplayName(updates['name'] as String?);
+      }
+      final photo = updates['profileImage'] ?? updates['photoURL'];
+      if (_auth.currentUser?.uid == user.uid &&
+          photo is String &&
+          {'http', 'https'}.contains(Uri.tryParse(photo)?.scheme))
+        await user.updatePhotoURL(photo);
+    } catch (error) {
+      logProfileFailure('auth-display-sync', error);
+    }
+    return true;
   }
 
   /// Update user profile
@@ -250,7 +154,7 @@ class UserDataService {
     String? photoUrl,
   }) async {
     final updates = <String, dynamic>{};
-    
+
     if (name != null) updates['name'] = name;
     if (email != null) updates['email'] = email;
     if (phone != null) updates['phone'] = phone;
@@ -262,27 +166,25 @@ class UserDataService {
   /// Stream user data (real-time updates)
   Stream<Map<String, dynamic>?> streamUserData() async* {
     final userId = await _authService.getCurrentUserId();
-    
+
     if (userId == null) {
       yield null;
       return;
     }
 
-    yield* _firestore
-        .collection('users')
-        .doc(userId)
-        .snapshots()
-        .map((snapshot) {
-          if (!snapshot.exists) return null;
-          
-          final data = snapshot.data()!;
-          
-          // Update cache
-          _cachedUserData = data;
-          _cachedUserId = userId;
-          
-          return data;
-        });
+    yield* _firestore.collection('users').doc(userId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) return null;
+
+      final data = snapshot.data()!;
+
+      // Update cache
+      _cachedUserData = data;
+      _cachedUserId = userId;
+
+      return data;
+    });
   }
 
   /// Clear cached data
@@ -307,7 +209,7 @@ class UserDataService {
   /// Get user display info (for UI)
   Future<Map<String, String>> getUserDisplayInfo() async {
     final userData = await getCurrentUserData();
-    
+
     if (userData == null) {
       return {
         'name': 'User',
@@ -333,7 +235,7 @@ class UserDataService {
   Future<String?> getUserLanguagePreference(String userId) async {
     try {
       final doc = await _firestore.collection('users').doc(userId).get();
-      
+
       if (!doc.exists) {
         return null;
       }
@@ -347,10 +249,13 @@ class UserDataService {
   }
 
   /// Save user's language preference
-  Future<bool> saveUserLanguagePreference(String userId, String languageCode) async {
+  Future<bool> saveUserLanguagePreference(
+    String userId,
+    String languageCode,
+  ) async {
     try {
       print('📤 Saving language preference: $languageCode');
-      
+
       await _firestore.collection('users').doc(userId).update({
         'language': languageCode,
         'updatedAt': FieldValue.serverTimestamp(),
