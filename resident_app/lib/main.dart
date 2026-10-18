@@ -334,7 +334,7 @@ class MyApp extends StatelessWidget {
               case '/splash':
                 return MaterialPageRoute(
                   builder: (context) => CleanSplashScreen(
-                    logoAssetPath: 'lib/assets/Resident_New.png',
+                    logoAssetPath: 'lib/assets/Resident_New1.png',
                     appName: 'Hominode',
                     tagline: 'Your Community, Connected',
                     duration: const Duration(milliseconds: 3000),
@@ -468,7 +468,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'lib/assets/Resident_New.png',
+                  'lib/assets/Resident_New1.png',
                   width: 130,
                   height: 130,
                   fit: BoxFit.contain,
@@ -513,7 +513,7 @@ class _ResidentLegalLoadingScreen extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'lib/assets/Resident_New.png',
+                  'lib/assets/Resident_New1.png',
                   width: 130,
                   height: 130,
                   fit: BoxFit.contain,

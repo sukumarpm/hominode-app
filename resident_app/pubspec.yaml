@@ -133,6 +133,7 @@ flutter:
     - assets/logo1.png
     - assets/hominode_residential_hero.jpg
     - lib/assets/Resident_New.png
+    - lib/assets/Resident_New1.png
     - assets/Android.png
     - assets/translations/
     - lib/assets/images/resident_login_background.png

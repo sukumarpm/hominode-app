@@ -748,7 +748,7 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen>
                               children: [
                                 SizedBox(height: 2.h),
                                 Image.asset(
-                                  'lib/assets/Resident_New.png',
+                                  'lib/assets/Resident_New1.png',
                                   width: (constraints.maxWidth * 0.33).clamp(
                                     120.0,
                                     200.0,

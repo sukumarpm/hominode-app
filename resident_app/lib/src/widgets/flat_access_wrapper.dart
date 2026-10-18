@@ -60,7 +60,7 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Image.asset(
-                        'lib/assets/Resident_New.png',
+                        'lib/assets/Resident_New1.png',
                         width: 130,
                         height: 130,
                         fit: BoxFit.contain,

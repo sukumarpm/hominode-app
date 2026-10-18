@@ -455,7 +455,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12.r),
                 child: Image.asset(
-                  'lib/assets/Resident_New.png',
+                  'lib/assets/Resident_New1.png',
                   width: 48.w,
                   height: 48.h,
                   fit: BoxFit.contain,

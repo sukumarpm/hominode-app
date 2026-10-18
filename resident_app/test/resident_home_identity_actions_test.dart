@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/src/screens/emergency_sos_screen.dart';
 import 'package:resident_app/src/widgets/resident_home_identity_actions.dart';
@@ -30,12 +31,30 @@ void main() {
     final logo = tester.widget<Image>(
       find.byKey(const ValueKey('resident-home-logo')),
     );
-    expect((logo.image as AssetImage).assetName, 'lib/assets/Resident_New.png');
+    expect(
+      (logo.image as AssetImage).assetName,
+      'lib/assets/Resident_New1.png',
+    );
     expect(logo.fit, BoxFit.contain);
     expect(logo.width, 50);
     expect(logo.height, 50);
     expect(tester.takeException(), isNull);
   });
+
+  test(
+    'approved transparent Resident artwork has no opaque corner tile',
+    () async {
+      final data = await rootBundle.load('lib/assets/Resident_New1.png');
+      final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+      final frame = await codec.getNextFrame();
+      final pixels = await frame.image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      expect(pixels!.getUint8(3), 0);
+      frame.image.dispose();
+      codec.dispose();
+    },
+  );
 
   for (final layout in [
     (width: 320.0, textScale: 1.0, rtl: false),
