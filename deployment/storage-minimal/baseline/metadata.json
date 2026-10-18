@@ -1,0 +1,41 @@
+{
+  "project": "hominode-prod",
+  "bucket": "hominode-prod.firebasestorage.app",
+  "region": "asia-southeast1",
+  "productionCaptures": [
+    {
+      "name": "projects/hominode-prod/releases/cloud.firestore",
+      "rulesetName": "projects/hominode-prod/rulesets/935fe09d-d1bc-4fd8-821f-24f00304ffcf",
+      "createTime": "2026-08-18T12:21:22.351105Z",
+      "updateTime": "2026-09-30T13:18:19.020648Z"
+    },
+    {
+      "name": "projects/hominode-prod/releases/firebase.storage/hominode-prod.firebasestorage.app",
+      "rulesetName": "projects/hominode-prod/rulesets/5a129305-6efd-45fe-abf1-a1d4ae1d5cbc",
+      "createTime": "2026-08-25T16:34:17.806455Z",
+      "updateTime": "2026-09-27T08:37:47.706221Z"
+    }
+  ],
+  "baselineHashes": {
+    "firestore": "c6451aa9362999505437c51478592bc071b6cdae2186a12653867c6bace8d19d",
+    "storage": "a9cc825cd8975210bc3db84cd31679558552cf57b06c5c81500b3326254ddb82"
+  },
+  "initialCallables": [
+    "prepareStorageImageUpload",
+    "completeStorageImageUpload",
+    "readStorageImage",
+    "saveApartmentImage",
+    "deleteApartmentImage",
+    "createResidentImageDraft",
+    "commitResidentImages"
+  ],
+  "excludedSchedulers": [
+    "cleanupApartmentImages",
+    "cleanupResidentImages"
+  ],
+  "capturedSourceHashes": {
+    "firestore": "fb4c719cf04823b0277bb4bb21f3800363609921f9caf5a27d2b907f602b6168",
+    "storage": "a9cc825cd8975210bc3db84cd31679558552cf57b06c5c81500b3326254ddb82"
+  },
+  "normalization": "Removed spaces from nine otherwise blank Firestore lines in baseline and deployable copies; no tokens or rule predicates changed."
+}

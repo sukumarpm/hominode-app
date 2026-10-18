@@ -1,0 +1,24 @@
+{
+  "firestore": {
+    "rules": "deployment/storage-minimal/firestore.rules"
+  },
+  "storage": {
+    "rules": "deployment/storage-minimal/storage.rules"
+  },
+  "functions": {
+    "source": "functions",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      ".runtimeconfig.json",
+      ".env",
+      ".env.*",
+      "firestore-debug.log",
+      ".DS_Store",
+      "scripts",
+      "test"
+    ]
+  }
+}

@@ -1,0 +1,278 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function residentMayAccessReceipt(communityId, billId, uid) {
+      let profilePath =
+        /databases/(default)/documents/users/$(request.auth.uid);
+
+      let billPath =
+        /databases/(default)/documents/bills/$(billId);
+
+      return signedIn()
+        && uid == request.auth.uid
+
+        && firestore.exists(profilePath)
+        && firestore.exists(billPath)
+
+        && firestore.get(profilePath).data.role == 'resident'
+        && firestore.get(profilePath).data.approvalStatus == 'approved'
+        && firestore.get(profilePath).data.isActive == true
+
+        && (
+          !('status' in firestore.get(profilePath).data)
+          || firestore.get(profilePath).data.status == 'active'
+        )
+
+        && firestore.get(profilePath).data.communityId == communityId
+
+        && firestore.get(billPath).data.communityId == communityId
+
+        && firestore.get(profilePath).data.flatId
+          == firestore.get(billPath).data.flatId;
+    }
+
+    function adminMayReadReceipt(communityId) {
+      let adminPath =
+        /databases/(default)/documents/admins/$(request.auth.uid);
+
+      return signedIn()
+        && firestore.exists(adminPath)
+
+        && firestore.get(adminPath).data.role == 'admin'
+        && firestore.get(adminPath).data.isActive == true
+
+        && firestore.get(adminPath).data.authorizedCommunityIds is list
+        && communityId
+          in firestore.get(adminPath).data.authorizedCommunityIds;
+    }
+
+    function adminMayAccessCommunity(communityId) {
+  let adminPath =
+    /databases/(default)/documents/admins/$(request.auth.uid);
+
+  return signedIn()
+    && firestore.exists(adminPath)
+    && firestore.get(adminPath).data.role == 'admin'
+    && firestore.get(adminPath).data.isActive == true
+    && firestore.get(adminPath).data.authorizedCommunityIds is list
+    && communityId
+      in firestore.get(adminPath).data.authorizedCommunityIds;
+}
+
+function residentMayAccessCommunity(communityId) {
+  let profilePath =
+    /databases/(default)/documents/users/$(request.auth.uid);
+
+  return signedIn()
+    && firestore.exists(profilePath)
+    && firestore.get(profilePath).data.role == 'resident'
+    && firestore.get(profilePath).data.approvalStatus == 'approved'
+    && firestore.get(profilePath).data.isActive == true
+    && (
+      !('status' in firestore.get(profilePath).data)
+      || firestore.get(profilePath).data.status == 'active'
+    )
+    && firestore.get(profilePath).data.communityId == communityId;
+}
+
+function adminMayManageFacilityImage(communityId, facilityId) {
+  let facilityPath =
+    /databases/(default)/documents/amenities/$(facilityId);
+
+  return adminMayAccessCommunity(communityId)
+    && firestore.exists(facilityPath)
+    && firestore.get(facilityPath).data.communityId == communityId;
+}
+
+
+function adminMayManageEventImage(communityId, eventId) {
+  let eventPath =
+    /databases/(default)/documents/events_announcements/$(eventId);
+
+  return adminMayAccessCommunity(communityId)
+    && firestore.exists(eventPath)
+    && firestore.get(eventPath).data.communityId == communityId
+    && firestore.get(eventPath).data.type == 'event';
+}
+
+    // ============================================================
+    // PRIVATE PAYMENT RECEIPTS
+    // ============================================================
+
+    match /payment_receipts/{communityId}/{billId}/{uid}/{fileName} {
+
+      allow read: if
+        residentMayAccessReceipt(communityId, billId, uid)
+        || adminMayReadReceipt(communityId);
+
+      allow write: if
+        residentMayAccessReceipt(communityId, billId, uid)
+
+        && request.resource != null
+        && resource == null
+
+        && request.resource.size < 10 * 1024 * 1024
+
+        && request.resource.contentType.matches(
+          'image/(jpeg|jpg|png|heic|heif)'
+        );
+    }
+
+    // ============================================================
+    // FACILITY IMAGES
+    // ============================================================
+
+    match /facility_images/{communityId}/{facilityId}/{fileName} {
+
+  // Reading the image only needs community authorization.
+  //
+  // Admin:    admins/{uid}       -> 1 document
+  // Resident: admins/{uid} miss
+  //           + users/{uid}      -> at most 2 documents
+  allow read: if
+    adminMayAccessCommunity(communityId)
+    || residentMayAccessCommunity(communityId);
+
+  // Creating/replacing/deleting requires:
+  // admins/{uid} + amenities/{facilityId} -> 2 documents.
+  allow write: if
+    adminMayManageFacilityImage(communityId, facilityId)
+    && (
+      request.resource == null
+      ||
+      (
+        request.resource != null
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches(
+          'image/(jpeg|png|webp)'
+        )
+      )
+    );
+}
+
+    // ============================================================
+    // EVENT IMAGES
+    // ============================================================
+
+    match /event_images/{communityId}/{eventId}/{fileName} {
+
+      allow read: if
+        adminMayAccessCommunity(communityId)
+        || residentMayAccessCommunity(communityId);
+
+      allow write: if
+        adminMayAccessCommunity(communityId)
+        && (
+          request.resource == null
+          ||
+          (
+            request.resource != null
+            && request.resource.size <= 5 * 1024 * 1024
+            && request.resource.contentType.matches(
+              'image/(jpeg|png|webp)'
+            )
+          )
+        );
+    }
+
+    // Image-only phone binding; existing receipt/facility/event auth is unchanged.
+    function imagePhoneMatchesProfile(profile) {
+      return request.auth.token.firebase.sign_in_provider == 'phone'
+        && request.auth.token.phone_number == profile.phoneNumber;
+    }
+
+    // Private image staging. These rules authorize the uploader's namespace,
+    // not publication on a domain record. The callable validates target
+    // ownership/entitlement and verifies bytes before returning a ready asset.
+    // Profile + community = two Firestore documents, including denied paths.
+    function imageResidentIsOperational(profile, community) {
+      let residentType = 'residentType' in profile && profile.residentType is string
+        ? profile.residentType : profile.ownershipType;
+      let ownerProofRequired = 'ownerIdentityVerificationRequired' in community
+        && community.ownerIdentityVerificationRequired == true;
+      let verified = 'identityVerified' in profile && profile.identityVerified == true
+        && (!('identityVerificationStatus' in profile)
+          || profile.identityVerificationStatus == 'verified');
+      return profile.approvalStatus == 'approved'
+        && (!('status' in profile) || profile.status == 'active')
+        && residentType in ['owner', 'tenant']
+        && (!('ownershipType' in profile) || profile.ownershipType == null
+          || profile.ownershipType == residentType)
+        && (!('residentType' in profile) || profile.residentType == null
+          || profile.residentType == residentType)
+        && ((residentType == 'owner' && !ownerProofRequired) || verified);
+    }
+
+    function imageUploader(communityId, uid, role) {
+      let profileCollection = role == 'admin' ? 'admins' : 'users';
+      let profile = firestore.get(
+        /databases/(default)/documents/$(profileCollection)/$(uid)).data;
+      let community = firestore.get(
+        /databases/(default)/documents/communities/$(communityId)).data;
+      return signedIn() && request.auth.uid == uid
+        && profile.uid == uid && profile.role == role
+        && profile.isActive == true && imagePhoneMatchesProfile(profile)
+        && community.isActive == true
+        && (role == 'admin'
+          ? profile.authorizedCommunityIds is list
+            && communityId in profile.authorizedCommunityIds
+          : profile.communityId == communityId
+            && imageResidentIsOperational(profile, community));
+    }
+
+    function imageStagingCreate(communityId, uid, feature, fileName) {
+      let metadata = request.resource.metadata;
+      let type = request.resource.contentType;
+      let extension = type == 'image/jpeg' ? 'jpg'
+        : type == 'image/png' ? 'png' : type == 'image/webp' ? 'webp' : 'gif';
+      return resource == null && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && (type in ['image/jpeg', 'image/png', 'image/webp']
+          || (type == 'image/gif' && feature in ['profile', 'community_wall']))
+        && metadata.keys().hasOnly(['assetId', 'ownerId', 'communityId', 'feature', 'resourceId'])
+        && metadata.assetId.matches('[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}')
+        && fileName == metadata.assetId + '.' + extension
+        && metadata.ownerId == uid && metadata.communityId == communityId
+        && metadata.feature == feature && metadata.resourceId.size() > 0
+        && metadata.resourceId.size() <= 128
+        && (feature != 'profile' || metadata.resourceId == uid);
+    }
+
+    match /apartment_images/{communityId}/{uid}/{fileName} {
+      allow get: if signedIn() && request.auth.uid == uid
+        && imageUploader(communityId, uid, 'admin');
+      allow create: if signedIn() && request.auth.uid == uid
+        && imageUploader(communityId, uid, 'admin')
+        && imageStagingCreate(communityId, uid, 'apartment', fileName);
+      allow list, update, delete: if false;
+    }
+
+    match /resident_images/{communityId}/{uid}/{feature}/{fileName} {
+      allow get: if signedIn() && request.auth.uid == uid
+        && feature in ['profile', 'community_wall', 'complaints', 'marketplace']
+        && imageUploader(communityId, uid, 'resident');
+      allow create: if signedIn() && request.auth.uid == uid
+        && feature in ['profile', 'community_wall', 'complaints', 'marketplace']
+        && imageUploader(communityId, uid, 'resident')
+        && imageStagingCreate(communityId, uid, feature, fileName);
+      allow list, update, delete: if false;
+    }
+
+    // Verified images are written/read only by authorized Functions. Denying
+    // client metadata reads also prevents clients minting download-token URLs.
+    match /private_images/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Everything else remains private.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

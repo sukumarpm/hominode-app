@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const { storageRulesDirectory } = require("./helpers/storage_rules_variant");
+const rulesDirectory = storageRulesDirectory();
 const {
   initializeTestEnvironment,
   assertSucceeds,
@@ -96,12 +98,12 @@ test.before(async () => {
     firestore: {
       host: firestoreHost,
       port: Number(firestorePort),
-      rules: fs.readFileSync(`${__dirname}/../../firestore.rules`, "utf8"),
+      rules: fs.readFileSync(`${rulesDirectory}/firestore.rules`, "utf8"),
     },
     storage: {
       host: localStorageHost,
       port: Number(storagePort),
-      rules: fs.readFileSync(`${__dirname}/../../storage.rules`, "utf8"),
+      rules: fs.readFileSync(`${rulesDirectory}/storage.rules`, "utf8"),
     },
   });
   app = initializeApp(
