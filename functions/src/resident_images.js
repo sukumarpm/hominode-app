@@ -64,16 +64,24 @@ async function resident({ db, auth, transaction }) {
     fail("permission-denied", "Resident access is unavailable.");
   return profile;
 }
-async function entitlement({ db, transaction, feature, communityId, nowMs }) {
+async function entitlement({
+  db,
+  transaction,
+  feature,
+  communityId,
+  nowMs,
+  requireConfigured = false,
+}) {
   const featureName = policy[feature]?.entitlement;
-  if (
-    featureName &&
-    !subscriptionCanUseFeature(
-      await resolveCommunitySubscriptionCore({ db, transaction, communityId }),
-      featureName,
-      nowMs,
-    )
-  )
+  if (!featureName) return;
+  const subscription = await resolveCommunitySubscriptionCore({
+    db,
+    transaction,
+    communityId,
+  });
+  if (!subscription && requireConfigured)
+    fail("failed-precondition", "This community does not have a subscription.");
+  if (!subscriptionCanUseFeature(subscription, featureName, nowMs))
     fail("permission-denied", "This community feature is unavailable.");
 }
 async function draftAuthority({
@@ -131,6 +139,7 @@ async function createResidentImageDraftCore({
       feature: data.feature,
       communityId: profile.communityId,
       nowMs: now(),
+      requireConfigured: true,
     });
     transaction.create(db.collection("residentImageDrafts").doc(resourceId), {
       feature: data.feature,

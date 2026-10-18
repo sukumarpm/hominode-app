@@ -16,6 +16,42 @@ const {
   collectResidentAsset: collect,
   reference,
 } = require("../src/resident_images");
+
+test("missing subscription rejects Marketplace/Wall drafts without writing a draft or listing", async () => {
+  const s = setup();
+  s.db.values.delete("subscriptions/A");
+  const before = [...s.db.values.keys()];
+  for (const feature of ["marketplace", "community_wall"])
+    await assert.rejects(draft(call(s, { feature })), {
+      code: "failed-precondition",
+      message: "This community does not have a subscription.",
+    });
+  assert.deepEqual([...s.db.values.keys()], before);
+  assert.equal(s.files.size, 0);
+});
+
+test("subscription lookup failure leaves no draft, upload or partial listing", async () => {
+  const s = setup();
+  const transaction = s.db.runTransaction.bind(s.db);
+  s.db.runTransaction = (fn) =>
+    transaction((tx) =>
+      fn({
+        ...tx,
+        get: (ref) => {
+          if (ref.path === "subscriptions/A")
+            throw new Error("Synthetic unavailable");
+          return tx.get(ref);
+        },
+      }),
+    );
+  const before = [...s.db.values.keys()];
+  await assert.rejects(
+    draft(call(s, { feature: "marketplace" })),
+    /Synthetic unavailable/,
+  );
+  assert.deepEqual([...s.db.values.keys()], before);
+  assert.equal(s.files.size, 0);
+});
 const call = (s, data, uid = "r") => ({ ...s.context, auth: auth(uid), data });
 const deny = (promise, code = "permission-denied") =>
   assert.rejects(promise, (e) => e.code === code);

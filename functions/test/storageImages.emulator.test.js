@@ -802,6 +802,45 @@ const residentCall = (data, uid = "r") => ({
   auth: { uid, token: claims },
   data,
 });
+run(
+  "canonical current-community entitlement permits Essential Wall and missing subscription fails closed",
+  async () => {
+    const {
+      getCurrentCommunityEntitlementCore,
+    } = require("../src/subscription_management");
+    await db.doc("users/r").update({ buildingId: "target" });
+    await db.doc("subscriptions/A").set({
+      planId: "essential",
+      status: "active",
+      features: { marketplace: true },
+    });
+    const result = await getCurrentCommunityEntitlementCore(residentCall({}));
+    assert.equal(result.communityId, "A");
+    assert.equal(result.features.communityWall, true);
+    assert.equal(result.features.marketplace, false);
+    assert.equal(result.features.facilityBooking, false);
+    await residentDraft(residentCall({ feature: "community_wall" }));
+    await assert.rejects(
+      residentDraft(residentCall({ feature: "marketplace" })),
+      { code: "permission-denied" },
+    );
+    await db.doc("subscriptions/A").delete();
+    await db.doc("subscriptions/B").set({ planId: "pro", status: "active" });
+    await assert.rejects(getCurrentCommunityEntitlementCore(residentCall({})), {
+      code: "failed-precondition",
+    });
+    for (const feature of ["marketplace", "community_wall"])
+      await assert.rejects(residentDraft(residentCall({ feature })), {
+        code: "failed-precondition",
+        message: "This community does not have a subscription.",
+      });
+    assert.equal((await db.collection("marketplaces").get()).size, 0);
+    await assert.rejects(
+      getCurrentCommunityEntitlementCore(residentCall({ communityId: "B" })),
+      { code: "invalid-argument" },
+    );
+  },
+);
 async function residentAsset(feature, resourceId) {
   const pending = await prepare(
     residentCall({

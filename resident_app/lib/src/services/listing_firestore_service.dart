@@ -2,17 +2,26 @@ import '../utils/resident_phone.dart';
 import 'resident_image_operations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/listing_model.dart';
 import 'content_moderation_service.dart';
 
 class ListingFirestoreService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final _images = ResidentImageOperations();
+  ListingFirestoreService({
+    ResidentImageOperations? images,
+    String? Function()? currentUid,
+  }) : _images = images ?? ResidentImageOperations(),
+       _uid = currentUid ?? (() => FirebaseAuth.instance.currentUser?.uid);
+
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
+  final String? Function() _uid;
+  final ResidentImageOperations _images;
+  bool _creating = false;
 
   // Get current user ID from either Firebase Auth or Firestore Auth Service
-  Future<String> get _currentUserId async => _auth.currentUser?.uid ?? '';
+  Future<String> get _currentUserId async => _uid() ?? '';
 
   // Get current user ID (public method)
   Future<String> getCurrentUserId() async {
@@ -34,8 +43,19 @@ class ListingFirestoreService {
     required String condition,
     required String description,
     List<String> images = const [],
+    List<String> imagePaths = const [],
     String? imageDraftId,
   }) async {
+    if (_creating) {
+      return ServiceResult(
+        success: false,
+        message: 'Your listing is being saved.',
+      );
+    }
+    _creating = true;
+    var stage = 'validation';
+    final paths = List<String>.of(imagePaths);
+    final references = List<String>.of(images);
     try {
       // Check content moderation first
       final moderationResult = await ContentModerationService().checkContent(
@@ -56,14 +76,24 @@ class ListingFirestoreService {
         return ServiceResult(success: false, message: 'User not authenticated');
       }
 
-      final draft =
-          imageDraftId ??
-          await ResidentImageOperations().createDraft('marketplace');
+      stage = 'draft';
+      final draft = imageDraftId ?? await _images.createDraft('marketplace');
+      stage = 'image-upload';
+      for (final path in paths) {
+        references.add(
+          await _images.upload(
+            feature: 'marketplace',
+            resourceId: draft,
+            imagePath: path,
+          ),
+        );
+      }
+      stage = 'listing-commit';
       final result = await _images.save(
         feature: 'marketplace',
         resourceId: draft,
         revision: 0,
-        references: images,
+        references: references,
         content: {
           'title': title,
           'price': price,
@@ -78,12 +108,22 @@ class ListingFirestoreService {
         data: result['resourceId'],
       );
     } catch (e) {
-      print('❌ Error creating listing: $e');
+      final code = e is FirebaseFunctionsException ? e.code : 'client-error';
+      if (kDebugMode) debugPrint('[marketplace] stage=$stage code=$code');
+      final missingSubscription =
+          e is FirebaseFunctionsException &&
+          e.code == 'failed-precondition' &&
+          e.message == 'This community does not have a subscription.';
       return ServiceResult(
         success: false,
-        message:
-            'Unable to save your listing. Please retry, or reopen the form.',
+        message: missingSubscription
+            ? "This community's subscription is not configured. Please contact your community administrator, then retry."
+            : code == 'permission-denied'
+            ? 'Marketplace requires an active Plus or Pro subscription and authorized resident access. Please contact your community administrator.'
+            : 'Unable to save your listing. Please retry in this form.',
       );
+    } finally {
+      _creating = false;
     }
   }
 

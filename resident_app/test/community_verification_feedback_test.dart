@@ -1,10 +1,44 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resident_app/src/services/community_wall_entitlement_policy.dart';
 import 'package:resident_app/src/widgets/community_verification_feedback.dart';
 
 void main() {
+  testWidgets(
+    'missing Wall subscription remains denied and can retry after configuration is restored',
+    (tester) async {
+      _useTallTestView(tester);
+      var configured = false;
+      await tester.pumpWidget(
+        _testApp(
+          _FeedbackHarness(
+            communityWall: true,
+            verify: () async {
+              if (!configured) {
+                throw FirebaseFunctionsException(
+                  code: 'failed-precondition',
+                  message: 'This community does not have a subscription.',
+                );
+              }
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.text('Verify'));
+      await tester.pumpAndSettle();
+      expect(find.text('Subscription not configured'), findsOneWidget);
+      expect(find.text('Access granted'), findsNothing);
+      expect(find.text('Retry'), findsOneWidget);
+      configured = true;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.text('Subscription not configured'), findsNothing);
+      expect(find.text('Access granted'), findsOneWidget);
+    },
+  );
   testWidgets(
     'failed verification retries same operation and clears on success',
     (tester) async {
@@ -141,9 +175,10 @@ void _useTallTestView(WidgetTester tester) {
 }
 
 class _FeedbackHarness extends StatefulWidget {
-  const _FeedbackHarness({required this.verify});
+  const _FeedbackHarness({required this.verify, this.communityWall = false});
 
   final Future<void> Function() verify;
+  final bool communityWall;
 
   @override
   State<_FeedbackHarness> createState() => _FeedbackHarnessState();
@@ -158,9 +193,14 @@ class _FeedbackHarnessState extends State<_FeedbackHarness> {
     context: context,
     operation: 'test/community-membership',
     verify: widget.verify,
-    onFailure: (_) => _feedback.showRetryableNotice(
+    onFailure: (error) => _feedback.showRetryableNotice(
       context: context,
-      message: 'Verification failed',
+      message:
+          widget.communityWall &&
+              CommunityWallEntitlementPolicy.classifyFailure(error) ==
+                  CommunityWallVerificationFailure.missingSubscription
+          ? 'Subscription not configured'
+          : 'Verification failed',
       retryLabel: 'Retry',
       onRetry: () => unawaited(startVerification()),
     ),

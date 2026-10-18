@@ -6,12 +6,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../services/listing_firestore_service.dart';
-import '../services/resident_image_operations.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 
 class MarketplaceCreateListingScreen extends StatefulWidget {
-  const MarketplaceCreateListingScreen({super.key});
+  const MarketplaceCreateListingScreen({super.key, this.listingService});
+
+  final ListingFirestoreService? listingService;
 
   @override
   State<MarketplaceCreateListingScreen> createState() =>
@@ -20,8 +21,8 @@ class MarketplaceCreateListingScreen extends StatefulWidget {
 
 class _MarketplaceCreateListingScreenState
     extends State<MarketplaceCreateListingScreen> {
-  final ListingFirestoreService _listingService = ListingFirestoreService();
-  final _images = ResidentImageOperations();
+  late final ListingFirestoreService _listingService =
+      widget.listingService ?? ListingFirestoreService();
   final _formKey = GlobalKey<FormState>();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -449,32 +450,20 @@ class _MarketplaceCreateListingScreenState
   }
 
   Future<void> _createListing() async {
-    if (!_formKey.currentState!.validate()) {
+    if (_isCreating || !_formKey.currentState!.validate()) {
       return;
     }
 
     setState(() => _isCreating = true);
 
     try {
-      final draft = await _images.createDraft('marketplace');
-      final uploadedImageUrls = <String>[];
-      for (final image in _selectedImages) {
-        uploadedImageUrls.add(
-          await _images.upload(
-            feature: 'marketplace',
-            resourceId: draft,
-            imagePath: image.path,
-          ),
-        );
-      }
       final result = await _listingService.createListing(
         title: _titleController.text.trim(),
         price: int.parse(_priceController.text.trim()),
         category: _selectedCategory,
         condition: _selectedCondition,
         description: _descriptionController.text.trim(),
-        images: uploadedImageUrls,
-        imageDraftId: draft,
+        imagePaths: _selectedImages.map((image) => image.path).toList(),
       );
 
       if (mounted) {

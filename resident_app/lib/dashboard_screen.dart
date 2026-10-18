@@ -753,20 +753,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         accessStatus = CommunityWallEntitlementPolicy.evaluate(entitlement);
       },
       onFailure: (error) {
-        if (CommunityWallEntitlementPolicy.classifyFailure(error) ==
-            CommunityWallVerificationFailure.missingSubscription) {
-          _communityWallFeedback.showNotice(
-            context: context,
-            message: 'community_subscription_not_configured'.tr(),
-          );
-        } else {
-          _communityWallFeedback.showRetryableNotice(
-            context: context,
-            message: 'community_wall_verification_error'.tr(),
-            retryLabel: 'retry'.tr(),
-            onRetry: () => unawaited(_openCommunityWallIfAllowed()),
-          );
-        }
+        _communityWallFeedback.showRetryableNotice(
+          context: context,
+          message:
+              (CommunityWallEntitlementPolicy.classifyFailure(error) ==
+                          CommunityWallVerificationFailure.missingSubscription
+                      ? 'community_subscription_not_configured'
+                      : 'community_wall_verification_error')
+                  .tr(),
+          retryLabel: 'retry'.tr(),
+          onRetry: () => unawaited(_openCommunityWallIfAllowed()),
+        );
       },
       onSuccess: () {
         if (accessStatus != CommunityWallAccessStatus.allowed) {

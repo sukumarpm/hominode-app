@@ -95,3 +95,20 @@ test("reviewed Release 1 plans include Wall without granting premium Events, boo
   for (const feature of ["events", "facilityBooking", "marketplace"])
     assert.equal(PLAN_DEFINITIONS.essential.features[feature], false);
 });
+
+for (const planId of ["essential", "plus", "pro"])
+  test(`${planId}: current-community callable enables Wall using canonical subscription`, async () => {
+    const { db, reads } = fixture(
+      {},
+      { planId, status: "active", features: { communityWall: false } },
+    );
+    const result = await getCurrentCommunityEntitlementCore({
+      db,
+      auth,
+      data: {},
+    });
+    assert.equal(result.features.communityWall, true);
+    assert.equal(result.features.marketplace, planId !== "essential");
+    assert.equal(result.features.events, planId !== "essential");
+    assert.deepEqual(reads, ["users/resident", "subscriptions/A"]);
+  });
