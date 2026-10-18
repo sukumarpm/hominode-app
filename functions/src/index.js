@@ -310,7 +310,7 @@ exports.cleanupApartmentImages = onSchedule(
     maxInstances: 1,
     concurrency: 1,
   },
-  () => cleanupApartmentImagesCore({ db, bucket: getStorage().bucket() }),
+  () => cleanupApartmentImagesCore({ db: getFirestore(), bucket: getStorage().bucket() }),
 );
 
 exports.createResidentImageDraft = storageImageCallable(
@@ -331,6 +331,7 @@ exports.cleanupResidentImages = onSchedule(
     concurrency: 1,
   },
   async () => {
+    const db = getFirestore();
     const bucket = getStorage().bucket();
     await cleanupResidentImagesCore({ db, bucket });
     await cleanupUnreservedResidentStaging({ db, bucket });
