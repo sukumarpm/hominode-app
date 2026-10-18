@@ -45,7 +45,7 @@ const PLAN_DEFINITIONS = Object.freeze({
       facilityBooking: false,
       events: false,
       polls: false,
-      communityWall: false,
+      communityWall: true,
       communityMessaging: false,
       domesticStaff: false,
       marketplace: false,

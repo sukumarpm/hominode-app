@@ -11,6 +11,19 @@ const { onSchedule } = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const { hasVerifiedPhoneAuth, hasCanonicalPhoneProfile } = require("./phone_auth");
+const { prepareStorageImageUploadCore, completeStorageImageUploadCore, readStorageImageCore } = require("./storage_images");
+const {
+  saveApartmentImageCore,
+  deleteApartmentImageCore,
+  cleanupApartmentImagesCore,
+} = require("./apartment_images");
+
+const {
+  createResidentImageDraftCore,
+  commitResidentImagesCore,
+  cleanupResidentImagesCore,
+  cleanupUnreservedResidentStaging,
+} = require("./resident_images");
 
 const {
   RegistrationError,
@@ -263,6 +276,67 @@ function callableHandler(
     }
   };
 }
+exports.prepareStorageImageUpload = appCheckedCallable(
+  prepareStorageImageUploadCore, 'Image upload could not be prepared.',
+);
+// Image verification/read operations buffer at most 10 MiB. Limit concurrency
+// independently of the existing financial/SOS callables.
+function storageImageCallable(core, failureMessage) {
+  return onCall({region: REGION, enforceAppCheck: true, memory: '512MiB', concurrency: 1},
+    callableHandler(core, failureMessage, {includeAppContext: true,
+      requirePhoneAuth: true, requireCanonicalPhoneProfile: true}));
+}
+exports.completeStorageImageUpload = storageImageCallable(
+  completeStorageImageUploadCore, 'Image upload could not be verified.',
+);
+exports.readStorageImage = storageImageCallable(
+  readStorageImageCore, 'Image could not be read.',
+);
+
+exports.saveApartmentImage = storageImageCallable(
+  saveApartmentImageCore,
+  "Image could not be saved.",
+);
+exports.deleteApartmentImage = storageImageCallable(
+  deleteApartmentImageCore,
+  "Image could not be deleted.",
+);
+exports.cleanupApartmentImages = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    region: REGION,
+    timeoutSeconds: 300,
+    memory: "512MiB",
+    maxInstances: 1,
+    concurrency: 1,
+  },
+  () => cleanupApartmentImagesCore({ db, bucket: getStorage().bucket() }),
+);
+
+exports.createResidentImageDraft = storageImageCallable(
+  createResidentImageDraftCore,
+  "Image draft could not be prepared.",
+);
+exports.commitResidentImages = storageImageCallable(
+  commitResidentImagesCore,
+  "Images could not be saved.",
+);
+exports.cleanupResidentImages = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    region: REGION,
+    timeoutSeconds: 300,
+    memory: "512MiB",
+    maxInstances: 1,
+    concurrency: 1,
+  },
+  async () => {
+    const bucket = getStorage().bucket();
+    await cleanupResidentImagesCore({ db, bucket });
+    await cleanupUnreservedResidentStaging({ db, bucket });
+  },
+);
+
 exports.recordManualPayment = appCheckedCallable(
   recordManualPaymentCore,
   'Manual payment could not be recorded.'

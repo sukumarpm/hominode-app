@@ -185,6 +185,89 @@ function adminMayManageEventImage(communityId, eventId) {
         );
     }
 
+    // Private image staging. These rules authorize the uploader's namespace,
+    // not publication on a domain record. The callable validates target
+    // ownership/entitlement and verifies bytes before returning a ready asset.
+    // Profile + community = two Firestore documents, including denied paths.
+    function imageResidentIsOperational(profile, community) {
+      let residentType = 'residentType' in profile && profile.residentType is string
+        ? profile.residentType : profile.ownershipType;
+      let ownerProofRequired = 'ownerIdentityVerificationRequired' in community
+        && community.ownerIdentityVerificationRequired == true;
+      let verified = 'identityVerified' in profile && profile.identityVerified == true
+        && (!('identityVerificationStatus' in profile)
+          || profile.identityVerificationStatus == 'verified');
+      return profile.approvalStatus == 'approved'
+        && (!('status' in profile) || profile.status == 'active')
+        && residentType in ['owner', 'tenant']
+        && (!('ownershipType' in profile) || profile.ownershipType == null
+          || profile.ownershipType == residentType)
+        && (!('residentType' in profile) || profile.residentType == null
+          || profile.residentType == residentType)
+        && ((residentType == 'owner' && !ownerProofRequired) || verified);
+    }
+
+    function imageUploader(communityId, uid, role) {
+      let profileCollection = role == 'admin' ? 'admins' : 'users';
+      let profile = firestore.get(
+        /databases/(default)/documents/$(profileCollection)/$(uid)).data;
+      let community = firestore.get(
+        /databases/(default)/documents/communities/$(communityId)).data;
+      return signedIn() && request.auth.uid == uid
+        && profile.uid == uid && profile.role == role
+        && profile.isActive == true && phoneMatchesProfile(profile)
+        && community.isActive == true
+        && (role == 'admin'
+          ? profile.authorizedCommunityIds is list
+            && communityId in profile.authorizedCommunityIds
+          : profile.communityId == communityId
+            && imageResidentIsOperational(profile, community));
+    }
+
+    function imageStagingCreate(communityId, uid, feature, fileName) {
+      let metadata = request.resource.metadata;
+      let type = request.resource.contentType;
+      let extension = type == 'image/jpeg' ? 'jpg'
+        : type == 'image/png' ? 'png' : type == 'image/webp' ? 'webp' : 'gif';
+      return resource == null && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && (type in ['image/jpeg', 'image/png', 'image/webp']
+          || (type == 'image/gif' && feature in ['profile', 'community_wall']))
+        && metadata.keys().hasOnly(['assetId', 'ownerId', 'communityId', 'feature', 'resourceId'])
+        && metadata.assetId.matches('[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}')
+        && fileName == metadata.assetId + '.' + extension
+        && metadata.ownerId == uid && metadata.communityId == communityId
+        && metadata.feature == feature && metadata.resourceId.size() > 0
+        && metadata.resourceId.size() <= 128
+        && (feature != 'profile' || metadata.resourceId == uid);
+    }
+
+    match /apartment_images/{communityId}/{uid}/{fileName} {
+      allow get: if signedIn() && request.auth.uid == uid
+        && imageUploader(communityId, uid, 'admin');
+      allow create: if signedIn() && request.auth.uid == uid
+        && imageUploader(communityId, uid, 'admin')
+        && imageStagingCreate(communityId, uid, 'apartment', fileName);
+      allow list, update, delete: if false;
+    }
+
+    match /resident_images/{communityId}/{uid}/{feature}/{fileName} {
+      allow get: if signedIn() && request.auth.uid == uid
+        && feature in ['profile', 'community_wall', 'complaints', 'marketplace']
+        && imageUploader(communityId, uid, 'resident');
+      allow create: if signedIn() && request.auth.uid == uid
+        && feature in ['profile', 'community_wall', 'complaints', 'marketplace']
+        && imageUploader(communityId, uid, 'resident')
+        && imageStagingCreate(communityId, uid, feature, fileName);
+      allow list, update, delete: if false;
+    }
+
+    // Verified images are written/read only by authorized Functions. Denying
+    // client metadata reads also prevents clients minting download-token URLs.
+    match /private_images/{allPaths=**} {
+      allow read, write: if false;
+    }
+
     // Everything else remains private.
     match /{allPaths=**} {
       allow read, write: if false;

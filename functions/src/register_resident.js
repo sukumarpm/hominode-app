@@ -147,7 +147,6 @@ async function claimImportedOnboardingCore({ db, identity }) {
     transaction.set(userRef, {
       uid: identity.uid,
       phoneNumber: identity.phoneNumber,
-      phone: identity.phoneNumber,
       name: onboardingData.fullName,
       fullName: onboardingData.fullName,
       email: onboardingData.email,
@@ -243,7 +242,7 @@ async function registerResidentCore({ db, auth, data, now = Date.now() }) {
       : null;
 
     transaction.set(userRef, {
-      uid: identity.uid, phoneNumber: identity.phoneNumber, phone: identity.phoneNumber,
+      uid: identity.uid, phoneNumber: identity.phoneNumber,
       name: onboardingData?.fullName ?? input.fullName,
       fullName: onboardingData?.fullName ?? input.fullName,
       email: onboardingData?.email ?? input.email,

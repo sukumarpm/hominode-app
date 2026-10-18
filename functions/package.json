@@ -12,7 +12,8 @@
   "dependencies": {
     "firebase-admin": "^13.4.0",
     "firebase-functions": "^6.4.0",
-    "libphonenumber-js": "^1.12.13"
+    "libphonenumber-js": "^1.12.13",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",

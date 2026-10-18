@@ -599,6 +599,38 @@ function securityCanAccessCommunity(communityId) {
     // USERS / RESIDENTS
     // ============================================================
 
+    // New managed references are server-owned. Unchanged legacy URLs keep
+    // their existing contracts, including non-image updates on old records.
+    function legacyImageValue(value) {
+      return value == null || (value is string && !value.matches('^hominode-image:.*'));
+    }
+    function legacyImageList(value) {
+      // Scan every legacy string, without imposing the new upload count limit
+      // on historical attachment lists. Dot-all also rejects newline payloads.
+      return value == null || (value is list
+        && !value.join('|').matches('(?s).*hominode-image:.*'));
+    }
+    function legacyImagesOnly(data) {
+      return !data.keys().hasAny(['managedImageAssets', 'imageRevision'])
+        && (!('imageUrl' in data) || legacyImageValue(data.imageUrl))
+        && (!('profileImage' in data) || legacyImageValue(data.profileImage))
+        && (!('profileImageUrl' in data) || legacyImageValue(data.profileImageUrl))
+        && (!('photoURL' in data) || legacyImageValue(data.photoURL))
+        && (!('images' in data) || legacyImageList(data.images))
+        && (!('imageUrls' in data) || legacyImageList(data.imageUrls))
+        && (!('attachments' in data) || legacyImageList(data.attachments));
+    }
+    function managedImagesSafeUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['managedImageAssets', 'imageRevision'])
+        && (noAttachedManagedImages() || !changed.hasAny(['status']) || request.resource.data.status != 'deleted')
+        && (!changed.hasAny(['imageUrl', 'imageUrls', 'images', 'attachments',
+          'profileImage', 'profileImageUrl', 'photoURL']) || legacyImagesOnly(request.resource.data));
+    }
+    function noAttachedManagedImages() {
+      return !('managedImageAssets' in resource.data) || resource.data.managedImageAssets.size() == 0;
+    }
+
     match /users/{userId} {
 
       // Resident profiles are created only by the trusted OTP registration
@@ -629,7 +661,8 @@ function securityCanAccessCommunity(communityId) {
         );
 
       // Resident-safe profile changes.
-      allow update: if approvedResident()
+      allow update: if managedImagesSafeUpdate()
+        && (approvedResident()
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data)
           .affectedKeys()
@@ -645,10 +678,11 @@ function securityCanAccessCommunity(communityId) {
             'buildingReference',
             'unitReference',
             'updatedAt'
-          ]);
+          ]));
 
       // Admin approval / reject / block.
-      allow update: if adminCanAccessCommunity(
+      allow update: if managedImagesSafeUpdate()
+        && (adminCanAccessCommunity(
           resource.data.communityId
         )
         && request.resource.data.communityId
@@ -698,7 +732,7 @@ function securityCanAccessCommunity(communityId) {
             'previousFlatLabel',
             'previousBuildingId',
             'previousBuildingName'
-          ]);
+          ]));
 
       allow delete: if false;
     }
@@ -1473,16 +1507,19 @@ function securityCanAccessCommunity(communityId) {
           && adminCanAccessCommunity(resource.data.communityId)
         );
 
-      allow create: if residentContentCreate(request.resource.data)
+      allow create: if legacyImagesOnly(request.resource.data)
+        && (residentContentCreate(request.resource.data)
         || (adminCanAccessCommunity(request.resource.data.communityId)
-          && contentReferencesMatch(request.resource.data, request.resource.data.communityId));
+          && contentReferencesMatch(request.resource.data, request.resource.data.communityId)));
 
-      allow update: if (residentContentOwner(resource.data)
+      allow update: if managedImagesSafeUpdate()
+        && ((residentContentOwner(resource.data)
           || adminCanAccessCommunity(resource.data.communityId))
-        && contentUpdateIsSafe();
+        && contentUpdateIsSafe());
 
-      allow delete: if residentOwns(resource.data)
-        || adminCanAccessCommunity(resource.data.communityId);
+      allow delete: if noAttachedManagedImages()
+        && (residentOwns(resource.data)
+        || adminCanAccessCommunity(resource.data.communityId));
     }
 
     match /community_wall/{postId} {
@@ -2110,7 +2147,8 @@ function securityCanAccessCommunity(communityId) {
         && adminCanAccessCommunity(resource.data.communityId)
       );
 
-    allow create: if (
+    allow create: if legacyImagesOnly(request.resource.data)
+        && ((
         approvedResident()
         && request.resource.data.communityId == userProfile().communityId
         && request.resource.data.userId == request.auth.uid
@@ -2123,9 +2161,10 @@ function securityCanAccessCommunity(communityId) {
         && adminCanAccessCommunity(
           request.resource.data.communityId
         )
-      );
+      ));
 
-    allow update: if (
+    allow update: if managedImagesSafeUpdate()
+        && ((
         residentOwnsComplaint(resource.data)
         && request.resource.data
           .diff(resource.data)
@@ -2159,12 +2198,13 @@ function securityCanAccessCommunity(communityId) {
             'flatId',
             'buildingId'
           ])
-      );
+      ));
 
-    allow delete: if (
+    allow delete: if noAttachedManagedImages()
+        && ((
       ('communityId' in resource.data)
       && adminCanAccessCommunity(resource.data.communityId)
-    );
+    ));
   }
   
   // ============================================================
@@ -2319,28 +2359,31 @@ match /marketplaces/{listingId} {
     );
 
   // Resident can create a listing for their own building.
-  allow create: if approvedResident()
+  allow create: if legacyImagesOnly(request.resource.data)
+        && (approvedResident()
     && ('sellerId' in request.resource.data)
     && request.resource.data.sellerId == request.auth.uid
     && residentContentIdentityMatches(request.resource.data)
     && ('buildingId' in request.resource.data)
     && request.resource.data.buildingId == userProfile().buildingId
     && contentCommunity(request.resource.data) == userProfile().communityId
-    && contentReferencesMatch(request.resource.data, userProfile().communityId);
+    && contentReferencesMatch(request.resource.data, userProfile().communityId));
 
   // Seller can update own listing.
-  allow update: if approvedResident()
+  allow update: if managedImagesSafeUpdate()
+        && (approvedResident()
     && ('sellerId' in resource.data)
     && resource.data.sellerId == request.auth.uid
     && request.resource.data.sellerId == resource.data.sellerId
     && request.resource.data.buildingId == resource.data.buildingId
     && contentCommunity(resource.data) == userProfile().communityId
-    && contentUpdateIsSafe();
+    && contentUpdateIsSafe());
 
   // Seller can delete own listing.
-  allow delete: if approvedResident()
+  allow delete: if noAttachedManagedImages()
+        && (approvedResident()
     && ('sellerId' in resource.data)
-    && resource.data.sellerId == request.auth.uid;
+    && resource.data.sellerId == request.auth.uid);
 
 
   // ----------------------------------------------------------
@@ -2397,17 +2440,21 @@ match /marketplaces/{listingId} {
           && adminCanAccessCommunity(resource.data.communityId)
         );
 
-      // Admin manages images.
+      // Legacy URL records retain their contract. Managed private references
+      // and revisions are changed only by authorized transactional callables.
       allow create: if
-        ('communityId' in request.resource.data)
+        !request.resource.data.keys().hasAny(['imageAsset', 'revision'])
+        && ('communityId' in request.resource.data)
         && adminCanAccessCommunity(request.resource.data.communityId)
         && contentReferencesMatch(request.resource.data, request.resource.data.communityId);
 
-      allow update: if adminCanAccessCommunity(resource.data.communityId)
+      allow update: if !resource.data.keys().hasAny(['imageAsset', 'revision'])
+        && !request.resource.data.keys().hasAny(['imageAsset', 'revision'])
+        && adminCanAccessCommunity(resource.data.communityId)
         && contentUpdateIsSafe();
 
-      allow delete: if
-        ('communityId' in resource.data)
+      allow delete: if !resource.data.keys().hasAny(['imageAsset', 'revision'])
+        && ('communityId' in resource.data)
         && adminCanAccessCommunity(resource.data.communityId);
     }
     
@@ -2465,6 +2512,12 @@ match /marketplaces/{listingId} {
       allow read, write: if false;
     }
 
+
+    // Server-owned image reservations and verified asset references. Clients
+    // use App Check-protected callables, never manufacture or edit grants.
+    match /storageImageUploads/{assetId} {
+      allow read, write: if false;
+    }
 
     // ============================================================
     // DENY EVERYTHING ELSE

@@ -25,6 +25,7 @@ test("transaction creates one profile and increments invite only once on retry",
   assert.equal(invite.useCount, 1);
   assert.equal(invite.usedCount, 1);
   assert.equal(user.phoneNumber, "+919876543210");
+  assert.equal(Object.hasOwn(user, "phone"), false);
   assert.equal(user.communityId, communityId);
   assert.equal(user.role, "resident");
   assert.equal(user.isActive, false);
