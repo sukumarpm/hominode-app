@@ -168,7 +168,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             enabled: true, // Enabled for editing
                             validator: (value) {
                               if (value == null || value.trim().isEmpty) {
-                                return 'email_required'.tr();
+                                return null; // Email is optional for phone-auth residents.
                               }
                               final emailRegex = RegExp(
                                 r'^[a-zA-Z0-9.]+@[a-zA-Z0-9]+\.[a-zA-Z]+',
@@ -490,7 +490,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       debugPrint('Resident profile: stage=display-fields');
       final updates = <String, dynamic>{'name': newName, 'email': newEmail};
 
-      // STEP 2: Upload image if selected
+      // Ordinary profile fields do not depend on photo attestation. An empty
+      // email explicitly clears the old display email, without changing Auth.
+      debugPrint('Resident profile: stage=profile-write');
+      final success = widget.profileSaver != null
+          ? await widget.profileSaver!(updates)
+          : await _userDataService!.updateUserData(updates);
+      if (!success) {
+        throw StateError('Profile update failed');
+      }
+      if (!mounted) return;
+
+      // Only a pending private photo enters App Check verification.
       if (_photoFile != null) {
         final imageResult = widget.photoUploader != null
             ? await widget.photoUploader!(_photoFile!.path)
@@ -506,10 +517,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  (imageResult.errorCode == 'APP_CHECK_UNAVAILABLE'
-                          ? 'profile_device_verification_failed'
-                          : 'profile_photo_upload_failed')
-                      .tr(),
+                  '${'profile_details_saved'.tr()} '
+                  '${(imageResult.errorCode == 'APP_CHECK_UNAVAILABLE' ? 'profile_device_verification_failed' : 'profile_photo_upload_failed').tr()}',
                 ),
                 backgroundColor: Colors.orange,
                 duration: const Duration(seconds: 2),
@@ -519,17 +528,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           if (mounted) setState(() => _isSaving = false);
           return;
         }
-      }
-
-      // Profile image pointers are already committed by the authorized callable.
-      // STEP 3: Update Firestore Document directly
-      debugPrint('Resident profile: stage=profile-write');
-      final success = widget.profileSaver != null
-          ? await widget.profileSaver!(updates)
-          : await _userDataService!.updateUserData(updates);
-
-      if (!success) {
-        throw Exception('Profile update failed');
       }
 
       if (!mounted) return;

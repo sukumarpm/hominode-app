@@ -528,5 +528,6 @@
   "paid_bill": "Factura pagada",
   "price_value": "Precio: {price}",
   "capacity_value": "Capacidad: {count} personas",
-  "profile_device_verification_failed": "Falló la verificación del dispositivo. Reinicia la aplicación e inténtalo de nuevo. Si continúa, contacta con soporte."
+  "profile_device_verification_failed": "Falló la verificación del dispositivo; la foto no se actualizó. Inténtalo más tarde. Si continúa, contacta con soporte.",
+  "profile_details_saved": "Datos del perfil guardados."
 }

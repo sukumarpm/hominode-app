@@ -48,11 +48,12 @@ class ProfileImageService {
   final Future<void> Function() _verifyDevice;
 
   static Future<void> _verifyAppCheck() async {
-    // A retry must acquire fresh attestation after Console debug registration;
-    // do not let the Functions SDK send a placeholder token after startup failed.
-    final token = await FirebaseAppCheck.instance
-        .getToken(true)
-        .timeout(const Duration(seconds: 20));
+    // Use valid cached attestation and the SDK's normal refresh/backoff policy.
+    // Forcing a token exchange on every Save tap amplifies debug-provider 403s.
+    // Failure still stops private uploads before any staging or attachment.
+    final token = await FirebaseAppCheck.instance.getToken().timeout(
+      const Duration(seconds: 20),
+    );
     if (token == null || token.isEmpty) {
       throw StateError('Device verification is unavailable.');
     }

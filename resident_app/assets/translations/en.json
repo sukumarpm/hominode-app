@@ -528,5 +528,6 @@
   "paid_bill": "Paid bill",
   "price_value": "Price: {price}",
   "capacity_value": "Capacity: {count} people",
-  "profile_device_verification_failed": "Device verification failed. Restart the app and retry. If this continues, contact support."
+  "profile_device_verification_failed": "Device verification failed; photo not updated. Try again later. If this continues, contact support.",
+  "profile_details_saved": "Profile details saved."
 }

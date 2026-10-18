@@ -784,13 +784,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _showEditProfile(BuildContext context) async {
     // Navigate to Edit Profile screen
-    final result = await Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const EditProfileScreen()),
     );
 
-    // Reload profile if changes were made
-    if (result == true) {
+    // Display fields may have saved even while a photo remains pending.
+    if (mounted) {
       _loadUserProfile();
     }
   }

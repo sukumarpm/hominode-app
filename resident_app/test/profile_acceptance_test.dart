@@ -191,4 +191,60 @@ void main() {
       expect(db.fields, isNull);
     },
   );
+  test(
+    'empty email clears the Firestore display field without phone identity changes',
+    () async {
+      final writes = _Writes();
+      final service = UserDataService.forTesting(
+        auth: _Auth(_User()),
+        writeUser: writes.write,
+      );
+      expect(
+        await service.updateUserData({'name': 'Synthetic', 'email': ''}),
+        true,
+      );
+      expect(writes.fields!['email'], '');
+      expect(
+        writes.fields!.keys,
+        unorderedEquals(['name', 'email', 'updatedAt']),
+      );
+    },
+  );
+  for (final failure in ['Too many attempts', '403 App attestation failed']) {
+    test(
+      'App Check $failure fails closed and logs only safe categories',
+      () async {
+        final logs = <String>[];
+        final prior = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) logs.add(message);
+        };
+        addTearDown(() => debugPrint = prior);
+        final images = _Images();
+        final service = ProfileImageService.forTesting(
+          operations: images,
+          currentUid: () => 'resident',
+          verifyDevice: () async {
+            throw FirebaseException(
+              plugin: 'firebase_app_check',
+              code: 'unknown',
+              message: '$failure synthetic-private-marker',
+            );
+          },
+        );
+        final result = await service.uploadProfileImage(
+          imagePath: 'synthetic.jpg',
+        );
+        expect(result.errorCode, 'APP_CHECK_UNAVAILABLE');
+        expect(images.stages, isEmpty);
+        expect(
+          logs.join(),
+          contains(
+            'reason=${failure.startsWith('Too') ? 'throttled' : 'attestation-rejected'}',
+          ),
+        );
+        expect(logs.join(), isNot(contains('synthetic-private-marker')));
+      },
+    );
+  }
 }
