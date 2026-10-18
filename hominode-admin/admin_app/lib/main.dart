@@ -8,6 +8,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
 
 import 'admin_login_screen.dart';
+import 'widgets/admin_startup_gate.dart';
 import 'auth_wrapper.dart';
 import 'firebase_options.dart';
 import 'navigation/admin_module_destinations.dart';
@@ -26,29 +27,65 @@ Future<void> main() async {
   // instead of hash-based URLs.
   usePathUrlStrategy();
 
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-
-    await FirebaseAppCheck.instance.activate(
-      // Keep the existing Android / Apple providers for now.
-      // They are deprecated parameter names, but they remain functional.
-      // ignore: deprecated_member_use
-      androidProvider: kDebugMode
-          ? AndroidProvider.debug
-          : AndroidProvider.playIntegrity,
-      // ignore: deprecated_member_use
-      appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
-
-      // Required for admin.hominode.com.
-      providerWeb: ReCaptchaEnterpriseProvider(
-        '6LfLtJstAAAAAFM2jk9KvFB-2f7zUr9DCNIl7HqN',
+  await EasyLocalization.ensureInitialized();
+  runApp(
+    EasyLocalization(
+      supportedLocales: const [
+        Locale('en'),
+        Locale('ta'),
+        Locale('hi'),
+        Locale('es'),
+        Locale('ar'),
+      ],
+      path: 'assets/translations',
+      fallbackLocale: const Locale('en'),
+      child: AdminStartupGate(
+        initialize: _initializeServices,
+        child: const MyApp(),
       ),
-    );
+    ),
+  );
+}
+
+bool _appCheckActivated = false;
+bool _hasRequestedAttestation = false;
+Future<void> _initializeServices() async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      ).timeout(const Duration(seconds: 20));
+    }
+
+    if (!_appCheckActivated) {
+      await FirebaseAppCheck.instance
+          .activate(
+            // Keep the existing Android / Apple providers for now.
+            // They are deprecated parameter names, but they remain functional.
+            // ignore: deprecated_member_use
+            androidProvider: kDebugMode
+                ? AndroidProvider.debug
+                : AndroidProvider.playIntegrity,
+            // ignore: deprecated_member_use
+            appleProvider: kDebugMode
+                ? AppleProvider.debug
+                : AppleProvider.appAttest,
+
+            // Required for admin.hominode.com.
+            providerWeb: ReCaptchaEnterpriseProvider(
+              '6LfLtJstAAAAAFM2jk9KvFB-2f7zUr9DCNIl7HqN',
+            ),
+          )
+          .timeout(const Duration(seconds: 20));
+      _appCheckActivated = true;
+    }
 
     try {
-      final appCheckToken = await FirebaseAppCheck.instance.getToken();
+      final forceRefresh = _hasRequestedAttestation;
+      _hasRequestedAttestation = true;
+      final appCheckToken = await FirebaseAppCheck.instance
+          .getToken(forceRefresh)
+          .timeout(const Duration(seconds: 20));
       if (appCheckToken == null || appCheckToken.isEmpty) {
         throw StateError('App Check did not provide an attestation token.');
       }
@@ -62,9 +99,9 @@ Future<void> main() async {
     }
 
     try {
-      await HominodePushNotifications.instance.initialize(
-        onAuthorizedTap: AdminNotificationRouter.handle,
-      );
+      await HominodePushNotifications.instance
+          .initialize(onAuthorizedTap: AdminNotificationRouter.handle)
+          .timeout(const Duration(seconds: 5));
     } catch (error, stackTrace) {
       debugPrint('Notification initialization failed (${error.runtimeType}).');
 
@@ -90,22 +127,6 @@ Future<void> main() async {
     // Do not launch the UI with an incomplete Firebase startup.
     rethrow;
   }
-
-  await EasyLocalization.ensureInitialized();
-  runApp(
-    EasyLocalization(
-      supportedLocales: const [
-        Locale('en'),
-        Locale('ta'),
-        Locale('hi'),
-        Locale('es'),
-        Locale('ar'),
-      ],
-      path: 'assets/translations',
-      fallbackLocale: const Locale('en'),
-      child: const MyApp(),
-    ),
-  );
 }
 
 class MyApp extends StatelessWidget {

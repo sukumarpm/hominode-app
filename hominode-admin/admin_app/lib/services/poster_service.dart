@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'admin_service.dart';
-import '../config/cloudinary_config.dart';
 
 class PosterService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -127,124 +125,13 @@ class PosterService {
     }
   }
 
-  // ==================== HELPER METHODS ====================
-  /// Upload image to Cloudinary
   Future<String> _uploadToCloudinary(File imageFile) async {
-    try {
-      print('📤 Uploading to Cloudinary...');
-
-      // Validate file
-      if (!imageFile.existsSync()) {
-        throw Exception('Image file does not exist');
-      }
-
-      final fileSize = imageFile.lengthSync();
-      if (fileSize == 0) {
-        throw Exception('Image file is empty');
-      }
-
-      print('📤 File size: $fileSize bytes');
-      print('📤 Cloud Name: ${CloudinaryConfig.cloudName}');
-      print('📤 Upload Preset: ${CloudinaryConfig.uploadPreset}');
-
-      // Create multipart request
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse(CloudinaryConfig.uploadUrl),
-      );
-
-      // Add file (REQUIRED)
-      request.files.add(
-        await http.MultipartFile.fromPath('file', imageFile.path),
-      );
-
-      // Add upload preset (REQUIRED for unsigned uploads)
-      request.fields['upload_preset'] = CloudinaryConfig.uploadPreset;
-      request.fields['folder'] = 'posters';
-
-      print('📤 Sending request to Cloudinary...');
-
-      // Send request with timeout
-      var response = await request.send().timeout(
-        const Duration(seconds: 60),
-        onTimeout: () {
-          throw Exception('Upload timeout - please try again');
-        },
-      );
-
-      print('📤 Response status: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final responseData = await response.stream.toBytes();
-        final responseString = String.fromCharCodes(responseData);
-
-        print('📤 Response received: ${responseString.substring(0, 100)}...');
-
-        // Parse JSON response
-        final Map<String, dynamic> jsonResponse = _parseJsonResponse(
-          responseString,
-        );
-
-        final imageUrl = jsonResponse['secure_url'] ?? jsonResponse['url'];
-
-        if (imageUrl == null) {
-          print('❌ No URL in response: $jsonResponse');
-          throw Exception('No URL in Cloudinary response');
-        }
-
-        print('✅ Cloudinary URL: $imageUrl');
-        return imageUrl;
-      } else {
-        final responseData = await response.stream.toBytes();
-        final responseString = String.fromCharCodes(responseData);
-        print('❌ Cloudinary error response: $responseString');
-        throw Exception(
-          'Cloudinary upload failed: ${response.statusCode} - $responseString',
-        );
-      }
-    } catch (e) {
-      print('❌ Cloudinary upload error: $e');
-      throw Exception('Failed to upload to Cloudinary: $e');
-    }
-  }
-
-  /// Parse JSON response (simple parser to avoid json dependency issues)
-  Map<String, dynamic> _parseJsonResponse(String jsonString) {
-    try {
-      // Simple JSON parsing for Cloudinary response
-      final Map<String, dynamic> result = {};
-
-      // Extract secure_url
-      final secureUrlMatch = RegExp(
-        r'"secure_url":"([^"]+)"',
-      ).firstMatch(jsonString);
-      if (secureUrlMatch != null) {
-        result['secure_url'] = secureUrlMatch.group(1);
-      }
-
-      // Extract url
-      final urlMatch = RegExp(r'"url":"([^"]+)"').firstMatch(jsonString);
-      if (urlMatch != null) {
-        result['url'] = urlMatch.group(1);
-      }
-
-      // Extract public_id
-      final publicIdMatch = RegExp(
-        r'"public_id":"([^"]+)"',
-      ).firstMatch(jsonString);
-      if (publicIdMatch != null) {
-        result['public_id'] = publicIdMatch.group(1);
-      }
-
-      return result;
-    } catch (e) {
-      print('❌ JSON parse error: $e');
-      return {};
-    }
+    throw StateError(
+      'Photo uploads are temporarily unavailable while secure storage is enabled.',
+    );
   }
 }
 
-// ==================== POSTER MODEL ====================
 class PosterModel {
   final String id;
   final String imageUrl;

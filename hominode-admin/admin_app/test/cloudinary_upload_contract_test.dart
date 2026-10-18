@@ -1,231 +1,259 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-
-import 'package:admin_app/config/cloudinary_config.dart';
+import 'dart:typed_data';
 import 'package:admin_app/services/admin_service.dart';
 import 'package:admin_app/services/cloudinary_apartment_images_service.dart';
+import 'package:admin_app/services/firebase_image_upload_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hominode_storage/hominode_storage.dart';
 import 'package:http/http.dart' as http;
 
+const assetId = 'a1111111-1111-4111-8111-111111111111';
+StorageImageAsset ticket({bool ready = false}) => StorageImageAsset.fromMap({
+  'assetId': assetId,
+  'provider': 'firebase',
+  'bucket': 'demo-images.appspot.com',
+  'ownerId': 'a',
+  'communityId': 'A',
+  'feature': 'apartment',
+  'resourceId': 'building-test',
+  'contentType': 'image/jpeg',
+  'size': 4,
+  'state': ready ? 'ready' : 'pending',
+  'storagePath': ready
+      ? 'private_images/A/a/apartment/$assetId.jpg'
+      : 'apartment_images/A/a/$assetId.jpg',
+  if (ready) ...{'generation': '7', 'sha256': 'a' * 64},
+});
+
 class _Admin extends Fake implements AdminService {
-  String? uid = 'admin-test';
+  String? uid = 'a';
+  String community = 'A';
   @override
   String? getCurrentAdminId() => uid;
   @override
-  String requireCurrentCommunityId() => 'community-test';
-  @override
-  Future<Map<String, dynamic>?> getAdminProfile() async => {
-    'name': 'Test Admin',
-  };
+  String requireCurrentCommunityId() => community;
 }
 
-class _UploadClient extends http.BaseClient {
-  _UploadClient(this.handle);
-  final Future<http.StreamedResponse> Function(http.BaseRequest) handle;
+class _Uploads extends Fake implements FirebaseImageUploadService {
+  int uploads = 0, completions = 0;
+  bool failComplete = false, failSave = false, failUpload = false;
+  void Function()? afterUpload;
+  final calls = <(String, Map<String, dynamic>)>[];
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) =>
-      handle(request);
+  Future<StorageImageAsset> upload({
+    required String feature,
+    required String resourceId,
+    required String contentType,
+    required Uint8List bytes,
+    void Function(StorageImageAsset)? onReserved,
+    void Function()? onStored,
+  }) async {
+    uploads++;
+    expect(feature, 'apartment');
+    expect(resourceId, 'building-test');
+    expect(contentType, 'image/jpeg');
+    onReserved?.call(ticket());
+    if (failUpload) throw StateError('Storage failed.');
+    onStored?.call();
+    afterUpload?.call();
+    if (failComplete) throw StateError('Finalization unavailable.');
+    return ticket(ready: true);
+  }
+
+  @override
+  Future<StorageImageAsset> complete(StorageImageAsset reservation) async {
+    completions++;
+    expect(reservation.assetId, assetId);
+    return ticket(ready: true);
+  }
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    calls.add((name, data));
+    if (failSave) throw StateError('Save response lost.');
+    return {'imageId': data['imageId'] ?? assetId, 'revision': 1};
+  }
 }
 
-http.StreamedResponse _response(String body, [int status = 200]) =>
-    http.StreamedResponse(Stream.value(utf8.encode(body)), status);
+class _NoNetwork extends http.BaseClient {
+  int requests = 0;
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests++;
+    throw StateError('External upload prohibited.');
+  }
+}
 
 void main() {
-  late Directory directory;
-  late File image;
-  late FakeFirebaseFirestore firestore;
+  late Directory temp;
+  late File file;
   late _Admin admin;
+  late _Uploads uploads;
   late CloudinaryApartmentImagesService service;
-  const url =
-      'https://res.cloudinary.com/test-cloud/image/upload/apartment.jpg';
-  final imageBytes = [0xff, 0xd8, 0xff, 0xd9];
-
+  late FakeFirebaseFirestore firestore;
   setUp(() async {
-    directory = await Directory.systemTemp.createTemp('admin-upload-contract-');
-    image = await File('${directory.path}/image.jpg').writeAsBytes(imageBytes);
-    firestore = FakeFirebaseFirestore();
+    temp = await Directory.systemTemp.createTemp('apartment-firebase-test-');
+    file = await File(
+      '${temp.path}/photo.jpg',
+    ).writeAsBytes([255, 216, 255, 217]);
     admin = _Admin();
+    uploads = _Uploads();
+    firestore = FakeFirebaseFirestore();
     service = CloudinaryApartmentImagesService(
       firestore: firestore,
       adminService: admin,
+      uploads: uploads,
     );
   });
-  tearDown(() async => directory.delete(recursive: true));
-
-  Future<String> upload() => service.uploadImage(
-    title: 'Courtyard',
-    description: 'Shared space',
-    type: 'Common Area',
-    imageFile: image,
-    buildingId: 'building-test',
-    uploadDate: '17-10-2026',
-    uploadTime: '12:30',
-  );
-
-  Future<void> expectNoMetadata() async => expect(
-    (await firestore.collection('apartmentImages').get()).docs,
-    isEmpty,
-  );
-
+  tearDown(() async {
+    await temp.delete(recursive: true);
+  });
+  Future<String> upload({ApartmentImageModel? replacing}) =>
+      service.uploadImage(
+        title: 'Courtyard',
+        description: 'Garden',
+        type: 'Common Area',
+        imageFile: file,
+        buildingId: 'building-test',
+        uploadDate: '17-10-2026',
+        uploadTime: '10:00',
+        replacing: replacing,
+      );
   test(
-    'unsigned apartment upload preserves request, URL and scoped metadata',
+    'existing upload entry point uses Firebase and server attachment without external HTTP or client metadata writes',
     () async {
-      var requests = 0;
-      final client = _UploadClient((request) async {
-        requests++;
-        expect(request.method, 'POST');
-        expect(
-          request.url.toString(),
-          CloudinaryApartmentImagesService.CLOUDINARY_API_URL,
-        );
-        expect(request.url.scheme, 'https');
-        expect(request.url.toString(), CloudinaryConfig.uploadUrl);
-        final multipart = request as http.MultipartRequest;
-        expect(multipart.fields.keys.toSet(), {
-          'upload_preset',
-          'folder',
-          'tags',
-          'public_id',
-        });
-        expect(
-          multipart.fields['upload_preset'],
-          CloudinaryConfig.uploadPreset,
-        );
-        expect(multipart.fields['folder'], 'apartment_images');
-        expect(multipart.fields['tags'], 'apartment,admin,admin-test');
-        expect(multipart.fields['public_id'], matches(r'^apartment_\d+$'));
-        expect(multipart.fields, isNot(contains('api_key')));
-        expect(multipart.fields, isNot(contains('api_secret')));
-        expect(multipart.fields, isNot(contains('signature')));
-        expect(multipart.files.single.field, 'file');
-        expect(await multipart.files.single.finalize().toBytes(), imageBytes);
-        return _response(jsonEncode({'secure_url': url}));
+      final network = _NoNetwork();
+      expect(await http.runWithClient(() => upload(), () => network), assetId);
+      expect(network.requests, 0);
+      expect(uploads.uploads, 1);
+      expect(uploads.calls.single.$1, 'saveApartmentImage');
+      expect(uploads.calls.single.$2, {
+        'assetId': assetId,
+        'title': 'Courtyard',
+        'description': 'Garden',
+        'type': 'Common Area',
+        'uploadDate': '17-10-2026',
+        'uploadTime': '10:00',
       });
-      final id = await http.runWithClient(upload, () => client);
-      final saved =
-          (await firestore.collection('apartmentImages').doc(id).get()).data()!;
-      expect(requests, 1);
-      expect(saved, containsPair('imageUrl', url));
-      expect(saved, containsPair('communityId', 'community-test'));
-      expect(saved, containsPair('buildingId', 'building-test'));
-      expect(saved, containsPair('adminId', 'admin-test'));
-      expect(saved, containsPair('adminName', 'Test Admin'));
-      expect(saved, containsPair('title', 'Courtyard'));
-      expect(saved, containsPair('description', 'Shared space'));
-      expect(saved, containsPair('type', 'Common Area'));
-      expect(saved, containsPair('uploadDate', '17-10-2026'));
-      expect(saved, containsPair('uploadTime', '12:30'));
-      expect(saved['createdAt'], isNotNull);
-      expect(saved['updatedAt'], isNotNull);
+      expect(
+        (await firestore.collection('apartmentImages').get()).docs,
+        isEmpty,
+      );
     },
   );
-
-  for (final failure in [
-    'invalid JSON',
-    'missing URL',
-    'denied',
-    'provider error',
-    'network',
-  ]) {
-    test('$failure does not save apartment metadata', () async {
-      final client = _UploadClient((_) async {
-        switch (failure) {
-          case 'invalid JSON':
-            return _response('not JSON');
-          case 'missing URL':
-            return _response('{}');
-          case 'denied':
-            return _response('{"error":{"message":"denied"}}', 401);
-          case 'provider error':
-            return _response('{"error":{"message":"invalid image"}}', 400);
-          default:
-            throw http.ClientException('offline');
-        }
-      });
-      await http.runWithClient(
-        () => expectLater(
-          upload(),
-          throwsA(
-            isA<Exception>().having(
-              (e) => e.toString(),
-              'message',
-              contains(
-                {
-                  'invalid JSON': 'FormatException',
-                  'missing URL': 'Failed to get image URL',
-                  'denied': 'Upload preset not configured',
-                  'provider error': 'invalid image',
-                  'network': 'offline',
-                }[failure]!,
-              ),
-            ),
-          ),
-        ),
-        () => client,
-      );
-      await expectNoMetadata();
-    });
-  }
-
-  test('60-second timeout fails without saving apartment metadata', () async {
-    var deadlines = 0;
-    final client = _UploadClient(
-      (_) => Completer<http.StreamedResponse>().future,
-    );
-    await runZoned(
-      () => http.runWithClient(
-        () => expectLater(
-          upload(),
-          throwsA(
-            isA<Exception>().having(
-              (e) => e.toString(),
-              'message',
-              contains('Upload timeout'),
-            ),
-          ),
-        ),
-        () => client,
-      ),
-      zoneSpecification: ZoneSpecification(
-        createTimer: (self, parent, zone, duration, callback) {
-          if (duration == const Duration(seconds: 60)) {
-            deadlines++;
-            return parent.createTimer(zone, Duration.zero, callback);
-          }
-          return parent.createTimer(zone, duration, callback);
-        },
-      ),
-    );
-    expect(deadlines, 1);
-    await expectNoMetadata();
+  test(
+    'failed finalization retries existing staged asset instead of reuploading',
+    () async {
+      uploads.failComplete = true;
+      await expectLater(upload(), throwsStateError);
+      expect(uploads.calls, isEmpty);
+      expect(uploads.uploads, 1);
+      expect(await upload(), assetId);
+      expect(uploads.completions, 1);
+      expect(uploads.uploads, 1);
+    },
+  );
+  test(
+    'lost attachment response retries the same asset and gallery ID',
+    () async {
+      uploads.failSave = true;
+      await expectLater(upload(), throwsStateError);
+      uploads.failSave = false;
+      expect(await upload(), assetId);
+      expect(uploads.uploads, 1);
+      expect(uploads.calls[0].$1, uploads.calls[1].$1);
+      expect(uploads.calls[0].$2, uploads.calls[1].$2);
+    },
+  );
+  test(
+    'Storage failure cannot publish metadata and retry can upload again',
+    () async {
+      uploads.failUpload = true;
+      await expectLater(upload(), throwsStateError);
+      expect(uploads.calls, isEmpty);
+      uploads.failUpload = false;
+      expect(await upload(), assetId);
+      expect(uploads.uploads, 2);
+    },
+  );
+  test('community change after upload prevents attachment', () async {
+    uploads.afterUpload = () => admin.community = 'B';
+    await expectLater(upload(), throwsStateError);
+    expect(uploads.calls, isEmpty);
   });
-
-  for (final failure in ['unauthenticated', 'empty', 'oversized', 'missing']) {
-    test('$failure fails before making an HTTP request', () async {
-      switch (failure) {
-        case 'unauthenticated':
-          admin.uid = null;
-        case 'empty':
-          image.writeAsBytesSync([]);
-        case 'oversized':
-          final file = image.openSync(mode: FileMode.write);
-          file.truncateSync(10 * 1024 * 1024 + 1);
-          file.closeSync();
-        case 'missing':
-          image.deleteSync();
-      }
-      var requests = 0;
-      await http.runWithClient(
-        () => expectLater(upload(), throwsA(isA<Exception>())),
-        () => _UploadClient((_) async {
-          requests++;
-          return _response('{}');
-        }),
-      );
-      expect(requests, 0);
-      await expectNoMetadata();
-    });
-  }
+  test('sign-out prevents upload', () async {
+    admin.uid = null;
+    await expectLater(upload(), throwsStateError);
+    expect(uploads.uploads, 0);
+  });
+  test('unsupported, empty and oversized files never upload', () async {
+    await file.writeAsBytes([1, 2, 3, 4]);
+    await expectLater(upload(), throwsArgumentError);
+    await file.writeAsBytes([]);
+    await expectLater(upload(), throwsArgumentError);
+    final handle = await file.open(mode: FileMode.write);
+    await handle.truncate(StorageImageAsset.maxBytes + 1);
+    await handle.close();
+    await expectLater(upload(), throwsArgumentError);
+    expect(uploads.uploads, 0);
+  });
+  test(
+    'replacement sends revision without changing existing title, date or ordering fields',
+    () async {
+      final model = ApartmentImageModel.fromFirestore('legacy', {
+        'buildingId': 'building-test',
+        'communityId': 'A',
+        'revision': 4,
+        'title': 'Original',
+        'createdAt': Timestamp.fromMillisecondsSinceEpoch(1000),
+        'imageUrl': 'https://example.invalid/legacy.jpg',
+      });
+      expect(await upload(replacing: model), 'legacy');
+      expect(uploads.calls.single.$1, 'saveApartmentImage');
+      expect(uploads.calls.single.$2, {
+        'assetId': assetId,
+        'imageId': 'legacy',
+        'expectedRevision': 4,
+      });
+      expect(model.title, 'Original');
+      expect(model.createdAt, DateTime.fromMillisecondsSinceEpoch(1000));
+    },
+  );
+  test(
+    'deletion calls authorized backend with revision, never deletes a URL',
+    () async {
+      await service.deleteImage('existing', expectedRevision: 2);
+      expect(uploads.calls.single.$1, 'deleteApartmentImage');
+      expect(uploads.calls.single.$2, {
+        'imageId': 'existing',
+        'expectedRevision': 2,
+      });
+    },
+  );
+  test(
+    'legacy URL and private reference parsing preserve timestamps and order',
+    () async {
+      final timestamp = Timestamp.fromMillisecondsSinceEpoch(1000);
+      await firestore.collection('apartmentImages').doc('old').set({
+        'communityId': 'A',
+        'imageUrl': 'https://example.invalid/legacy.jpg',
+        'createdAt': timestamp,
+      });
+      await firestore.collection('apartmentImages').doc('new').set({
+        'communityId': 'A',
+        'imageAsset': ticket(ready: true).toMap(),
+        'createdAt': Timestamp.fromMillisecondsSinceEpoch(2000),
+      });
+      final images = await service.getImages().first;
+      expect(images.map((image) => image.id), ['new', 'old']);
+      expect(images.first.imageAsset!.assetId, assetId);
+      expect(images.last.imageUrl, 'https://example.invalid/legacy.jpg');
+      expect(images.last.imageAsset, isNull);
+    },
+  );
 }

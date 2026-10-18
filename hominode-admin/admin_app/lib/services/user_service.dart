@@ -1,3 +1,4 @@
+import '../utils/resident_phone.dart';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -110,7 +111,7 @@ class UserService {
                 return UserModel(
                   id: doc.id, // Firebase Auth UID
                   name: data['name'] ?? data['fullName'] ?? '',
-                  phone: data['phone'] ?? data['phoneNumber'] ?? '',
+                  phone: residentDisplayPhone(data),
                   email: data['email'],
                   password: data['password'],
                   residentId: data['residentId'] ?? '',
@@ -200,7 +201,7 @@ class UserService {
             return UserModel(
               id: doc.id, // Firebase Auth UID
               name: data['name'] ?? '',
-              phone: data['phone'] ?? '',
+              phone: residentDisplayPhone(data),
               email: data['email'],
               password: data['password'],
               residentId: data['residentId'] ?? '',
@@ -311,7 +312,7 @@ class UserService {
                 return UserModel(
                   id: doc.id, // Firebase Auth UID
                   name: data['name'] ?? '',
-                  phone: data['phone'] ?? '',
+                  phone: residentDisplayPhone(data),
                   email: data['email'],
                   password: data['password'],
                   residentId: data['residentId'] ?? '',
@@ -362,7 +363,7 @@ class UserService {
       return UserModel(
         id: doc.id,
         name: data['name'] ?? data['fullName'] ?? '',
-        phone: data['phone'] ?? data['phoneNumber'] ?? '',
+        phone: residentDisplayPhone(data),
         email: data['email'],
         password: data['password'],
         residentId: data['residentId'] ?? '',

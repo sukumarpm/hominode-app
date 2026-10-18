@@ -1,3 +1,4 @@
+import '../utils/resident_phone.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
@@ -700,7 +701,7 @@ class ParkingSlotDetailModel {
   ParkingSlotDetailModel({required this.slot, this.vehicle, this.userDetails});
 
   String get ownerName => userDetails?['name'] ?? 'Unknown';
-  String get ownerPhone => userDetails?['phone'] ?? '';
+  String get ownerPhone => residentDisplayPhone(userDetails);
   String get ownerEmail => userDetails?['email'] ?? '';
 }
 

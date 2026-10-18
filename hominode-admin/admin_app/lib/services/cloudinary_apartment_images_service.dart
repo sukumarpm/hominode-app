@@ -1,28 +1,29 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'dart:typed_data';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hominode_storage/hominode_storage.dart';
 import 'admin_service.dart';
+import 'firebase_image_upload_service.dart';
 
+/// Compatibility name for existing callers. All writes use private Firebase
+/// assets and server-authorized gallery operations; there is no external upload.
 class CloudinaryApartmentImagesService {
   final FirebaseFirestore _firestore;
   final AdminService _adminService;
-  final String _imagesCollection = 'apartmentImages';
+  final FirebaseImageUploadService _uploads;
+  StorageImageAsset? _reservation;
+  StorageImageAsset? _ready;
+  String? _attempt;
+  bool _stored = false;
 
   CloudinaryApartmentImagesService({
     FirebaseFirestore? firestore,
     AdminService? adminService,
+    FirebaseImageUploadService? uploads,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
-       _adminService = adminService ?? AdminService();
+       _adminService = adminService ?? AdminService(),
+       _uploads = uploads ?? FirebaseImageUploadService();
 
-  // Cloudinary configuration
-  static const String CLOUDINARY_CLOUD_NAME = 'de8yccofb';
-  static const String CLOUDINARY_UPLOAD_PRESET = 'lyvo_upload';
-  static const String CLOUDINARY_API_URL =
-      'https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload';
-
-  // ==================== FLOW FUNCTION: Upload Image ====================
-  /// Upload apartment image to Cloudinary and save metadata to Firestore
   Future<String> uploadImage({
     required String title,
     required String description,
@@ -31,385 +32,161 @@ class CloudinaryApartmentImagesService {
     required String buildingId,
     String? uploadDate,
     String? uploadTime,
+    ApartmentImageModel? replacing,
   }) async {
-    try {
-      print('🔵 CLOUDINARY APARTMENT IMAGES SERVICE: Starting image upload...');
-
-      // STEP 1: Validate Admin Authentication
-      print('🔐 STEP 1: Validating admin authentication...');
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null || adminId.isEmpty) {
-        print('❌ STEP 1 FAILED: Admin not authenticated or ID is empty');
-        throw Exception('Admin not authenticated. Please log in again.');
-      }
-      print('✅ STEP 1 PASSED: Admin authenticated - $adminId');
-
-      // STEP 2: Validate Input Data
-      print('📋 STEP 2: Validating input data...');
-      if (title.isEmpty) {
-        print('❌ STEP 2 FAILED: Title is empty');
-        throw Exception('Title cannot be empty');
-      }
-      if (!imageFile.existsSync()) {
-        print(
-          '❌ STEP 2 FAILED: Image file does not exist at ${imageFile.path}',
-        );
-        throw Exception('Image file does not exist');
-      }
-      final fileSize = imageFile.lengthSync();
-      if (fileSize == 0) {
-        print('❌ STEP 2 FAILED: Image file is empty');
-        throw Exception('Image file is empty');
-      }
-      if (fileSize > 10 * 1024 * 1024) {
-        print('❌ STEP 2 FAILED: Image file too large ($fileSize bytes)');
-        throw Exception('Image file is too large (max 10MB)');
-      }
-      if (buildingId.isEmpty) {
-        print('❌ STEP 2 FAILED: Building ID is empty');
-        throw Exception('Building ID cannot be empty');
-      }
-      print(
-        '✅ STEP 2 PASSED: Input data validated - File size: $fileSize bytes',
-      );
-
-      // STEP 3: Upload Image to Cloudinary
-      print('📤 STEP 3: Uploading image to Cloudinary...');
-      String imageUrl = '';
-      try {
-        print('📤 STEP 3.1: Preparing upload request...');
-        print('📤 STEP 3.1a: File size: $fileSize bytes');
-        print('📤 STEP 3.1b: Admin ID: $adminId');
-        print('📤 STEP 3.1c: Building ID: $buildingId');
-        print('📤 STEP 3.1d: Cloud Name: $CLOUDINARY_CLOUD_NAME');
-        print('📤 STEP 3.1e: Upload Preset: $CLOUDINARY_UPLOAD_PRESET');
-
-        // Create multipart request
-        var request = http.MultipartRequest(
-          'POST',
-          Uri.parse(CLOUDINARY_API_URL),
-        );
-
-        // Add file (REQUIRED)
-        request.files.add(
-          await http.MultipartFile.fromPath('file', imageFile.path),
-        );
-
-        // Add upload preset (REQUIRED for unsigned uploads)
-        request.fields['upload_preset'] = CLOUDINARY_UPLOAD_PRESET;
-
-        // Add folder for organization
-        request.fields['folder'] = 'apartment_images';
-
-        // Add tags for better organization
-        request.fields['tags'] = 'apartment,admin,$adminId';
-
-        // Add public ID for better organization
-        request.fields['public_id'] =
-            'apartment_${DateTime.now().millisecondsSinceEpoch}';
-
-        print('📤 STEP 3.2: Sending upload request to Cloudinary...');
-        print('📤 STEP 3.2a: URL: $CLOUDINARY_API_URL');
-
-        var response = await request.send().timeout(
-          const Duration(seconds: 60),
-          onTimeout: () {
-            throw Exception('Upload timeout - please try again');
-          },
-        );
-
-        print('📤 STEP 3.2b: Response status: ${response.statusCode}');
-
-        final responseData = await response.stream.toBytes();
-        final responseString = String.fromCharCodes(responseData);
-
-        if (response.statusCode == 200) {
-          print('📤 STEP 3.2c: Response received successfully');
-
-          final jsonResponse = json.decode(responseString);
-
-          imageUrl = jsonResponse['secure_url'] ?? '';
-
-          if (imageUrl.isEmpty) {
-            print('❌ STEP 3 FAILED: No secure_url in response');
-            print('   Full response: $jsonResponse');
-            throw Exception('Failed to get image URL from Cloudinary');
-          }
-
-          print('✅ STEP 3 PASSED: Image uploaded - $imageUrl');
-        } else if (response.statusCode == 401) {
-          print(
-            '❌ STEP 3 FAILED: Upload failed with status 401 (Unauthorized)',
-          );
-          print('   Response body: $responseString');
-
-          // 401 means preset doesn't exist or isn't unsigned
-          String errorMessage =
-              'Cloudinary error: Upload preset not configured\n\n';
-          errorMessage += 'SOLUTION:\n';
-          errorMessage += '1. Go to https://cloudinary.com/console\n';
-          errorMessage += '2. Click Settings (gear icon)\n';
-          errorMessage += '3. Click Upload tab\n';
-          errorMessage += '4. Click "Add upload preset"\n';
-          errorMessage += '5. Name: lyvo_upload\n';
-          errorMessage += '6. Toggle Unsigned: ON\n';
-          errorMessage += '7. Click Save\n';
-          errorMessage += '8. Try uploading again';
-
-          throw Exception(errorMessage);
-        } else {
-          print(
-            '❌ STEP 3 FAILED: Upload failed with status ${response.statusCode}',
-          );
-          print('   Response body: $responseString');
-
-          // Parse error details
-          String errorMessage =
-              'Cloudinary upload failed: ${response.statusCode}';
-          try {
-            final errorJson = json.decode(responseString);
-            final error = errorJson['error'];
-            if (error != null) {
-              if (error is Map) {
-                errorMessage =
-                    'Cloudinary error: ${error['message'] ?? error.toString()}';
-              } else {
-                errorMessage = 'Cloudinary error: $error';
-              }
-              print('   Error details: $errorMessage');
-            }
-          } catch (e) {
-            print('   Could not parse error response: $e');
-          }
-
-          // Provide specific guidance for common errors
-          if (response.statusCode == 400) {
-            errorMessage +=
-                '\n\nFix: Check request format - upload_preset field may be missing or incorrect.';
-          }
-
-          throw Exception(errorMessage);
-        }
-      } catch (uploadError) {
-        print('❌ STEP 3 FAILED: Cloudinary upload error');
-        print('   Error type: ${uploadError.runtimeType}');
-        print('   Error message: $uploadError');
-        throw Exception('Failed to upload image to Cloudinary: $uploadError');
-      }
-
-      // STEP 4: Save Image Metadata to Firestore
-      print('💾 STEP 4: Saving image metadata to Firestore...');
-      String docId = '';
-      try {
-        print('💾 STEP 4.1: Fetching admin profile...');
-        final adminProfile = await _adminService.getAdminProfile();
-
-        String adminName = 'Admin';
-        if (adminProfile != null) {
-          adminName = adminProfile['name'] ?? 'Admin';
-          print('💾 STEP 4.1a: Admin profile found - Name: $adminName');
-        } else {
-          print('⚠️ WARNING: Admin profile not found, using defaults');
-        }
-
-        print('💾 STEP 4.2: Creating Firestore document...');
-        print('💾 STEP 4.2a: Collection: $_imagesCollection');
-        print('💾 STEP 4.2b: Admin ID: $adminId');
-        print('💾 STEP 4.2c: Building ID: $buildingId');
-
-        final docRef = await _firestore.collection(_imagesCollection).add({
-          'title': title,
-          'description': description,
-          'type': type,
-          'imageUrl': imageUrl,
-          'adminId': adminId,
-          'communityId': _adminService.requireCurrentCommunityId(),
-          'adminName': adminName,
-          'buildingId': buildingId,
-          'uploadDate': uploadDate ?? '',
-          'uploadTime': uploadTime ?? '',
-          'status': 'active',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-
-        docId = docRef.id;
-        print('✅ STEP 4 PASSED: Image metadata saved - $docId');
-      } catch (firestoreError) {
-        print('❌ STEP 4 FAILED: Firestore save error - $firestoreError');
-        throw Exception('Failed to save image metadata: $firestoreError');
-      }
-
-      // STEP 5: Log Completion
-      print('🔔 STEP 5: Logging completion...');
-      print('✅ CLOUDINARY APARTMENT IMAGES SERVICE: Image upload COMPLETE');
-      return docId;
-    } catch (e) {
-      print('❌ ERROR: $e');
-      rethrow;
+    final community = _adminService.requireCurrentCommunityId();
+    final uid = _adminService.getCurrentAdminId();
+    if (uid == null) throw StateError('Sign in to upload an image.');
+    final stat = await imageFile.stat();
+    if (stat.size < 1 || stat.size > StorageImageAsset.maxBytes) {
+      throw ArgumentError('Choose an image no larger than 10 MB.');
     }
+    final attempt =
+        '$uid/$community/$buildingId/${replacing?.id}/${replacing?.revision}/${imageFile.path}/${stat.size}/${stat.modified.millisecondsSinceEpoch}';
+    if (_attempt != attempt) {
+      _attempt = attempt;
+      _reservation = null;
+      _ready = null;
+      _stored = false;
+    }
+    void checkScope() {
+      if (_adminService.getCurrentAdminId() != uid ||
+          _adminService.requireCurrentCommunityId() != community) {
+        throw StateError(
+          'The selected community or sign-in changed. Reopen the image form.',
+        );
+      }
+    }
+
+    if (_ready == null) {
+      if (_stored && _reservation != null) {
+        _ready = await _uploads.complete(_reservation!);
+      } else {
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in imageFile.openRead(
+          0,
+          StorageImageAsset.maxBytes + 1,
+        )) {
+          builder.add(chunk);
+        }
+        final bytes = builder.takeBytes();
+        if (bytes.isEmpty || bytes.length > StorageImageAsset.maxBytes) {
+          throw ArgumentError('Choose an image no larger than 10 MB.');
+        }
+        // Match the content, not the filename or a client-supplied MIME string.
+        final String mime;
+        if (bytes.length >= 3 &&
+            bytes[0] == 255 &&
+            bytes[1] == 216 &&
+            bytes[2] == 255) {
+          mime = 'image/jpeg';
+        } else if (bytes.length >= 8 &&
+            bytes.take(8).join(',') == '137,80,78,71,13,10,26,10') {
+          mime = 'image/png';
+        } else if (bytes.length >= 12 &&
+            String.fromCharCodes(bytes.take(4)) == 'RIFF' &&
+            String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
+          mime = 'image/webp';
+        } else {
+          throw ArgumentError('Choose a JPEG, PNG or WebP image.');
+        }
+        checkScope();
+        _ready = await _uploads.upload(
+          feature: 'apartment',
+          resourceId: buildingId,
+          contentType: mime,
+          bytes: bytes,
+          onReserved: (asset) => _reservation = asset,
+          onStored: () => _stored = true,
+        );
+      }
+    }
+    checkScope();
+    if (_ready!.communityId != community || _ready!.resourceId != buildingId) {
+      throw StateError('The image belongs to another community or building.');
+    }
+    final result = await _uploads.call('saveApartmentImage', {
+      'assetId': _ready!.assetId,
+      if (replacing != null) ...{
+        'imageId': replacing.id,
+        'expectedRevision': replacing.revision,
+      },
+      if (replacing == null) ...{
+        'title': title,
+        'description': description,
+        'type': type,
+        'uploadDate': uploadDate ?? '',
+        'uploadTime': uploadTime ?? '',
+      },
+    });
+    checkScope();
+    final id = result['imageId'];
+    if (id is! String || id != (replacing?.id ?? _ready!.assetId)) {
+      throw const FormatException(
+        'The image save was not confirmed. Retry to check it.',
+      );
+    }
+    // Retain the idempotent attempt until the modal closes, including on a lost
+    // response. A retry must never create another gallery record.
+    return id;
   }
 
-  // ==================== FLOW FUNCTION: Get Images ====================
-  /// Get all images for admin (real-time stream)
-  Stream<List<ApartmentImageModel>> getImages() {
-    try {
-      print('🔵 CLOUDINARY APARTMENT IMAGES SERVICE: Fetching images...');
-
-      // STEP 1: Validate Admin Authentication
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null) {
-        print('❌ STEP 1 FAILED: Admin not authenticated');
-        return Stream.value([]);
-      }
-      print('✅ STEP 1 PASSED: Admin authenticated - $adminId');
-
-      // STEP 2: Fetch Images from Firestore
-      print('📋 STEP 2: Fetching images from Firestore...');
-      return _firestore
-          .collection(_imagesCollection)
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
-          .snapshots()
-          .map((snapshot) {
-            print('✅ STEP 2 PASSED: Received ${snapshot.docs.length} images');
-
-            // STEP 3: Transform Data
-            final images = snapshot.docs.map((doc) {
-              final data = doc.data();
-              return ApartmentImageModel.fromFirestore(doc.id, data);
-            }).toList();
-
-            // Sort by creation date (newest first)
-            images.sort((a, b) {
-              final dateA = a.createdAt ?? DateTime.now();
-              final dateB = b.createdAt ?? DateTime.now();
-              return dateB.compareTo(dateA);
-            });
-
-            print(
-              '✅ STEP 3 PASSED: Data transformed and sorted - Total: ${images.length} images',
-            );
-            return images;
-          })
-          .handleError((error) {
-            print('❌ ERROR: $error');
-            throw Exception('Failed to fetch images: $error');
-          });
-    } catch (e) {
-      print('❌ ERROR: $e');
-      return Stream.value([]);
-    }
-  }
-
-  // ==================== FLOW FUNCTION: Get Images for Building ====================
-  /// Get active images for specific building (for resident app)
-  Stream<List<ApartmentImageModel>> getImagesForBuilding(String buildingId) {
-    try {
-      print(
-        '🔵 CLOUDINARY APARTMENT IMAGES SERVICE: Fetching images for building - $buildingId',
-      );
-
-      // STEP 1: Validate Building ID
-      if (buildingId.isEmpty) {
-        print('❌ STEP 1 FAILED: Building ID is empty');
-        return Stream.value([]);
-      }
-      print('✅ STEP 1 PASSED: Building ID validated');
-
-      // STEP 2: Fetch Active Images
-      print('📋 STEP 2: Fetching active images...');
-      return _firestore
-          .collection(_imagesCollection)
-          .where(
-            'communityId',
-            isEqualTo: _adminService.requireCurrentCommunityId(),
-          )
+  Stream<List<ApartmentImageModel>> getImages() => _images();
+  Stream<List<ApartmentImageModel>> getImagesForBuilding(String buildingId) =>
+      _images(buildingId);
+  Stream<List<ApartmentImageModel>> _images([String? buildingId]) {
+    if (_adminService.getCurrentAdminId() == null) return Stream.value([]);
+    Query<Map<String, dynamic>> query = _firestore
+        .collection('apartmentImages')
+        .where(
+          'communityId',
+          isEqualTo: _adminService.requireCurrentCommunityId(),
+        );
+    if (buildingId != null) {
+      query = query
           .where('buildingId', isEqualTo: buildingId)
-          .where('status', isEqualTo: 'active')
-          .snapshots()
-          .map((snapshot) {
-            print('✅ STEP 2 PASSED: Received ${snapshot.docs.length} images');
-
-            // STEP 3: Transform Data
-            final images = snapshot.docs.map((doc) {
-              final data = doc.data();
-              return ApartmentImageModel.fromFirestore(doc.id, data);
-            }).toList();
-
-            // Sort by creation date (newest first)
-            images.sort((a, b) {
-              final dateA = a.createdAt ?? DateTime.now();
-              final dateB = b.createdAt ?? DateTime.now();
-              return dateB.compareTo(dateA);
-            });
-
-            print(
-              '✅ STEP 3 PASSED: Filtered ${images.length} images for building',
-            );
-            return images;
-          })
-          .handleError((error) {
-            print('❌ ERROR: $error');
-            throw Exception('Failed to fetch images: $error');
-          });
-    } catch (e) {
-      print('❌ ERROR: $e');
-      return Stream.value([]);
+          .where('status', isEqualTo: 'active');
     }
+    return query.snapshots().map((snapshot) {
+      final images = snapshot.docs
+          .map((doc) => ApartmentImageModel.fromFirestore(doc.id, doc.data()))
+          .toList();
+      images.sort(
+        (a, b) => (b.createdAt ?? DateTime.now()).compareTo(
+          a.createdAt ?? DateTime.now(),
+        ),
+      );
+      return images;
+    });
   }
 
-  // ==================== FLOW FUNCTION: Delete Image ====================
-  /// Delete image and its metadata
-  Future<void> deleteImage(String imageId) async {
-    try {
-      print(
-        '🔵 CLOUDINARY APARTMENT IMAGES SERVICE: Deleting image - $imageId',
-      );
-
-      // STEP 1: Validate Admin Authentication
-      print('🔐 STEP 1: Validating admin authentication...');
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null) {
-        print('❌ STEP 1 FAILED: Admin not authenticated');
-        throw Exception('Admin not authenticated');
-      }
-      print('✅ STEP 1 PASSED: Admin authenticated');
-
-      // STEP 2: Delete Image Metadata from Firestore
-      print('💾 STEP 2: Deleting image metadata from Firestore...');
-      await _firestore.collection(_imagesCollection).doc(imageId).delete();
-      print('✅ STEP 2 PASSED: Image metadata deleted');
-
-      // Note: Cloudinary image deletion can be done via API if needed
-      // For now, we just delete the Firestore record
-
-      print('✅ CLOUDINARY APARTMENT IMAGES SERVICE: Deletion COMPLETE');
-    } catch (e) {
-      print('❌ ERROR: $e');
-      throw Exception('Failed to delete image: $e');
-    }
+  Future<void> deleteImage(
+    String imageId, {
+    required int expectedRevision,
+  }) async {
+    await _uploads.call('deleteApartmentImage', {
+      'imageId': imageId,
+      'expectedRevision': expectedRevision,
+    });
   }
 }
 
-// ==================== Apartment Image Model ====================
 class ApartmentImageModel {
-  final String id;
-  final String title;
-  final String description;
-  final String type;
-  final String imageUrl;
-  final String adminId;
-  final String adminName;
-  final String buildingId;
-  final String status;
-  final String uploadDate;
-  final String uploadTime;
-  final DateTime? createdAt;
-  final DateTime? updatedAt;
-
+  final String id,
+      title,
+      description,
+      type,
+      imageUrl,
+      adminId,
+      adminName,
+      buildingId,
+      communityId,
+      status,
+      uploadDate,
+      uploadTime;
+  final DateTime? createdAt, updatedAt;
+  final StorageImageAsset? imageAsset;
+  final int revision;
   ApartmentImageModel({
     required this.id,
     required this.title,
@@ -419,31 +196,39 @@ class ApartmentImageModel {
     required this.adminId,
     required this.adminName,
     required this.buildingId,
+    this.communityId = '',
     required this.status,
     required this.uploadDate,
     required this.uploadTime,
     this.createdAt,
     this.updatedAt,
+    this.imageAsset,
+    this.revision = 0,
   });
 
   factory ApartmentImageModel.fromFirestore(
     String id,
     Map<String, dynamic> data,
-  ) {
-    return ApartmentImageModel(
-      id: id,
-      title: data['title'] ?? '',
-      description: data['description'] ?? '',
-      type: data['type'] ?? 'Common Area',
-      imageUrl: data['imageUrl'] ?? '',
-      adminId: data['adminId'] ?? '',
-      adminName: data['adminName'] ?? 'Admin',
-      buildingId: data['buildingId'] ?? '',
-      status: data['status'] ?? 'active',
-      uploadDate: data['uploadDate'] ?? '',
-      uploadTime: data['uploadTime'] ?? '',
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
-    );
-  }
+  ) => ApartmentImageModel(
+    id: id,
+    title: data['title'] ?? '',
+    description: data['description'] ?? '',
+    type: data['type'] ?? 'Common Area',
+    imageUrl: data['imageUrl'] ?? '',
+    adminId: data['adminId'] ?? '',
+    adminName: data['adminName'] ?? 'Admin',
+    buildingId: data['buildingId'] ?? '',
+    communityId: data['communityId'] ?? '',
+    status: data['status'] ?? 'active',
+    uploadDate: data['uploadDate'] ?? '',
+    uploadTime: data['uploadTime'] ?? '',
+    createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+    updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+    imageAsset: data['imageAsset'] == null
+        ? null
+        : StorageImageAsset.fromMap(
+            Map<String, dynamic>.from(data['imageAsset']),
+          ),
+    revision: data['revision'] as int? ?? 0,
+  );
 }

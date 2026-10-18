@@ -4,6 +4,7 @@ import '../models/complaint_models.dart';
 import '../services/staff_vendor_service.dart';
 import '../services/complaint_service.dart';
 import 'status_chip.dart';
+import 'complaint_attachments.dart';
 
 class ComplaintDetailModal extends StatefulWidget {
   final ComplaintEntry complaint;
@@ -323,7 +324,7 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Attachments (1)',
+          'Attachments',
           style: TextStyle(
             fontSize: 14.sp,
             fontWeight: FontWeight.w500,
@@ -2273,28 +2274,10 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Attachments'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.image, color: Color(0xFF0E4778)),
-              title: const Text('complaint_image.jpg'),
-              subtitle: const Text('2.3 MB • Image'),
-              trailing: IconButton(
-                icon: const Icon(Icons.download),
-                onPressed: () {
-                  // Handle download
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Downloading attachment...'),
-                      backgroundColor: Color(0xFF0E4778),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
+        content: SizedBox(
+          width: 400,
+          height: 400,
+          child: ComplaintAttachments(complaintId: widget.complaint.id),
         ),
         actions: [
           TextButton(

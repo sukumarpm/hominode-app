@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:io';
@@ -6,6 +7,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'widgets/standard_header.dart';
 import 'services/cloudinary_apartment_images_service.dart';
 import 'services/admin_service.dart';
+import 'services/admin_tenant_context.dart';
+import 'services/firebase_image_upload_service.dart';
+import 'widgets/private_apartment_image.dart';
 
 class ApartmentImagesManagementScreen extends StatefulWidget {
   const ApartmentImagesManagementScreen({super.key});
@@ -21,73 +25,69 @@ class _ApartmentImagesManagementScreenState
       CloudinaryApartmentImagesService();
   final AdminService _adminService = AdminService();
   bool _isInitialized = false;
-  String? _adminId;
+  Stream<List<ApartmentImageModel>>? _images;
+  StreamSubscription<User?>? _authSubscription;
+  late final ApartmentImageCache _cache = ApartmentImageCache(
+    read: FirebaseImageUploadService().read,
+    revalidate: FirebaseImageUploadService().authorizeRead,
+    scope: () {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final community = AdminTenantContext.instance.communityId;
+      return uid == null || community == null ? null : '$uid/$community';
+    },
+  );
+  int _initialization = 0;
   String? _buildingId;
 
   @override
   void initState() {
     super.initState();
+    AdminTenantContext.instance.addListener(_scopeChanged);
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen(
+      (_) => _scopeChanged(),
+    );
     _initializeScreen();
   }
 
-  Future<void> _initializeScreen() async {
-    try {
-      print('🔵 APARTMENT IMAGES SCREEN: Starting initialization...');
-
-      // STEP 1: Validate Admin Authentication
-      print('🔐 STEP 1: Validating admin authentication...');
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        print('❌ STEP 1 FAILED: User not authenticated');
-        throw Exception('User not authenticated');
-      }
-      _adminId = user.uid;
-      print('✅ STEP 1 PASSED: Admin authenticated - $_adminId');
-
-      // STEP 2: Get Building ID from Admin's Buildings
-      print('📋 STEP 2: Fetching building ID from admin buildings...');
-      try {
-        final buildingIds = await _adminService.getAdminBuildingIds();
-        if (buildingIds.isEmpty) {
-          print('⚠️ WARNING: No buildings found for admin');
-          print('   Admin may not have any buildings assigned yet');
-        } else {
-          _buildingId = buildingIds.first;
-          print('✅ STEP 2 PASSED: Building ID found - $_buildingId');
-        }
-      } catch (buildingError) {
-        print('⚠️ WARNING: Could not fetch building IDs - $buildingError');
-        print('   This is OK - continuing without building ID');
-      }
-      print('✅ STEP 2 PASSED: Building ID fetch completed');
-
-      // STEP 3: Initialize Data Streams
-      print('🔄 STEP 3: Initializing data streams...');
-      print('✅ STEP 3 PASSED: Data streams ready');
-
-      // STEP 4: Update UI State
-      print('🔔 STEP 4: Updating UI state...');
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-      }
-      print('✅ STEP 4 PASSED: UI state updated');
-      print('✅ APARTMENT IMAGES SCREEN: Initialization COMPLETE');
-    } catch (e) {
-      print('❌ ERROR: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error initializing apartment images: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-          ),
-        );
-      }
-    }
+  void _scopeChanged() {
+    _cache.clear();
+    if (!mounted) return;
+    setState(() {
+      _images = null;
+      _buildingId = null;
+      _isInitialized = false;
+    });
+    _initializeScreen();
   }
 
-  void _showUploadModal() {
+  @override
+  void dispose() {
+    AdminTenantContext.instance.removeListener(_scopeChanged);
+    _authSubscription?.cancel();
+    _cache.clear();
+    super.dispose();
+  }
+
+  Future<void> _initializeScreen() async {
+    final attempt = ++_initialization;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final community = AdminTenantContext.instance.communityId;
+    if (uid == null || community == null) return;
+    final buildingIds = await _adminService.getAdminBuildingIds();
+    if (!mounted ||
+        attempt != _initialization ||
+        uid != FirebaseAuth.instance.currentUser?.uid ||
+        community != AdminTenantContext.instance.communityId) {
+      return;
+    }
+    setState(() {
+      _buildingId = buildingIds.isEmpty ? null : buildingIds.first;
+      _images = _imagesService.getImages();
+      _isInitialized = true;
+    });
+  }
+
+  void _showUploadModal([ApartmentImageModel? replacing]) {
     if (_buildingId == null || _buildingId!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -105,9 +105,9 @@ class _ApartmentImagesManagementScreenState
       barrierDismissible: false,
       barrierColor: Colors.black.withOpacity(0.4),
       builder: (context) => AddApartmentImageModal(
-        buildingId: _buildingId!,
+        buildingId: replacing?.buildingId ?? _buildingId!,
+        replacing: replacing,
         onImageAdded: (imageId) {
-          print('✅ Image added: $imageId');
           // UI will update automatically via StreamBuilder
         },
       ),
@@ -157,11 +157,11 @@ class _ApartmentImagesManagementScreenState
                   ),
                 ),
                 SizedBox(height: 20.h),
-                _buildImagesList(),
-                SizedBox(height: 80.h),
               ],
             ),
           ),
+          _buildImagesList(),
+          SliverToBoxAdapter(child: SizedBox(height: 80.h)),
         ],
       ),
     );
@@ -169,78 +169,88 @@ class _ApartmentImagesManagementScreenState
 
   Widget _buildImagesList() {
     return StreamBuilder<List<ApartmentImageModel>>(
-      stream: _imagesService.getImages(),
+      stream: _images,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return Padding(
-            padding: EdgeInsets.all(32.0.w),
-            child: Center(child: CircularProgressIndicator()),
+          return SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(32.w),
+              child: const Center(child: CircularProgressIndicator()),
+            ),
           );
         }
-
         if (snapshot.hasError) {
-          return Padding(
-            padding: EdgeInsets.all(32.0.w),
-            child: Center(
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 48.w,
-                    color: Color(0xFFEF4444),
-                  ),
-                  SizedBox(height: 16.h),
-                  Text(
-                    'Error loading images: ${snapshot.error}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFF6B7280)),
-                  ),
-                ],
+          return SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(32.w),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 48.w,
+                      color: const Color(0xFFEF4444),
+                    ),
+                    SizedBox(height: 16.h),
+                    const Text(
+                      'Unable to load images. Please reopen this page.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Color(0xFF6B7280)),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
         }
-
         final images = snapshot.data ?? [];
-
         if (images.isEmpty) {
-          return Padding(
-            padding: EdgeInsets.all(32.w),
-            child: Center(
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.image_not_supported,
-                    size: 56.w,
-                    color: Colors.grey[400],
-                  ),
-                  SizedBox(height: 12.h),
-                  Text(
-                    'No images yet',
-                    style: TextStyle(fontSize: 15.sp, color: Colors.grey[600]),
-                  ),
-                  SizedBox(height: 8.h),
-                  Text(
-                    'Upload your first apartment image to get started',
-                    style: TextStyle(fontSize: 13.sp, color: Colors.grey[500]),
-                  ),
-                ],
+          return SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(32.w),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.image_not_supported,
+                      size: 56.w,
+                      color: Colors.grey[400],
+                    ),
+                    SizedBox(height: 12.h),
+                    Text(
+                      'No images yet',
+                      style: TextStyle(
+                        fontSize: 15.sp,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    Text(
+                      'Upload your first apartment image to get started',
+                      style: TextStyle(
+                        fontSize: 13.sp,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
         }
-
-        return Padding(
+        // Lazy cards keep off-screen images out of the decoded-image cache.
+        return SliverPadding(
           padding: EdgeInsets.symmetric(horizontal: 16.w),
-          child: Column(
-            children: images
-                .map(
-                  (image) => Padding(
-                    padding: EdgeInsets.only(bottom: 16.h),
-                    child: _buildImageCard(image),
-                  ),
-                )
-                .toList(),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => Padding(
+                key: ValueKey(images[index].id),
+                padding: EdgeInsets.only(bottom: 16.h),
+                child: _buildImageCard(images[index]),
+              ),
+              childCount: images.length,
+              addAutomaticKeepAlives: false,
+            ),
           ),
         );
       },
@@ -270,20 +280,26 @@ class _ApartmentImagesManagementScreenState
               topLeft: Radius.circular(12.r),
               topRight: Radius.circular(12.r),
             ),
-            child: Image.network(
-              image.imageUrl,
-              width: double.infinity,
-              height: 200,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  width: double.infinity,
-                  height: 200.h,
-                  color: Colors.grey[300],
-                  child: const Icon(Icons.image_not_supported),
-                );
-              },
-            ),
+            child: image.imageAsset != null
+                ? PrivateApartmentImage(
+                    key: ValueKey(image.imageAsset!.assetId),
+                    asset: image.imageAsset!,
+                    cache: _cache,
+                  )
+                : Image.network(
+                    image.imageUrl,
+                    width: double.infinity,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        width: double.infinity,
+                        height: 200.h,
+                        color: Colors.grey[300],
+                        child: const Icon(Icons.image_not_supported),
+                      );
+                    },
+                  ),
           ),
           // Image Details
           Padding(
@@ -386,6 +402,11 @@ class _ApartmentImagesManagementScreenState
                     ),
                     const Spacer(),
                     IconButton(
+                      tooltip: 'Replace image',
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: () => _showUploadModal(image),
+                    ),
+                    IconButton(
                       icon: const Icon(
                         Icons.delete_outline,
                         color: Color(0xFFEF4444),
@@ -427,7 +448,11 @@ class _ApartmentImagesManagementScreenState
     if (confirmed != true) return;
 
     try {
-      await _imagesService.deleteImage(image.id);
+      await _imagesService.deleteImage(
+        image.id,
+        expectedRevision: image.revision,
+      );
+      _cache.clear();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -452,11 +477,17 @@ class _ApartmentImagesManagementScreenState
 // ==================== Add Apartment Image Modal ====================
 class AddApartmentImageModal extends StatefulWidget {
   final String buildingId;
+  final ApartmentImageModel? replacing;
+  final CloudinaryApartmentImagesService? imagesService;
+  final Future<File?> Function()? pickImage;
   final Function(String) onImageAdded;
 
   const AddApartmentImageModal({
     super.key,
     required this.buildingId,
+    this.replacing,
+    this.imagesService,
+    this.pickImage,
     required this.onImageAdded,
   });
 
@@ -465,8 +496,8 @@ class AddApartmentImageModal extends StatefulWidget {
 }
 
 class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
-  final CloudinaryApartmentImagesService _imagesService =
-      CloudinaryApartmentImagesService();
+  late final CloudinaryApartmentImagesService _imagesService =
+      widget.imagesService ?? CloudinaryApartmentImagesService();
   final ImagePicker _imagePicker = ImagePicker();
 
   File? _selectedImage;
@@ -474,6 +505,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
   bool _isImageSelected = false;
   String? _imageError;
 
+  final DateTime _uploadDateTime = DateTime.now();
   final _dateController = TextEditingController();
   final _timeController = TextEditingController();
 
@@ -484,20 +516,38 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
     super.dispose();
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _dateController.text =
+        widget.replacing?.uploadDate ??
+        '${_uploadDateTime.day.toString().padLeft(2, '0')}-${_uploadDateTime.month.toString().padLeft(2, '0')}-${_uploadDateTime.year}';
+    _timeController.text = widget.replacing?.uploadTime ?? '';
+  }
+
   Future<void> _pickImage() async {
     try {
       setState(() {
         _imageError = null;
       });
 
-      final pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 80,
-      );
+      final File? pickedFile;
+      if (widget.pickImage != null) {
+        pickedFile = await widget.pickImage!();
+      } else {
+        final selected = await _imagePicker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 80,
+          maxWidth: 4096,
+          maxHeight: 4096,
+        );
+        pickedFile = selected == null ? null : File(selected.path);
+      }
+      if (!mounted) return;
 
       if (pickedFile != null) {
         setState(() {
-          _selectedImage = File(pickedFile.path);
+          _selectedImage = pickedFile;
           _isImageSelected = true;
           _imageError = null;
         });
@@ -512,6 +562,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
         }
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _imageError = 'Failed to select image. Please try again.';
       });
@@ -527,48 +578,13 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
     }
   }
 
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF0E4778)),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _dateController.text =
-            '${picked.day.toString().padLeft(2, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.year}';
-      });
-    }
-  }
-
-  Future<void> _selectTime(BuildContext context) async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: Color(0xFF0E4778)),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (picked != null) {
-      setState(() {
-        _timeController.text = picked.format(context);
-      });
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (widget.replacing == null) {
+      _timeController.text = TimeOfDay.fromDateTime(
+        _uploadDateTime,
+      ).format(context);
     }
   }
 
@@ -586,32 +602,19 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
     });
 
     try {
-      print('🔵 ADD IMAGE MODAL: Starting image upload...');
-      print('🔐 STEP 1: Validating form data...');
-
-      if (_dateController.text.isEmpty) {
-        print('❌ STEP 1 FAILED: Date not selected');
-        throw Exception('Please select a date');
-      }
-      if (_timeController.text.isEmpty) {
-        print('❌ STEP 1 FAILED: Time not selected');
-        throw Exception('Please select a time');
-      }
-      print('✅ STEP 1 PASSED: Form data validated');
-
-      print('📋 STEP 2: Uploading image to Cloudinary...');
       final imageId = await _imagesService.uploadImage(
-        title: 'Apartment Image ${DateTime.now().millisecondsSinceEpoch}',
+        title:
+            widget.replacing?.title ??
+            'Apartment Image ${DateTime.now().millisecondsSinceEpoch}',
         description: 'Apartment image',
         type: 'Common Area',
         imageFile: _selectedImage!,
         buildingId: widget.buildingId,
+        replacing: widget.replacing,
         uploadDate: _dateController.text,
         uploadTime: _timeController.text,
       );
-      print('✅ STEP 2 PASSED: Image uploaded successfully - $imageId');
 
-      print('🔔 STEP 3: Showing success message...');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -623,17 +626,17 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
         widget.onImageAdded(imageId);
         Navigator.pop(context);
       }
-      print('✅ STEP 3 PASSED: Success message shown');
     } catch (e) {
-      print('❌ ERROR: $e');
       if (mounted) {
         setState(() {
-          _imageError = e.toString().replaceAll('Exception: ', '');
+          _imageError = e is ArgumentError
+              ? '${e.message}'
+              : 'The image could not be saved. Retry to check the result, or reopen this form if the problem continues.';
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error uploading image: $e'),
+            content: const Text('Unable to save image. Please retry.'),
             backgroundColor: const Color(0xFFEF4444),
           ),
         );
@@ -649,90 +652,91 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: EdgeInsets.all(20.w),
-      child: Container(
-        constraints: BoxConstraints(maxHeight: 500.h),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16.r),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            _buildHeader(),
+    return PopScope(
+      canPop: !_isUploading,
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.all(20.w),
+        child: Container(
+          constraints: BoxConstraints(maxHeight: 500.h),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16.r),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              _buildHeader(),
 
-            // Form Content
-            Flexible(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(horizontal: 24.w),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(height: 8.h),
+              // Form Content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.symmetric(horizontal: 24.w),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(height: 8.h),
 
-                    // Upload Photo
-                    _buildFieldLabel('Upload Image'),
-                    SizedBox(height: 8.h),
-                    _buildUploadButton(),
+                      // Upload Photo
+                      _buildFieldLabel('Upload Image'),
+                      SizedBox(height: 8.h),
+                      _buildUploadButton(),
 
-                    SizedBox(height: 20.h),
+                      SizedBox(height: 20.h),
 
-                    // Date & Time Row
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildFieldLabel('Date'),
-                              SizedBox(height: 8.h),
-                              _buildTextField(
-                                controller: _dateController,
-                                placeholder: 'dd-mm-yyyy',
-                                onTap: () => _selectDate(context),
-                                readOnly: true,
-                              ),
-                            ],
+                      // Date & Time Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildFieldLabel('Date'),
+                                SizedBox(height: 8.h),
+                                _buildTextField(
+                                  controller: _dateController,
+                                  placeholder: 'dd-mm-yyyy',
+                                  readOnly: true,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        SizedBox(width: 16.w),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildFieldLabel('Time'),
-                              SizedBox(height: 8.h),
-                              _buildTextField(
-                                controller: _timeController,
-                                placeholder: '-- : --',
-                                onTap: () => _selectTime(context),
-                                readOnly: true,
-                              ),
-                            ],
+                          SizedBox(width: 16.w),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildFieldLabel('Time'),
+                                SizedBox(height: 8.h),
+                                _buildTextField(
+                                  controller: _timeController,
+                                  placeholder: '-- : --',
+                                  readOnly: true,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
 
-                    SizedBox(height: 24.h),
-                  ],
+                      SizedBox(height: 24.h),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-            // Upload Button
-            _buildUploadActionButton(),
-          ],
+              // Upload Button
+              _buildUploadActionButton(),
+            ],
+          ),
         ),
       ),
     );
@@ -748,7 +752,9 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Add Apartment Image',
+                  widget.replacing == null
+                      ? 'Add Apartment Image'
+                      : 'Replace Apartment Image',
                   style: TextStyle(
                     fontSize: 20.sp,
                     fontWeight: FontWeight.bold,
@@ -764,7 +770,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
             ),
           ),
           GestureDetector(
-            onTap: () => Navigator.pop(context),
+            onTap: _isUploading ? null : () => Navigator.pop(context),
             child: Container(
               padding: EdgeInsets.all(8.w),
               child: Icon(Icons.close, size: 20.w, color: Color(0xFF6B7280)),
@@ -807,7 +813,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
           hintStyle: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
           border: InputBorder.none,
           contentPadding: EdgeInsets.all(16.w),
-          suffixIcon: readOnly && onTap != null
+          suffixIcon: readOnly && (onTap != null || widget.replacing == null)
               ? Icon(
                   controller == _dateController
                       ? Icons.calendar_today
@@ -873,6 +879,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
             borderRadius: BorderRadius.circular(8.r),
             child: Image.file(
               _selectedImage!,
+              cacheWidth: 1024,
               width: double.infinity,
               height: 120,
               fit: BoxFit.cover,
@@ -911,13 +918,15 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
                 style: TextStyle(fontSize: 12.sp, color: Color(0xFF6B7280)),
               ),
               GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _isImageSelected = false;
-                    _selectedImage = null;
-                    _imageError = null;
-                  });
-                },
+                onTap: _isUploading
+                    ? null
+                    : () {
+                        setState(() {
+                          _isImageSelected = false;
+                          _selectedImage = null;
+                          _imageError = null;
+                        });
+                      },
                 child: Text(
                   'Remove',
                   style: TextStyle(
@@ -968,7 +977,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
                 ),
               )
             : Text(
-                'Upload Image',
+                widget.replacing == null ? 'Upload Image' : 'Replace Image',
                 style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
               ),
       ),

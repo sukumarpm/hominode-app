@@ -1,3 +1,4 @@
+import '../utils/resident_phone.dart';
 import 'dart:math';
 
 import 'package:admin_app/services/admin_tenant_context.dart';
@@ -762,7 +763,7 @@ class ResidentModel {
       residentId: data['residentId'] ?? '',
       name: data['name'] ?? '',
       email: data['email'] ?? '',
-      phone: data['phone'] ?? '',
+      phone: residentDisplayPhone(data),
       role: data['role'] ?? 'resident',
       flatId: data['flatId'],
       flatLabel: data['flatLabel'],

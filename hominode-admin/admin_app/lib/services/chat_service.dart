@@ -1,3 +1,4 @@
+import '../utils/resident_phone.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_service.dart';
 
@@ -217,7 +218,7 @@ class ChatService {
               id: doc.id,
               name: data['name'] ?? '',
               flatLabel: data['flatLabel'] ?? '',
-              phone: data['phone'] ?? '',
+              phone: residentDisplayPhone(data),
               email: data['email'],
               isOnline: false, // TODO: Implement online status
             );
