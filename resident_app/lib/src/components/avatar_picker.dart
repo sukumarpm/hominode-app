@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/components/avatar_picker.dart
 // Reusable avatar picker widget with photo upload
 
@@ -80,8 +81,8 @@ class AvatarPicker extends StatelessWidget {
 
     // Show network image if URL available
     if (avatarUrl != null && avatarUrl!.isNotEmpty) {
-      return Image.network(
-        avatarUrl!,
+      return Image(
+        image: residentImageProvider(avatarUrl!),
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
           return _buildPlaceholder();

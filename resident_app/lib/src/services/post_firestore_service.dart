@@ -1,3 +1,4 @@
+import 'resident_image_operations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -7,6 +8,7 @@ import 'content_moderation_service.dart';
 class PostFirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _images = ResidentImageOperations();
 
   // Cache for user document ID
   String? _cachedUserId;
@@ -70,6 +72,7 @@ class PostFirestoreService {
     required String content,
     String? imageUrl,
     List<String>? imageUrls,
+    String? imageDraftId,
   }) async {
     try {
       // Check content moderation first
@@ -92,73 +95,26 @@ class PostFirestoreService {
         return ServiceResult(success: false, message: 'User not authenticated');
       }
 
-      print('📝 Creating post...');
-
-      // Get user info
-      final userDoc = await _usersCollection.doc(currentUserId).get();
-      final userData = userDoc.data() as Map<String, dynamic>?;
-
-      // Check if user has building assigned
-      final buildingId = userData?['buildingId'];
-      if (buildingId == null || buildingId.toString().isEmpty) {
-        print('❌ User has no building assigned');
-        return ServiceResult(
-          success: false,
-          message: 'Cannot create post: You must be assigned to a building',
-        );
-      }
-
-      final flatLabel =
-          userData?['flatLabel'] ??
-          userData?['flatNumber'] ??
-          userData?['flatId'] ??
-          'N/A';
-      final flatId = userData?['flatId'];
-      final buildingName = userData?['buildingName'] ?? 'Unknown Building';
-
-      final postData = {
-        'content': content,
-        'imageUrl': imageUrl,
-        'imageUrls': imageUrls,
-        'authorId':
-            _auth.currentUser?.uid ?? currentUserId, // Use Firebase Auth UID
-        'authorName': userData?['name'] ?? 'Unknown User',
-        'profileImage': userData?['profileImage'] ?? '',
-        'flat': flatLabel,
-        'flatId': flatId, // For reference
-        'flatLabel': flatLabel, // Human-readable flat number
-        'buildingId': buildingId, // For filtering by building
-        'buildingName': buildingName, // Building name
-        'likes': 0,
-        'comments': 0,
-        'likedBy': [], // Array of user IDs who liked
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      final docRef = await _postsCollection.add(postData);
-
-      print('✅ Post created with ID: ${docRef.id}');
-      print('   Building ID: $buildingId');
-      print('   Building Name: $buildingName');
-      print('   Flat Label: $flatLabel');
-      if (imageUrl != null) {
-        print('   Image URL: $imageUrl');
-      }
-      if (imageUrls != null && imageUrls.isNotEmpty) {
-        print('   Image URLs (${imageUrls.length}): ${imageUrls.join(", ")}');
-      }
-
+      final draft =
+          imageDraftId ??
+          await ResidentImageOperations().createDraft('community_wall');
+      final result = await _images.save(
+        feature: 'community_wall',
+        resourceId: draft,
+        revision: 0,
+        references: [if (imageUrl != null) imageUrl, ...?imageUrls],
+        content: {'content': content},
+      );
       return ServiceResult(
         success: true,
         message: 'Post created successfully',
-        data: docRef.id,
+        data: result['resourceId'],
       );
     } catch (e) {
       print('❌ Error creating post: $e');
       return ServiceResult(
         success: false,
-        message: 'Failed to create post: ${e.toString()}',
+        message: 'Unable to save your post. Please retry, or reopen the form.',
       );
     }
   }
@@ -659,9 +615,13 @@ class PostFirestoreService {
         );
       }
 
-      // Delete post
-      await _postsCollection.doc(postId).delete();
-
+      await _images.save(
+        feature: 'community_wall',
+        resourceId: postId,
+        revision: postData?['imageRevision'] as int? ?? 0,
+        references: [],
+        deleteResource: true,
+      );
       print('✅ Post deleted');
 
       return ServiceResult(success: true, message: 'Post deleted');

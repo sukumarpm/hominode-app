@@ -46,22 +46,29 @@ class _CommunityWallScreenState extends State<CommunityWallScreen> {
     }
   }
 
-  Future<void> _handleAddPost(String content, String? imageUrl) async {
+  Future<bool> _handleAddPost(
+    String content,
+    String? imageUrl,
+    String? draftId,
+  ) async {
     try {
       final result = await _service.createPost(
         content: content,
         imageUrl: imageUrl,
+        imageDraftId: draftId,
       );
 
       if (result.success) {
         _loadPosts(); // Refresh posts list
         _showSnackBar('Post created successfully!', Colors.green);
+        return true;
       } else {
         _showSnackBar(result.message ?? 'Failed to create post', Colors.red);
       }
     } catch (e) {
       _showSnackBar('Failed to create post', Colors.red);
     }
+    return false;
   }
 
   Future<void> _handleLike(Post post) async {

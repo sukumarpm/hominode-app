@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -235,9 +236,10 @@ class _PhotoUploadWidgetState extends State<PhotoUploadWidget> {
                         width: 48,
                         height: 48,
                       )
-                    : _photoUrl!.startsWith('http')
-                    ? Image.network(
-                        _photoUrl!,
+                    : (_photoUrl!.startsWith('http') ||
+                          isPrivateResidentImageReference(_photoUrl!))
+                    ? Image(
+                        image: residentImageProvider(_photoUrl!),
                         fit: BoxFit.cover,
                         width: 48,
                         height: 48,
@@ -396,8 +398,12 @@ class _PhotoUploadWidgetState extends State<PhotoUploadWidget> {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.file(
-              File(imagePath),
+            child: Image(
+              image:
+                  imagePath.startsWith('http') ||
+                      isPrivateResidentImageReference(imagePath)
+                  ? residentImageProvider(imagePath)
+                  : FileImage(File(imagePath)),
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) {
                 return const Center(

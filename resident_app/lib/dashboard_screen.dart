@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -326,7 +327,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   radius: 21.r,
                   backgroundColor: Colors.white,
                   backgroundImage: _profileImageUrl?.isNotEmpty == true
-                      ? NetworkImage(_profileImageUrl!)
+                      ? residentImageProvider(_profileImageUrl!)
                       : null,
                   child: _profileImageUrl?.isNotEmpty == true
                       ? null
@@ -398,7 +399,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         : _bannerImages[_currentPage.clamp(0, _bannerImages.length - 1)];
     final ImageProvider heroImage = image == null
         ? const AssetImage('assets/hominode_residential_hero.jpg')
-        : NetworkImage(image);
+        : residentImageProvider(image);
     return GestureDetector(
       onHorizontalDragEnd: _bannerImages.length < 2
           ? null
@@ -709,7 +710,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           image: DecorationImage(
             image: _bannerImages.isEmpty
                 ? const AssetImage('assets/hominode_residential_hero.jpg')
-                : NetworkImage(_bannerImages.first),
+                : residentImageProvider(_bannerImages.first),
             fit: BoxFit.cover,
           ),
           boxShadow: [

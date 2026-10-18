@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/comments_screen.dart
 // Comments screen for a post
 
@@ -173,8 +174,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
               width: 40.w,
               height: 40.h,
               color: Colors.grey[300],
-              child: Image.network(
-                widget.post.profileImage,
+              child: Image(
+                image: residentImageProvider(widget.post.profileImage),
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   return const Icon(Icons.person, color: Colors.grey);
@@ -249,8 +250,8 @@ class _CommentsScreenState extends State<CommentsScreen> {
               height: 36.h,
               color: Colors.grey[300],
               child: profileImage.isNotEmpty
-                  ? Image.network(
-                      profileImage,
+                  ? Image(
+                      image: residentImageProvider(profileImage),
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
                         return Icon(

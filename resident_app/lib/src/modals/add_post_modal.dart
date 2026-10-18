@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import '../services/image_upload_flow_function.dart';
+import '../services/resident_image_operations.dart';
+import '../services/resident_private_images.dart';
 
 const Color kPrimary = Color(0xFF172B4D);
 const Color kModalBackground = Color(0xFFFCFDFE);
@@ -19,7 +20,7 @@ const double kInputRadius = 12.0;
 
 void showAddPostModal(
   BuildContext context, {
-  required Function(String, String?) onSubmit,
+  required Future<bool> Function(String, String?, String?) onSubmit,
 }) {
   showGeneralDialog(
     context: context,
@@ -46,9 +47,16 @@ void showAddPostModal(
 }
 
 class AddPostModal extends StatefulWidget {
-  final Function(String, String?) onSubmit;
+  final Future<bool> Function(String, String?, String?) onSubmit;
 
-  const AddPostModal({super.key, required this.onSubmit});
+  final ResidentImageOperations? images;
+  final Future<File?> Function(ImageSource)? pickImage;
+  const AddPostModal({
+    super.key,
+    required this.onSubmit,
+    this.images,
+    this.pickImage,
+  });
 
   @override
   State<AddPostModal> createState() => _AddPostModalState();
@@ -60,6 +68,7 @@ class _AddPostModalState extends State<AddPostModal> {
   File? _selectedImage;
   bool _isUploadingImage = false;
   String? _uploadedImageUrl;
+  late final _images = widget.images ?? ResidentImageOperations();
 
   @override
   void dispose() {
@@ -69,13 +78,22 @@ class _AddPostModalState extends State<AddPostModal> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final picker = ImagePicker();
-      final pickedFile = await picker.pickImage(source: source);
-      if (pickedFile != null) {
-        setState(() => _selectedImage = File(pickedFile.path));
+      final File? selected;
+      if (widget.pickImage != null) {
+        selected = await widget.pickImage!(source);
+      } else {
+        final image = await ImagePicker().pickImage(
+          source: source,
+          maxWidth: 4096,
+          maxHeight: 4096,
+          imageQuality: 85,
+        );
+        selected = image == null ? null : File(image.path);
+      }
+      if (selected != null && mounted) {
+        setState(() => _selectedImage = selected);
       }
     } catch (e) {
-      print('❌ Error picking image: $e');
       _showError('Failed to pick image');
     }
   }
@@ -85,29 +103,24 @@ class _AddPostModalState extends State<AddPostModal> {
     setState(() => _isUploadingImage = true);
 
     try {
-      print('📤 Starting image upload for community wall...');
-      final result = await ImageUploadFlowFunction().uploadImage(
+      final draft = await _images.createDraft('community_wall');
+      final reference = await _images.upload(
+        feature: 'community_wall',
+        resourceId: draft,
         imagePath: _selectedImage!.path,
-        folder: 'community_wall',
-        publicId: 'post_${DateTime.now().millisecondsSinceEpoch}',
       );
-
-      if (result.success && result.imageUrl != null) {
-        print('✅ Image uploaded successfully: ${result.imageUrl}');
+      if (!mounted) return;
+      {
         setState(() {
-          _uploadedImageUrl = result.imageUrl;
+          _uploadedImageUrl = reference;
           _selectedImage = null;
         });
         _showSuccess('Image uploaded successfully');
-      } else {
-        print('❌ Upload failed: ${result.message}');
-        _showError(result.message ?? 'Failed to upload image');
       }
     } catch (e) {
-      print('❌ Error uploading image: $e');
       _showError('Failed to upload image');
     } finally {
-      setState(() => _isUploadingImage = false);
+      if (mounted) setState(() => _isUploadingImage = false);
     }
   }
 
@@ -116,17 +129,22 @@ class _AddPostModalState extends State<AddPostModal> {
     setState(() => _isSubmitting = true);
 
     try {
-      await widget.onSubmit(_controller.text.trim(), _uploadedImageUrl);
-      if (mounted) Navigator.pop(context);
+      final draft = await _images.createDraft('community_wall');
+      final saved = await widget.onSubmit(
+        _controller.text.trim(),
+        _uploadedImageUrl,
+        draft,
+      );
+      if (mounted && saved) Navigator.pop(context);
     } catch (e) {
-      print('❌ Error submitting post: $e');
       _showError('Failed to create post');
     } finally {
-      setState(() => _isSubmitting = false);
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -137,6 +155,7 @@ class _AddPostModalState extends State<AddPostModal> {
   }
 
   void _showSuccess(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -238,7 +257,8 @@ class _AddPostModalState extends State<AddPostModal> {
                         onPressed:
                             (_controller.text.trim().isEmpty &&
                                     _uploadedImageUrl == null) ||
-                                _isSubmitting
+                                _isSubmitting ||
+                                _isUploadingImage
                             ? null
                             : _handleSubmit,
                         style: ElevatedButton.styleFrom(
@@ -460,8 +480,8 @@ class _AddPostModalState extends State<AddPostModal> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(kInputRadius - 1),
-                child: Image.network(
-                  _uploadedImageUrl!,
+                child: Image(
+                  image: residentImageProvider(_uploadedImageUrl!),
                   fit: BoxFit.cover,
                   width: double.infinity,
                   height: double.infinity,

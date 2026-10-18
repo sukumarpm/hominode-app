@@ -1,53 +1,18 @@
+import '../utils/resident_phone.dart';
+import 'resident_image_operations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/listing_model.dart';
 import 'content_moderation_service.dart';
-import 'firestore_auth_service.dart';
 
 class ListingFirestoreService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirestoreAuthService _authService = FirestoreAuthService();
+  final _images = ResidentImageOperations();
 
   // Get current user ID from either Firebase Auth or Firestore Auth Service
-  Future<String> get _currentUserId async {
-    // First try Firebase Auth
-    final firebaseUser = _auth.currentUser;
-    if (firebaseUser != null) {
-      print('📥 Using Firebase Auth UID: ${firebaseUser.uid}');
-
-      // Check if user document exists with this UID
-      final doc = await _firestore
-          .collection('users')
-          .doc(firebaseUser.uid)
-          .get();
-      if (doc.exists) {
-        return firebaseUser.uid;
-      }
-
-      // Try to find by authUid field
-      final querySnapshot = await _firestore
-          .collection('users')
-          .where('authUid', isEqualTo: firebaseUser.uid)
-          .limit(1)
-          .get();
-
-      if (querySnapshot.docs.isNotEmpty) {
-        return querySnapshot.docs.first.id;
-      }
-    }
-
-    // Fallback to Firestore Auth Service (for Firestore-only login)
-    final userId = await _authService.getCurrentUserId();
-    if (userId != null) {
-      print('📥 Using Firestore Auth user ID: $userId');
-      return userId;
-    }
-
-    print('❌ No user authenticated');
-    return '';
-  }
+  Future<String> get _currentUserId async => _auth.currentUser?.uid ?? '';
 
   // Get current user ID (public method)
   Future<String> getCurrentUserId() async {
@@ -69,6 +34,7 @@ class ListingFirestoreService {
     required String condition,
     required String description,
     List<String> images = const [],
+    String? imageDraftId,
   }) async {
     try {
       // Check content moderation first
@@ -90,56 +56,33 @@ class ListingFirestoreService {
         return ServiceResult(success: false, message: 'User not authenticated');
       }
 
-      print('📝 Creating listing: $title');
-
-      // Fetch user data from Firestore
-      final userDoc = await _usersCollection.doc(currentUserId).get();
-      final userData = userDoc.data() as Map<String, dynamic>?;
-      final sellerName = userData?['name'] ?? 'Unknown Seller';
-
-      // Check if user has building assigned
-      final buildingId = userData?['buildingId'];
-      if (buildingId == null || buildingId.toString().isEmpty) {
-        print('❌ User has no building assigned');
-        return ServiceResult(
-          success: false,
-          message: 'Cannot create listing: You must be assigned to a building',
-        );
-      }
-
-      final listingData = {
-        'title': title,
-        'price': price,
-        'category': category,
-        'condition': condition,
-        'description': description,
-        'images': images,
-        'sellerId': currentUserId,
-        'sellerName': sellerName,
-        'buildingId':
-            buildingId, // Store by buildingId for building members only
-        'status': 'active', // active, sold, deleted
-        'phoneRequestCount': 0,
-        'phoneRequestIds': [],
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      final docRef = await _listingsCollection.add(listingData);
-
-      print('✅ Listing created with ID: ${docRef.id}');
-      print('   Building ID: $buildingId');
-
+      final draft =
+          imageDraftId ??
+          await ResidentImageOperations().createDraft('marketplace');
+      final result = await _images.save(
+        feature: 'marketplace',
+        resourceId: draft,
+        revision: 0,
+        references: images,
+        content: {
+          'title': title,
+          'price': price,
+          'category': category,
+          'condition': condition,
+          'description': description,
+        },
+      );
       return ServiceResult(
         success: true,
         message: 'Listing created successfully',
-        data: docRef.id,
+        data: result['resourceId'],
       );
     } catch (e) {
       print('❌ Error creating listing: $e');
       return ServiceResult(
         success: false,
-        message: 'Failed to create listing: ${e.toString()}',
+        message:
+            'Unable to save your listing. Please retry, or reopen the form.',
       );
     }
   }
@@ -422,7 +365,7 @@ class ListingFirestoreService {
 
       final requesterName = userData['name'] ?? 'Unknown';
       final requesterFlat = userData['flatLabel'] ?? 'N/A';
-      final requesterPhone = userData['phone'] ?? '';
+      final requesterPhone = residentDisplayPhone(userData);
 
       // Check if already requested
       final existingRequest = await _firestore
@@ -568,26 +511,23 @@ class ListingFirestoreService {
     required String condition,
     required String description,
     List<String>? images,
+    int? expectedImageRevision,
   }) async {
     try {
-      print('🔄 Updating listing: $listingId');
-
-      final updateData = {
-        'title': title,
-        'price': price,
-        'category': category,
-        'condition': condition,
-        'description': description,
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      if (images != null) {
-        updateData['images'] = images;
-      }
-
-      await _listingsCollection.doc(listingId).update(updateData);
-
-      print('✅ Listing updated');
+      final record = await _images.record('marketplace', listingId);
+      await _images.save(
+        feature: 'marketplace',
+        resourceId: listingId,
+        revision: expectedImageRevision ?? record['imageRevision'] as int? ?? 0,
+        references: images ?? List<String>.from(record['images'] ?? []),
+        content: {
+          'title': title,
+          'price': price,
+          'category': category,
+          'condition': condition,
+          'description': description,
+        },
+      );
       return ServiceResult(
         success: true,
         message: 'Listing updated successfully',
@@ -596,7 +536,8 @@ class ListingFirestoreService {
       print('❌ Error updating listing: $e');
       return ServiceResult(
         success: false,
-        message: 'Failed to update listing: ${e.toString()}',
+        message:
+            'Unable to save your changes. Please reload the listing and retry.',
       );
     }
   }
@@ -608,12 +549,14 @@ class ListingFirestoreService {
     try {
       print('🗑️ Deleting listing: $listingId');
 
-      // Soft delete by updating status
-      await _listingsCollection.doc(listingId).update({
-        'status': 'deleted',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
+      final record = await _images.record('marketplace', listingId);
+      await _images.save(
+        feature: 'marketplace',
+        resourceId: listingId,
+        revision: record['imageRevision'] as int? ?? 0,
+        references: [],
+        deleteResource: true,
+      );
       print('✅ Listing deleted');
 
       return ServiceResult(
@@ -624,7 +567,7 @@ class ListingFirestoreService {
       print('❌ Error deleting listing: $e');
       return ServiceResult(
         success: false,
-        message: 'Failed to delete listing: ${e.toString()}',
+        message: 'Unable to remove the listing. Please reload and retry.',
       );
     }
   }
@@ -671,7 +614,7 @@ class ListingFirestoreService {
       // Get seller's phone number from users collection
       final sellerDoc = await _usersCollection.doc(sellerId).get();
       final sellerData = sellerDoc.data() as Map<String, dynamic>?;
-      final sellerPhone = sellerData?['phone'] ?? '';
+      final sellerPhone = residentDisplayPhone(sellerData);
 
       print('✅ Fetched seller phone number for buyer');
       return [

@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_screen.dart
 // Main Marketplace Screen - Browse & Your Products
 
@@ -282,8 +283,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                 borderRadius: BorderRadius.vertical(top: Radius.circular(12.r)),
               ),
               child: listing.images.isNotEmpty
-                  ? Image.network(
-                      listing.images.first,
+                  ? Image(
+                      image: residentImageProvider(listing.images.first),
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Center(
                         child: Icon(
@@ -480,8 +481,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                     ),
                   ),
                   child: listing.images.isNotEmpty
-                      ? Image.network(
-                          listing.images.first,
+                      ? Image(
+                          image: residentImageProvider(listing.images.first),
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => Center(
                             child: Icon(

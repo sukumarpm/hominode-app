@@ -1,6 +1,7 @@
 // lib/src/services/chat_firestore_service.dart
 // Firestore service for chat functionality
 
+import '../utils/resident_phone.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -874,7 +875,7 @@ class ChatFirestoreService {
             'id': doc.id,
             'name': memberData['name'] ?? 'Unknown',
             'email': memberData['email'],
-            'phone': memberData['phone'],
+            'phone': residentDisplayPhone(memberData),
             'photoUrl': memberData['photoUrl'] ?? memberData['profileImage'],
             'flatId': memberData['flatId'],
             'flatNumber': displayFlatNumber,
@@ -981,7 +982,7 @@ class ChatFirestoreService {
           'id': doc.id,
           'name': memberData['name'] ?? 'Unknown',
           'email': memberData['email'],
-          'phone': memberData['phone'],
+          'phone': residentDisplayPhone(memberData),
           'photoUrl': memberData['photoUrl'] ?? memberData['profileImage'],
           'flatId': memberData['flatId'],
           'flatNumber': displayFlatNumber,

@@ -6,7 +6,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../services/listing_firestore_service.dart';
-import '../services/cloudinary_service.dart';
+import '../services/resident_image_operations.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 
@@ -21,6 +21,7 @@ class MarketplaceCreateListingScreen extends StatefulWidget {
 class _MarketplaceCreateListingScreenState
     extends State<MarketplaceCreateListingScreen> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
+  final _images = ResidentImageOperations();
   final _formKey = GlobalKey<FormState>();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -69,7 +70,6 @@ class _MarketplaceCreateListingScreenState
         });
       }
     } catch (e) {
-      print('❌ Error picking images: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error picking images: $e'),
@@ -94,7 +94,6 @@ class _MarketplaceCreateListingScreenState
         });
       }
     } catch (e) {
-      print('❌ Error taking photo: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error taking photo: $e'),
@@ -457,52 +456,17 @@ class _MarketplaceCreateListingScreenState
     setState(() => _isCreating = true);
 
     try {
-      // Step 1: Upload images to Cloudinary if selected
-      print(
-        '🔵 MARKETPLACE: Creating listing with ${_selectedImages.length} images...',
-      );
-
-      List<String> uploadedImageUrls = [];
-
-      if (_selectedImages.isNotEmpty) {
-        print(
-          '🔐 STEP 1: Uploading ${_selectedImages.length} images to Cloudinary...',
+      final draft = await _images.createDraft('marketplace');
+      final uploadedImageUrls = <String>[];
+      for (final image in _selectedImages) {
+        uploadedImageUrls.add(
+          await _images.upload(
+            feature: 'marketplace',
+            resourceId: draft,
+            imagePath: image.path,
+          ),
         );
-
-        for (int i = 0; i < _selectedImages.length; i++) {
-          try {
-            final imageUrl = await CloudinaryService.uploadImage(
-              imagePath: _selectedImages[i].path,
-              folder: 'marketplace',
-              publicId:
-                  'marketplace_${DateTime.now().millisecondsSinceEpoch}_$i',
-            );
-
-            if (imageUrl.isNotEmpty) {
-              uploadedImageUrls.add(imageUrl);
-              print('✅ Image ${i + 1} uploaded: $imageUrl');
-            }
-          } catch (e) {
-            print('❌ Error uploading image ${i + 1}: $e');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Error uploading image ${i + 1}: $e'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-            setState(() => _isCreating = false);
-            return;
-          }
-        }
-
-        print('✅ STEP 1 PASSED: All images uploaded');
       }
-
-      // Step 2: Create listing with image URLs
-      print('🔐 STEP 2: Creating listing in Firestore...');
-
       final result = await _listingService.createListing(
         title: _titleController.text.trim(),
         price: int.parse(_priceController.text.trim()),
@@ -510,15 +474,13 @@ class _MarketplaceCreateListingScreenState
         condition: _selectedCondition,
         description: _descriptionController.text.trim(),
         images: uploadedImageUrls,
+        imageDraftId: draft,
       );
 
       if (mounted) {
         setState(() => _isCreating = false);
 
         if (result.success) {
-          print('✅ STEP 2 PASSED: Listing created successfully');
-          print('✅ MARKETPLACE: Listing creation complete');
-
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Listing created successfully'),
@@ -527,8 +489,6 @@ class _MarketplaceCreateListingScreenState
           );
           Navigator.pop(context, true); // Return true to refresh list
         } else {
-          print('❌ STEP 2 FAILED: ${result.message}');
-
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(result.message ?? 'Failed to create listing'),
@@ -537,15 +497,15 @@ class _MarketplaceCreateListingScreenState
           );
         }
       }
-    } catch (e, stackTrace) {
-      print('❌ MARKETPLACE: Error creating listing: $e');
-      print('   Stack trace: $stackTrace');
-
+    } catch (e) {
       if (mounted) {
         setState(() => _isCreating = false);
 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: const Text('Unable to save images. Please retry.'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }

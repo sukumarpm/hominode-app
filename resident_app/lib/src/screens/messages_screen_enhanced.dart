@@ -1,3 +1,4 @@
+import '../services/resident_private_images.dart';
 // lib/src/screens/messages_screen_enhanced.dart
 // Enhanced Messages screen with Chats & Requests tabs, flat members, and admin chat
 
@@ -348,8 +349,8 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
                     child: chat.iconUrl != null
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(12.r),
-                            child: Image.network(
-                              chat.iconUrl!,
+                            child: Image(
+                              image: residentImageProvider(chat.iconUrl!),
                               width: 48,
                               height: 48,
                               fit: BoxFit.cover,
@@ -916,8 +917,8 @@ class _BuildingMembersSheet extends StatelessWidget {
               child: photoUrl != null
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(16.r),
-                      child: Image.network(
-                        photoUrl,
+                      child: Image(
+                        image: residentImageProvider(photoUrl),
                         width: 56,
                         height: 56,
                         fit: BoxFit.cover,

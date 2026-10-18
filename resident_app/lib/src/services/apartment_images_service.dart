@@ -1,3 +1,5 @@
+import 'package:hominode_storage/hominode_storage.dart';
+import 'resident_image_operations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -44,12 +46,26 @@ class ApartmentImagesService {
   final _firestore = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance;
 
+  static String? imageReference(Map<String, dynamic> data) {
+    if (data['imageAsset'] != null) {
+      final asset = StorageImageAsset.fromMap(
+        Map<String, dynamic>.from(data['imageAsset'] as Map),
+      );
+      if (asset.feature != 'apartment' ||
+          asset.state != 'ready' ||
+          (data['buildingId'] != null &&
+              asset.resourceId != data['buildingId'])) {
+        throw const FormatException('Invalid apartment image.');
+      }
+      return '$privateImagePrefix${asset.assetId}';
+    }
+    return data['imageUrl'] as String?;
+  }
+
   /// Get apartment images - Following flow function pattern
   /// Step 1: Validate authentication → Step 2: Query collection → Step 3: Extract URLs → Step 4: Return result
   Future<ApartmentImagesResult> getApartmentImages() async {
     try {
-      print('🔵 APARTMENT IMAGES SERVICE: Starting fetch...');
-
       final user = FirebaseAuth.instance.currentUser;
 
       if (user == null) {
@@ -85,8 +101,6 @@ class ApartmentImagesService {
         );
       }
 
-      print('🏢 Resident buildingId: $buildingId');
-
       final snapshot = await FirebaseFirestore.instance
           .collection('apartmentImages')
           .where('communityId', isEqualTo: communityId)
@@ -95,18 +109,13 @@ class ApartmentImagesService {
           .get();
 
       final imageUrls = snapshot.docs
-          .map((doc) => doc.data()['imageUrl']?.toString())
+          .map((doc) => imageReference(doc.data()))
           .whereType<String>()
           .where((url) => url.isNotEmpty)
           .toList();
 
-      print('✅ Apartment images found: ${imageUrls.length}');
-
       return ApartmentImagesResult(success: true, imageUrls: imageUrls);
-    } catch (e, stackTrace) {
-      print('❌ APARTMENT IMAGES SERVICE: Error: $e');
-      print('   Stack trace: $stackTrace');
-
+    } catch (e) {
       return ApartmentImagesResult(
         success: false,
         message: 'Failed to fetch apartment images: $e',
@@ -117,8 +126,6 @@ class ApartmentImagesService {
   /// Stream apartment images in real-time
   /// Following flow function pattern with real-time updates
   Stream<ApartmentImagesResult> streamApartmentImages() async* {
-    print('🔵 APARTMENT IMAGES SERVICE: Setting up stream...');
-
     final user = _auth.currentUser;
     if (user == null) {
       yield ApartmentImagesResult.failure(message: 'User not authenticated');
@@ -146,12 +153,7 @@ class ApartmentImagesService {
         .snapshots()
         .map((snapshot) {
           try {
-            print(
-              '✅ Stream update received: ${snapshot.docs.length} documents',
-            );
-
             if (snapshot.docs.isEmpty) {
-              print('⚠️  No documents in stream');
               return ApartmentImagesResult.success(
                 message: 'No apartment images available',
                 imageUrls: [],
@@ -161,21 +163,18 @@ class ApartmentImagesService {
             final images = <String>[];
             for (var doc in snapshot.docs) {
               final data = doc.data();
-              final imageUrl = data['imageUrl'] as String?;
+              final imageUrl = imageReference(data);
 
               if (imageUrl != null && imageUrl.isNotEmpty) {
                 images.add(imageUrl);
               }
             }
 
-            print('✅ Stream: Extracted ${images.length} image URLs');
-
             return ApartmentImagesResult.success(
               message: 'Apartment images received',
               imageUrls: images,
             );
           } catch (e) {
-            print('❌ Stream error: $e');
             return ApartmentImagesResult.failure(
               message: 'Stream error: $e',
               errorCode: 'STREAM_ERROR',

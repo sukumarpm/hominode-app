@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_screen_enhanced.dart
 // Enhanced Marketplace with Browse & Your Products tabs, real data only
 
@@ -19,7 +20,8 @@ class MarketplaceScreenEnhanced extends StatefulWidget {
   const MarketplaceScreenEnhanced({super.key});
 
   @override
-  State<MarketplaceScreenEnhanced> createState() => _MarketplaceScreenEnhancedState();
+  State<MarketplaceScreenEnhanced> createState() =>
+      _MarketplaceScreenEnhancedState();
 }
 
 class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
@@ -39,12 +41,14 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
         children: [
           // Header
           const PrimaryHeader(title: 'Marketplace'),
-          
+
           const SizedBox(height: 20),
-          
+
           // Segmented Control - Browse & Your Products
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSizes.pagePadding),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSizes.pagePadding,
+            ),
             child: AppSegmentedControl(
               segments: const ['Browse', 'Your Products'],
               selectedIndex: _selectedTab,
@@ -55,9 +59,9 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
               },
             ),
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           // Content
           Expanded(
             child: _selectedTab == 0
@@ -75,13 +79,13 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
                         case '/marketplace_edit_listing':
                           final listing = settings.arguments as ListingModel;
                           return MaterialPageRoute(
-                            builder: (_) => MarketplaceEditListingScreen(
-                              listing: listing,
-                            ),
+                            builder: (_) =>
+                                MarketplaceEditListingScreen(listing: listing),
                           );
                         default:
                           return MaterialPageRoute(
-                            builder: (_) => const MarketplaceYourProductsScreen(),
+                            builder: (_) =>
+                                const MarketplaceYourProductsScreen(),
                           );
                       }
                     },
@@ -129,13 +133,16 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
             ),
           ),
         ),
-        
+
         const SizedBox(height: 16),
-        
+
         // Category Filter
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSizes.pagePadding),
@@ -148,19 +155,16 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
             horizontalMargin: 0,
           ),
         ),
-        
+
         const SizedBox(height: 16),
-        
+
         // Listings Grid
         Expanded(
           child: StreamBuilder<List<ListingModel>>(
             stream: _listingService.streamAllListings(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return SkeletonListLoader(
-                  itemCount: 6,
-                  itemHeight: 200,
-                );
+                return SkeletonListLoader(itemCount: 6, itemHeight: 200);
               }
 
               if (snapshot.hasError) {
@@ -168,7 +172,11 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
+                      Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red.shade300,
+                      ),
                       const SizedBox(height: 16),
                       const Text('Error loading products'),
                     ],
@@ -177,13 +185,18 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
               }
 
               final allListings = snapshot.data ?? [];
-              
+
               // Filter listings
               final filteredListings = allListings.where((listing) {
-                final matchesCategory = _selectedCategory == 'All' ||
-                    listing.category.toLowerCase() == _selectedCategory.toLowerCase();
-                final matchesSearch = _searchQuery.isEmpty ||
-                    listing.title.toLowerCase().contains(_searchQuery.toLowerCase());
+                final matchesCategory =
+                    _selectedCategory == 'All' ||
+                    listing.category.toLowerCase() ==
+                        _selectedCategory.toLowerCase();
+                final matchesSearch =
+                    _searchQuery.isEmpty ||
+                    listing.title.toLowerCase().contains(
+                      _searchQuery.toLowerCase(),
+                    );
                 return matchesCategory && matchesSearch;
               }).toList();
 
@@ -192,7 +205,11 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.shopping_bag_outlined, size: 64, color: Colors.grey.shade300),
+                      Icon(
+                        Icons.shopping_bag_outlined,
+                        size: 64,
+                        color: Colors.grey.shade300,
+                      ),
                       const SizedBox(height: 16),
                       const Text('No products found'),
                     ],
@@ -257,21 +274,29 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
               height: 120,
               decoration: BoxDecoration(
                 color: Colors.grey.shade200,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
+                ),
               ),
               child: listing.images.isNotEmpty
-                  ? Image.network(
-                      listing.images.first,
+                  ? Image(
+                      image: residentImageProvider(listing.images.first),
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Center(
-                        child: Icon(Icons.image_not_supported, color: Colors.grey.shade400),
+                        child: Icon(
+                          Icons.image_not_supported,
+                          color: Colors.grey.shade400,
+                        ),
                       ),
                     )
                   : Center(
-                      child: Icon(Icons.image_not_supported, color: Colors.grey.shade400),
+                      child: Icon(
+                        Icons.image_not_supported,
+                        color: Colors.grey.shade400,
+                      ),
                     ),
             ),
-            
+
             // Details
             Expanded(
               child: Padding(
@@ -290,9 +315,9 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    
+
                     const SizedBox(height: 4),
-                    
+
                     // Condition
                     Text(
                       listing.condition,
@@ -301,9 +326,9 @@ class _MarketplaceScreenEnhancedState extends State<MarketplaceScreenEnhanced> {
                         color: AppColors.textSecondary,
                       ),
                     ),
-                    
+
                     const Spacer(),
-                    
+
                     // Price & Seller
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,

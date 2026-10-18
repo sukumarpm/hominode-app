@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_your_product_detail_screen.dart
 // Product detail screen for seller's own products
 
@@ -130,8 +131,8 @@ class _MarketplaceYourProductDetailScreenState
             },
             itemCount: widget.listing.images.length,
             itemBuilder: (context, index) {
-              return Image.network(
-                widget.listing.images[index],
+              return Image(
+                image: residentImageProvider(widget.listing.images[index]),
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   return Container(

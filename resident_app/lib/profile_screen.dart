@@ -1,3 +1,5 @@
+import 'src/utils/resident_phone.dart';
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/profile_screen.dart
 // Profile / Settings screen
 
@@ -159,7 +161,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _userProfile = {
             'name': userData['name'],
             'email': userData['email'] ?? '',
-            'phone': userData['phone'] ?? '',
+            'phone': residentDisplayPhone(userData),
             'flatNumber': userData['flatLabel'] ?? userData['flatId'],
           };
           _organizationName = organizationName;
@@ -403,12 +405,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           userId: _userId!,
                         ),
                         builder: (context, snapshot) {
-                          print('🔵 ProfileScreen: Image stream update');
-
                           // Loading state
                           if (snapshot.connectionState ==
                               ConnectionState.waiting) {
-                            print('⏳ ProfileScreen: Image stream loading...');
                             return CircleAvatar(
                               radius: 28.r,
                               backgroundColor: Colors.white,
@@ -427,7 +426,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                           // Error or no data state
                           if (!snapshot.hasData || snapshot.data == null) {
-                            print('⚠️ ProfileScreen: No image data in stream');
                             return CircleAvatar(
                               radius: 28.r,
                               backgroundColor: Colors.white,
@@ -443,13 +441,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                           // Success state - image found
                           if (result.success && result.imageUrl != null) {
-                            print(
-                              '✅ ProfileScreen: Image URL received: ${result.imageUrl}',
-                            );
                             return CircleAvatar(
                               radius: 28.r,
                               backgroundColor: Colors.white,
-                              backgroundImage: NetworkImage(result.imageUrl!),
+                              backgroundImage: residentImageProvider(
+                                result.imageUrl!,
+                              ),
                             );
                           }
 

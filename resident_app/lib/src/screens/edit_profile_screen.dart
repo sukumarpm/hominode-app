@@ -1,3 +1,5 @@
+import '../utils/resident_phone.dart';
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/edit_profile_screen.dart
 import 'dart:io';
 
@@ -114,7 +116,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               userData?['email'] ??
               FirebaseAuth.instance.currentUser?.email ??
               '';
-          _phoneController.text = userData?['phone'] ?? '';
+          _phoneController.text = residentDisplayPhone(userData);
           _flatNumberController.text =
               userData?['flatLabel'] ?? userData?['flatId'] ?? '';
           _photoUrl = userData?['profileImage'] ?? userData?['photoURL'];
@@ -274,7 +276,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   child: _photoFile != null
                       ? Image.file(_photoFile!, fit: BoxFit.cover)
                       : _photoUrl != null
-                      ? Image.network(_photoUrl!, fit: BoxFit.cover)
+                      ? Image(
+                          image: residentImageProvider(_photoUrl!),
+                          fit: BoxFit.cover,
+                        )
                       : Icon(
                           Icons.person,
                           size: 50.w,
@@ -526,7 +531,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final updates = <String, dynamic>{'name': newName, 'email': newEmail};
 
       // STEP 2: Upload image if selected
-      print('📸 Checking for image upload...');
       String? uploadedImageUrl;
       if (_photoFile != null) {
         final imageResult = await ProfileImageService.instance
@@ -534,8 +538,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
         if (imageResult.success && imageResult.imageUrl != null) {
           uploadedImageUrl = imageResult.imageUrl;
-          updates['profileImage'] = imageResult.imageUrl;
+
           _photoUrl = imageResult.imageUrl;
+          _photoFile = null;
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -546,9 +551,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
             );
           }
+          throw StateError('Profile photo save was not confirmed.');
         }
       }
 
+      // Profile image pointers are already committed by the authorized callable.
       // STEP 3: Update Firestore Document directly
       print('💾 Updating user data in Firestore...');
       final success = await _userDataService!.updateUserData(updates);

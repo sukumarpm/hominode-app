@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_edit_listing_screen.dart
 // Edit marketplace listing screen
 
@@ -7,7 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../models/listing_model.dart';
 import '../services/listing_firestore_service.dart';
-import '../services/cloudinary_service.dart';
+import '../services/resident_image_operations.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 
@@ -24,6 +25,7 @@ class MarketplaceEditListingScreen extends StatefulWidget {
 class _MarketplaceEditListingScreenState
     extends State<MarketplaceEditListingScreen> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
+  final _images = ResidentImageOperations();
   final _formKey = GlobalKey<FormState>();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -244,8 +246,10 @@ class _MarketplaceEditListingScreenState
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8.r),
-                            child: Image.network(
-                              _existingImages[index],
+                            child: Image(
+                              image: residentImageProvider(
+                                _existingImages[index],
+                              ),
                               width: 100,
                               height: 100,
                               fit: BoxFit.cover,
@@ -513,7 +517,6 @@ class _MarketplaceEditListingScreenState
         });
       }
     } catch (e) {
-      print('❌ Error picking images: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error picking images: $e'),
@@ -538,7 +541,6 @@ class _MarketplaceEditListingScreenState
         });
       }
     } catch (e) {
-      print('❌ Error taking photo: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error taking photo: $e'),
@@ -556,51 +558,16 @@ class _MarketplaceEditListingScreenState
     setState(() => _isUpdating = true);
 
     try {
-      print('🔵 MARKETPLACE EDIT: Updating listing...');
-
-      // Combine existing and new images
-      List<String> allImages = [..._existingImages];
-
-      // Upload new images if any
-      if (_newImages.isNotEmpty) {
-        print(
-          '🔐 STEP 1: Uploading ${_newImages.length} new images to Cloudinary...',
+      final allImages = [..._existingImages];
+      for (final image in _newImages) {
+        allImages.add(
+          await _images.upload(
+            feature: 'marketplace',
+            resourceId: widget.listing.id!,
+            imagePath: image.path,
+          ),
         );
-
-        for (int i = 0; i < _newImages.length; i++) {
-          try {
-            final imageUrl = await CloudinaryService.uploadImage(
-              imagePath: _newImages[i].path,
-              folder: 'marketplace',
-              publicId:
-                  'marketplace_${DateTime.now().millisecondsSinceEpoch}_$i',
-            );
-
-            if (imageUrl.isNotEmpty) {
-              allImages.add(imageUrl);
-              print('✅ New image ${i + 1} uploaded: $imageUrl');
-            }
-          } catch (e) {
-            print('❌ Error uploading new image ${i + 1}: $e');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Error uploading image ${i + 1}: $e'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-            setState(() => _isUpdating = false);
-            return;
-          }
-        }
-
-        print('✅ STEP 1 PASSED: All new images uploaded');
       }
-
-      // Step 2: Update listing with all images
-      print('🔐 STEP 2: Updating listing in Firestore...');
-
       final result = await _listingService.updateListing(
         listingId: widget.listing.id!,
         title: _titleController.text,
@@ -609,15 +576,13 @@ class _MarketplaceEditListingScreenState
         condition: _selectedCondition,
         description: _descriptionController.text,
         images: allImages,
+        expectedImageRevision: widget.listing.imageRevision,
       );
 
       if (mounted) {
         setState(() => _isUpdating = false);
 
         if (result.success) {
-          print('✅ STEP 2 PASSED: Listing updated successfully');
-          print('✅ MARKETPLACE EDIT: Update complete');
-
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Product updated successfully'),
@@ -626,8 +591,6 @@ class _MarketplaceEditListingScreenState
           );
           Navigator.pop(context);
         } else {
-          print('❌ STEP 2 FAILED: ${result.message}');
-
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(result.message ?? 'Failed to update product'),
@@ -636,15 +599,15 @@ class _MarketplaceEditListingScreenState
           );
         }
       }
-    } catch (e, stackTrace) {
-      print('❌ MARKETPLACE EDIT: Error updating listing: $e');
-      print('   Stack trace: $stackTrace');
-
+    } catch (e) {
       if (mounted) {
         setState(() => _isUpdating = false);
 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: const Text('Unable to save images. Please retry.'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }

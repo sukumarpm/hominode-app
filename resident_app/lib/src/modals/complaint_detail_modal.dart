@@ -1,3 +1,5 @@
+import '../services/resident_private_images.dart';
+import '../services/resident_image_operations.dart';
 // lib/src/modals/complaint_detail_modal.dart
 // Centered modal overlay for complaint details with timeline
 
@@ -585,6 +587,26 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
         );
       } else {
         // Fallback for network URLs
+        if (imageData.startsWith(privateImagePrefix)) {
+          return Image(
+            image: residentImageProvider(imageData),
+            width: double.infinity,
+            height: 250,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stack) => Container(
+              width: double.infinity,
+              height: 250.h,
+              color: Colors.grey[200],
+              child: Center(
+                child: Icon(
+                  Icons.image_not_supported,
+                  size: 48.w,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+          );
+        }
         return CachedNetworkImage(
           imageUrl: imageData,
           width: double.infinity,

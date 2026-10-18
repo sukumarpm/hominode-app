@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ListingModel {
   final String? id;
+  final int imageRevision;
   final String communityId;
   final String title;
   final int price;
@@ -21,6 +22,7 @@ class ListingModel {
 
   ListingModel({
     this.id,
+    this.imageRevision = 0,
     this.communityId = '',
     required this.title,
     required this.price,
@@ -45,6 +47,7 @@ class ListingModel {
 
     return ListingModel(
       id: doc.id,
+      imageRevision: data['imageRevision'] as int? ?? 0,
       communityId: data['communityId'] as String? ?? '',
       title: data['title'] as String? ?? '',
       price: data['price'] as int? ?? 0,

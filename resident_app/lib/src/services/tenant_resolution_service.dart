@@ -1,3 +1,4 @@
+import 'resident_private_images.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -49,6 +50,12 @@ class TenantResolutionService extends ChangeNotifier {
   TenantResolutionService({FirebaseAuth? auth, FirebaseFirestore? firestore})
     : _auth = auth ?? FirebaseAuth.instance,
       _firestore = firestore ?? FirebaseFirestore.instance;
+
+  @override
+  void notifyListeners() {
+    ResidentPrivateImages.selectCommunity(_current?.communityId);
+    super.notifyListeners();
+  }
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;

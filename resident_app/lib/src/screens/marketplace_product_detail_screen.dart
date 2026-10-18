@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_product_detail_screen.dart
 // Product detail screen with phone request functionality
 
@@ -119,8 +120,8 @@ class _MarketplaceProductDetailScreenState
                       itemCount: widget.listing.images.length,
                       itemBuilder: (context, index) {
                         final imageUrl = widget.listing.images[index];
-                        return Image.network(
-                          imageUrl,
+                        return Image(
+                          image: residentImageProvider(imageUrl),
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => Center(
                             child: Icon(
@@ -149,8 +150,10 @@ class _MarketplaceProductDetailScreenState
                         if (snapshot.hasData &&
                             snapshot.data!.success &&
                             snapshot.data!.imageUrl != null) {
-                          return Image.network(
-                            snapshot.data!.imageUrl!,
+                          return Image(
+                            image: residentImageProvider(
+                              snapshot.data!.imageUrl!,
+                            ),
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Center(
                               child: Icon(

@@ -1,3 +1,4 @@
+import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/components/post_card.dart
 // Community post card component
 
@@ -57,8 +58,8 @@ class PostCard extends StatelessWidget {
                   width: 48.w,
                   height: 48.h,
                   color: Colors.grey[300],
-                  child: Image.network(
-                    post.profileImage,
+                  child: Image(
+                    image: residentImageProvider(post.profileImage),
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) {
                       return Container(
@@ -159,8 +160,8 @@ class PostCard extends StatelessWidget {
     if (images.length == 1) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12.r),
-        child: Image.network(
-          images[0],
+        child: Image(
+          image: residentImageProvider(images[0]),
           width: double.infinity,
           height: 240,
           fit: BoxFit.cover,
@@ -199,8 +200,8 @@ class PostCard extends StatelessWidget {
         ),
         itemCount: images.length,
         itemBuilder: (context, index) {
-          return Image.network(
-            images[index],
+          return Image(
+            image: residentImageProvider(images[index]),
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) {
               return Container(

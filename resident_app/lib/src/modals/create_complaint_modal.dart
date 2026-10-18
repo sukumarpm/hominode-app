@@ -38,7 +38,11 @@ void showCreateComplaintModal(
     barrierColor: kOverlayDim,
     transitionDuration: const Duration(milliseconds: 250),
     pageBuilder: (context, anim1, anim2) {
-      return CreateComplaintModal(onCreated: onCreated);
+      return CreateComplaintModal(
+        onCreated: (complaint) {
+          if (context.mounted) onCreated?.call(complaint);
+        },
+      );
     },
     transitionBuilder: (context, anim1, anim2, child) {
       return FadeTransition(
@@ -61,7 +65,16 @@ void showCreateComplaintModal(
 class CreateComplaintModal extends StatefulWidget {
   final Function(Complaint)? onCreated;
 
-  const CreateComplaintModal({super.key, this.onCreated});
+  final ComplaintsService? complaints;
+  final ComplaintImageService? images;
+  final Future<File?> Function()? pickImage;
+  const CreateComplaintModal({
+    super.key,
+    this.onCreated,
+    this.complaints,
+    this.images,
+    this.pickImage,
+  });
 
   @override
   State<CreateComplaintModal> createState() => _CreateComplaintModalState();
@@ -74,6 +87,15 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
 
   ComplaintCategory? _selectedCategory;
   File? _attachedImage;
+  Complaint? _createdComplaint;
+  bool _didNotifyCreated = false;
+  void _notifyCreated(Complaint complaint) {
+    if (!_didNotifyCreated) {
+      _didNotifyCreated = true;
+      widget.onCreated?.call(complaint);
+    }
+  }
+
   bool _isSubmitting = false;
 
   final Map<String, String?> _errors = {
@@ -135,6 +157,11 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
   }
 
   Future<void> _pickImage() async {
+    if (widget.pickImage != null) {
+      final file = await widget.pickImage!();
+      if (mounted) setState(() => _attachedImage = file);
+      return;
+    }
     final picker = ImagePicker();
 
     // Show source selection dialog (same as family member modal)
@@ -267,35 +294,41 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
     setState(() => _isSubmitting = true);
 
     try {
-      print('🔵 Submitting complaint with image...');
-
       // Step 1: Create complaint
-      print('📝 Creating complaint...');
-      final complaint = await ComplaintsService().createComplaint(
-        title: _titleController.text.trim(),
-        description: _descriptionController.text.trim(),
-        category: _selectedCategory!,
-      );
-      print('✅ Complaint created: ${complaint.id}');
+      final complaint = _createdComplaint ??=
+          await (widget.complaints ?? ComplaintsService()).createComplaint(
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim(),
+            category: _selectedCategory!,
+          );
+
+      _notifyCreated(complaint);
+      if (!mounted) return;
 
       // Step 2: Upload image if attached
       if (_attachedImage != null) {
-        print('📸 Image attached, uploading to Cloudinary...');
-        final imageResult = await ComplaintImageService.instance
-            .uploadComplaintImage(
-              imagePath: _attachedImage!.path,
-              complaintId: complaint.id,
-            );
+        final imageResult =
+            await (widget.images ?? ComplaintImageService.instance)
+                .uploadComplaintImage(
+                  imagePath: _attachedImage!.path,
+                  complaintId: complaint.id,
+                );
 
         if (imageResult.success) {
-          print('✅ Image uploaded successfully');
-          print('🔗 Image URL: ${imageResult.imageUrl}');
         } else {
-          print('⚠️ Image upload failed: ${imageResult.message}');
-          // Don't fail the complaint submission if image upload fails
+          _notifyCreated(complaint);
+          if (mounted) {
+            setState(() => _isSubmitting = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Your complaint is saved. Retry its photo, or remove the photo to continue.',
+                ),
+              ),
+            );
+          }
+          return;
         }
-      } else {
-        print('⚠️ No image attached');
       }
 
       if (mounted) {
@@ -312,10 +345,10 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
         );
 
         // Callback
-        widget.onCreated?.call(complaint);
+        _notifyCreated(complaint);
       }
     } catch (e) {
-      print('❌ Submission error: $e');
+      if (!mounted) return;
       setState(() => _isSubmitting = false);
 
       if (mounted) {

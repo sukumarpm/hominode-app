@@ -1,6 +1,7 @@
 // lib/src/services/user_data_service.dart
 // User Data Service - Fetches and manages user data from Firestore
 
+import '../utils/resident_phone.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firestore_auth_service.dart';
@@ -157,7 +158,7 @@ class UserDataService {
   /// Get user phone
   Future<String> getUserPhone() async {
     final userData = await getCurrentUserData();
-    return userData?['phone'] ?? '';
+    return residentDisplayPhone(userData);
   }
 
   /// Get user flat
@@ -320,7 +321,7 @@ class UserDataService {
     return {
       'name': userData['name'] ?? 'User',
       'email': userData['email'] ?? '',
-      'phone': userData['phone'] ?? '',
+      'phone': residentDisplayPhone(userData),
       'flat': userData['flatLabel'] ?? userData['flatId'] ?? '',
       'role': userData['role'] ?? 'resident',
       'residentId': userData['residentId'] ?? '',
