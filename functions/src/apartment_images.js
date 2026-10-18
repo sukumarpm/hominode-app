@@ -94,7 +94,6 @@ async function authorizedApartmentRead({
     );
     if (
       profile.communityId !== value.communityId ||
-      profile.buildingId !== value.buildingId ||
       value.status !== "active" ||
       !building.exists ||
       building.data().communityId !== value.communityId ||

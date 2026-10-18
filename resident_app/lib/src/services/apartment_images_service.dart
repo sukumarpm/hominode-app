@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:hominode_storage/hominode_storage.dart';
 import 'resident_image_operations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -43,8 +44,11 @@ class ApartmentImagesResult {
 /// Apartment Images Service - Flow Function Pattern
 /// Fetches apartment/building images from Firestore apartmentImages collection
 class ApartmentImagesService {
-  final _firestore = FirebaseFirestore.instance;
-  final _auth = FirebaseAuth.instance;
+  ApartmentImagesService({FirebaseFirestore? firestore, FirebaseAuth? auth})
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _auth = auth ?? FirebaseAuth.instance;
+  final FirebaseFirestore _firestore;
+  final FirebaseAuth _auth;
 
   static String? imageReference(Map<String, dynamic> data) {
     if (data['imageAsset'] != null) {
@@ -60,6 +64,128 @@ class ApartmentImagesService {
       return '$privateImagePrefix${asset.assetId}';
     }
     return data['imageUrl'] as String?;
+  }
+
+  /// Use exactly the Admin gallery records, scoped to the selected canonical
+  /// community. A malformed or foreign asset cannot replace the local fallback.
+  static List<String> communityReferences(
+    Iterable<Map<String, dynamic>> records,
+    String communityId,
+  ) {
+    final sorted = records
+        .where(
+          (data) =>
+              data['communityId'] == communityId && data['status'] == 'active',
+        )
+        .toList();
+    DateTime created(Map<String, dynamic> data) =>
+        data['createdAt'] is Timestamp
+        ? (data['createdAt'] as Timestamp).toDate()
+        : DateTime.fromMillisecondsSinceEpoch(0);
+    sorted.sort((a, b) => created(b).compareTo(created(a)));
+    final references = <String>[];
+    for (final data in sorted) {
+      try {
+        if (data['imageAsset'] is Map &&
+            (data['imageAsset'] as Map)['communityId'] != communityId)
+          continue;
+        final reference = imageReference(data);
+        if (reference != null && reference.isNotEmpty)
+          references.add(reference);
+      } catch (_) {
+        continue;
+      }
+    }
+    return references;
+  }
+
+  Stream<List<String>> streamCommunityImages(String communityId) {
+    late StreamController<List<String>> controller;
+    StreamSubscription<User?>? authSubscription;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+    profileSubscription;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? imagesSubscription;
+    var epoch = 0;
+    void clear() {
+      if (!controller.isClosed) controller.add([]);
+    }
+
+    Future<void> cancelImages() async {
+      await imagesSubscription?.cancel();
+      imagesSubscription = null;
+    }
+
+    controller = StreamController<List<String>>(
+      onListen: () {
+        authSubscription = _auth.idTokenChanges().listen(
+          (user) async {
+            final session = ++epoch;
+            clear();
+            await cancelImages();
+            await profileSubscription?.cancel();
+            if (user == null || session != epoch || controller.isClosed) return;
+            profileSubscription = _firestore
+                .collection('users')
+                .doc(user.uid)
+                .snapshots()
+                .listen(
+                  (profile) async {
+                    final request = ++epoch;
+                    clear();
+                    await cancelImages();
+                    final data = profile.data();
+                    if (controller.isClosed ||
+                        request != epoch ||
+                        _auth.currentUser?.uid != user.uid ||
+                        data?['communityId'] != communityId ||
+                        data?['isActive'] != true ||
+                        data?['approvalStatus'] != 'approved')
+                      return;
+                    imagesSubscription = _firestore
+                        .collection('apartmentImages')
+                        .where('communityId', isEqualTo: communityId)
+                        .where('status', isEqualTo: 'active')
+                        .snapshots()
+                        .listen(
+                          (snapshot) {
+                            if (!controller.isClosed &&
+                                request == epoch &&
+                                _auth.currentUser?.uid == user.uid) {
+                              controller.add(
+                                communityReferences(
+                                  snapshot.docs.map((doc) => doc.data()),
+                                  communityId,
+                                ),
+                              );
+                            }
+                          },
+                          onError: (Object _) {
+                            if (request == epoch) clear();
+                          },
+                        );
+                  },
+                  onError: (Object _) {
+                    ++epoch;
+                    clear();
+                    unawaited(cancelImages());
+                  },
+                );
+          },
+          onError: (Object _) {
+            ++epoch;
+            clear();
+            unawaited(cancelImages());
+          },
+        );
+      },
+      onCancel: () async {
+        ++epoch;
+        await authSubscription?.cancel();
+        await profileSubscription?.cancel();
+        await cancelImages();
+      },
+    );
+    return controller.stream;
   }
 
   /// Get apartment images - Following flow function pattern

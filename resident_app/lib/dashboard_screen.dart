@@ -26,6 +26,9 @@ import 'src/services/tenant_resolution_service.dart';
 import 'src/services/visitor_firestore_service.dart';
 import 'src/widgets/resident_home_quick_actions.dart';
 import 'src/widgets/resident_home_identity_actions.dart';
+import 'src/widgets/community_image_slideshow.dart';
+import 'src/widgets/resident_notification_button.dart';
+import 'src/services/notice_firestore_service.dart';
 import 'src/widgets/resident_home_due_payment_content.dart';
 import 'src/widgets/resident_home_summary_navigation.dart';
 import 'src/widgets/resident_home_summary_card.dart';
@@ -44,12 +47,13 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   static const Color _navy = Color(0xFF082F73);
-  static const Color _blue = Color(0xFF1558D6);
   static const Color _ink = Color(0xFF0E2247);
   static const Color _muted = Color(0xFF667792);
   static const Color _pageBg = Color(0xFFF7F9FD);
 
-  int _currentPage = 0;
+  StreamSubscription<List<String>>? _imageSubscription;
+  String? _imageScope;
+  Stream<int>? _unreadCounts;
   late Future<List<dynamic>> _recentActivityFuture;
 
   final _billService = BillFirestoreService();
@@ -72,8 +76,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     _recentActivityFuture = _fetchRecentActivities();
     _loadDashboardData();
-    _loadApartmentImages();
-    Future.delayed(const Duration(seconds: 5), _autoScroll);
   }
 
   @override
@@ -210,35 +212,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _loadApartmentImages() async {
-    try {
-      final result = await _apartmentImagesService.getApartmentImages();
-      if (!result.success) {
-        if (mounted) setState(() => _bannerImages = []);
-        return;
-      }
-      if (mounted) {
-        setState(() => _bannerImages = result.imageUrls ?? []);
-      }
-    } catch (e) {
-      debugPrint('Apartment image load error: $e');
-      if (mounted) setState(() => _bannerImages = []);
-    }
-  }
-
-  void _autoScroll() {
-    if (!mounted) return;
-    if (_bannerImages.length < 2) {
-      Future.delayed(const Duration(seconds: 5), _autoScroll);
-      return;
-    }
-
-    setState(() => _currentPage = (_currentPage + 1) % _bannerImages.length);
-    Future.delayed(const Duration(seconds: 5), _autoScroll);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final tenant = Provider.of<TenantResolutionService>(context);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final community = tenant.communityId;
+    final scope = uid == null || community == null ? null : '$uid/$community';
+    if (scope == _imageScope) return;
+    _imageScope = scope;
+    _bannerImages = [];
+    _unreadCounts = scope == null
+        ? null
+        : NoticeFirestoreService.instance.streamUnreadCount();
+    _imageSubscription?.cancel();
+    _imageSubscription = scope == null
+        ? null
+        : _apartmentImagesService
+              .streamCommunityImages(community!)
+              .listen(
+                (images) {
+                  if (mounted && _imageScope == scope)
+                    setState(() => _bannerImages = images);
+                },
+                onError: (Object _) {
+                  if (mounted && _imageScope == scope)
+                    setState(() => _bannerImages = []);
+                },
+              );
   }
 
   @override
   void dispose() {
+    _imageSubscription?.cancel();
     _communityWallFeedback.cancel();
     super.dispose();
   }
@@ -267,10 +273,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const ColoredBox(color: Color(0xB8F7FAFD)),
             RefreshIndicator(
               onRefresh: () async {
-                await Future.wait([
-                  _loadDashboardData(),
-                  _loadApartmentImages(),
-                ]);
+                await _loadDashboardData();
+                NoticeFirestoreService.instance.refreshUnreadCount();
               },
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(
@@ -394,42 +398,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _communityHeroCard() {
     final textScale = MediaQuery.textScalerOf(context).scale(1).toDouble();
-    final image = _bannerImages.isEmpty
-        ? null
-        : _bannerImages[_currentPage.clamp(0, _bannerImages.length - 1)];
-    final ImageProvider heroImage = image == null
-        ? const AssetImage('assets/hominode_residential_hero.jpg')
-        : residentImageProvider(image);
-    return GestureDetector(
-      onHorizontalDragEnd: _bannerImages.length < 2
-          ? null
-          : (details) {
-              if (details.primaryVelocity == null) return;
-              setState(() {
-                final delta = details.primaryVelocity! < 0 ? 1 : -1;
-                _currentPage =
-                    (_currentPage + delta + _bannerImages.length) %
-                    _bannerImages.length;
-              });
-            },
-      child: Container(
-        height: 204.h * textScale,
-        width: double.infinity,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(26.r),
-          color: const Color(0xFFDCE7F0),
-          boxShadow: [
-            BoxShadow(
-              color: _navy.withValues(alpha: .12),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-          image: DecorationImage(image: heroImage, fit: BoxFit.cover),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(26.r),
-          child: Stack(
+    return Container(
+      height: 204.h * textScale,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(26.r),
+        color: const Color(0xFFDCE7F0),
+        boxShadow: [
+          BoxShadow(
+            color: _navy.withValues(alpha: .12),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26.r),
+        child: CommunityImageSlideshow(
+          key: ValueKey(_imageScope),
+          images: _bannerImages,
+          active: widget.isActive,
+          foregroundBuilder: (context, index, count) => Stack(
             children: [
               const Positioned.fill(
                 child: DecoratedBox(
@@ -482,16 +471,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const Spacer(),
-                    if (_bannerImages.length > 1)
+                    if (count > 1)
                       Row(
                         children: List.generate(
-                          _bannerImages.length,
+                          count,
                           (i) => Container(
                             margin: EdgeInsets.only(right: 6.w),
-                            width: i == _currentPage ? 16.w : 7.w,
+                            width: i == index ? 16.w : 7.w,
                             height: 7.w,
                             decoration: BoxDecoration(
-                              color: i == _currentPage
+                              color: i == index
                                   ? _navy
                                   : _navy.withValues(alpha: .3),
                               borderRadius: BorderRadius.circular(8.r),
@@ -509,54 +498,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _notificationButton() {
-    return GestureDetector(
-      onTap: () {
-        _prepareForDashboardNavigation();
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+  Widget _notificationButton() => ResidentNotificationButton(
+    key: ValueKey('notifications/$_imageScope'),
+    unreadCounts: widget.isActive
+        ? (_unreadCounts ?? const Stream<int>.empty())
+        : const Stream<int>.empty(),
+    onTap: () async {
+      _prepareForDashboardNavigation();
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
+      );
+      if (mounted)
+        setState(
+          () => _unreadCounts = NoticeFirestoreService.instance
+              .streamUnreadCount(),
         );
-      },
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: 42.w,
-            height: 42.w,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.96),
-              borderRadius: BorderRadius.circular(13.r),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.10),
-                  blurRadius: 14,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-            ),
-            child: Icon(
-              Icons.notifications_none_rounded,
-              color: _blue,
-              size: 23.w,
-            ),
-          ),
-          Positioned(
-            right: 7.w,
-            top: 7.h,
-            child: Container(
-              width: 8.w,
-              height: 8.w,
-              decoration: const BoxDecoration(
-                color: Color(0xFFFF3B3B),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    },
+  );
 
   Widget _buildSummaryCards() {
     final width = MediaQuery.sizeOf(context).width;

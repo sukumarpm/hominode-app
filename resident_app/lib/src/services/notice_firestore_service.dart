@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 // lib/src/services/notice_firestore_service.dart
 // Notice/Notification Firestore Service - Fetch notices from Firestore
 
@@ -13,13 +15,24 @@ class NoticeFirestoreService {
   static final NoticeFirestoreService instance =
       NoticeFirestoreService._internal();
   factory NoticeFirestoreService() => instance;
-  NoticeFirestoreService._internal();
+  NoticeFirestoreService._internal() : _noticeLoader = null, _readLoader = null;
+  @visibleForTesting
+  NoticeFirestoreService.forTesting({
+    required Future<List<NoticeModel>> Function() notices,
+    required Future<bool> Function(String) isRead,
+  }) : _noticeLoader = notices,
+       _readLoader = isRead;
+  final Future<List<NoticeModel>> Function()? _noticeLoader;
+  final Future<bool> Function(String)? _readLoader;
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+  late final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = FirebaseAuth.instance;
+  late final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
     region: 'asia-southeast1',
   );
+
+  final _readChanges = StreamController<void>.broadcast();
+  void refreshUnreadCount() => _readChanges.add(null);
 
   // Collection name
   static const String noticesCollection = 'notices';
@@ -35,6 +48,7 @@ class NoticeFirestoreService {
   /// - targetFlats is empty (all flats) OR contains user's flat
   Future<List<NoticeModel>> getNotices() async {
     try {
+      if (_noticeLoader != null) return await _noticeLoader();
       print('🔵 Fetching notices from Firestore...');
 
       final user = _auth.currentUser;
@@ -264,7 +278,7 @@ class NoticeFirestoreService {
           .doc(user.uid)
           .set({'readAt': FieldValue.serverTimestamp(), 'userId': user.uid});
 
-      print('✅ Marked notice $noticeId as read');
+      _readChanges.add(null);
     } catch (e) {
       print('❌ Error marking notice as read: $e');
     }
@@ -273,6 +287,7 @@ class NoticeFirestoreService {
   /// Check if notice has been read by current user
   Future<bool> isRead(String noticeId) async {
     try {
+      if (_readLoader != null) return await _readLoader(noticeId);
       final user = _auth.currentUser;
       if (user == null) return false;
 
@@ -285,9 +300,54 @@ class NoticeFirestoreService {
 
       return doc.exists;
     } catch (e) {
-      print('❌ Error checking read status: $e');
-      return false;
+      print('Notice read status unavailable (${e.runtimeType}).');
+      rethrow;
     }
+  }
+
+  /// Same authorized notice source and persisted read receipts as the inbox.
+  /// Refresh on successful read writes and periodically while Home is visible.
+  Stream<int> streamUnreadCount() {
+    late StreamController<int> controller;
+    StreamSubscription<void>? reads;
+    StreamSubscription<User?>? auth;
+    Timer? timer;
+    var epoch = 0;
+    Future<void> refresh() async {
+      final request = ++epoch, uid = _auth.currentUser?.uid;
+      if (uid == null) {
+        if (!controller.isClosed) controller.add(0);
+        return;
+      }
+      final count = await getUnreadCount();
+      if (!controller.isClosed &&
+          request == epoch &&
+          uid == _auth.currentUser?.uid)
+        controller.add(count);
+    }
+
+    controller = StreamController<int>(
+      onListen: () {
+        controller.add(0);
+        reads = _readChanges.stream.listen((_) => unawaited(refresh()));
+        auth = _auth.idTokenChanges().listen((_) {
+          ++epoch;
+          if (!controller.isClosed) controller.add(0);
+          unawaited(refresh());
+        });
+        timer = Timer.periodic(
+          const Duration(seconds: 60),
+          (_) => unawaited(refresh()),
+        );
+      },
+      onCancel: () async {
+        ++epoch;
+        timer?.cancel();
+        await reads?.cancel();
+        await auth?.cancel();
+      },
+    );
+    return controller.stream;
   }
 
   /// Get unread count

@@ -425,3 +425,19 @@ test("cached private read rechecks authority and metadata without downloading by
     ),
   );
 });
+
+
+test("community gallery permits active residents across buildings but rejects foreign, inactive and withdrawn access", async () => {
+  const s = setup(), asset = await ready(s);
+  await attach(s, asset);
+  s.db.values.get("users/r").buildingId = "another-building";
+  assert.equal((await read(invoke(s, {assetId: asset.assetId}, "r"))).size, jpeg.length);
+  s.db.values.get("users/r").communityId = "B";
+  await deny(read(invoke(s, {assetId: asset.assetId}, "r")));
+  s.db.values.get("users/r").communityId = "A";
+  s.db.values.get("users/r").isActive = false;
+  await deny(read(invoke(s, {assetId: asset.assetId}, "r")));
+  s.db.values.get("users/r").isActive = true;
+  gallery(s, asset.assetId).status = "deleted";
+  await deny(read(invoke(s, {assetId: asset.assetId}, "r")));
+});

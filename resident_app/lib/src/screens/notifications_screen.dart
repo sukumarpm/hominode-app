@@ -1,3 +1,4 @@
+import 'dart:async';
 // lib/src/screens/notifications_screen.dart
 // Notifications screen matching app design standards
 
@@ -10,9 +11,10 @@ import '../constants/app_sizes.dart';
 import '../widgets/resident_visitor_page_background.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key, this.loadNotifications});
+  const NotificationsScreen({super.key, this.loadNotifications, this.markRead});
 
   final Future<List<NoticeModel>> Function()? loadNotifications;
+  final Future<void> Function(String)? markRead;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -64,6 +66,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _showNoticeDetail(NoticeModel notice) {
+    if (widget.markRead != null) {
+      unawaited(widget.markRead!(notice.id));
+    } else if (widget.loadNotifications == null) {
+      unawaited(NoticeFirestoreService.instance.markAsRead(notice.id));
+    }
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -146,14 +153,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       color: const Color(0xFF52627A),
                     ),
                     SizedBox(width: 6.w),
-                    Text(
-                      'posted_by_name'.tr(
-                        namedArgs: {'name': notice.authorName},
-                      ),
-                      style: TextStyle(
-                        fontSize: 13.sp,
-                        color: const Color(0xFF52627A),
-                        fontWeight: FontWeight.w500,
+                    Flexible(
+                      child: Text(
+                        'posted_by_name'.tr(
+                          namedArgs: {'name': notice.authorName},
+                        ),
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          color: const Color(0xFF52627A),
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ],
@@ -169,13 +178,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     color: const Color(0xFF52627A),
                   ),
                   SizedBox(width: 6.w),
-                  Text(
-                    'published_date'.tr(
-                      namedArgs: {'date': _formatFullDate(notice.publishDate)},
-                    ),
-                    style: TextStyle(
-                      fontSize: 13.sp,
-                      color: const Color(0xFF52627A),
+                  Flexible(
+                    child: Text(
+                      'published_date'.tr(
+                        namedArgs: {
+                          'date': _formatFullDate(notice.publishDate),
+                        },
+                      ),
+                      style: TextStyle(
+                        fontSize: 13.sp,
+                        color: const Color(0xFF52627A),
+                      ),
                     ),
                   ),
                 ],
@@ -191,15 +204,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       color: const Color(0xFF52627A),
                     ),
                     SizedBox(width: 6.w),
-                    Text(
-                      'expires_date'.tr(
-                        namedArgs: {
-                          'date': _formatFullDate(notice.expiryDate!),
-                        },
-                      ),
-                      style: TextStyle(
-                        fontSize: 13.sp,
-                        color: const Color(0xFF52627A),
+                    Flexible(
+                      child: Text(
+                        'expires_date'.tr(
+                          namedArgs: {
+                            'date': _formatFullDate(notice.expiryDate!),
+                          },
+                        ),
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          color: const Color(0xFF52627A),
+                        ),
                       ),
                     ),
                   ],

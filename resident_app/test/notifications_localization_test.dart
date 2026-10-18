@@ -10,6 +10,48 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(initializeTestLocalization);
 
+  testWidgets('opening an actual inbox notice writes its read receipt', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final now = DateTime(2026);
+    String? marked;
+    final notice = NoticeModel(
+      id: 'notice',
+      title: 'Synthetic notice',
+      content: 'Test contents',
+      authorId: 'admin',
+      authorName: 'Admin',
+      publishDate: now,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await tester.pumpWidget(
+      withEnglishLocalization(
+        (context) => ScreenUtilInit(
+          designSize: const Size(390, 844),
+          builder: (_, _) => localizedMaterialApp(
+            context,
+            home: NotificationsScreen(
+              loadNotifications: () async => [notice],
+              markRead: (id) async {
+                marked = id;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Synthetic notice'));
+    await tester.pumpAndSettle();
+    expect(marked, 'notice');
+    expect(find.byType(AlertDialog), findsOneWidget);
+  });
+
   testWidgets('Tamil notifications empty state is localized', (tester) async {
     tester.view.physicalSize = const Size(320, 760);
     tester.view.devicePixelRatio = 1;

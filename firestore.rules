@@ -1857,9 +1857,10 @@ function securityCanAccessCommunity(communityId) {
             );
         }
 
+        // An eligible resident may check whether their own receipt exists.
         allow read: if readerId == request.auth.uid
           && currentResidentMayReadParent()
-          && resource.data.userId == request.auth.uid;
+          && (resource == null || resource.data.userId == request.auth.uid);
 
         allow create: if readerId == request.auth.uid
           && currentResidentMayReadParent()
@@ -2432,9 +2433,9 @@ match /marketplaces/{listingId} {
     
     match /apartmentImages/{imageId} {
 
-      // Resident can read active images for their own building.
+      // Community gallery: active images for approved residents in this tenant.
       allow read: if
-        residentSameBuilding(resource.data)
+        (residentSameCommunity(resource.data) && resource.data.status == 'active')
         || (
           ('communityId' in resource.data)
           && adminCanAccessCommunity(resource.data.communityId)

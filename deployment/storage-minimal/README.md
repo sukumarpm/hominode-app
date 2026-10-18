@@ -21,8 +21,11 @@ The deployable files add only:
 - Server-owned managed references/revisions, with protected attachment changes and
   deletion in users, posts, complaints, marketplaces and apartmentImages.
 
-Production authentication helpers, every unrelated match scope, and existing
-image-collection read predicates remain identical apart from those blank-line spaces. Existing receipts,
+Production authentication helpers and every unrelated match scope remain identical
+apart from those blank-line spaces. The Resident acceptance correction permits
+approved, active residents to read active apartment-gallery records across buildings
+in their own community; the private reader enforces the same tenant scope. Other
+image-collection read predicates remain unchanged. Existing receipts,
 facility/event images, visitor creation/check-in, financial records, event access
 and SOS retain their captured production behavior. This is not approval to expand
 those older policies, or to introduce legacy authorization into new image APIs.

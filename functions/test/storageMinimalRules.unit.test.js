@@ -60,8 +60,23 @@ for (const kind of ["firestore", "storage"]) {
         const reads = (text) => [...text.matchAll(/allow\s+([^:]+):[^;]+;/g)]
           .filter((match) => /\b(read|get|list)\b/.test(match[1]))
           .map((match) => match[0]);
-        assert.deepEqual(reads(after.get(key)), reads(value), `${key}: changed reads`);
-      } else assert.equal(after.get(key), value, `Changed production scope: ${key}`);
+        const expected = reads(value);
+        if (key === "match:/apartmentImages/{imageId}") {
+          for (let i = 0; i < expected.length; i++) expected[i] = expected[i].replace(
+            "residentSameBuilding(resource.data)",
+            "(residentSameCommunity(resource.data) && resource.data.status == 'active')");
+        }
+        assert.deepEqual(reads(after.get(key)), expected, `${key}: changed reads`);
+      } else {
+        // The acceptance fix only permits eligible residents to check a missing
+        // own notice receipt; existing/foreign receipt protection is unchanged.
+        const expected = value.replace(
+          "&& currentResidentMayReadParent()\n          && resource.data.userId == request.auth.uid;",
+          "&& currentResidentMayReadParent()\n          && (resource == null || resource.data.userId == request.auth.uid);");
+        const actual = after.get(key).replace(
+          "// An eligible resident may check whether their own receipt exists.\n        ", "");
+        assert.equal(actual, expected, `Changed production scope: ${key}`);
+      }
     }
     const additions = [...after.keys()].filter((key) => !before.has(key)).sort();
     const allowed = kind === "firestore" ? [

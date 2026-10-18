@@ -20,7 +20,7 @@ const {
   deleteObject,
   listAll,
 } = require("firebase/storage");
-const { doc, setDoc, getDoc } = require("firebase/firestore");
+const { doc, setDoc, getDoc, getDocs, query, collection, where } = require("firebase/firestore");
 const {
   prepareStorageImageUploadCore: prepare,
   completeStorageImageUploadCore: complete,
@@ -828,7 +828,7 @@ async function residentAsset(feature, resourceId) {
   return complete(residentCall({ assetId: pending.assetId }));
 }
 run(
-  "Resident apartment reader enforces exact building, active membership and community",
+  "Resident community gallery allows other buildings but enforces active membership and tenant",
   async () => {
     await db.doc("users/r").update({ buildingId: "target" });
     const asset = await apartmentAsset();
@@ -840,10 +840,12 @@ run(
       bytes.length,
     );
     await db.doc("users/r").update({ buildingId: "another" });
-    await assert.rejects(
-      readImage(residentCall({ assetId: asset.assetId })),
-      (e) => e.code === "permission-denied",
-    );
+    assert.equal((await readImage(residentCall({ assetId: asset.assetId }))).size, bytes.length);
+    const gallery = await getDocs(query(collection(context("r").firestore(), "apartmentImages"),
+      where("communityId", "==", "A"), where("status", "==", "active")));
+    assert.equal(gallery.size, 1);
+    await assertFails(getDocs(query(collection(context("r").firestore(), "apartmentImages"),
+      where("communityId", "==", "B"), where("status", "==", "active"))));
     await db.doc("users/r").update({ buildingId: "target", isActive: false });
     await assert.rejects(
       readImage(residentCall({ assetId: asset.assetId })),
@@ -855,6 +857,14 @@ run(
     );
   },
 );
+run("resident display-field save preserves phone identity and denies protected-field changes", async () => {
+  const profile = doc(context("r").firestore(), "users", "r");
+  await assertSucceeds(require("firebase/firestore").updateDoc(profile, {name:"Synthetic Resident",email:"synthetic@example.invalid"}));
+  await assertFails(require("firebase/firestore").updateDoc(profile, {phoneNumber:"+639170000001"}));
+  await assertFails(require("firebase/firestore").updateDoc(profile, {phone:"+639170000001"}));
+  await assertFails(require("firebase/firestore").updateDoc(profile, {communityId:"B"}));
+  await assertFails(require("firebase/firestore").updateDoc(doc(context("other").firestore(),"users","r"),{name:"Other"}));
+});
 run(
   "Resident profile/complaint upload attach/read/replace/delete with no public tokens",
   async () => {
@@ -1196,3 +1206,18 @@ run(
     );
   },
 );
+
+run("notice unread receipt checks distinguish missing/read while denying foreign and inactive access", async () => {
+  await db.doc("users/r").update({flatId:"flat"});
+  await db.doc("notices/notice").set({communityId:"A",isActive:true,targetFlats:[]});
+  const receipt = doc(context("r").firestore(), "notices/notice/readBy/r");
+  assert.equal((await assertSucceeds(getDoc(receipt))).exists(),false);
+  await assertSucceeds(setDoc(receipt,{userId:"r",readAt:require("firebase/firestore").serverTimestamp()}));
+  assert.equal((await assertSucceeds(getDoc(receipt))).exists(),true);
+  await assertFails(getDoc(doc(context("other").firestore(),"notices/notice/readBy/r")));
+  await db.doc("notices/notice").update({communityId:"B"});
+  await assertFails(getDoc(receipt));
+  await db.doc("notices/notice").update({communityId:"A"});
+  await db.doc("users/r").update({isActive:false});
+  await assertFails(getDoc(receipt));
+});
