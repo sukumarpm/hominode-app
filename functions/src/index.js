@@ -364,7 +364,10 @@ exports.dispatchBillingV2PaymentNotification = onDocumentCreated({
   logger: {warn: (message, context) => logger.warn(message, context)},
 }));
 exports.notifyResidentOfSubmittedV2PaymentProof = onObjectFinalized({
-  region: REGION,
+  // Storage triggers must match this bucket's location, even when a selective
+  // deployment targets only the asia-southeast1 callable exports.
+  region: "us-east1",
+  bucket: "hominode-prod.firebasestorage.app",
   // This handler only creates deterministic Firestore records; retrying it is
   // idempotent and ensures receipt finalization eventually reaches the inbox.
   retry: true,

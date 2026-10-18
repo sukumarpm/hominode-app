@@ -67,6 +67,59 @@ test("storage callable export names match client calls, region and App Check", (
   }
 });
 
+test("Firebase CLI analyzes the complete source with a bucket-aligned Storage trigger", async (t) => {
+  const root = path.join(__dirname, "../..");
+  const { getRuntimeDelegate } = require("firebase-tools/lib/deploy/functions/runtimes");
+  const buildTools = require("firebase-tools/lib/deploy/functions/build");
+  const backendTools = require("firebase-tools/lib/deploy/functions/backend");
+  const { endpointsAreValid } = require("firebase-tools/lib/deploy/functions/validate");
+  const { ensureStorageTriggerRegion } = require("firebase-tools/lib/deploy/functions/services/storage");
+  const { getEndpointFilters, endpointMatchesAnyFilter } = require("firebase-tools/lib/deploy/functions/functionsDeployHelper");
+  const metadata = JSON.parse(fs.readFileSync(path.join(root,
+    "deployment/storage-minimal/baseline/metadata.json"), "utf8"));
+  const firebaseConfig = { projectId: metadata.project, storageBucket: metadata.bucket };
+  const discoveryDirectory = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "storage-discovery-"));
+  const priorOutput = process.env.FIREBASE_FUNCTIONS_DISCOVERY_OUTPUT_PATH;
+  process.env.FIREBASE_FUNCTIONS_DISCOVERY_OUTPUT_PATH = discoveryDirectory;
+  t.after(() => {
+    if (priorOutput === undefined) delete process.env.FIREBASE_FUNCTIONS_DISCOVERY_OUTPUT_PATH;
+    else process.env.FIREBASE_FUNCTIONS_DISCOVERY_OUTPUT_PATH = priorOutput;
+    fs.rmSync(discoveryDirectory, { recursive: true, force: true });
+  });
+  // Run the installed CLI's real SDK discovery, without executing handlers,
+  // reading credentials, enabling APIs or invoking a deployment/dry-run.
+  const delegate = await getRuntimeDelegate({
+    projectId: metadata.project, projectDir: root, sourceDir: path.join(root, "functions"),
+  });
+  const build = await delegate.discoverBuild({ firebase: firebaseConfig }, {
+    GCLOUD_PROJECT: metadata.project, FIREBASE_CONFIG: JSON.stringify(firebaseConfig),
+  });
+  // Trigger options are literals. Convert them without the deployment-only
+  // resolveBackend step, which would contact unrelated Secret Manager APIs.
+  const backend = buildTools.toBackend(build, {});
+  endpointsAreValid(backend);
+  const endpoints = backendTools.allEndpoints(backend);
+  const storage = endpoints.filter((endpoint) =>
+    endpoint.eventTrigger?.eventType.startsWith("google.cloud.storage."));
+  assert.equal(storage.length, 1);
+  assert.equal(storage[0].id, "notifyResidentOfSubmittedV2PaymentProof");
+  assert.equal(storage[0].eventTrigger.eventFilters.bucket, metadata.bucket);
+  assert.equal(storage[0].region, "us-east1");
+  // Captured bucket location: US-EAST1. Exercise the same CLI check that failed,
+  // supplying its lookup result locally so this regression test stays offline.
+  const resolved = { ...storage[0], eventTrigger: { ...storage[0].eventTrigger, region: "us-east1" } };
+  await assert.rejects(ensureStorageTriggerRegion({ ...resolved, region: "asia-southeast1" }),
+    /cannot listen to a bucket in region us-east1/);
+  await ensureStorageTriggerRegion(resolved);
+  const filters = getEndpointFilters({
+    only: metadata.initialCallables.map((name) => `functions:${name}`).join(","),
+  }, [{ codebase: "default" }]);
+  const selected = endpoints.filter((endpoint) => endpointMatchesAnyFilter(endpoint, filters));
+  assert.deepEqual(selected.map((endpoint) => endpoint.id).sort(), [...metadata.initialCallables].sort());
+  assert.ok(selected.every((endpoint) => endpoint.region === "asia-southeast1"
+    && backendTools.isCallableTriggered(endpoint)));
+});
+
 test("actual apartment cleanup export resolves Firestore and Storage at invocation", async () => {
   const { exports, calls } = loadExports();
   const cleanup = exports.cleanupApartmentImages;
