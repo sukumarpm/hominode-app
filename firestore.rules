@@ -1500,6 +1500,56 @@ function securityCanAccessCommunity(communityId) {
 
     match /posts/{postId} {
 
+      function validComment(data) {
+        let profile = userProfile();
+        return data.keys().hasAll([
+            'postId', 'communityId', 'authorId', 'authorName',
+            'profileImage', 'comment', 'createdAt'
+          ])
+          && data.keys().hasOnly([
+            'postId', 'communityId', 'authorId', 'authorName',
+            'profileImage', 'comment', 'createdAt'
+          ])
+          && data.postId == postId
+          && residentCanAccessCommunity(data.communityId)
+          && data.authorId == request.auth.uid
+          && data.authorName == (profile.get('name', null) == null ? 'Unknown User' : profile.name)
+          && data.profileImage == (profile.get('profileImage', null) == null ? '' : profile.profileImage)
+          && data.comment is string && data.comment.size() > 0
+          && data.createdAt == request.time;
+      }
+
+      function commentCounterUpdate() {
+        let data = request.resource.data;
+        let commentPath = /databases/$(database)/documents/posts/$(postId)/comments/$(data.lastCommentId);
+        return residentSameCommunity(resource.data)
+          && resource.data.get('status', 'active') == 'active'
+          && data.diff(resource.data).affectedKeys().hasOnly([
+            'comments', 'updatedAt', 'lastCommentId'
+          ])
+          && data.lastCommentId is string
+          && data.comments is int
+          && data.comments == resource.data.get('comments', 0) + 1
+          && data.updatedAt == request.time
+          && !exists(commentPath)
+          && validComment(getAfter(commentPath).data)
+          && getAfter(commentPath).data.communityId == resource.data.communityId;
+      }
+
+      match /comments/{commentId} {
+        function parentPost() {
+          return get(/databases/$(database)/documents/posts/$(postId)).data;
+        }
+        allow read: if residentSameCommunity(parentPost())
+          || adminCanAccessCommunity(parentPost().communityId);
+        allow create: if validComment(request.resource.data)
+          && request.resource.data.communityId == parentPost().communityId
+          && parentPost().get('status', 'active') == 'active'
+          && getAfter(/databases/$(database)/documents/posts/$(postId)).data.lastCommentId == commentId
+          && getAfter(/databases/$(database)/documents/posts/$(postId)).data.comments == parentPost().get('comments', 0) + 1
+          && getAfter(/databases/$(database)/documents/posts/$(postId)).data.updatedAt == request.time;
+      }
+
       allow read: if residentSameCommunity(resource.data)
         || residentSameBuilding(resource.data)
         || (
@@ -1512,7 +1562,7 @@ function securityCanAccessCommunity(communityId) {
         || (adminCanAccessCommunity(request.resource.data.communityId)
           && contentReferencesMatch(request.resource.data, request.resource.data.communityId)));
 
-      allow update: if managedImagesSafeUpdate()
+      allow update: if commentCounterUpdate() || managedImagesSafeUpdate()
         && ((residentContentOwner(resource.data)
           || adminCanAccessCommunity(resource.data.communityId))
         && contentUpdateIsSafe());

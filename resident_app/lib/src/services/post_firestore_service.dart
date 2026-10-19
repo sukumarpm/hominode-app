@@ -514,39 +514,32 @@ class PostFirestoreService {
         );
       }
 
-      final currentUserId = await _getCurrentUserId();
-
-      if (currentUserId == null || currentUserId.isEmpty) {
+      // Use the current authenticated identity, never the cached post author.
+      final currentUserId = _auth.currentUser?.uid;
+      if (currentUserId == null) {
         return ServiceResult(success: false, message: 'User not authenticated');
       }
-
-      print('💬 Adding comment to post: $postId');
-
-      // Get user info
+      final postRef = _postsCollection.doc(postId);
+      final postDoc = await postRef.get();
       final userDoc = await _usersCollection.doc(currentUserId).get();
-      final userData = userDoc.data() as Map<String, dynamic>?;
-
-      final commentData = {
-        'postId': postId,
-        'authorId':
-            _auth.currentUser?.uid ?? currentUserId, // Use Firebase Auth UID
-        'authorName': userData?['name'] ?? 'Unknown User',
-        'profileImage': userData?['profileImage'] ?? '',
-        'comment': comment,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
-
-      // Add comment to comments subcollection
-      await _postsCollection
-          .doc(postId)
-          .collection('comments')
-          .add(commentData);
-
-      // Increment comment count
-      await _postsCollection.doc(postId).update({
+      final commentData = buildCommunityWallComment(
+        postId: postId,
+        authorId: currentUserId,
+        post: postDoc.data() as Map<String, dynamic>?,
+        profile: userDoc.data() as Map<String, dynamic>?,
+        comment: comment,
+      );
+      final commentRef = postRef.collection('comments').doc();
+      // The rules bind this counter increment to this exact new comment.
+      // Either both writes succeed, or neither leaves a partial comment.
+      final batch = _firestore.batch();
+      batch.set(commentRef, commentData);
+      batch.update(postRef, {
         'comments': FieldValue.increment(1),
         'updatedAt': FieldValue.serverTimestamp(),
+        'lastCommentId': commentRef.id,
       });
+      await batch.commit();
 
       print('✅ Comment added');
 
@@ -801,4 +794,35 @@ class ServiceResult {
   final dynamic data;
 
   ServiceResult({required this.success, this.message, this.data});
+}
+
+/// Constructs the canonical comment payload; Firestore Rules remain authoritative.
+Map<String, dynamic> buildCommunityWallComment({
+  required String postId,
+  required String authorId,
+  required Map<String, dynamic>? post,
+  required Map<String, dynamic>? profile,
+  required String comment,
+}) {
+  final communityId = post?['communityId'];
+  if (authorId.isEmpty ||
+      postId.isEmpty ||
+      comment.trim().isEmpty ||
+      communityId is! String ||
+      communityId.isEmpty ||
+      profile == null ||
+      profile['communityId'] != communityId) {
+    throw ArgumentError(
+      'Comment requires a current resident and community post',
+    );
+  }
+  return {
+    'postId': postId,
+    'communityId': communityId,
+    'authorId': authorId,
+    'authorName': profile['name'] ?? 'Unknown User',
+    'profileImage': profile['profileImage'] ?? '',
+    'comment': comment.trim(),
+    'createdAt': FieldValue.serverTimestamp(),
+  };
 }
