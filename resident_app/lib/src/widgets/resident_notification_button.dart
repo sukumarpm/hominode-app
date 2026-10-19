@@ -1,17 +1,46 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-class ResidentNotificationButton extends StatelessWidget {
+class ResidentNotificationButton extends StatefulWidget {
   const ResidentNotificationButton({
     super.key,
-    required this.unreadCounts,
+    required this.createUnreadCounts,
     required this.onTap,
+    this.active = true,
   });
-  final Stream<int> unreadCounts;
+
+  /// Creates a fresh, single-consumer stream for each active subscription.
+  final Stream<int> Function() createUnreadCounts;
   final VoidCallback onTap;
+  final bool active;
+
+  @override
+  State<ResidentNotificationButton> createState() =>
+      _ResidentNotificationButtonState();
+}
+
+class _ResidentNotificationButtonState
+    extends State<ResidentNotificationButton> {
+  Stream<int>? _counts;
+
+  @override
+  void initState() {
+    super.initState();
+    _counts = widget.active ? widget.createUnreadCounts() : null;
+  }
+
+  @override
+  void didUpdateWidget(covariant ResidentNotificationButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active != widget.active ||
+        oldWidget.createUnreadCounts != widget.createUnreadCounts) {
+      _counts = widget.active ? widget.createUnreadCounts() : null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
+    onTap: widget.onTap,
     child: Stack(
       clipBehavior: Clip.none,
       children: [
@@ -36,7 +65,10 @@ class ResidentNotificationButton extends StatelessWidget {
           ),
         ),
         StreamBuilder<int>(
-          stream: unreadCounts,
+          // Replacements start at zero, without retaining another tenant's
+          // snapshot. StreamBuilder owns cancellation on replacement/disposal.
+          key: ObjectKey(_counts),
+          stream: _counts,
           initialData: 0,
           builder: (context, snapshot) {
             final count = snapshot.hasError ? 0 : (snapshot.data ?? 0);

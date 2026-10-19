@@ -15,18 +15,24 @@ class NoticeFirestoreService {
   static final NoticeFirestoreService instance =
       NoticeFirestoreService._internal();
   factory NoticeFirestoreService() => instance;
-  NoticeFirestoreService._internal() : _noticeLoader = null, _readLoader = null;
+  NoticeFirestoreService._internal()
+    : _noticeLoader = null,
+      _readLoader = null,
+      _authOverride = null;
   @visibleForTesting
   NoticeFirestoreService.forTesting({
     required Future<List<NoticeModel>> Function() notices,
     required Future<bool> Function(String) isRead,
+    FirebaseAuth? auth,
   }) : _noticeLoader = notices,
-       _readLoader = isRead;
+       _readLoader = isRead,
+       _authOverride = auth;
   final Future<List<NoticeModel>> Function()? _noticeLoader;
   final Future<bool> Function(String)? _readLoader;
+  final FirebaseAuth? _authOverride;
 
   late final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  late final FirebaseAuth _auth = FirebaseAuth.instance;
+  late final FirebaseAuth _auth = _authOverride ?? FirebaseAuth.instance;
   late final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
     region: 'asia-southeast1',
   );
@@ -307,6 +313,7 @@ class NoticeFirestoreService {
 
   /// Same authorized notice source and persisted read receipts as the inbox.
   /// Refresh on successful read writes and periodically while Home is visible.
+  /// Cold single-consumer stream: call again after cancellation, not listen again.
   Stream<int> streamUnreadCount() {
     late StreamController<int> controller;
     StreamSubscription<void>? reads;

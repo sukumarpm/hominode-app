@@ -53,7 +53,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   StreamSubscription<List<String>>? _imageSubscription;
   String? _imageScope;
-  Stream<int>? _unreadCounts;
+  final _createUnreadCounts = NoticeFirestoreService.instance.streamUnreadCount;
   late Future<List<dynamic>> _recentActivityFuture;
 
   final _billService = BillFirestoreService();
@@ -222,9 +222,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (scope == _imageScope) return;
     _imageScope = scope;
     _bannerImages = [];
-    _unreadCounts = scope == null
-        ? null
-        : NoticeFirestoreService.instance.streamUnreadCount();
     _imageSubscription?.cancel();
     _imageSubscription = scope == null
         ? null
@@ -500,19 +497,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _notificationButton() => ResidentNotificationButton(
     key: ValueKey('notifications/$_imageScope'),
-    unreadCounts: widget.isActive
-        ? (_unreadCounts ?? const Stream<int>.empty())
-        : const Stream<int>.empty(),
+    createUnreadCounts: _createUnreadCounts,
+    active: widget.isActive && _imageScope != null,
     onTap: () async {
       _prepareForDashboardNavigation();
       await Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
       );
-      if (mounted)
-        setState(
-          () => _unreadCounts = NoticeFirestoreService.instance
-              .streamUnreadCount(),
-        );
+      if (mounted) {
+        NoticeFirestoreService.instance.refreshUnreadCount();
+      }
     },
   );
 
