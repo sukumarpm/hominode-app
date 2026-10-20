@@ -535,6 +535,17 @@ exports.removeSecurityAssignment = appCheckedCallable(
   "Security assignment could not be removed."
 );
 
+// Creation only: no update trigger and no historical backfill on deployment.
+exports.notifyResidentsOfCreatedEvent = onDocumentCreated({
+  region: REGION,
+  document: "events_announcements/{eventId}",
+  timeoutSeconds: 540,
+  memory: "512MiB",
+  retry: true,
+}, (event) => require("./event_notifications").notifyCreatedEventCore({
+  db: getFirestore(), messaging: getMessaging(), eventId: event.params.eventId,
+}));
+
 exports.registerNotificationDevice = appCheckedCallable(
   registerNotificationDeviceCore,
   "This notification device could not be registered."

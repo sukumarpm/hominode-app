@@ -194,6 +194,8 @@ async function registerNotificationDeviceCore({db, auth, app, data}) {
   const appContext = requireAppContext(app);
   const installationId = requireInstallationId(data?.installationId);
   const token = requireToken(data?.token);
+  const eventPreferences = data?.eventPreferences === undefined ? null :
+    require("./event_notification_preferences").eventPushPreferences(data.eventPreferences);
   const authority = await resolveDeviceAuthority({db, auth, appContext, data});
   const deviceId = notificationDeviceId(
     appContext.appId,
@@ -226,6 +228,7 @@ async function registerNotificationDeviceCore({db, auth, app, data}) {
       uid: authority.uid,
     }),
     active: true,
+    ...(eventPreferences ? {eventPreferences} : {}),
     updatedAt: FieldValue.serverTimestamp(),
   }, {merge: true});
   await batch.commit();
@@ -402,6 +405,7 @@ async function sendCanonicalNotification({
   title,
   message,
   notificationData = {},
+  deviceFilter = () => true,
 }) {
   await requireCanonicalRecipient(db, {
     recipientUid,
@@ -423,7 +427,7 @@ async function sendCanonicalNotification({
     const value = doc.data();
     return value.active === true && value.uid === recipientUid &&
       value.communityId === communityId && value.role === role &&
-      value.appId === appId && typeof value.token === "string";
+      value.appId === appId && typeof value.token === "string" && deviceFilter(value);
   });
   const unique = new Map();
   for (const device of devices) {
