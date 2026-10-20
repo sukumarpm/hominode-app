@@ -369,3 +369,155 @@ No full builds, typechecks, complete Flutter suites, customer-file reads or devi
 acceptance were performed. Passing local tests establish local contracts, not that
 missing/stale production Functions have been deployed. No fixes, deployment, push,
 branch switch, production write or credential change was made by this audit.
+
+## Image-contract addendum — 2026-10-20
+
+**Source baseline:** M `4b060a8`, AW `2bf3e53`, RW `a6a3fa0`. This is a targeted,
+source-only refinement of F07–F10, not a fresh production inventory. Original
+production observations above retain their original dates. No customer images,
+historical Cloudinary objects, credentials or production configuration were accessed.
+No application code changed. Both web worktrees were clean; root's nine existing
+untracked paths were preserved.
+
+**Release impact:** IMG01/IMG02/IMG06 are confirmed gaps in already-present event
+photo workflows. IMG03/IMG04 require explicit web scope decisions; missing modules
+are not automatically defects. IMG05 is a conditional privacy blocker, not proof
+of unauthorized production access. Cross-platform image parity is not yet accepted.
+
+### Contract comparison
+
+| Workflow                    | Current mobile/backend contract                                                                                                                                                                                                                                                                                                                                                                          | Current AW / RW support                                                                                                                                                                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Marketplace                 | `marketplaces/{id}`: ordered `images: string[]`, `managedImageAssets`, `imageRevision`; private strings are `hominode-image:<UUID>`. Resident creates an owned draft, stages/finalizes, then atomically publishes/edits through `commitResidentImages`.                                                                                                                                                  | Neither web app has a Marketplace route or mutation adapter. This is absent capability, not a broken existing web uploader.                                                                                                                             |
+| Community Wall              | `posts/{id}`: primary `imageUrl`, ordered `imageUrls`, additive managed assets/revision; the same draft/commit flow binds author and community. Private author avatars resolve to the current profile pointer.                                                                                                                                                                                           | `src/data.ts` defines a posts query, but routed `CommunityPage` is community information, not a Wall image/post editor. No web private-image reader.                                                                                                    |
+| Events                      | `events_announcements/{id}`, `type: event`. AW writes ordered `images: {url,storagePath,name}[]`, `imageUrls`, primary `imageUrl`; Resident mobile merges these URL fields. Admin mobile still writes a selected device's `localImagePath` and null `imageUrl`.                                                                                                                                          | AW event details render `images[].url` / `imageUrl` through `FacilityGallery`; RW event details are generic text, without an event gallery. AW's reader does not consume an `imageUrls`-only record, although its own uploader writes all three fields. |
+| Announcements               | Canonical `events_announcements`, with existing announcement/notice discovery compatibility. Mobile models accept `attachments`, `imageUrls`, primary `imageUrl`; these attachment views are network-URL readers, not private-asset readers.                                                                                                                                                             | Existing announcement forms/details are text-oriented and have no attachment gallery/private upload adapter. Do not publish opaque announcement references before adding an authorized contract and readers.                                            |
+| Apartment/community gallery | `apartmentImages/{id}` retains metadata, ordering/timestamps and legacy `imageUrl`, adding server-owned `imageAsset` / `revision`. Readers must prefer the private asset, without falling back to an old URL on authorization failure. Current backend permits operational residents in the same community to read active gallery records, validates the record's building, and permits assigned Admins. | Neither app queries/renders this gallery in current profile/apartment/community pages. Static community banners and text/initials remain. Older Phase 2 documents saying exact resident-building-only access are superseded by current source.          |
+| Resident photo              | `users/{uid}` synchronizes `profileImage`, `profileImageUrl`, `photoURL` with an opaque string plus managed assets/revision; Firebase Auth's public photo URL is not used to store the opaque reference. Owner uploads/changes; operational same-community residents and assigned Admins may read under backend checks.                                                                                  | Current profile/resident surfaces show initials/text. No photo upload/edit adapter or private-avatar rendering; no demonstrated new external upload.                                                                                                    |
+
+Exact mobile/domain source: M
+`resident_app/lib/src/services/{resident_image_operations,profile_image_service,post_firestore_service,listing_firestore_service,apartment_images_service,resident_private_images}.dart`,
+`resident_app/lib/src/models/{event_model,announcement_model}.dart`,
+`resident_app/lib/events_announcements_screen.dart`,
+`hominode-admin/admin_app/lib/services/{cloudinary_apartment_images_service,event_announcement_service}.dart`,
+`hominode-admin/admin_app/lib/widgets/private_apartment_image.dart`,
+`functions/src/{storage_images,resident_images,apartment_images}.js`.
+
+### Authorization and transport: confirmed source facts
+
+- All inspected configurations target `hominode-prod` and
+  `hominode-prod.firebasestorage.app`; mobile/web callable region is
+  `asia-southeast1`. This pass found no bucket/region string mismatch. Browser
+  App Check acceptance, actual deployed source and bucket IAM were not reverified.
+- Existing seven callable names match mobile adapters:
+  `prepareStorageImageUpload`, `completeStorageImageUpload`, `readStorageImage`,
+  `saveApartmentImage`, `deleteApartmentImage`, `createResidentImageDraft`,
+  `commitResidentImages`. M `functions/src/index.js` enforces App Check and verified
+  phone/canonical identity. Both web `src/firebase.ts` initialize reCAPTCHA Enterprise,
+  enable debug only in DEV, and already provide a callable wrapper in that region.
+- `prepareStorageImageUpload({feature,resourceId,contentType,size})` issues the
+  server-owned reservation; upload only to its returned path/metadata, then call
+  `completeStorageImageUpload({assetId})`. Staging paths are
+  `apartment_images/{communityId}/{uid}/{assetId}.{ext}` or
+  `resident_images/{communityId}/{uid}/{feature}/{assetId}.{ext}`; final objects use
+  `private_images/{communityId}/{ownerId}/{feature}/{assetId}.{ext}`. Clients must not
+  choose trusted community, role, owner, bucket or final path.
+- `createResidentImageDraft({feature})` supports Wall/Marketplace targets not yet
+  created. `commitResidentImages({feature,resourceId,operationId,expectedRevision,
+references,content?,deleteResource?})` validates ownership/entitlement and attaches
+  atomically. Apartment save/delete use `imageId` and optimistic `expectedRevision`
+  for existing records. Do not replace these with client writes to managed fields.
+- `readStorageImage({assetId,knownAssetId?,knownGeneration?})` returns authorized
+  asset metadata and bounded base64 bytes or `notModified`; it rechecks access after
+  I/O and can redirect replaced profile pointers. It does **not** return a permanent
+  URL. M `deployment/storage-minimal/{storage,firestore}.rules` deny direct final
+  object access and protect managed document fields. Source reads retain tenant,
+  operational identity, owner/audience and feature-entitlement checks; Admin and
+  Resident permissions are not interchangeable.
+- Private uploads are limited to 10 MiB, JPEG/PNG/WebP, plus GIF only for profile/Wall;
+  backend Sharp validates actual image content. This is different from AW event
+  uploads: direct `event_images/{communityId}/{eventId}/{fileName}`, up to six images,
+  5 MiB each, JPEG/PNG/WebP, MIME/size checks and Firebase token-bearing download URLs.
+  Event Rules preserve scoped Admin writes and same-community reads; the private
+  five-feature foundation has **no event/announcement feature**.
+- No Cloudinary write/delete implementation was found in either web's active TS/TSX
+  source. Admin apartment service's historical class name now wraps Firebase.
+  Resident `cloudinary_service.dart` upload/delete methods throw without HTTP;
+  remaining old helper/example references cannot perform provider requests. Legacy
+  HTTPS URLs stay readable only at surfaces already supporting network images.
+  Both web `safeUrl` helpers intentionally reject opaque references: changing that
+  URL allowlist would not implement private viewing. No historical URL was fetched.
+
+### Confirmed gaps, conditional blockers and smallest corrections
+
+| ID / severity                                                    | Exact affected source and confirmed difference                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Smallest safe action / rollout                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| IMG01 — **P1, must fix for the existing event photo picker**     | M `hominode-admin/admin_app/lib/widgets/create_event_modal.dart:550`, `events_announcements_screen.dart:276,878`, `services/event_announcement_service.dart:80,446`. Selected photo is returned as a local File/path, persisted without upload, then preferred over `imageUrl` by `Image.file`. Admin mobile also drops the ordered URL gallery fields AW writes. This cannot share the selected photo to another device; multi-image rendering differs from Resident mobile. Confirmed code defect; cross-device/failure UI acceptance pending. | Upload the selected file through an approved event image contract, store shared references only after success, and normalize ordered image fields in the Admin model/view. Ignore device-local paths for shared display. Decide URL-shareable versus private event policy first (IMG05); do not invent an unsupported private `feature: event` request. Admin rebuild; backend/Rules only if introducing private event media.                                            |
+| IMG02 — **P1, existing web event viewer gap**                    | RW `src/pages.tsx:1548–1557` renders galleries for facilities only; event detail uses `DetailFields`. AW `src/pages.tsx:306,353` renders event galleries but ignores `imageUrls`-only inputs. Resident mobile `src/models/event_model.dart` / `events_announcements_screen.dart` consumes ordered URL lists. Confirmed source gap; existing AW three-field records already avoid its fallback edge case.                                                                                                                                         | RW: render a scoped event gallery in existing event details, preserving list order and legacy primary URL. AW: normalize the same accepted URL variants. Do not pass private IDs to `<img>`. No new backend feature needed for existing URL records; affected web hosting only.                                                                                                                                                                                          |
+| IMG03 — **P1, explicit web photo-scope decision**                | AW/RW `src/pages.tsx` (`ProfilePage`, `ApartmentInfo`, `CommunityPage`), `src/data.ts`, `src/models.ts`; no private adapter, no `apartmentImages` query, no private avatar. Mobile gallery/profile images are implemented. Confirmed missing presentation, not evidence of unauthorized access.                                                                                                                                                                                                                                                  | For required existing web surfaces, add a bounded session/community-scoped callable reader, validate response identity/MIME/size/generation, release object URLs and discard stale responses on sign-out, scope change or denial. Integrate profile photos and the approved gallery only; no unused viewer or Admin use of Resident upload authority. Web hosting; existing backend audience appears sufficient, subject to synthetic tests.                             |
+| IMG04 — **P1 scope decision, not automatically a blocker**       | AW/RW `src/{App.tsx,navigation.ts,pages.tsx,actions.ts,data.ts}`: no Marketplace or interactive Wall image workflow; announcement attachments are not presented. Mobile supports these images.                                                                                                                                                                                                                                                                                                                                                   | Record mobile-only Release 1 scope or separately authorize each workflow. If web editing is required, reuse drafts, exact image fields and atomic commit/revision contracts; preserve Essential Wall and Plus/Pro Marketplace checks. Do not build these modules merely to claim image parity. Hosting/rebuild only for approved work, with backend changes only for a proven unsupported contract.                                                                      |
+| IMG05 — **P0 conditional privacy gate / P1 contract difference** | AW `src/actions.ts:169–192`, M `deployment/storage-minimal/storage.rules:163`, `functions/src/storage_images.js` feature registry. New event uploads are Firebase-only but bypass private finalization/Sharp and store bearer download URLs. This differs from private mobile gallery/profile/Wall/Marketplace, but no current account leak or breached private-event policy was established.                                                                                                                                                    | Owner explicitly classifies new event/announcement media. If tenant-private is required, block that rollout until a narrow server-authorized event contract, actual-content validation and all active readers support private media. If URL-shareable is approved, document it and test current scoped writes. Do not migrate/revoke historical URLs during this task. Conditional Functions/Rules + client rollout, not a blind change to the seven existing callables. |
+| IMG06 — **P1, current AW event image failure/retry defect**      | AW `src/actions.ts:174–209,256–270`, `src/pages.tsx:1269–1279`. Delete removes bytes before Firestore metadata update; failed metadata update leaves a broken image reference. Create persists an event before upload; retry can create another event. A failed `getDownloadURL` occurs before the uploaded object enters the rollback list. Confirmed ordering gaps; no production failure was induced.                                                                                                                                         | Retain the created event ID for retry; track uploaded paths immediately; confirm metadata removal before retiring bytes, with idempotent cleanup/retry on interruption. Preserve ordering/primary fields and failed-replacement originals. Fault-injection tests before hosting rollout; no generic migration or unrelated event redesign.                                                                                                                               |
+
+All source tasks above are practical for a developer manually; **Codex is optional**.
+Privacy/scope decisions, browser/signed-device attestation and production permission
+acceptance require the owner/tester and cannot be certified by code inspection.
+
+### Prioritized file-by-file handoff
+
+1. **Shared prerequisite:** agree IMG05's event-media policy and IMG04's web feature
+   scope. M `functions/src/{storage_images,resident_images,apartment_images}.js`,
+   `deployment/storage-minimal/{storage,firestore}.rules` remain unchanged unless a
+   specific new authorized event contract is approved. Do not deploy broader root Rules.
+2. **Admin Web, existing event workflow first:** AW `src/actions.ts` fixes IMG06;
+   `src/pages.tsx` retains pending event identity and normalizes event image variants;
+   `src/models.ts` declares the event gallery shape; focused `src/test/actions.test.ts`
+   and a proposed new `src/test/eventImages.test.tsx` cover failure/retry/order. Keep
+   supported URL records readable. Pair with the three IMG01 mobile files and mobile
+   event model/presentation tests; this is the next recommended implementation task.
+3. **Resident Web, existing event presentation:** RW `src/pages.tsx` normalizes/renders
+   scoped ordered event URLs; proposed `src/test/eventImages.test.tsx` covers AW-written
+   records, URL-only variants, empty/error states and narrow-screen navigation. No upload
+   controls, Marketplace routes or private-feature expansion in this task.
+4. **Web private photos, only approved existing surfaces:** separately in AW and RW,
+   propose `src/privateImages.ts` and `src/components/PrivateImage.tsx` plus focused tests;
+   reuse existing `src/firebase.ts` `call`, add strict contract types in `src/models.ts`,
+   scoped gallery reads in `src/data.ts`, integrate only selected `src/pages.tsx` surfaces.
+   These are proposed files, not present implementations. Add a Resident upload adapter
+   only if web photo editing is explicitly required; its server contract already exists.
+5. **Rollout:** current URL-view/lifecycle fixes need web hosting and the affected mobile
+   rebuild. Private web readers reuse existing callables, subject to acceptance. A newly
+   approved private event contract needs backend/Rules before compatible clients and
+   before emitting new reference shapes. Do not activate cleanup schedulers implicitly.
+   Their previously documented retention/operational gate remains separate and was not
+   freshly checked here. No deployment was performed.
+
+### Minimal cross-platform acceptance and validation
+
+- Use synthetic fixtures only: AW event with two ordered photos -> AW, Resident
+  mobile and RW event detail; Admin mobile event photo -> a second device/browser.
+  Exercise `images`, `imageUrls` and primary-only legacy shapes separately. Mock all
+  legacy URLs; do not fetch or migrate historical Cloudinary test images.
+- Admin apartment upload/replace/delete -> same-community Resident mobile and any
+  approved web gallery. Preserve metadata/date/order; deny foreign-community access;
+  a private-read denial must not fall back to an old URL. Include an active gallery
+  record from another building in the same community, per current backend policy.
+- Resident profile replacement -> current same-community avatar; denied foreign read,
+  removed photo and expired session. Test private reader redirects, cached generation,
+  auth/community switch, bounded memory and discarded in-flight replies in web mocks
+  and browser acceptance. Never use permanent download URLs for private assets.
+- Mobile Wall/Marketplace create/edit/multi-image/delete -> authorized same-community
+  mobile readers. Web is not an acceptance target for absent modules unless approved.
+  Confirm Essential Wall allowed / Marketplace denied, Plus/Pro Marketplace allowed,
+  wrong owner/community and invalid App Check denied; no arbitrary managed-field writes.
+- Inject event upload, URL retrieval, metadata-save and byte-delete failures; retry
+  must not duplicate events, break retained images or silently abandon cleanup.
+- Hosted AW/RW reCAPTCHA Enterprise + signed/debug mobile App Check, phone-auth identity,
+  direct private-object denial and exact backend deployment remain runtime checks.
+  No live claims from the original audit were refreshed in this pass.
+- **Run this pass:** AW `src/test/release1Queries.test.ts` + `src/test/firebase.test.ts`:
+  **15 passed, 0 failed**. RW same two focused files: **16 passed, 0 failed**.
+  These prove mocked config/query/legacy-URL behavior, **not private web rendering or
+  live authorization**. No broad builds, application suites, new tests or backend
+  emulators were needed for this documentation-only change. Report formatting and
+  `git diff --check` are checked before its local-only commit.
