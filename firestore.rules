@@ -1500,6 +1500,41 @@ function securityCanAccessCommunity(communityId) {
 
     match /posts/{postId} {
 
+      function initialLikesAreEmpty() {
+        return request.resource.data.get('likes', 0) is int
+          && request.resource.data.get('likes', 0) == 0
+          && request.resource.data.get('likedBy', []) == [];
+      }
+
+      function residentLikeUpdate() {
+        let data = request.resource.data;
+        let before = resource.data.get('likedBy', []);
+        let after = data.get('likedBy', []);
+        let oldCount = resource.data.get('likes', 0);
+        return data.diff(resource.data).affectedKeys().hasOnly([
+            'likes', 'likedBy', 'updatedAt'
+          ])
+          && signedIn()
+          && phoneAuthenticated()
+          && request.auth.token.phone_number == userProfile().phoneNumber
+          && residentSameCommunity(resource.data)
+          && resource.data.get('status', 'active') == 'active'
+          && before is list && after is list
+          && oldCount is int && oldCount >= 0
+          && oldCount == before.size()
+          && before.toSet().size() == before.size()
+          && data.likes is int && data.likes == after.size()
+          && data.updatedAt == request.time
+          && (
+            (!(request.auth.uid in before)
+              && after == before.concat([request.auth.uid])
+              && data.likes == oldCount + 1)
+            || (request.auth.uid in before
+              && after == before.removeAll([request.auth.uid])
+              && data.likes == oldCount - 1)
+          );
+      }
+
       function validComment(data) {
         let profile = userProfile();
         return data.keys().hasAll([
@@ -1557,15 +1592,18 @@ function securityCanAccessCommunity(communityId) {
           && adminCanAccessCommunity(resource.data.communityId)
         );
 
-      allow create: if legacyImagesOnly(request.resource.data)
+      allow create: if initialLikesAreEmpty()
+        && legacyImagesOnly(request.resource.data)
         && (residentContentCreate(request.resource.data)
         || (adminCanAccessCommunity(request.resource.data.communityId)
           && contentReferencesMatch(request.resource.data, request.resource.data.communityId)));
 
-      allow update: if commentCounterUpdate() || managedImagesSafeUpdate()
+      allow update: if residentLikeUpdate() || commentCounterUpdate()
+        || (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['likes', 'likedBy'])
+        && managedImagesSafeUpdate()
         && ((residentContentOwner(resource.data)
           || adminCanAccessCommunity(resource.data.communityId))
-        && contentUpdateIsSafe());
+        && contentUpdateIsSafe()));
 
       allow delete: if noAttachedManagedImages()
         && (residentOwns(resource.data)

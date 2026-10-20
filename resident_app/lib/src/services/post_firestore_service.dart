@@ -430,64 +430,51 @@ class PostFirestoreService {
     }
   }
 
-  // ============================================
-  // LIKE POST
-  // ============================================
-  Future<ServiceResult> likePost(String postId) async {
-    try {
-      final currentUserId = await _getCurrentUserId();
+  // A transaction makes repeated taps/retries idempotent and prevents lost
+  // updates when different residents react at the same time.
+  Future<ServiceResult> likePost(String postId) =>
+      _setPostLiked(postId, liked: true);
 
-      if (currentUserId == null || currentUserId.isEmpty) {
-        return ServiceResult(success: false, message: 'User not authenticated');
-      }
+  Future<ServiceResult> unlikePost(String postId) =>
+      _setPostLiked(postId, liked: false);
 
-      print('👍 Liking post: $postId');
-
-      await _postsCollection.doc(postId).update({
-        'likes': FieldValue.increment(1),
-        'likedBy': FieldValue.arrayUnion([currentUserId]),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      print('✅ Post liked');
-
-      return ServiceResult(success: true, message: 'Post liked');
-    } catch (e) {
-      print('❌ Error liking post: $e');
-      return ServiceResult(
-        success: false,
-        message: 'Failed to like post: ${e.toString()}',
-      );
+  Future<ServiceResult> _setPostLiked(
+    String postId, {
+    required bool liked,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return ServiceResult(success: false, message: 'User not authenticated');
     }
-  }
-
-  // ============================================
-  // UNLIKE POST
-  // ============================================
-  Future<ServiceResult> unlikePost(String postId) async {
     try {
-      final currentUserId = await _getCurrentUserId();
-
-      if (currentUserId == null || currentUserId.isEmpty) {
-        return ServiceResult(success: false, message: 'User not authenticated');
-      }
-
-      print('👎 Unliking post: $postId');
-
-      await _postsCollection.doc(postId).update({
-        'likes': FieldValue.increment(-1),
-        'likedBy': FieldValue.arrayRemove([currentUserId]),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      print('✅ Post unliked');
-
-      return ServiceResult(success: true, message: 'Post unliked');
-    } catch (e) {
-      print('❌ Error unliking post: $e');
+      final postRef = _postsCollection.doc(postId);
+      final profileRef = _usersCollection.doc(uid);
+      await retryCommunityWallLikeTransaction(
+        () => _firestore.runTransaction<void>((transaction) async {
+          final post = await transaction.get(postRef);
+          final profile = await transaction.get(profileRef);
+          if (_auth.currentUser?.uid != uid) {
+            throw StateError('The signed-in resident changed.');
+          }
+          final update = buildCommunityWallLikeUpdate(
+            residentId: uid,
+            post: post.data() as Map<String, dynamic>?,
+            profile: profile.data() as Map<String, dynamic>?,
+            liked: liked,
+          );
+          if (update != null) transaction.update(postRef, update);
+        }),
+      );
+      return ServiceResult(
+        success: true,
+        message: liked ? 'Post liked' : 'Post unliked',
+      );
+    } catch (_) {
       return ServiceResult(
         success: false,
-        message: 'Failed to unlike post: ${e.toString()}',
+        message: liked
+            ? 'Failed to like post. Please try again.'
+            : 'Failed to unlike post. Please try again.',
       );
     }
   }
@@ -825,4 +812,62 @@ Map<String, dynamic> buildCommunityWallComment({
     'comment': comment.trim(),
     'createdAt': FieldValue.serverTimestamp(),
   };
+}
+
+/// Computes only the current resident's reaction. Null means an idempotent no-op.
+/// Rules enforce eligibility and ownership independently of this client check.
+Map<String, dynamic>? buildCommunityWallLikeUpdate({
+  required String residentId,
+  required Map<String, dynamic>? post,
+  required Map<String, dynamic>? profile,
+  required bool liked,
+}) {
+  final communityId = post?['communityId'];
+  if (residentId.isEmpty ||
+      post == null ||
+      profile == null ||
+      communityId is! String ||
+      communityId.isEmpty ||
+      profile['communityId'] != communityId ||
+      (post['status'] ?? 'active') != 'active') {
+    throw StateError(
+      'A current resident and active community post are required.',
+    );
+  }
+  final rawLikedBy = post.containsKey('likedBy') ? post['likedBy'] : <String>[];
+  final count = post.containsKey('likes') ? post['likes'] : 0;
+  if (rawLikedBy is! List ||
+      rawLikedBy.any((uid) => uid is! String) ||
+      count is! int ||
+      count < 0 ||
+      count != rawLikedBy.length ||
+      rawLikedBy.toSet().length != rawLikedBy.length) {
+    // Do not silently repair historical counters or other residents' reactions.
+    throw const FormatException('Invalid post reaction state.');
+  }
+  final residents = List<String>.from(rawLikedBy);
+  if (residents.contains(residentId) == liked) return null;
+  // Apply own-UID transforms rather than a stale whole-array snapshot when
+  // concurrent residents commit between transaction reads and rule evaluation.
+  return {
+    'likedBy': liked
+        ? FieldValue.arrayUnion([residentId])
+        : FieldValue.arrayRemove([residentId]),
+    'likes': FieldValue.increment(liked ? 1 : -1),
+    'updatedAt': FieldValue.serverTimestamp(),
+  };
+}
+
+/// Rules can reject a simultaneous duplicate before the version precondition
+/// triggers SDK transaction retries. Re-read once: an already-applied reaction
+/// becomes a no-op. Every retry still uses authenticated reads and strict Rules.
+Future<void> retryCommunityWallLikeTransaction(
+  Future<void> Function() transaction,
+) async {
+  try {
+    await transaction();
+  } on FirebaseException catch (error) {
+    if (error.code != 'permission-denied') rethrow;
+    await transaction();
+  }
 }
