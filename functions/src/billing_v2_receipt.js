@@ -52,6 +52,17 @@ async function readAdjustments(db, transaction, scope, settlement) {
   const allocations = rootRows(allocationsSnapshot, 'paymentAllocations');
   const credits = rootRows(creditSnapshot, 'residentCreditEntries');
   check(allocations.length <= MAX_EVENTS && credits.length <= MAX_EVENTS, 'financial_history_limit');
+  // A receipt requires the original settlement's immutable ledger writes,
+  // not merely a settlement snapshot or a mutable bill's paid flag.
+  for (const [expected, saved] of [[settlement.allocationEvents, allocations],
+    [settlement.creditEntries, credits]]) {
+    const stored = new Map(saved.map(doc => [doc.id, doc.data()]));
+    for (const event of expected) {
+      check(stored.has(event.id), 'invalid_financial_history');
+      try { ledger.assertImmutableRetry(stored.get(event.id), event); }
+      catch (_) { fail('invalid_financial_history'); }
+    }
+  }
   const laterReversals = [];
   const laterCredits = [];
   for (const doc of allocations) {
@@ -126,15 +137,39 @@ async function getResidentBillingV2ReceiptCore({db, auth, data}) {
 
   // A V2 settlement is the only source for an official receipt. Proof-backed
   // settlements additionally require the authoritative proof to remain completed.
+  let historicalVerifiedAt = null;
   if (transaction.sourceType === 'direct_upi_proof') {
     const proofSnapshot = await db.collection('paymentProofsV2').doc(transaction.sourceId).get();
     const proof = proofSnapshot.data();
     check(proofSnapshot.exists && proof.schemaVersion === 2 && proof.status === 'completed' &&
       proof.transactionId === transaction.id && proof.residentId === scope.residentId &&
-      proof.communityId === scope.communityId &&
-      proof.submittedAmountMinor === settlement.claimedAmountMinor &&
-      proof.confirmedAmountMinor === (settlement.confirmedAmountMinor ?? transaction.amountMinor) &&
-      proof.amountMismatch === settlement.amountMismatch, 'proof_not_settled', 'failed-precondition');
+      proof.communityId === scope.communityId, 'proof_not_settled');
+    const historical = ['claimedAmountMinor', 'confirmedAmountMinor', 'amountMismatch',
+      'amountConfirmationMode', 'reviewedBy', 'reviewedAt', 'referenceReviewRequired']
+      .every(key => !Object.hasOwn(settlement, key)) &&
+      ['confirmedAmountMinor', 'amountMismatch', 'amountConfirmationMode', 'amountContractVersion']
+        .every(key => !Object.hasOwn(proof, key));
+    if (historical) {
+      // The original exact-amount verifier persisted these authoritative records
+      // before confirmation metadata existed. Never extend this to flexible or
+      // partially populated newer confirmations, or infer payment from a proof.
+      check(transaction.sourceState === 'approved' && transaction.method === 'upi' &&
+        Number.isSafeInteger(proof.submittedAmountMinor) && proof.submittedAmountMinor > 0 &&
+        proof.submittedAmountMinor === transaction.amountMinor &&
+        validId(settlement.createdBy) && proof.reviewedBy === settlement.createdBy &&
+        settlement.result?.success === true && settlement.result.transactionId === transaction.id &&
+        timestampMillis(settlement.createdAt) === transaction.createdAt, 'proof_not_settled');
+      historicalVerifiedAt = timestampMillis(proof.reviewedAt);
+    } else {
+      check(Number.isSafeInteger(settlement.claimedAmountMinor) && settlement.claimedAmountMinor > 0 &&
+        Number.isSafeInteger(settlement.confirmedAmountMinor) && settlement.confirmedAmountMinor > 0 &&
+        settlement.confirmedAmountMinor === transaction.amountMinor &&
+        typeof settlement.amountMismatch === 'boolean' &&
+        settlement.amountMismatch === (settlement.claimedAmountMinor !== settlement.confirmedAmountMinor) &&
+        proof.submittedAmountMinor === settlement.claimedAmountMinor &&
+        proof.confirmedAmountMinor === settlement.confirmedAmountMinor &&
+        proof.amountMismatch === settlement.amountMismatch, 'proof_not_settled');
+    }
   } else {
     check(['admin_cash', 'bank_transfer', 'cheque'].includes(transaction.sourceType), 'invalid_settlement');
   }
@@ -169,7 +204,8 @@ async function getResidentBillingV2ReceiptCore({db, auth, data}) {
     'settlement_reconciliation_failed');
 
   const proofBacked = transaction.sourceType === 'direct_upi_proof';
-  const verifiedAt = proofBacked ? timestampMillis(settlement.reviewedAt) : timestampMillis(settlement.createdAt);
+  const verifiedAt = proofBacked ? (historicalVerifiedAt ?? timestampMillis(settlement.reviewedAt))
+    : timestampMillis(settlement.createdAt);
   const communityNameValue = community.name ?? community.displayName ?? community.communityName;
   const communityName = typeof communityNameValue === 'string' && communityNameValue.trim()
     ? communityNameValue.trim() : null;
