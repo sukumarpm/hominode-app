@@ -4,7 +4,9 @@ import 'dart:io';
 import '../services/image_picker_service.dart';
 
 class CreateEventModal extends StatefulWidget {
-  const CreateEventModal({super.key});
+  const CreateEventModal({super.key, this.onSubmit});
+
+  final Future<void> Function(Map<String, dynamic>)? onSubmit;
 
   @override
   State<CreateEventModal> createState() => _CreateEventModalState();
@@ -22,6 +24,8 @@ class _CreateEventModalState extends State<CreateEventModal> {
   File? _selectedImageFile;
   String? _imageError;
   bool _isImageSelected = false;
+  bool _saving = false;
+  String? _saveError;
 
   @override
   void dispose() {
@@ -36,134 +40,137 @@ class _CreateEventModalState extends State<CreateEventModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: EdgeInsets.all(20.w),
-      child: Container(
-        constraints: BoxConstraints(maxHeight: 600.h),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16.r),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            _buildHeader(),
+    return PopScope(
+      canPop: !_saving,
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.all(20.w),
+        child: Container(
+          constraints: BoxConstraints(maxHeight: 600.h),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16.r),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              _buildHeader(),
 
-            // Form Content
-            Flexible(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(horizontal: 24.w),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(height: 8.h),
+              // Form Content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.symmetric(horizontal: 24.w),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(height: 8.h),
 
-                      // Event Title
-                      _buildFieldLabel('Events Title'),
-                      SizedBox(height: 8.h),
-                      _buildTextField(
-                        controller: _titleController,
-                        placeholder: 'e.g., Diwali Celebration',
-                      ),
+                        // Event Title
+                        _buildFieldLabel('Events Title'),
+                        SizedBox(height: 8.h),
+                        _buildTextField(
+                          controller: _titleController,
+                          placeholder: 'e.g., Diwali Celebration',
+                        ),
 
-                      SizedBox(height: 20.h),
+                        SizedBox(height: 20.h),
 
-                      // Category
-                      _buildFieldLabel('Category'),
-                      SizedBox(height: 8.h),
-                      _buildTextField(
-                        controller: _categoryController,
-                        placeholder: 'e.g., Festival, Meeting, Sports',
-                      ),
+                        // Category
+                        _buildFieldLabel('Category'),
+                        SizedBox(height: 8.h),
+                        _buildTextField(
+                          controller: _categoryController,
+                          placeholder: 'e.g., Festival, Meeting, Sports',
+                        ),
 
-                      SizedBox(height: 20.h),
+                        SizedBox(height: 20.h),
 
-                      // Date & Time Row
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildFieldLabel('Date'),
-                                SizedBox(height: 8.h),
-                                _buildTextField(
-                                  controller: _dateController,
-                                  placeholder: 'dd-mm-yyyy',
-                                  onTap: () => _selectDate(context),
-                                  readOnly: true,
-                                ),
-                              ],
+                        // Date & Time Row
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildFieldLabel('Date'),
+                                  SizedBox(height: 8.h),
+                                  _buildTextField(
+                                    controller: _dateController,
+                                    placeholder: 'dd-mm-yyyy',
+                                    onTap: () => _selectDate(context),
+                                    readOnly: true,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 16.w),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildFieldLabel('Time'),
-                                SizedBox(height: 8.h),
-                                _buildTextField(
-                                  controller: _timeController,
-                                  placeholder: '-- / --',
-                                  onTap: () => _selectTime(context),
-                                  readOnly: true,
-                                ),
-                              ],
+                            SizedBox(width: 16.w),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildFieldLabel('Time'),
+                                  SizedBox(height: 8.h),
+                                  _buildTextField(
+                                    controller: _timeController,
+                                    placeholder: '-- / --',
+                                    onTap: () => _selectTime(context),
+                                    readOnly: true,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
 
-                      SizedBox(height: 20.h),
+                        SizedBox(height: 20.h),
 
-                      // Location
-                      _buildFieldLabel('Location'),
-                      SizedBox(height: 8.h),
-                      _buildTextField(
-                        controller: _locationController,
-                        placeholder: 'e.g., Community Hall',
-                      ),
+                        // Location
+                        _buildFieldLabel('Location'),
+                        SizedBox(height: 8.h),
+                        _buildTextField(
+                          controller: _locationController,
+                          placeholder: 'e.g., Community Hall',
+                        ),
 
-                      SizedBox(height: 20.h),
+                        SizedBox(height: 20.h),
 
-                      // Description
-                      _buildFieldLabel('Description'),
-                      SizedBox(height: 8.h),
-                      _buildTextField(
-                        controller: _descriptionController,
-                        placeholder: 'Event details...',
-                        maxLines: 4,
-                      ),
+                        // Description
+                        _buildFieldLabel('Description'),
+                        SizedBox(height: 8.h),
+                        _buildTextField(
+                          controller: _descriptionController,
+                          placeholder: 'Event details...',
+                          maxLines: 4,
+                        ),
 
-                      SizedBox(height: 20.h),
+                        SizedBox(height: 20.h),
 
-                      // Attach Photo
-                      _buildFieldLabel('Attach photo (optional)'),
-                      SizedBox(height: 8.h),
-                      _buildUploadButton(),
+                        // Attach Photo
+                        _buildFieldLabel('Attach photo (optional)'),
+                        SizedBox(height: 8.h),
+                        _buildUploadButton(),
 
-                      SizedBox(height: 24.h),
-                    ],
+                        SizedBox(height: 24.h),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
 
-            // Create Button
-            _buildCreateButton(),
-          ],
+              // Create Button
+              _buildCreateButton(),
+            ],
+          ),
         ),
       ),
     );
@@ -195,7 +202,7 @@ class _CreateEventModalState extends State<CreateEventModal> {
             ),
           ),
           GestureDetector(
-            onTap: () => Navigator.pop(context),
+            onTap: _saving ? null : () => Navigator.pop(context),
             child: Container(
               padding: EdgeInsets.all(8.w),
               child: Icon(Icons.close, size: 20.w, color: Color(0xFF6B7280)),
@@ -400,21 +407,37 @@ class _CreateEventModalState extends State<CreateEventModal> {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(24.w),
-      child: ElevatedButton(
-        onPressed: _handleCreateEvent,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF0E4778),
-          foregroundColor: Colors.white,
-          padding: EdgeInsets.symmetric(vertical: 16.h),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12.r),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_saveError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                _saveError!,
+                style: const TextStyle(color: Color(0xFFDC2626)),
+              ),
+            ),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _saving ? null : _handleCreateEvent,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0E4778),
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16.h),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                elevation: 0,
+              ),
+              child: Text(
+                _saving ? 'Saving…' : 'Create & Notify All',
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
+              ),
+            ),
           ),
-          elevation: 0,
-        ),
-        child: Text(
-          'Create & Notify All',
-          style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600),
-        ),
+        ],
       ),
     );
   }
@@ -465,6 +488,7 @@ class _CreateEventModalState extends State<CreateEventModal> {
   }
 
   Future<void> _pickImage() async {
+    if (_saving) return;
     try {
       setState(() {
         _imageError = null;
@@ -520,7 +544,8 @@ class _CreateEventModalState extends State<CreateEventModal> {
     }
   }
 
-  void _handleCreateEvent() {
+  Future<void> _handleCreateEvent() async {
+    if (_saving) return;
     if (_formKey.currentState!.validate()) {
       // Parse date from dd-mm-yyyy format
       DateTime? eventDate;
@@ -548,23 +573,42 @@ class _CreateEventModalState extends State<CreateEventModal> {
         'description': _descriptionController.text,
         'hasImage': _isImageSelected,
         'imageFile': _selectedImageFile,
-        'localImagePath': _selectedImageFile?.path,
-        'imageUrl': null, // For network images (future enhancement)
+        'imageUrl':
+            null, // Firebase upload supplies the shared URL before save.
       };
 
-      Navigator.pop(context, eventData);
+      setState(() {
+        _saving = true;
+        _saveError = null;
+      });
+      try {
+        await widget.onSubmit?.call(eventData);
+        if (mounted) Navigator.pop(context, eventData);
+      } catch (_) {
+        if (mounted) {
+          setState(
+            () => _saveError =
+                'Could not save the event and photo. Your details are kept. Please retry.',
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
     }
   }
 }
 
 // Helper function to show the modal
-Future<Map<String, dynamic>?> showCreateEventModal(BuildContext context) {
+Future<Map<String, dynamic>?> showCreateEventModal(
+  BuildContext context, {
+  Future<void> Function(Map<String, dynamic>)? onSubmit,
+}) {
   return showDialog<Map<String, dynamic>>(
     context: context,
     barrierDismissible: false, // Prevent dismissing by tapping outside
     barrierColor: Colors.black.withOpacity(0.4), // Dark overlay
     builder: (BuildContext context) {
-      return const CreateEventModal();
+      return CreateEventModal(onSubmit: onSubmit);
     },
   );
 }

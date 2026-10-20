@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'dart:io';
 import 'desktop/admin_desktop_page_frame.dart';
 import 'widgets/create_event_modal.dart';
 import 'widgets/edit_announcement_modal.dart';
@@ -271,19 +270,38 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
       }
 
       if (selectedTab == 0) {
-        final result = await showCreateEventModal(context);
-        if (result == null || !context.mounted) return;
-        await _service.createEvent(
-          title: result['title'],
-          category: result['category'] ?? 'General',
-          description: result['description'] ?? '',
-          date: result['date'] ?? DateTime.now(),
-          time: result['time'] ?? '6:00 PM',
-          location: result['location'] ?? 'Community Hall',
-          imageUrl: result['imageUrl'],
-          localImagePath: result['localImagePath'],
+        String? eventId;
+        final result = await showCreateEventModal(
+          context,
+          onSubmit: (data) async {
+            eventId ??= _service.newEventId();
+            await _service.createEvent(
+              eventId: eventId,
+              title: data['title'],
+              category: data['category'] ?? 'General',
+              description: data['description'] ?? '',
+              date: data['date'] ?? DateTime.now(),
+              time: data['time'] ?? '6:00 PM',
+              location: data['location'] ?? 'Community Hall',
+              imageFile: data['imageFile'],
+            );
+          },
         );
-        if (context.mounted) {
+        if (result == null) {
+          if (eventId != null) {
+            try {
+              await _service.discardEventAttempt(eventId!);
+            } catch (_) {
+              // Do not log file paths, download URLs or profile details.
+              debugPrint(
+                'Event photo cleanup was not confirmed; no referenced image was removed.',
+              );
+            }
+          }
+          return;
+        }
+        if (!mounted) return;
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Event created successfully'),
@@ -403,7 +421,6 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
                       rsvpCount: event.rsvpCount,
                       totalCapacity: event.totalCapacity,
                       imagePath: event.imageUrl,
-                      localImagePath: event.localImagePath,
                     ),
                     onTap: () {
                       // TODO: Navigate to event detail screen
@@ -696,7 +713,8 @@ class EventData {
   final int rsvpCount;
   final int totalCapacity;
   final String? imagePath; // Optional image URL for network images
-  final String? localImagePath; // Optional local file path
+  final String?
+  localImagePath; // Legacy argument; never rendered as shared media.
 
   EventData({
     required this.title,
@@ -712,7 +730,7 @@ class EventData {
   });
 
   // Helper to check if event has any image
-  bool get hasImage => imagePath != null || localImagePath != null;
+  bool get hasImage => imagePath != null;
 }
 
 class AnnouncementData {
@@ -877,18 +895,12 @@ class EventCardWidget extends StatelessWidget {
   Widget _buildEventImage(EventData event) {
     Widget imageWidget;
 
-    if (event.localImagePath != null) {
-      // Display local file image
-      imageWidget = Image.file(
-        File(event.localImagePath!),
-        width: double.infinity,
-        height: 160,
-        fit: BoxFit.cover,
-      );
-    } else if (event.imagePath != null) {
+    if (event.imagePath != null) {
       // Display network image
       imageWidget = Image.network(
         event.imagePath!,
+        errorBuilder: (_, _, _) =>
+            const Center(child: Icon(Icons.image_not_supported_outlined)),
         width: double.infinity,
         height: 160,
         fit: BoxFit.cover,
