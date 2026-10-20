@@ -780,8 +780,17 @@ async function setCommunitySubscriptionStatusCore({db, auth, data}) {
   });
 }
 
-function toMillis(value) {
-  return value?.toMillis?.() ?? null;
+function toMillis(value, fieldName) {
+  if (value == null) return null;
+  // Missing bounds are intentional; malformed stored bounds must not become
+  // an unlimited active subscription. Approved writes use Firestore Timestamp.
+  if (!(value instanceof Timestamp)) {
+    throw new RegistrationError(
+      "failed-precondition",
+      `The community subscription has an invalid ${fieldName}.`,
+    );
+  }
+  return value.toMillis();
 }
 
 async function resolveCommunitySubscriptionCore({db, communityId, transaction = null}) {
@@ -808,8 +817,8 @@ async function resolveCommunitySubscriptionCore({db, communityId, transaction = 
     planId: subscription.planId,
     planName: plan.name,
     status: subscription.status,
-    startsAtMs: toMillis(subscription.startsAt),
-    endsAtMs: toMillis(subscription.endsAt),
+    startsAtMs: toMillis(subscription.startsAt, "startsAt"),
+    endsAtMs: toMillis(subscription.endsAt, "endsAt"),
     features: {...plan.features},
     limits: {...plan.limits},
     schemaVersion: subscription.schemaVersion ?? 1,
