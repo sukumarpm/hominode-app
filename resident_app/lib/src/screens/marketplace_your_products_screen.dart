@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/listing_model.dart';
 import '../services/listing_firestore_service.dart';
-import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 import '../widgets/skeleton_loader.dart';
+import '../components/marketplace_listing_card.dart';
 
 class MarketplaceYourProductsScreen extends StatefulWidget {
   const MarketplaceYourProductsScreen({super.key});
@@ -84,7 +84,13 @@ class _MarketplaceYourProductsScreenState
           itemCount: listings.length,
           itemBuilder: (context, index) {
             final listing = listings[index];
-            return _buildProductCard(context, listing);
+            return MarketplaceListingCard(
+              listing: listing,
+              onOpen: () => _navigateToDetail(context, listing),
+              onEdit: () => _editProduct(context, listing),
+              onMarkSold: () => _markAsSold(context, listing),
+              onDelete: () => _deleteProduct(context, listing),
+            );
           },
         );
       },
@@ -112,235 +118,6 @@ class _MarketplaceYourProductsScreenState
       print('❌ Error streaming my listings: $e');
       yield [];
     }
-  }
-
-  Widget _buildProductCard(BuildContext context, ListingModel listing) {
-    return GestureDetector(
-      onTap: () => _navigateToDetail(context, listing),
-      child: Container(
-        margin: EdgeInsets.only(bottom: 12.h),
-        padding: EdgeInsets.all(16.w),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12.r),
-          border: Border.all(color: AppColors.border),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header with status
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        listing.title,
-                        style: TextStyle(
-                          fontSize: 16.sp,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      SizedBox(height: 4.h),
-                      Text(
-                        listing.formattedPrice,
-                        style: TextStyle(
-                          fontSize: 14.sp,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _buildStatusBadge(listing.status),
-              ],
-            ),
-
-            SizedBox(height: 12.h),
-
-            // Details
-            Row(
-              children: [
-                _buildDetailChip(Icons.category, listing.category),
-                SizedBox(width: 8.w),
-                _buildDetailChip(Icons.check_circle, listing.condition),
-                SizedBox(width: 8.w),
-                _buildDetailChip(Icons.calendar_today, listing.formattedDate),
-              ],
-            ),
-
-            SizedBox(height: 12.h),
-
-            // Phone Requests (Clickable)
-            if (listing.phoneRequestCount > 0)
-              GestureDetector(
-                onTap: () => _navigateToDetail(context, listing),
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12.w,
-                    vertical: 8.h,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8.r),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.phone,
-                        size: 16.w,
-                        color: Colors.blue.shade600,
-                      ),
-                      SizedBox(width: 8.w),
-                      Text(
-                        '${listing.phoneRequestCount} phone request${listing.phoneRequestCount > 1 ? 's' : ''}',
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.blue.shade600,
-                        ),
-                      ),
-                      SizedBox(width: 8.w),
-                      Icon(
-                        Icons.arrow_forward,
-                        size: 14.w,
-                        color: Colors.blue.shade600,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-            SizedBox(height: 12.h),
-
-            // Action Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => _editProduct(context, listing),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: const BorderSide(color: AppColors.primary),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                    ),
-                    child: const Text('Edit'),
-                  ),
-                ),
-                SizedBox(width: 8.w),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _markAsSold(context, listing),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: listing.status == 'sold'
-                          ? Colors.grey.shade400
-                          : Colors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                    ),
-                    child: Text(
-                      listing.status == 'sold' ? 'Sold' : 'Mark Sold',
-                    ),
-                  ),
-                ),
-                SizedBox(width: 8.w),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _deleteProduct(context, listing),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade500,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                    ),
-                    child: const Text('Delete'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusBadge(String status) {
-    Color bgColor;
-    Color textColor;
-    String label;
-
-    switch (status) {
-      case 'active':
-        bgColor = Colors.green.shade50;
-        textColor = Colors.green.shade600;
-        label = 'Active';
-        break;
-      case 'sold':
-        bgColor = Colors.grey.shade100;
-        textColor = Colors.grey.shade600;
-        label = 'Sold';
-        break;
-      default:
-        bgColor = Colors.grey.shade100;
-        textColor = Colors.grey.shade600;
-        label = 'Inactive';
-    }
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(20.r),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12.sp,
-          fontWeight: FontWeight.w600,
-          color: textColor,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailChip(IconData icon, String label) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(6.r),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12.w, color: Colors.grey.shade600),
-          SizedBox(width: 4.w),
-          Text(
-            label,
-            style: TextStyle(fontSize: 11.sp, color: Colors.grey.shade600),
-          ),
-        ],
-      ),
-    );
   }
 
   void _editProduct(BuildContext context, ListingModel listing) {

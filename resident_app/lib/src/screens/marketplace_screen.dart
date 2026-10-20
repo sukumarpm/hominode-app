@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/listing_model.dart';
 import '../services/listing_firestore_service.dart';
-import '../components/app_segmented_control.dart';
+import '../components/marketplace_tabs.dart';
 import '../components/primary_header.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
@@ -62,8 +62,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
             padding: const EdgeInsets.symmetric(
               horizontal: AppSizes.pagePadding,
             ),
-            child: AppSegmentedControl(
-              segments: const ['Browse', 'Your Products', 'History'],
+            child: MarketplaceTabs(
               selectedIndex: _selectedTab,
               onChanged: (index) {
                 setState(() {
