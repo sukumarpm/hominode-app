@@ -1677,23 +1677,46 @@ function securityCanAccessCommunity(communityId) {
     // MARKETPLACE / LISTINGS
     // ============================================================
 
+    // Marketplace has no Essential read-only tier. Resolve the canonical plan
+    // from the authenticated resident's community, never client feature flags.
+    function marketplaceSubscriptionAllowsAccess() {
+      return hasUserProfile()
+        && userProfile().role == 'resident'
+        && marketplaceSubscriptionIsUsable(userProfile());
+    }
+
+    function marketplaceSubscriptionIsUsable(profile) {
+      let subscription = get(/databases/$(database)/documents/subscriptions/$(profile.communityId)).data;
+      let starts = subscription.get('startsAt', null);
+      let ends = subscription.get('endsAt', null);
+      return phoneAuthenticated()
+        && request.auth.token.phone_number == profile.phoneNumber
+        && subscription.planId in ['plus', 'pro']
+        && subscription.status in ['active', 'trial', 'grace']
+        && (starts == null || (starts is timestamp && starts <= request.time))
+        && ((ends is timestamp && request.time < ends)
+          || (ends == null && subscription.status == 'active'));
+    }
+
     match /listings/{listingId} {
 
-      allow read: if residentSameBuilding(resource.data)
-        || residentSameCommunity(resource.data)
-        || residentOwns(resource.data)
+      allow read: if (marketplaceSubscriptionAllowsAccess()
+        && (residentSameBuilding(resource.data)
+          || residentSameCommunity(resource.data)
+          || residentOwns(resource.data)))
         || (
           ('communityId' in resource.data)
           && adminCanAccessCommunity(resource.data.communityId)
         );
 
-      allow create: if residentContentCreate(request.resource.data);
+      allow create: if marketplaceSubscriptionAllowsAccess()
+        && residentContentCreate(request.resource.data);
 
-      allow update: if (residentContentOwner(resource.data)
+      allow update: if ((marketplaceSubscriptionAllowsAccess() && residentContentOwner(resource.data))
           || adminCanAccessCommunity(resource.data.communityId))
         && contentUpdateIsSafe();
 
-      allow delete: if residentOwns(resource.data)
+      allow delete: if (marketplaceSubscriptionAllowsAccess() && residentOwns(resource.data))
         || adminCanAccessCommunity(resource.data.communityId);
     }
 
@@ -2053,6 +2076,12 @@ function securityCanAccessCommunity(communityId) {
     // ============================================================
 
     match /{collectionName}/{documentId} {
+      function marketplaceCollectionAllowed(data) {
+        return collectionName != 'marketplace'
+          || adminCanAccessCommunity(data.communityId)
+          || marketplaceSubscriptionAllowsAccess();
+      }
+
       function adminManagedCollection() {
         return collectionName in [
           'parcels', 'staff', 'parkingSlots', 'parking_violations', 'vendors',
@@ -2077,19 +2106,22 @@ function securityCanAccessCommunity(communityId) {
       }
 
       // No chats/messages here: their participant rules must be authoritative.
-      allow read: if (adminManagedCollection() || residentOwnedCollection())
+      allow read: if marketplaceCollectionAllowed(resource.data)
+        && (adminManagedCollection() || residentOwnedCollection())
         && (canAccessCommunity(resource.data.communityId) || residentOwns(resource.data));
       allow create: if (adminManagedCollection() || residentOwnedCollection())
         && adminCanAccessCommunity(request.resource.data.communityId)
         && contentReferencesMatch(request.resource.data, request.resource.data.communityId);
-      allow create: if residentOwnedCollection()
+      allow create: if marketplaceCollectionAllowed(request.resource.data)
+        && residentOwnedCollection()
         && residentRecordOwner(request.resource.data)
         && contentReferencesMatch(request.resource.data, request.resource.data.communityId);
       // Admin assignments (for example a parking slot's residentId) remain editable.
       allow update: if adminManagedCollection()
         && adminCanAccessCommunity(resource.data.communityId)
         && tenantContentUpdateIsSafe();
-      allow update: if residentOwnedCollection()
+      allow update: if marketplaceCollectionAllowed(resource.data)
+        && residentOwnedCollection()
         && (adminCanAccessCommunity(resource.data.communityId) || residentRecordOwner(resource.data))
         && contentUpdateIsSafe();
       allow delete: if (adminManagedCollection() || residentOwnedCollection())
@@ -2098,12 +2130,14 @@ function securityCanAccessCommunity(communityId) {
 
     match /marketplaceRequests/{requestId} {
       function requestParticipant(data) {
-        return residentCanAccessCommunity(data.communityId)
+        return marketplaceSubscriptionAllowsAccess()
+          && residentCanAccessCommunity(data.communityId)
           && (data.requestUserId == request.auth.uid || data.productOwnerId == request.auth.uid);
       }
       allow read: if requestParticipant(resource.data)
         || adminCanAccessCommunity(resource.data.communityId);
-      allow create: if ((residentCanAccessCommunity(request.resource.data.communityId)
+      allow create: if ((marketplaceSubscriptionAllowsAccess()
+          && residentCanAccessCommunity(request.resource.data.communityId)
           && request.resource.data.requestUserId == request.auth.uid
           && request.resource.data.status == 'pending'
           && get(/databases/$(database)/documents/marketplaces/$(request.resource.data.productId)).data.sellerId
@@ -2372,8 +2406,8 @@ match /marketplaces/{listingId} {
 
   // Residents can browse listings in their own building.
   allow read: if
-    residentSameBuilding(resource.data)
-    || residentOwns(resource.data)
+    (marketplaceSubscriptionAllowsAccess()
+      && (residentSameBuilding(resource.data) || residentOwns(resource.data)))
     || (
       ('communityId' in resource.data)
       && adminCanAccessCommunity(resource.data.communityId)
@@ -2381,7 +2415,8 @@ match /marketplaces/{listingId} {
 
   // Resident can create a listing for their own building.
   allow create: if legacyImagesOnly(request.resource.data)
-        && (approvedResident()
+        && (marketplaceSubscriptionAllowsAccess()
+    && approvedResident()
     && ('sellerId' in request.resource.data)
     && request.resource.data.sellerId == request.auth.uid
     && residentContentIdentityMatches(request.resource.data)
@@ -2392,7 +2427,8 @@ match /marketplaces/{listingId} {
 
   // Seller can update own listing.
   allow update: if managedImagesSafeUpdate()
-        && (approvedResident()
+        && (marketplaceSubscriptionAllowsAccess()
+    && approvedResident()
     && ('sellerId' in resource.data)
     && resource.data.sellerId == request.auth.uid
     && request.resource.data.sellerId == resource.data.sellerId
@@ -2402,9 +2438,11 @@ match /marketplaces/{listingId} {
 
   // Seller can delete own listing.
   allow delete: if noAttachedManagedImages()
-        && (approvedResident()
+        && (marketplaceSubscriptionAllowsAccess()
+    && approvedResident()
     && ('sellerId' in resource.data)
-    && resource.data.sellerId == request.auth.uid);
+    && resource.data.sellerId == request.auth.uid
+    && contentCommunity(resource.data) == userProfile().communityId);
 
 
   // ----------------------------------------------------------
@@ -2420,7 +2458,8 @@ match /marketplaces/{listingId} {
         }
 
         function sameBuildingResident() {
-          return approvedResident()
+          return marketplaceSubscriptionAllowsAccess()
+            && approvedResident()
             && ('buildingId' in parentListing())
             && parentListing().buildingId == userProfile().buildingId
             && contentCommunity(parentListing()) == userProfile().communityId;

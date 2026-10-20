@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_your_product_detail_screen.dart
 // Product detail screen for seller's own products
@@ -12,18 +13,35 @@ import '../models/listing_model.dart';
 import '../services/listing_firestore_service.dart';
 import 'marketplace_edit_listing_screen.dart';
 
-class MarketplaceYourProductDetailScreen extends StatefulWidget {
+class MarketplaceYourProductDetailScreen extends StatelessWidget {
+  const MarketplaceYourProductDetailScreen({
+    super.key,
+    required this.listing,
+    this.accessLoader,
+  });
   final ListingModel listing;
-
-  const MarketplaceYourProductDetailScreen({super.key, required this.listing});
+  final MarketplaceAccessLoader? accessLoader;
 
   @override
-  State<MarketplaceYourProductDetailScreen> createState() =>
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) =>
+        _MarketplaceYourProductDetailScreenContent(listing: listing),
+  );
+}
+
+class _MarketplaceYourProductDetailScreenContent extends StatefulWidget {
+  final ListingModel listing;
+
+  const _MarketplaceYourProductDetailScreenContent({required this.listing});
+
+  @override
+  State<_MarketplaceYourProductDetailScreenContent> createState() =>
       _MarketplaceYourProductDetailScreenState();
 }
 
 class _MarketplaceYourProductDetailScreenState
-    extends State<MarketplaceYourProductDetailScreen> {
+    extends State<_MarketplaceYourProductDetailScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
   late PageController _imageController;
   int _currentImageIndex = 0;

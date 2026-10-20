@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 // lib/src/screens/marketplace_buyer_phone_view_screen.dart
 // Screen for buyer to view accepted phone numbers from sellers
 
@@ -9,18 +10,34 @@ import '../services/listing_firestore_service.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 
-class MarketplaceBuyerPhoneViewScreen extends StatefulWidget {
+class MarketplaceBuyerPhoneViewScreen extends StatelessWidget {
+  const MarketplaceBuyerPhoneViewScreen({
+    super.key,
+    required this.listing,
+    this.accessLoader,
+  });
   final ListingModel listing;
-
-  const MarketplaceBuyerPhoneViewScreen({super.key, required this.listing});
+  final MarketplaceAccessLoader? accessLoader;
 
   @override
-  State<MarketplaceBuyerPhoneViewScreen> createState() =>
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) => _MarketplaceBuyerPhoneViewScreenContent(listing: listing),
+  );
+}
+
+class _MarketplaceBuyerPhoneViewScreenContent extends StatefulWidget {
+  final ListingModel listing;
+
+  const _MarketplaceBuyerPhoneViewScreenContent({required this.listing});
+
+  @override
+  State<_MarketplaceBuyerPhoneViewScreenContent> createState() =>
       _MarketplaceBuyerPhoneViewScreenState();
 }
 
 class _MarketplaceBuyerPhoneViewScreenState
-    extends State<MarketplaceBuyerPhoneViewScreen> {
+    extends State<_MarketplaceBuyerPhoneViewScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
   final bool _isLoading = false;
 

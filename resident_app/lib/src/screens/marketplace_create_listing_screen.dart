@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 // lib/src/screens/marketplace_create_listing_screen.dart
 // Create new marketplace listing
 
@@ -9,18 +10,35 @@ import '../services/listing_firestore_service.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 
-class MarketplaceCreateListingScreen extends StatefulWidget {
-  const MarketplaceCreateListingScreen({super.key, this.listingService});
+class MarketplaceCreateListingScreen extends StatelessWidget {
+  const MarketplaceCreateListingScreen({
+    super.key,
+    this.listingService,
+    this.accessLoader,
+  });
+  final ListingFirestoreService? listingService;
+  final MarketplaceAccessLoader? accessLoader;
+
+  @override
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) =>
+        _MarketplaceCreateListingScreenContent(listingService: listingService),
+  );
+}
+
+class _MarketplaceCreateListingScreenContent extends StatefulWidget {
+  const _MarketplaceCreateListingScreenContent({this.listingService});
 
   final ListingFirestoreService? listingService;
 
   @override
-  State<MarketplaceCreateListingScreen> createState() =>
+  State<_MarketplaceCreateListingScreenContent> createState() =>
       _MarketplaceCreateListingScreenState();
 }
 
 class _MarketplaceCreateListingScreenState
-    extends State<MarketplaceCreateListingScreen> {
+    extends State<_MarketplaceCreateListingScreenContent> {
   late final ListingFirestoreService _listingService =
       widget.listingService ?? ListingFirestoreService();
   final _formKey = GlobalKey<FormState>();

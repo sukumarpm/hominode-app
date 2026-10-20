@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_product_detail_screen.dart
 // Product detail screen with phone request functionality
@@ -10,18 +11,34 @@ import '../services/listing_firestore_service.dart';
 import '../services/image_display_flow_function.dart';
 import '../constants/app_colors.dart';
 
-class MarketplaceProductDetailScreen extends StatefulWidget {
+class MarketplaceProductDetailScreen extends StatelessWidget {
+  const MarketplaceProductDetailScreen({
+    super.key,
+    required this.listing,
+    this.accessLoader,
+  });
   final ListingModel listing;
-
-  const MarketplaceProductDetailScreen({super.key, required this.listing});
+  final MarketplaceAccessLoader? accessLoader;
 
   @override
-  State<MarketplaceProductDetailScreen> createState() =>
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) => _MarketplaceProductDetailScreenContent(listing: listing),
+  );
+}
+
+class _MarketplaceProductDetailScreenContent extends StatefulWidget {
+  final ListingModel listing;
+
+  const _MarketplaceProductDetailScreenContent({required this.listing});
+
+  @override
+  State<_MarketplaceProductDetailScreenContent> createState() =>
       _MarketplaceProductDetailScreenState();
 }
 
 class _MarketplaceProductDetailScreenState
-    extends State<MarketplaceProductDetailScreen> {
+    extends State<_MarketplaceProductDetailScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
   bool _isRequestingPhone = false;
   bool _phoneRequested = false;

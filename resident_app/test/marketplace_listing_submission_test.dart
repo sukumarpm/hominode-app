@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:hominode_entitlements/hominode_entitlements.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -191,10 +192,20 @@ void main() {
         ScreenUtilInit(
           designSize: const Size(390, 844),
           builder: (_, _) => MaterialApp(
-            home: MarketplaceCreateListingScreen(listingService: service),
+            home: MarketplaceCreateListingScreen(
+              listingService: service,
+              accessLoader: () async => const HominodeEntitlement(
+                communityId: 'A',
+                planId: 'plus',
+                status: HominodeSubscriptionStatus.active,
+                features: {'marketplace': true},
+                limits: {},
+              ),
+            ),
           ),
         ),
       );
+      await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField).at(0), 'Chair');
       await tester.enterText(find.byType(TextFormField).at(1), '500');
       await tester.enterText(

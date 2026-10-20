@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_screen.dart
 // Main Marketplace Screen - Browse & Your Products
@@ -18,14 +19,25 @@ import 'marketplace_your_product_detail_screen.dart';
 import 'marketplace_edit_listing_screen.dart';
 import 'marketplace_buyer_phone_view_screen.dart';
 
-class MarketplaceScreen extends StatefulWidget {
-  const MarketplaceScreen({super.key});
+class MarketplaceScreen extends StatelessWidget {
+  const MarketplaceScreen({super.key, this.accessLoader});
+  final MarketplaceAccessLoader? accessLoader;
 
   @override
-  State<MarketplaceScreen> createState() => _MarketplaceScreenState();
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) => _MarketplaceScreenContent(),
+  );
 }
 
-class _MarketplaceScreenState extends State<MarketplaceScreen> {
+class _MarketplaceScreenContent extends StatefulWidget {
+  const _MarketplaceScreenContent();
+
+  @override
+  State<_MarketplaceScreenContent> createState() => _MarketplaceScreenState();
+}
+
+class _MarketplaceScreenState extends State<_MarketplaceScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
   int _selectedTab = 0; // 0 = Browse, 1 = Your Products
   int _selectedCategoryIndex = 0;

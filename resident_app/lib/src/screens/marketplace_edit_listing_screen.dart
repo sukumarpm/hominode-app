@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/src/screens/marketplace_edit_listing_screen.dart
 // Edit marketplace listing screen
@@ -12,18 +13,34 @@ import '../services/resident_image_operations.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_sizes.dart';
 
-class MarketplaceEditListingScreen extends StatefulWidget {
+class MarketplaceEditListingScreen extends StatelessWidget {
+  const MarketplaceEditListingScreen({
+    super.key,
+    required this.listing,
+    this.accessLoader,
+  });
   final ListingModel listing;
-
-  const MarketplaceEditListingScreen({super.key, required this.listing});
+  final MarketplaceAccessLoader? accessLoader;
 
   @override
-  State<MarketplaceEditListingScreen> createState() =>
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) => _MarketplaceEditListingScreenContent(listing: listing),
+  );
+}
+
+class _MarketplaceEditListingScreenContent extends StatefulWidget {
+  final ListingModel listing;
+
+  const _MarketplaceEditListingScreenContent({required this.listing});
+
+  @override
+  State<_MarketplaceEditListingScreenContent> createState() =>
       _MarketplaceEditListingScreenState();
 }
 
 class _MarketplaceEditListingScreenState
-    extends State<MarketplaceEditListingScreen> {
+    extends State<_MarketplaceEditListingScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
   final _images = ResidentImageOperations();
   final _formKey = GlobalKey<FormState>();

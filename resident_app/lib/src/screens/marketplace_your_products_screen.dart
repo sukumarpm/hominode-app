@@ -1,3 +1,4 @@
+import '../widgets/marketplace_access_gate.dart';
 // lib/src/screens/marketplace_your_products_screen.dart
 // Your Products management screen
 
@@ -9,16 +10,27 @@ import '../constants/app_sizes.dart';
 import '../widgets/skeleton_loader.dart';
 import '../components/marketplace_listing_card.dart';
 
-class MarketplaceYourProductsScreen extends StatefulWidget {
-  const MarketplaceYourProductsScreen({super.key});
+class MarketplaceYourProductsScreen extends StatelessWidget {
+  const MarketplaceYourProductsScreen({super.key, this.accessLoader});
+  final MarketplaceAccessLoader? accessLoader;
 
   @override
-  State<MarketplaceYourProductsScreen> createState() =>
+  Widget build(BuildContext context) => MarketplaceAccessGate(
+    loader: accessLoader,
+    builder: (_) => _MarketplaceYourProductsScreenContent(),
+  );
+}
+
+class _MarketplaceYourProductsScreenContent extends StatefulWidget {
+  const _MarketplaceYourProductsScreenContent();
+
+  @override
+  State<_MarketplaceYourProductsScreenContent> createState() =>
       _MarketplaceYourProductsScreenState();
 }
 
 class _MarketplaceYourProductsScreenState
-    extends State<MarketplaceYourProductsScreen> {
+    extends State<_MarketplaceYourProductsScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
 
   @override
