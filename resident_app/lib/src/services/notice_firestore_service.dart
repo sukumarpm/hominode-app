@@ -18,18 +18,22 @@ class NoticeFirestoreService {
   NoticeFirestoreService._internal()
     : _noticeLoader = null,
       _readLoader = null,
-      _authOverride = null;
+      _authOverride = null,
+      _inboxChangesOverride = null;
   @visibleForTesting
   NoticeFirestoreService.forTesting({
     required Future<List<NoticeModel>> Function() notices,
     required Future<bool> Function(String) isRead,
     FirebaseAuth? auth,
+    Stream<void> Function(String uid)? inboxChanges,
   }) : _noticeLoader = notices,
        _readLoader = isRead,
-       _authOverride = auth;
+       _authOverride = auth,
+       _inboxChangesOverride = inboxChanges;
   final Future<List<NoticeModel>> Function()? _noticeLoader;
   final Future<bool> Function(String)? _readLoader;
   final FirebaseAuth? _authOverride;
+  final Stream<void> Function(String uid)? _inboxChangesOverride;
 
   late final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   late final FirebaseAuth _auth = _authOverride ?? FirebaseAuth.instance;
@@ -309,18 +313,30 @@ class NoticeFirestoreService {
     String uid,
     String communityId,
   ) async {
-    final result = await _firestore
-        .collection('notifications')
-        .where('recipientId', isEqualTo: uid)
-        .where('communityId', isEqualTo: communityId)
-        .where('audience', isEqualTo: 'resident')
-        .where('role', isEqualTo: 'resident')
-        .where('appId', isEqualTo: 'resident')
-        .get();
+    final result = await _eventInboxQuery(uid, communityId).get();
     return result.docs
         .map((doc) => eventNotice(doc.id, doc.data(), uid, communityId))
         .whereType<NoticeModel>()
         .toList();
+  }
+
+  Query<Map<String, dynamic>> _eventInboxQuery(
+    String uid,
+    String communityId,
+  ) => _firestore
+      .collection('notifications')
+      .where('recipientId', isEqualTo: uid)
+      .where('communityId', isEqualTo: communityId)
+      .where('audience', isEqualTo: 'resident')
+      .where('role', isEqualTo: 'resident')
+      .where('appId', isEqualTo: 'resident');
+
+  /// A scoped change signal, never an independently counted second inbox.
+  /// Home replaces this subscription when its resident/community key changes.
+  Stream<void> _watchEventInbox(String uid) async* {
+    final scope = await _loadResidentScope(uid);
+    if (scope == null || _auth.currentUser?.uid != uid) return;
+    yield* _eventInboxQuery(uid, scope.communityId).snapshots().map((_) {});
   }
 
   /// Stream notices (real-time updates)
@@ -406,12 +422,14 @@ class NoticeFirestoreService {
   }
 
   /// Same authorized notice source and persisted read receipts as the inbox.
-  /// Refresh on successful read writes and periodically while Home is visible.
+  /// Refresh on scoped inbox changes, successful reads and periodic fallback.
   /// Cold single-consumer stream: call again after cancellation, not listen again.
   Stream<int> streamUnreadCount() {
     late StreamController<int> controller;
     StreamSubscription<void>? reads;
     StreamSubscription<User?>? auth;
+    StreamSubscription<void>? inbox;
+    var binding = 0;
     Timer? timer;
     var epoch = 0;
     Future<void> refresh() async {
@@ -427,25 +445,50 @@ class NoticeFirestoreService {
         controller.add(count);
     }
 
+    Future<void> bindInbox() async {
+      final currentBinding = ++binding;
+      ++epoch;
+      if (!controller.isClosed) controller.add(0);
+      final previous = inbox;
+      inbox = null;
+      await previous?.cancel();
+      if (controller.isClosed || currentBinding != binding) return;
+      final uid = _auth.currentUser?.uid;
+      if (uid != null) {
+        final changes =
+            _inboxChangesOverride?.call(uid) ??
+            (_noticeLoader == null ? _watchEventInbox(uid) : null);
+        inbox = changes?.listen(
+          (_) => unawaited(refresh()),
+          onError: (Object error, StackTrace stack) {
+            if (!controller.isClosed && currentBinding == binding) {
+              ++epoch;
+              controller.add(0);
+              debugPrint('Unread inbox unavailable (${error.runtimeType}).');
+            }
+          },
+        );
+      }
+      unawaited(refresh());
+    }
+
     controller = StreamController<int>(
       onListen: () {
         controller.add(0);
         reads = _readChanges.stream.listen((_) => unawaited(refresh()));
-        auth = _auth.idTokenChanges().listen((_) {
-          ++epoch;
-          if (!controller.isClosed) controller.add(0);
-          unawaited(refresh());
-        });
+        auth = _auth.idTokenChanges().listen((_) => unawaited(bindInbox()));
         timer = Timer.periodic(
           const Duration(seconds: 60),
           (_) => unawaited(refresh()),
         );
       },
       onCancel: () async {
+        ++binding;
         ++epoch;
         timer?.cancel();
         await reads?.cancel();
         await auth?.cancel();
+        await inbox?.cancel();
       },
     );
     return controller.stream;
@@ -457,9 +500,14 @@ class NoticeFirestoreService {
       final notices = await getNotices();
       int unreadCount = 0;
 
-      for (var notice in notices) {
-        final isRead = await this.isRead(notice.id);
-        if (!isRead) unreadCount++;
+      // A failed receipt is unknown, not unread. It must not suppress other
+      // independently verified unread items, including canonical event records.
+      for (final id in notices.map((notice) => notice.id).toSet()) {
+        try {
+          if (!await isRead(id)) unreadCount++;
+        } catch (error) {
+          debugPrint('Unread receipt unavailable (${error.runtimeType}).');
+        }
       }
 
       return unreadCount;

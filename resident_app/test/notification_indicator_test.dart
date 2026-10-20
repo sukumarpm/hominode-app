@@ -140,6 +140,44 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+  testWidgets(
+    '0, 1 and multiple unread counts recover after stream errors without resubscribing',
+    (tester) async {
+      final source = _Counts();
+      addTearDown(source.close);
+      await _mount(tester, source);
+      expect(
+        find.byKey(const ValueKey('notification-unread-count')),
+        findsNothing,
+      );
+      source.add(1);
+      await tester.pumpAndSettle();
+      expect(find.text('1'), findsOneWidget);
+      source.add(3);
+      await tester.pumpAndSettle();
+      expect(find.text('3'), findsOneWidget);
+      source.addError(StateError('permission-denied'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('notification-unread-count')),
+        findsNothing,
+      );
+      source.add(2);
+      await tester.pumpAndSettle();
+      expect(find.text('2'), findsOneWidget);
+      source.add(0);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('notification-unread-count')),
+        findsNothing,
+      );
+      expect(source.created, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      expect(source.cancelled, 1);
+    },
+  );
+
   testWidgets('disposal cancels the only listener and ignores later events', (
     tester,
   ) async {
