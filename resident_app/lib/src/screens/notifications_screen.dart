@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../events_announcements_screen.dart';
 // lib/src/screens/notifications_screen.dart
 // Notifications screen matching app design standards
 
@@ -7,14 +8,21 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/notice_model.dart';
 import '../services/notice_firestore_service.dart';
+import '../services/announcements_events_service.dart';
 import '../constants/app_sizes.dart';
 import '../widgets/resident_visitor_page_background.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key, this.loadNotifications, this.markRead});
+  const NotificationsScreen({
+    super.key,
+    this.loadNotifications,
+    this.markRead,
+    this.eventsService,
+  });
 
   final Future<List<NoticeModel>> Function()? loadNotifications;
   final Future<void> Function(String)? markRead;
+  final AnnouncementsEventsService? eventsService;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -70,6 +78,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       unawaited(widget.markRead!(notice.id));
     } else if (widget.loadNotifications == null) {
       unawaited(NoticeFirestoreService.instance.markAsRead(notice.id));
+    }
+    if (notice.eventId != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => EventsAnnouncementsScreen(
+            eventsOnly: true,
+            eventId: notice.eventId,
+            service: widget.eventsService,
+          ),
+        ),
+      );
+      return;
     }
     showDialog(
       context: context,

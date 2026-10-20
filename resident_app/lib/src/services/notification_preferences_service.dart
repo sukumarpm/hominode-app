@@ -1,8 +1,10 @@
 // lib/src/services/notification_preferences_service.dart
 // Service for managing notification preferences
 
-// import 'package:shared_preferences/shared_preferences.dart'; // Uncomment when ready to use
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hominode_notifications/hominode_notifications.dart';
 
 /// Service to manage notification preferences
 /// Handles local storage and provides helper methods
@@ -11,9 +13,21 @@ class NotificationPreferencesService {
   static final NotificationPreferencesService _instance =
       NotificationPreferencesService._internal();
   factory NotificationPreferencesService() => _instance;
-  NotificationPreferencesService._internal();
+  NotificationPreferencesService._internal()
+    : _currentUid = (() => FirebaseAuth.instance.currentUser?.uid),
+      _refreshRegistration =
+          HominodePushNotifications.instance.refreshRegistration;
 
-  // In-memory storage (replace with SharedPreferences when ready)
+  @visibleForTesting
+  NotificationPreferencesService.forTesting({
+    required String? Function() currentUid,
+    required Future<void> Function() refreshRegistration,
+  }) : _currentUid = currentUid,
+       _refreshRegistration = refreshRegistration;
+  final String? Function() _currentUid;
+  final Future<void> Function() _refreshRegistration;
+
+  // Defaults; persisted values are scoped to the signed-in resident.
   final Map<String, dynamic> _preferences = {
     'push_notifications': true,
     'email_notifications': true,
@@ -49,67 +63,72 @@ class NotificationPreferencesService {
 
   /// Get all notification preferences
   Future<Map<String, dynamic>> getAllPreferences() async {
-    // TODO: Replace with SharedPreferences when ready
-    // final prefs = await SharedPreferences.getInstance();
-    return Map<String, dynamic>.from(_preferences);
+    final uid = _currentUid();
+    if (uid == null) return Map<String, dynamic>.from(_preferences);
+    final store = await SharedPreferences.getInstance();
+    return {
+      for (final entry in _preferences.entries)
+        entry.key: store.get('notifications/$uid/${entry.key}') ?? entry.value,
+    };
   }
 
   /// Check if push notifications are enabled
   Future<bool> isPushEnabled() async {
-    return _preferences[_pushNotifications] as bool? ?? true;
+    return (await getAllPreferences())[_pushNotifications] as bool? ?? true;
   }
 
   /// Check if email notifications are enabled
   Future<bool> isEmailEnabled() async {
-    return _preferences[_emailNotifications] as bool? ?? true;
+    return (await getAllPreferences())[_emailNotifications] as bool? ?? true;
   }
 
   /// Check if SMS notifications are enabled
   Future<bool> isSMSEnabled() async {
-    return _preferences[_smsNotifications] as bool? ?? false;
+    return (await getAllPreferences())[_smsNotifications] as bool? ?? false;
   }
 
   /// Check if event reminders are enabled
   Future<bool> areEventRemindersEnabled() async {
-    return _preferences[_eventReminders] as bool? ?? true;
+    return (await getAllPreferences())[_eventReminders] as bool? ?? true;
   }
 
   /// Check if poll notifications are enabled
   Future<bool> arePollNotificationsEnabled() async {
-    return _preferences[_pollNotifications] as bool? ?? true;
+    return (await getAllPreferences())[_pollNotifications] as bool? ?? true;
   }
 
   /// Check if visitor alerts are enabled
   Future<bool> areVisitorAlertsEnabled() async {
-    return _preferences[_visitorAlerts] as bool? ?? true;
+    return (await getAllPreferences())[_visitorAlerts] as bool? ?? true;
   }
 
   /// Check if delivery notifications are enabled
   Future<bool> areDeliveryNotificationsEnabled() async {
-    return _preferences[_deliveryNotifications] as bool? ?? true;
+    return (await getAllPreferences())[_deliveryNotifications] as bool? ?? true;
   }
 
   /// Check if bill reminders are enabled
   Future<bool> areBillRemindersEnabled() async {
-    return _preferences[_billReminders] as bool? ?? true;
+    return (await getAllPreferences())[_billReminders] as bool? ?? true;
   }
 
   /// Check if payment confirmations are enabled
   Future<bool> arePaymentConfirmationsEnabled() async {
-    return _preferences[_paymentConfirmations] as bool? ?? true;
+    return (await getAllPreferences())[_paymentConfirmations] as bool? ?? true;
   }
 
   /// Check if Do Not Disturb is currently active
   Future<bool> isInDoNotDisturb() async {
-    final dndEnabled = _preferences[_dndEnabled] as bool? ?? false;
+    final preferences = await getAllPreferences();
+    final dndEnabled = preferences[_dndEnabled] as bool? ?? false;
 
     if (!dndEnabled) return false;
 
     final now = TimeOfDay.now();
-    final startHour = _preferences[_dndStartHour] as int? ?? 22;
-    final startMinute = _preferences[_dndStartMinute] as int? ?? 0;
-    final endHour = _preferences[_dndEndHour] as int? ?? 7;
-    final endMinute = _preferences[_dndEndMinute] as int? ?? 0;
+    final startHour = preferences[_dndStartHour] as int? ?? 22;
+    final startMinute = preferences[_dndStartMinute] as int? ?? 0;
+    final endHour = preferences[_dndEndHour] as int? ?? 7;
+    final endMinute = preferences[_dndEndMinute] as int? ?? 0;
 
     return _isTimeInRange(
       now,
@@ -161,68 +180,93 @@ class NotificationPreferencesService {
 
   /// Save a boolean preference
   Future<void> savePreference(String key, bool value) async {
-    _preferences[key] = value;
-    
-    // TODO: Replace with SharedPreferences when ready
-    // final prefs = await SharedPreferences.getInstance();
-    // await prefs.setBool(key, value);
-
-    // TODO: Sync to backend
-    // await _syncToBackend(key, value);
+    if (_preferences[key] is! bool) {
+      throw ArgumentError('Invalid notification preference.');
+    }
+    final uid = _currentUid();
+    if (uid == null) {
+      throw StateError('Sign in to update notification preferences.');
+    }
+    final store = await SharedPreferences.getInstance();
+    final path = 'notifications/$uid/$key';
+    final old = store.getBool(path);
+    await store.setBool(path, value);
+    try {
+      if (key != _emailNotifications && key != _smsNotifications) {
+        await _refreshRegistration();
+      }
+    } catch (_) {
+      if (old == null) {
+        await store.remove(path);
+      } else {
+        await store.setBool(path, old);
+      }
+      rethrow;
+    }
   }
 
-  /// Save a time preference
+  Future<Map<String, dynamic>> registrationPreferences() async {
+    final values = await getAllPreferences();
+    return {
+      for (final key in [
+        'push_notifications',
+        'event_reminders',
+        'dnd_enabled',
+        'dnd_start_hour',
+        'dnd_start_minute',
+        'dnd_end_hour',
+        'dnd_end_minute',
+      ])
+        key: values[key],
+      'timezone_offset_minutes': DateTime.now().timeZoneOffset.inMinutes,
+    };
+  }
+
+  /// Save DND times and synchronize the existing registered device.
   Future<void> saveTimePreference(String key, int value) async {
-    _preferences[key] = value;
-    
-    // TODO: Replace with SharedPreferences when ready
-    // final prefs = await SharedPreferences.getInstance();
-    // await prefs.setInt(key, value);
-
-    // TODO: Sync to backend
-    // await _syncToBackend(key, value);
+    if (![
+          _dndStartHour,
+          _dndEndHour,
+          _dndStartMinute,
+          _dndEndMinute,
+        ].contains(key) ||
+        value < 0 ||
+        value > (key.endsWith('hour') ? 23 : 59)) {
+      throw ArgumentError('Invalid notification time.');
+    }
+    final uid = _currentUid();
+    if (uid == null) {
+      throw StateError('Sign in to update notification preferences.');
+    }
+    final store = await SharedPreferences.getInstance();
+    final path = 'notifications/$uid/$key';
+    final old = store.getInt(path);
+    await store.setInt(path, value);
+    try {
+      await _refreshRegistration();
+    } catch (_) {
+      if (old == null) {
+        await store.remove(path);
+      } else {
+        await store.setInt(path, old);
+      }
+      rethrow;
+    }
   }
 
-  /// Reset all preferences to defaults
   Future<void> resetToDefaults() async {
-    _preferences[_pushNotifications] = true;
-    _preferences[_emailNotifications] = true;
-    _preferences[_smsNotifications] = false;
-    _preferences[_eventReminders] = true;
-    _preferences[_pollNotifications] = true;
-    _preferences[_visitorAlerts] = true;
-    _preferences[_deliveryNotifications] = true;
-    _preferences[_billReminders] = true;
-    _preferences[_paymentConfirmations] = true;
-    _preferences[_dndEnabled] = false;
-    _preferences[_dndStartHour] = 22;
-    _preferences[_dndStartMinute] = 0;
-    _preferences[_dndEndHour] = 7;
-    _preferences[_dndEndMinute] = 0;
-  }
-
-  /// Sync preferences to backend (stub - implement with your API)
-  Future<void> _syncToBackend(String key, dynamic value) async {
-    // TODO: Implement backend sync
-    // Example:
-    // final response = await http.put(
-    //   Uri.parse('$baseUrl/api/user/notifications/preferences'),
-    //   body: jsonEncode({'preference': key, 'value': value}),
-    // );
-    print('Syncing to backend: $key = $value');
+    for (final entry in _preferences.entries) {
+      if (entry.value is bool) {
+        await savePreference(entry.key, entry.value as bool);
+      } else {
+        await saveTimePreference(entry.key, entry.value as int);
+      }
+    }
   }
 }
 
 /// Notification types for categorization
-enum NotificationType {
-  general,
-  event,
-  poll,
-  visitor,
-  delivery,
-  bill,
-  payment,
-}
+enum NotificationType { general, event, poll, visitor, delivery, bill, payment }
 
 /// Extension to get notification channel for each type
 extension NotificationTypeExtension on NotificationType {

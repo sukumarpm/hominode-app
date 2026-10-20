@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -10,6 +11,9 @@ import 'package:resident_app/src/services/announcements_events_service.dart';
 import 'package:resident_app/src/widgets/resident_visitor_page_background.dart';
 
 import 'localization_test_app.dart';
+import 'package:resident_app/src/screens/notifications_screen.dart';
+import 'package:resident_app/src/services/notice_firestore_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class _FakeAnnouncementsEventsService implements AnnouncementsEventsService {
   _FakeAnnouncementsEventsService({
@@ -23,6 +27,12 @@ class _FakeAnnouncementsEventsService implements AnnouncementsEventsService {
   final List<EventModel> _events;
   final bool allowed;
   int entitlementChecks = 0;
+  Future<EventModel?> Function(String)? detailLoader;
+
+  @override
+  Future<EventModel?> getEvent(String id) async => detailLoader != null
+      ? detailLoader!(id)
+      : _events.where((event) => event.id == id).firstOrNull;
 
   @override
   Future<String?> currentCommunityId() async => 'community-test';
@@ -191,8 +201,116 @@ void main() {
     expect(uploadedImage.fit, BoxFit.cover);
     expect(find.byType(ResidentVisitorPageBackground), findsOneWidget);
     expect(service.entitlementChecks, 0);
+    await tester.tap(find.text('Community gathering'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(EventsAnnouncementsScreen, skipOffstage: false),
+      findsNWidgets(2),
+    );
+    expect(find.text('Community gathering'), findsOneWidget);
+    expect(find.textContaining('Central garden'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'notification deep link shows loading and a retryable missing event',
+    (tester) async {
+      final request = Completer<EventModel?>();
+      final service = _FakeAnnouncementsEventsService();
+      service.detailLoader = (_) => request.future;
+      // Pump without settling while the authorized lookup is pending.
+      await tester.pumpWidget(
+        withEnglishLocalization(
+          (context) => ScreenUtilInit(
+            designSize: const Size(390, 844),
+            builder: (_, _) => localizedMaterialApp(
+              context,
+              home: EventsAnnouncementsScreen(
+                eventsOnly: true,
+                eventId: 'missing',
+                service: service,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      request.complete(null);
+      await tester.pumpAndSettle();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(TextButton), findsOneWidget);
+      service.detailLoader = (_) async =>
+          throw StateError('synthetic access failure');
+      await tester.tap(find.byType(TextButton));
+      await tester.pumpAndSettle();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'opening an event inbox item marks it read and opens the correct image-less details',
+    (tester) async {
+      final date = DateTime(2026, 11, 3);
+      final service = _FakeAnnouncementsEventsService(
+        allowed: true,
+        events: [
+          EventModel(
+            id: 'event-inbox',
+            title: 'Inbox event details',
+            description: 'Synthetic event description',
+            category: 'Community',
+            priority: 'low',
+            status: 'upcoming',
+            eventDate: date,
+            location: 'Community hall',
+            createdAt: date,
+            updatedAt: date,
+          ),
+        ],
+      );
+      final notice = NoticeFirestoreService.eventNotice(
+        'event-notification',
+        {
+          'recipientId': 'resident',
+          'communityId': 'community',
+          'audience': 'resident',
+          'role': 'resident',
+          'appId': 'resident',
+          'type': 'event',
+          'eventType': 'community_event_created',
+          'title': 'New community event',
+          'createdAt': Timestamp.fromDate(date),
+          'data': {'route': 'events', 'eventId': 'event-inbox'},
+        },
+        'resident',
+        'community',
+      )!;
+      String? marked;
+      await pumpScreen(
+        tester,
+        screen: NotificationsScreen(
+          eventsService: service,
+          loadNotifications: () async => [notice],
+          markRead: (id) async {
+            marked = id;
+          },
+        ),
+        width: 390,
+        textScale: 1.3,
+      );
+      await tester.tap(find.text('New community event'));
+      await tester.pumpAndSettle();
+      expect(marked, 'notification:event-notification');
+      expect(find.text('Inbox event details'), findsOneWidget);
+      expect(find.text('Synthetic event description'), findsOneWidget);
+      expect(find.textContaining('Community hall'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('pushed Announcements route exposes a Back action', (
     tester,

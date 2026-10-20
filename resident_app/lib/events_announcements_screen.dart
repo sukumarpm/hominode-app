@@ -33,11 +33,13 @@ class EventsAnnouncementsScreen extends StatefulWidget {
     this.eventsOnly = false,
     this.announcementsOnly = false,
     this.service,
+    this.eventId,
   });
 
   final bool eventsOnly;
   final bool announcementsOnly;
   final AnnouncementsEventsService? service;
+  final String? eventId;
 
   @override
   State<EventsAnnouncementsScreen> createState() =>
@@ -47,12 +49,14 @@ class EventsAnnouncementsScreen extends StatefulWidget {
 class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   int _selectedTab = 0; // 0: Announcements, 1: Events
   late final AnnouncementsEventsService _service;
+  Future<EventModel?>? _eventDetails;
 
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? AnnouncementsEventsService();
     if (widget.eventsOnly) _selectedTab = 1;
+    if (widget.eventId != null) _eventDetails = _loadEventDetails();
   }
 
   Future<void> _selectTab(int index) async {
@@ -83,7 +87,8 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
   @override
   Widget build(BuildContext context) {
     final showAnnouncementsTitle =
-        widget.announcementsOnly || (!widget.eventsOnly && _selectedTab == 0);
+        widget.eventId == null &&
+        (widget.announcementsOnly || (!widget.eventsOnly && _selectedTab == 0));
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
       appBar: AppBar(
@@ -106,7 +111,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
             SizedBox(height: 14.h),
 
             // Segmented Control
-            if (!widget.eventsOnly && !widget.announcementsOnly)
+            if (widget.eventId == null &&
+                !widget.eventsOnly &&
+                !widget.announcementsOnly)
               AppSegmentedControl(
                 segments: ['announcements'.tr(), 'events'.tr()],
                 selectedIndex: _selectedTab,
@@ -119,7 +126,9 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
 
             // Content
             Expanded(
-              child: widget.eventsOnly
+              child: widget.eventId != null
+                  ? _buildEventDetails()
+                  : widget.eventsOnly
                   ? _buildEventsTab()
                   : widget.announcementsOnly
                   ? _buildAnnouncementsTab()
@@ -412,9 +421,64 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
     );
   }
 
+  Future<EventModel?> _loadEventDetails() async {
+    try {
+      return await _service
+          .getEvent(widget.eventId!)
+          .timeout(const Duration(seconds: 25));
+    } catch (error) {
+      debugPrint('Event details unavailable (${error.runtimeType}).');
+      return null;
+    }
+  }
+
+  Widget _buildEventDetails() => FutureBuilder<EventModel?>(
+    future: _eventDetails,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (snapshot.hasError || snapshot.data == null) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('error_loading_events'.tr(), textAlign: TextAlign.center),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _eventDetails = _loadEventDetails();
+                  }),
+                  child: Text('retry'.tr()),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      return SingleChildScrollView(
+        padding: EdgeInsets.all(18.w),
+        child: _buildEventCard(snapshot.data!, interactive: false),
+      );
+    },
+  );
+
+  void _openEvent(String id) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EventsAnnouncementsScreen(
+          eventsOnly: true,
+          eventId: id,
+          service: _service,
+        ),
+      ),
+    );
+  }
+
   /// Event Card
-  Widget _buildEventCard(EventModel event) {
-    return Container(
+  Widget _buildEventCard(EventModel event, {bool interactive = true}) {
+    final card = Container(
       margin: EdgeInsets.only(bottom: 18.h),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -552,6 +616,16 @@ class _EventsAnnouncementsScreenState extends State<EventsAnnouncementsScreen> {
         ],
       ),
     );
+    return interactive
+        ? Semantics(
+            button: true,
+            label: event.title,
+            child: GestureDetector(
+              onTap: () => _openEvent(event.id),
+              child: card,
+            ),
+          )
+        : card;
   }
 
   Widget _eventMeta(IconData icon, String text) {

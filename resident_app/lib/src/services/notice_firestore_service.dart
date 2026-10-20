@@ -53,6 +53,27 @@ class NoticeFirestoreService {
   /// - Not expired
   /// - targetFlats is empty (all flats) OR contains user's flat
   Future<List<NoticeModel>> getNotices() async {
+    if (_noticeLoader != null) return _noticeLoader();
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return [];
+    final scope = await _loadResidentScope(uid);
+    if (scope == null) return [];
+    final legacy = await _getLegacyNotices();
+    try {
+      legacy.addAll(await _eventNotifications(uid, scope.communityId));
+    } catch (error) {
+      debugPrint('Event inbox unavailable (${error.runtimeType}).');
+    }
+    final currentScope = await _loadResidentScope(uid);
+    if (_auth.currentUser?.uid != uid ||
+        currentScope?.communityId != scope.communityId) {
+      return [];
+    }
+    legacy.sort((a, b) => b.publishDate.compareTo(a.publishDate));
+    return legacy;
+  }
+
+  Future<List<NoticeModel>> _getLegacyNotices() async {
     try {
       if (_noticeLoader != null) return await _noticeLoader();
       print('🔵 Fetching notices from Firestore...');
@@ -244,6 +265,64 @@ class NoticeFirestoreService {
     }
   }
 
+  static const eventNotificationPrefix = 'notification:';
+
+  @visibleForTesting
+  static NoticeModel? eventNotice(
+    String id,
+    Map<String, dynamic> data,
+    String uid,
+    String communityId,
+  ) {
+    final event = data['data'];
+    if (data['recipientId'] != uid ||
+        data['communityId'] != communityId ||
+        data['audience'] != 'resident' ||
+        data['role'] != 'resident' ||
+        data['appId'] != 'resident' ||
+        data['type'] != 'event' ||
+        data['eventType'] != 'community_event_created' ||
+        event is! Map ||
+        event['route'] != 'events' ||
+        event['eventId'] is! String ||
+        (event['eventId'] as String).isEmpty ||
+        (event['eventId'] as String).contains('/')) {
+      return null;
+    }
+    final date = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    return NoticeModel(
+      id: '$eventNotificationPrefix$id',
+      eventId: event['eventId'],
+      communityId: communityId,
+      title: data['title'] as String? ?? '',
+      content: data['message'] as String? ?? '',
+      category: 'event',
+      authorId: '',
+      authorName: 'Admin',
+      publishDate: date,
+      createdAt: date,
+      updatedAt: date,
+    );
+  }
+
+  Future<List<NoticeModel>> _eventNotifications(
+    String uid,
+    String communityId,
+  ) async {
+    final result = await _firestore
+        .collection('notifications')
+        .where('recipientId', isEqualTo: uid)
+        .where('communityId', isEqualTo: communityId)
+        .where('audience', isEqualTo: 'resident')
+        .where('role', isEqualTo: 'resident')
+        .where('appId', isEqualTo: 'resident')
+        .get();
+    return result.docs
+        .map((doc) => eventNotice(doc.id, doc.data(), uid, communityId))
+        .whereType<NoticeModel>()
+        .toList();
+  }
+
   /// Stream notices (real-time updates)
   Stream<List<NoticeModel>> streamNotices() {
     return Stream.fromFuture(getNotices());
@@ -277,6 +356,14 @@ class NoticeFirestoreService {
       final user = _auth.currentUser;
       if (user == null) return;
 
+      if (noticeId.startsWith(eventNotificationPrefix)) {
+        await _firestore
+            .collection('notifications')
+            .doc(noticeId.substring(eventNotificationPrefix.length))
+            .update({'isRead': true, 'readAt': FieldValue.serverTimestamp()});
+        refreshUnreadCount();
+        return;
+      }
       await _firestore
           .collection(noticesCollection)
           .doc(noticeId)
@@ -297,6 +384,13 @@ class NoticeFirestoreService {
       final user = _auth.currentUser;
       if (user == null) return false;
 
+      if (noticeId.startsWith(eventNotificationPrefix)) {
+        final doc = await _firestore
+            .collection('notifications')
+            .doc(noticeId.substring(eventNotificationPrefix.length))
+            .get();
+        return doc.data()?['isRead'] == true;
+      }
       final doc = await _firestore
           .collection(noticesCollection)
           .doc(noticeId)

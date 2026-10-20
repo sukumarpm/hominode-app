@@ -1,3 +1,4 @@
+import 'src/services/notification_preferences_service.dart';
 // import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_localizations/flutter_localizations.dart';
@@ -227,7 +228,11 @@ Future<void> main() async {
   }
   unawaited(
     HominodePushNotifications.instance
-        .initialize(onAuthorizedTap: ResidentNotificationRouter.handle)
+        .initialize(
+          onAuthorizedTap: ResidentNotificationRouter.handle,
+          registrationPreferences:
+              NotificationPreferencesService().registrationPreferences,
+        )
         .timeout(const Duration(seconds: 8))
         .catchError((Object error, StackTrace _) {
           debugPrint(

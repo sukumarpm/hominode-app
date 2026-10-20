@@ -143,10 +143,13 @@ class HominodePushNotifications {
   Future<void>? _activation;
   final RetryableInitialization _initialization = RetryableInitialization();
   bool _active = false;
+  Future<Map<String, dynamic>> Function()? _registrationPreferences;
 
   Future<void> initialize({
     required HominodeNotificationTapHandler onAuthorizedTap,
+    Future<Map<String, dynamic>> Function()? registrationPreferences,
   }) async {
+    _registrationPreferences = registrationPreferences;
     _tapHandler = onAuthorizedTap;
     await _initialization.run(
       _initialize,
@@ -299,13 +302,33 @@ class HominodePushNotifications {
     );
   }
 
-  Future<void> _registerToken(String token) async {
+  Future<void> refreshRegistration() async {
+    if (!_active || _auth.currentUser == null) {
+      throw StateError('Notification registration is not ready.');
+    }
+    final token = await _messaging.getToken();
+    if (token == null || token.isEmpty) {
+      throw StateError('Notification registration is unavailable.');
+    }
+    await _registerToken(token, reportFailure: true);
+  }
+
+  Future<void> _registerToken(
+    String token, {
+    bool reportFailure = false,
+  }) async {
     if (!_active || _auth.currentUser == null) return;
     try {
+      final uid = _auth.currentUser?.uid;
       final installationId = await _installationId();
+      final preferences = await _registrationPreferences?.call();
+      if (_auth.currentUser?.uid != uid) {
+        throw StateError('Notification session changed.');
+      }
       final data = <String, dynamic>{
         'token': token,
         'installationId': installationId,
+        if (preferences != null) 'eventPreferences': preferences,
       };
       final selectedCommunityId = _selectedCommunityId;
       if (selectedCommunityId != null && selectedCommunityId.isNotEmpty) {
@@ -313,6 +336,7 @@ class HominodePushNotifications {
       }
       await _functions.httpsCallable('registerNotificationDevice').call(data);
     } catch (error, stackTrace) {
+      if (reportFailure) rethrow;
       debugPrint('Notification token registration failed: $error');
       debugPrintStack(stackTrace: stackTrace);
     }

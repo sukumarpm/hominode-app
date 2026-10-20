@@ -1,3 +1,4 @@
+import '../services/notification_preferences_service.dart';
 // lib/src/screens/notifications_settings_screen.dart
 // Notifications Preferences Screen
 
@@ -188,12 +189,28 @@ class _NotificationsSettingsScreenState
 
   // Persistence Methods
   Future<void> _loadPreferences() async {
-    // TODO: Load from SharedPreferences
-    print('📥 Loading notification preferences...');
+    final values = await NotificationPreferencesService().getAllPreferences();
+    if (!mounted) return;
+    setState(() {
+      _pushNotifications = values['push_notifications'] as bool? ?? true;
+      _emailNotifications = values['email_notifications'] as bool? ?? false;
+    });
   }
 
   Future<void> _savePreference(String key, bool value) async {
-    // TODO: Save to SharedPreferences
-    print('💾 Saved $key: $value');
+    try {
+      await NotificationPreferencesService().savePreference(key, value);
+    } catch (_) {
+      await _loadPreferences();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not update notification preferences. Please retry.',
+            ),
+          ),
+        );
+      }
+    }
   }
 }

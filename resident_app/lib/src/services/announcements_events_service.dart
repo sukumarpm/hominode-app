@@ -15,6 +15,29 @@ class AnnouncementsEventsService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  /// Fresh read for list taps and notification deep links; never trust a pushed
+  /// community or an old card as proof of event access.
+  Future<EventModel?> getEvent(String eventId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null || eventId.isEmpty || eventId.contains('/')) return null;
+    final community = await currentCommunityId();
+    if (community == null || !await eventsAllowed(community)) return null;
+    final document = await _firestore
+        .collection('events_announcements')
+        .doc(eventId)
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 20));
+    final data = document.data();
+    if (_auth.currentUser?.uid != uid ||
+        await currentCommunityId() != community ||
+        data == null ||
+        data['communityId'] != community ||
+        data['type'] != 'event') {
+      return null;
+    }
+    return EventModel.fromFirestore(document);
+  }
+
   Query<Map<String, dynamic>> _visibleEventsQuery(String communityId) {
     return _firestore
         .collection('events_announcements')

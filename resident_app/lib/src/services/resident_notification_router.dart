@@ -5,11 +5,13 @@ import 'package:hominode_notifications/hominode_notifications.dart';
 import 'package:hominode_sos/hominode_sos.dart';
 
 import '../screens/notifications_screen.dart';
+import '../../events_announcements_screen.dart';
+import 'notice_firestore_service.dart';
 import '../../resident_billing_statement_screen.dart';
 
 final residentNotificationNavigatorKey = GlobalKey<NavigatorState>();
 
-enum ResidentNotificationDestination { billing, sos, notifications }
+enum ResidentNotificationDestination { billing, sos, events, notifications }
 
 class ResidentNotificationTapGuard {
   final Set<String> _inFlight = <String>{};
@@ -75,6 +77,15 @@ class ResidentNotificationRouter {
         data['route'] == 'billing') {
       return ResidentNotificationDestination.billing;
     }
+    if (notification['type'] == 'event' &&
+        eventType == 'community_event_created' &&
+        data is Map &&
+        data['route'] == 'events' &&
+        data['eventId'] is String &&
+        (data['eventId'] as String).isNotEmpty &&
+        !(data['eventId'] as String).contains('/')) {
+      return ResidentNotificationDestination.events;
+    }
     return isSos
         ? ResidentNotificationDestination.sos
         : ResidentNotificationDestination.notifications;
@@ -138,6 +149,18 @@ class ResidentNotificationRouter {
         await navigator.push(
           MaterialPageRoute<void>(
             builder: (_) => const ResidentBillingStatementScreen(),
+          ),
+        );
+      } else if (destination == ResidentNotificationDestination.events) {
+        await NoticeFirestoreService.instance.markAsRead(
+          '${NoticeFirestoreService.eventNotificationPrefix}${payload.entityId}',
+        );
+        await navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => EventsAnnouncementsScreen(
+              eventsOnly: true,
+              eventId: (notification['data'] as Map)['eventId'] as String,
+            ),
           ),
         );
       } else if (destination == ResidentNotificationDestination.sos &&

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class NoticeModel {
   final String id;
+  final String? eventId;
   final String communityId;
   final String title;
   final String content;
@@ -20,6 +21,7 @@ class NoticeModel {
 
   NoticeModel({
     required this.id,
+    this.eventId,
     this.communityId = '',
     required this.title,
     required this.content,
@@ -144,6 +146,7 @@ class NoticeModel {
   }) {
     return NoticeModel(
       id: id ?? this.id,
+      eventId: eventId,
       communityId: communityId ?? this.communityId,
       title: title ?? this.title,
       content: content ?? this.content,
