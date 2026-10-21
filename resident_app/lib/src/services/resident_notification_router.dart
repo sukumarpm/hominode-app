@@ -8,6 +8,7 @@ import '../screens/notifications_screen.dart';
 import '../../events_announcements_screen.dart';
 import 'notice_firestore_service.dart';
 import '../../resident_billing_statement_screen.dart';
+import '../../maintenance_billing_screen.dart';
 
 final residentNotificationNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -34,6 +35,7 @@ class ResidentNotificationRouter {
   static final ResidentNotificationTapGuard _tapGuard =
       ResidentNotificationTapGuard();
   static const Set<String> _billingEventTypes = {
+    'bill_created',
     'payment_proof_submitted',
     'payment_proof_verified',
     'payment_proof_rejected',
@@ -56,6 +58,7 @@ class ResidentNotificationRouter {
         (profile['status'] == null || profile['status'] == 'active') &&
         canonicalCommunityId == payloadCommunityId &&
         notification != null &&
+        notification['deletedAt'] == null &&
         notification['recipientId'] == uid &&
         notification['communityId'] == canonicalCommunityId &&
         notification['audience'] == 'resident' &&
@@ -70,6 +73,16 @@ class ResidentNotificationRouter {
   }) {
     final data = notification['data'];
     final eventType = notification['eventType'];
+    if ((notification['type'] == 'payment' ||
+            notification['type'] == 'billing') &&
+        ((data is Map &&
+                data['route'] == 'billing' &&
+                NoticeFirestoreService.validTarget(data['billId'])) ||
+            NoticeFirestoreService.validTarget(
+              notification['sourceEntityId'],
+            ))) {
+      return ResidentNotificationDestination.billing;
+    }
     if (notification['type'] == 'payment' &&
         eventType is String &&
         _billingEventTypes.contains(eventType) &&
@@ -146,9 +159,24 @@ class ResidentNotificationRouter {
         isSos: sosId != null,
       );
       if (destination == ResidentNotificationDestination.billing) {
+        await NoticeFirestoreService.instance.markAsRead(
+          '${NoticeFirestoreService.eventNotificationPrefix}${payload.entityId}',
+        );
+        final data = notification['data'];
+        final candidate = data is Map
+            ? data['billId']
+            : notification['sourceEntityId'];
+        final billId = NoticeFirestoreService.validTarget(candidate)
+            ? candidate as String
+            : null;
         await navigator.push(
           MaterialPageRoute<void>(
-            builder: (_) => const ResidentBillingStatementScreen(),
+            builder: (_) => billId == null
+                ? const ResidentBillingStatementScreen()
+                : MaintenanceBillingScreen(
+                    showBackButton: true,
+                    initialBillId: billId,
+                  ),
           ),
         );
       } else if (destination == ResidentNotificationDestination.events) {

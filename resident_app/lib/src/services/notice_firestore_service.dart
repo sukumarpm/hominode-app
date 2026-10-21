@@ -68,13 +68,30 @@ class NoticeFirestoreService {
     } catch (error) {
       debugPrint('Event inbox unavailable (${error.runtimeType}).');
     }
+    final visible = <NoticeModel>[];
+    for (final notice in legacy) {
+      if (!notice.id.startsWith(eventNotificationPrefix)) {
+        try {
+          final receipt = await _firestore
+              .collection(noticesCollection)
+              .doc(notice.id)
+              .collection('readBy')
+              .doc(uid)
+              .get();
+          if (receipt.data()?['deletedAt'] != null) continue;
+        } catch (error) {
+          debugPrint('Notice dismissal unavailable (${error.runtimeType}).');
+        }
+      }
+      visible.add(notice);
+    }
     final currentScope = await _loadResidentScope(uid);
     if (_auth.currentUser?.uid != uid ||
         currentScope?.communityId != scope.communityId) {
       return [];
     }
-    legacy.sort((a, b) => b.publishDate.compareTo(a.publishDate));
-    return legacy;
+    visible.sort((a, b) => b.publishDate.compareTo(a.publishDate));
+    return visible;
   }
 
   Future<List<NoticeModel>> _getLegacyNotices() async {
@@ -271,6 +288,9 @@ class NoticeFirestoreService {
 
   static const eventNotificationPrefix = 'notification:';
 
+  static bool validTarget(Object? id) =>
+      id is String && id.isNotEmpty && !id.contains('/');
+
   @visibleForTesting
   static NoticeModel? eventNotice(
     String id,
@@ -278,29 +298,56 @@ class NoticeFirestoreService {
     String uid,
     String communityId,
   ) {
-    final event = data['data'];
     if (data['recipientId'] != uid ||
         data['communityId'] != communityId ||
         data['audience'] != 'resident' ||
         data['role'] != 'resident' ||
         data['appId'] != 'resident' ||
-        data['type'] != 'event' ||
-        data['eventType'] != 'community_event_created' ||
-        event is! Map ||
-        event['route'] != 'events' ||
-        event['eventId'] is! String ||
-        (event['eventId'] as String).isEmpty ||
-        (event['eventId'] as String).contains('/')) {
+        data['deletedAt'] != null) {
       return null;
     }
-    final date = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final target = data['data'];
+    final eventId = target is Map ? target['eventId'] : null;
+    final billing = data['type'] == 'payment' || data['type'] == 'billing';
+    final event =
+        data['type'] == 'event' &&
+        data['eventType'] == 'community_event_created' &&
+        target is Map &&
+        target['route'] == 'events' &&
+        validTarget(eventId);
+    // Historical payment records may only contain sourceEntityId. Their target
+    // is checked against the resident's authorized bill stream on navigation.
+    final candidate = target is Map ? target['billId'] : null;
+    final billId = validTarget(candidate)
+        ? candidate as String
+        : (validTarget(data['sourceEntityId'])
+              ? data['sourceEntityId'] as String
+              : null);
+    if (!billing &&
+        !event &&
+        ![
+          'general',
+          'maintenance',
+          'announcement',
+          'urgent',
+          'security',
+          'visitor',
+        ].contains(data['type'])) {
+      return null;
+    }
+    final timestamp = data['createdAt'];
+    final date = timestamp is Timestamp ? timestamp.toDate() : DateTime.now();
     return NoticeModel(
       id: '$eventNotificationPrefix$id',
-      eventId: event['eventId'],
+      eventId: event ? eventId as String : null,
+      billId: billing ? billId : null,
+      opensBilling: billing,
       communityId: communityId,
-      title: data['title'] as String? ?? '',
-      content: data['message'] as String? ?? '',
-      category: 'event',
+      title: data['title'] is String ? data['title'] as String : '',
+      content: data['message'] is String ? data['message'] as String : '',
+      category: billing
+          ? 'billing'
+          : (event ? 'event' : data['type'] as String),
       authorId: '',
       authorName: 'Admin',
       publishDate: date,
@@ -385,11 +432,58 @@ class NoticeFirestoreService {
           .doc(noticeId)
           .collection('readBy')
           .doc(user.uid)
-          .set({'readAt': FieldValue.serverTimestamp(), 'userId': user.uid});
+          .set({
+            'readAt': FieldValue.serverTimestamp(),
+            'userId': user.uid,
+          }, SetOptions(merge: true));
 
       _readChanges.add(null);
     } catch (e) {
       print('❌ Error marking notice as read: $e');
+    }
+  }
+
+  /// Recipient-only soft dismissal. Shared notices and financial records are
+  /// never deleted. Small atomic batches stay within Rules document-read limits.
+  Future<void> deleteNotifications(Iterable<String> ids) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw StateError('Sign in to manage notifications.');
+    final unique = ids.toSet().toList();
+    for (var start = 0; start < unique.length; start += 8) {
+      final batch = _firestore.batch();
+      for (final id in unique.skip(start).take(8)) {
+        final canonical = id.startsWith(eventNotificationPrefix);
+        final source = canonical
+            ? id.substring(eventNotificationPrefix.length)
+            : id;
+        if (!validTarget(source)) throw ArgumentError('Invalid notification.');
+        final ref = canonical
+            ? _firestore.collection('notifications').doc(source)
+            : _firestore
+                  .collection(noticesCollection)
+                  .doc(source)
+                  .collection('readBy')
+                  .doc(uid);
+        final old = await ref.get();
+        if (old.data()?['deletedAt'] != null) continue;
+        if (canonical) {
+          if (!old.exists) continue;
+          batch.update(ref, {
+            'deletedAt': FieldValue.serverTimestamp(),
+            'isRead': old.data()?['isRead'] == true,
+          });
+        } else {
+          batch.set(ref, {
+            'userId': uid,
+            'deletedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      }
+      if (_auth.currentUser?.uid != uid) {
+        throw StateError('Notification session changed.');
+      }
+      await batch.commit();
+      refreshUnreadCount();
     }
   }
 

@@ -44,6 +44,7 @@ class MaintenanceBillingScreen extends StatefulWidget {
     this.statementService,
     this.languageCodeOverride,
     this.showBackButton = false,
+    this.initialBillId,
   });
 
   final BillFirestoreService? billService;
@@ -51,6 +52,7 @@ class MaintenanceBillingScreen extends StatefulWidget {
   final ResidentBillingStatementService? statementService;
   final String? languageCodeOverride;
   final bool showBackButton;
+  final String? initialBillId;
 
   @override
   State<MaintenanceBillingScreen> createState() =>
@@ -485,7 +487,13 @@ class _MaintenanceBillingScreenState extends State<MaintenanceBillingScreen> {
                         );
                       }
 
-                      final bills = snapshot.data ?? [];
+                      final bills = (snapshot.data ?? [])
+                          .where(
+                            (bill) =>
+                                widget.initialBillId == null ||
+                                bill['id'] == widget.initialBillId,
+                          )
+                          .toList();
 
                       // Pending and overdue bills are both unpaid current bills.
                       final pendingBills = bills

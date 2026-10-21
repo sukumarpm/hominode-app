@@ -171,6 +171,7 @@ Widget _app(
   double width = 390,
   double textScale = 1,
   bool showBackButton = false,
+  String? initialBillId,
   Locale locale = const Locale('en'),
 }) => withResidentLocalization(
   (context) => ScreenUtilInit(
@@ -188,6 +189,7 @@ Widget _app(
           statementService: fixture.statementService,
           languageCodeOverride: locale.languageCode,
           showBackButton: showBackButton,
+          initialBillId: initialBillId,
         ),
       ),
     ),
@@ -204,6 +206,35 @@ void _setViewport(WidgetTester tester) {
 
 void main() {
   setUpAll(initializeTestLocalization);
+
+  testWidgets(
+    'notification bill target uses only the existing authorized bill stream',
+    (tester) async {
+      _setViewport(tester);
+      final fixture = _Fixture()
+        ..bills = [_v2(id: 'selected'), _v2(id: 'other')];
+      await tester.pumpWidget(
+        _app(fixture, initialBillId: 'selected', showBackButton: true),
+      );
+      await tester.pumpAndSettle();
+      expect(fixture.v2BillIds, contains('selected'));
+      expect(fixture.v2BillIds, isNot(contains('other')));
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'unavailable or foreign notification bill never falls back to a different bill',
+    (tester) async {
+      _setViewport(tester);
+      final fixture = _Fixture()..bills = [_v2(id: 'owned')];
+      await tester.pumpWidget(
+        _app(fixture, initialBillId: 'foreign', showBackButton: true),
+      );
+      await tester.pumpAndSettle();
+      expect(fixture.v2BillIds, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('current bill status and heading fit narrow large-text layout', (
     tester,

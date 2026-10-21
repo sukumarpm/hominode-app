@@ -1,5 +1,6 @@
 import 'dart:async';
 import '../../events_announcements_screen.dart';
+import '../../maintenance_billing_screen.dart';
 // lib/src/screens/notifications_screen.dart
 // Notifications screen matching app design standards
 
@@ -18,11 +19,15 @@ class NotificationsScreen extends StatefulWidget {
     this.loadNotifications,
     this.markRead,
     this.eventsService,
+    this.deleteNotifications,
+    this.billingBuilder,
   });
 
   final Future<List<NoticeModel>> Function()? loadNotifications;
   final Future<void> Function(String)? markRead;
   final AnnouncementsEventsService? eventsService;
+  final Future<void> Function(List<String>)? deleteNotifications;
+  final Widget Function(String?)? billingBuilder;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -31,6 +36,8 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<NoticeModel> _allNotices = [];
   bool _isLoading = true;
+  bool _selecting = false, _deleting = false;
+  final Set<String> _selected = {};
 
   @override
   void initState() {
@@ -73,11 +80,79 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  Future<void> _delete(List<String> ids) async {
+    if (ids.isEmpty || _deleting) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('delete'.tr()),
+        content: Text('${ids.length} ${'notifications'.tr()}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('cancel'.tr()),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('delete'.tr()),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deleting = true);
+    try {
+      if (widget.deleteNotifications != null) {
+        await widget.deleteNotifications!(ids);
+      } else {
+        await NoticeFirestoreService.instance.deleteNotifications(ids);
+      }
+      if (!mounted) return;
+      setState(() {
+        _allNotices.removeWhere((notice) => ids.contains(notice.id));
+        _selected.clear();
+        _selecting = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      await _loadNotifications();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${'error'.tr()}. ${'retry'.tr()}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  void _toggle(String id) => setState(() {
+    if (!_selected.add(id)) _selected.remove(id);
+  });
+
   void _showNoticeDetail(NoticeModel notice) {
+    if (_selecting) {
+      _toggle(notice.id);
+      return;
+    }
+    if (_deleting) return;
     if (widget.markRead != null) {
       unawaited(widget.markRead!(notice.id));
     } else if (widget.loadNotifications == null) {
       unawaited(NoticeFirestoreService.instance.markAsRead(notice.id));
+    }
+    if (notice.opensBilling) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              widget.billingBuilder?.call(notice.billId) ??
+              MaintenanceBillingScreen(
+                showBackButton: true,
+                initialBillId: notice.billId,
+              ),
+        ),
+      );
+      return;
     }
     if (notice.eventId != null) {
       Navigator.of(context).push(
@@ -411,7 +486,44 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: Text('notifications'.tr()),
+        title: Text(
+          _selecting
+              ? '${_selected.length} ${'notifications'.tr()}'
+              : 'notifications'.tr(),
+        ),
+        actions: [
+          if (_deleting)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_selecting) ...[
+            IconButton(
+              tooltip: 'delete'.tr(),
+              onPressed: _selected.isEmpty
+                  ? null
+                  : () => _delete(_selected.toList()),
+              icon: const Icon(Icons.delete_outline),
+            ),
+            IconButton(
+              tooltip: 'cancel'.tr(),
+              onPressed: () => setState(() {
+                _selecting = false;
+                _selected.clear();
+              }),
+              icon: const Icon(Icons.close),
+            ),
+          ] else if (_allNotices.isNotEmpty)
+            IconButton(
+              tooltip: 'notifications'.tr(),
+              onPressed: () => setState(() => _selecting = true),
+              icon: const Icon(Icons.checklist),
+            ),
+        ],
         backgroundColor: Colors.white.withValues(alpha: 0.82),
         foregroundColor: const Color(0xFF172B4D),
         elevation: 0,
@@ -446,10 +558,40 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
                           return Padding(
                             padding: EdgeInsets.only(bottom: 12.h),
-                            child: _NoticeCard(
-                              notice: notice,
-                              onTap: () => _showNoticeDetail(notice),
-                              formatDate: _formatDate,
+                            child: Row(
+                              children: [
+                                if (_selecting)
+                                  Checkbox(
+                                    value: _selected.contains(notice.id),
+                                    onChanged: _deleting
+                                        ? null
+                                        : (_) => _toggle(notice.id),
+                                  ),
+                                Expanded(
+                                  child: GestureDetector(
+                                    onLongPress: _deleting
+                                        ? null
+                                        : () => setState(() {
+                                            _selecting = true;
+                                            _selected.add(notice.id);
+                                          }),
+                                    child: _NoticeCard(
+                                      notice: notice,
+                                      onTap: () => _showNoticeDetail(notice),
+                                      formatDate: _formatDate,
+                                    ),
+                                  ),
+                                ),
+                                if (!_selecting)
+                                  IconButton(
+                                    key: ValueKey('delete/${notice.id}'),
+                                    tooltip: 'delete'.tr(),
+                                    onPressed: _deleting
+                                        ? null
+                                        : () => _delete([notice.id]),
+                                    icon: const Icon(Icons.delete_outline),
+                                  ),
+                              ],
                             ),
                           );
                         },

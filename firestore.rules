@@ -1862,14 +1862,22 @@ function securityCanAccessCommunity(communityId) {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'isRead',
           'readAt',
-          'updatedAt'
+          'updatedAt',
+          'deletedAt'
         ])
-        && request.resource.data.isRead is bool;
+        && request.resource.data.isRead is bool
+        && (!('deletedAt' in request.resource.data) ||
+          (request.resource.data.deletedAt is timestamp &&
+            ((('deletedAt' in resource.data) && request.resource.data.deletedAt == resource.data.deletedAt)
+              || (!('deletedAt' in resource.data) && request.resource.data.deletedAt == request.time))))
+        && (!('deletedAt' in resource.data) ||
+          request.resource.data.deletedAt == resource.data.deletedAt);
 
       // Canonical creation and delivery state remain backend-owned. A verified
       // recipient may remove an item from their own private inbox.
       allow create: if false;
-      allow delete: if isNotificationRecipient(resource.data);
+      allow delete: if isNotificationRecipient(resource.data)
+        && !residentNotificationRecipient(resource.data);
     }
 
 
@@ -1975,8 +1983,9 @@ function securityCanAccessCommunity(communityId) {
 
         allow create: if readerId == request.auth.uid
           && currentResidentMayReadParent()
-          && request.resource.data.keys().hasOnly(['userId', 'readAt'])
-          && request.resource.data.userId == request.auth.uid;
+          && request.resource.data.keys().hasOnly(['userId', 'readAt', 'deletedAt'])
+          && request.resource.data.userId == request.auth.uid
+          && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == request.time);
 
         allow update: if readerId == request.auth.uid
           && currentResidentMayReadParent()
@@ -1985,11 +1994,14 @@ function securityCanAccessCommunity(communityId) {
           && request.resource.data
             .diff(resource.data)
             .affectedKeys()
-            .hasOnly(['readAt']);
+            .hasOnly(['readAt', 'deletedAt'])
+          && (!('deletedAt' in request.resource.data) ||
+            ((('deletedAt' in resource.data) && request.resource.data.deletedAt == resource.data.deletedAt)
+              || (!('deletedAt' in resource.data) && request.resource.data.deletedAt == request.time)))
+          && (!('deletedAt' in resource.data) || request.resource.data.deletedAt == resource.data.deletedAt);
 
-        allow delete: if readerId == request.auth.uid
-          && currentResidentMayReadParent()
-          && resource.data.userId == request.auth.uid;
+        // Keep dismissal tombstones so retries cannot resurrect shared notices.
+        allow delete: if false;
       }
     }
 

@@ -514,22 +514,21 @@ async function sendNotificationCore({db, messaging, auth, app, data}) {
   if (!messaging || typeof messaging.sendEachForMulticast !== "function") {
     throw new RegistrationError("failed-precondition", "Firebase Messaging is unavailable.");
   }
-  const notificationId = notificationIdFor({
-    senderUid,
-    communityId,
-    recipientUid,
-    category,
-    sourceEntityId,
-    title,
-    message,
-  });
+  const {billContext, billNotificationId, existingBillNotification} = require("./bill_notifications");
+  const bill = category === "payment" && sourceEntityId
+    ? await billContext(db, sourceEntityId, communityId, recipientUid) : null;
+  const newBill = !!bill && title === "New Bill Created";
+  const notificationId = newBill ? (await existingBillNotification(db, communityId, recipientUid, sourceEntityId)
+      || billNotificationId(communityId, recipientUid, sourceEntityId))
+    : notificationIdFor({senderUid, communityId, recipientUid, category, sourceEntityId, title, message});
   const notificationRef = db.collection(NOTIFICATION_COLLECTION).doc(notificationId);
   let duplicate = false;
 
   await db.runTransaction(async (transaction) => {
     const existing = await transaction.get(notificationRef);
     const existingStatus = existing.data()?.deliveryStatus;
-    if (existing.exists && ["pending", "sent", "partial", "no_devices"].includes(existingStatus)) {
+    if (existing.exists && (existing.data()?.deletedAt != null ||
+        ["pending", "sent", "partial", "no_devices"].includes(existingStatus))) {
       duplicate = true;
       return;
     }
@@ -544,10 +543,12 @@ async function sendNotificationCore({db, messaging, auth, app, data}) {
       type: category,
       priority,
       sourceEntityId: sourceEntityId || null,
+      ...(bill ? {data: {route: "billing", billId: sourceEntityId},
+        ...(newBill ? {eventType: "bill_created"} : {})} : {}),
       createdBy: senderUid,
-      isRead: false,
+      isRead: existing.data()?.isRead === true,
       deliveryStatus: "pending",
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: existing.data()?.createdAt || FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     }, {merge: true});
   });
@@ -565,6 +566,11 @@ async function sendNotificationCore({db, messaging, auth, app, data}) {
       notificationId,
       title,
       message,
+      // Existing Resident device preferences govern bill pushes too; disabling
+      // event reminders alone must not suppress a bill notification.
+      deviceFilter: bill ? device => require("./event_notification_preferences").eventPushAllowed({
+        ...device, eventPreferences: {...device.eventPreferences, event_reminders: true},
+      }) : undefined,
     });
     const deliveryStatus = result.noDevices ? "no_devices" :
       result.failureCount === 0 ? "sent" :

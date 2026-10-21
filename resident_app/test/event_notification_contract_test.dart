@@ -49,7 +49,6 @@ void main() {
         {'audience': 'admin'},
         {'role': 'admin'},
         {'appId': 'admin'},
-        {'type': 'announcement'},
         {
           'data': {'route': 'events', 'eventId': 'foreign/path'},
         },

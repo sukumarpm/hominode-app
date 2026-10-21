@@ -535,6 +535,13 @@ exports.removeSecurityAssignment = appCheckedCallable(
   "Security assignment could not be removed."
 );
 
+// Inbox only; existing Admin notification requests retain push delivery.
+exports.recordResidentBillNotification = onDocumentCreated({
+  region: REGION, document: "bills/{billId}", retry: true,
+}, event => require("./bill_notifications").recordCreatedBillNotificationCore({
+  db: getFirestore(), billId: event.params.billId,
+}));
+
 // Creation only: no update trigger and no historical backfill on deployment.
 exports.notifyResidentsOfCreatedEvent = onDocumentCreated({
   region: REGION,
