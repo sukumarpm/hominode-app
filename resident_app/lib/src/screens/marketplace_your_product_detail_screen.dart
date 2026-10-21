@@ -1,5 +1,5 @@
 import '../widgets/marketplace_access_gate.dart';
-import 'package:resident_app/src/services/resident_private_images.dart';
+import '../components/marketplace_image_gallery.dart';
 // lib/src/screens/marketplace_your_product_detail_screen.dart
 // Product detail screen for seller's own products
 
@@ -43,21 +43,7 @@ class _MarketplaceYourProductDetailScreenContent extends StatefulWidget {
 class _MarketplaceYourProductDetailScreenState
     extends State<_MarketplaceYourProductDetailScreenContent> {
   final ListingFirestoreService _listingService = ListingFirestoreService();
-  late PageController _imageController;
-  int _currentImageIndex = 0;
   bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _imageController = PageController();
-  }
-
-  @override
-  void dispose() {
-    _imageController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -123,72 +109,8 @@ class _MarketplaceYourProductDetailScreenState
     );
   }
 
-  Widget _buildImageGallery() {
-    if (widget.listing.images.isEmpty) {
-      return Container(
-        height: 300.h,
-        color: Colors.grey.shade200,
-        child: Center(
-          child: Icon(
-            Icons.image_not_supported,
-            size: 64.w,
-            color: Colors.grey.shade400,
-          ),
-        ),
-      );
-    }
-
-    return Stack(
-      children: [
-        SizedBox(
-          height: 300.h,
-          child: PageView.builder(
-            controller: _imageController,
-            onPageChanged: (index) {
-              setState(() => _currentImageIndex = index);
-            },
-            itemCount: widget.listing.images.length,
-            itemBuilder: (context, index) {
-              return Image(
-                image: residentImageProvider(widget.listing.images[index]),
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: Colors.grey.shade200,
-                    child: Icon(
-                      Icons.broken_image,
-                      size: 64.w,
-                      color: Colors.grey.shade400,
-                    ),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-        // Image counter
-        Positioned(
-          bottom: 12,
-          right: 12,
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 6.h),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.6),
-              borderRadius: BorderRadius.circular(20.r),
-            ),
-            child: Text(
-              '${_currentImageIndex + 1}/${widget.listing.images.length}',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _buildImageGallery() =>
+      MarketplaceImageGallery(images: widget.listing.images, height: 300.h);
 
   Widget _buildTitleSection() {
     return Column(

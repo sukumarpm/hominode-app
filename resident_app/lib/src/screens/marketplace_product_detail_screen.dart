@@ -1,5 +1,5 @@
 import '../widgets/marketplace_access_gate.dart';
-import 'package:resident_app/src/services/resident_private_images.dart';
+import '../components/marketplace_image_gallery.dart';
 // lib/src/screens/marketplace_product_detail_screen.dart
 // Product detail screen with phone request functionality
 
@@ -129,70 +129,33 @@ class _MarketplaceProductDetailScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Image Gallery
-            Container(
-              height: 300.h,
-              color: Colors.grey.shade200,
-              child: widget.listing.images.isNotEmpty
-                  ? PageView.builder(
-                      itemCount: widget.listing.images.length,
-                      itemBuilder: (context, index) {
-                        final imageUrl = widget.listing.images[index];
-                        return Image(
-                          image: residentImageProvider(imageUrl),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Center(
-                            child: Icon(
-                              Icons.image_not_supported,
-                              color: Colors.grey.shade400,
-                            ),
-                          ),
-                        );
-                      },
-                    )
-                  : FutureBuilder<ImageDisplayResult>(
-                      future: ImageDisplayFlowFunction.instance
-                          .getMarketplaceProductImage(
-                            listingId: widget.listing.id ?? '',
-                          ),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return Center(
-                            child: CircularProgressIndicator(
-                              color: AppColors.primary,
-                            ),
-                          );
-                        }
-
-                        if (snapshot.hasData &&
-                            snapshot.data!.success &&
-                            snapshot.data!.imageUrl != null) {
-                          return Image(
-                            image: residentImageProvider(
-                              snapshot.data!.imageUrl!,
-                            ),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Center(
-                              child: Icon(
-                                Icons.image_not_supported,
-                                color: Colors.grey.shade400,
-                                size: 64.w,
-                              ),
-                            ),
-                          );
-                        }
-
-                        // No image found
-                        return Center(
-                          child: Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey.shade400,
-                            size: 64.w,
-                          ),
-                        );
-                      },
+            if (widget.listing.images.isNotEmpty)
+              MarketplaceImageGallery(
+                images: widget.listing.images,
+                height: 300.h,
+              )
+            else
+              FutureBuilder<ImageDisplayResult>(
+                future: ImageDisplayFlowFunction.instance
+                    .getMarketplaceProductImage(
+                      listingId: widget.listing.id ?? '',
                     ),
-            ),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return SizedBox(
+                      height: 300.h,
+                      child: const Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  final result = snapshot.data;
+                  return MarketplaceImageGallery(
+                    height: 300.h,
+                    images: result?.success == true && result?.imageUrl != null
+                        ? [result!.imageUrl!]
+                        : const [],
+                  );
+                },
+              ),
 
             // Details Section
             Padding(
