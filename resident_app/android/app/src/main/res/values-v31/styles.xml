@@ -6,7 +6,7 @@
         <item name="android:windowSplashScreenBackground">#06182B</item>
 
         <item name="android:windowSplashScreenAnimatedIcon">
-            @mipmap/launcher_splash
+            @drawable/branding_splash
         </item>
 
         <item name="android:windowSplashScreenIconBackgroundColor">

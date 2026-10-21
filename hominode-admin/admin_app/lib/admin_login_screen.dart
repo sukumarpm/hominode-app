@@ -517,7 +517,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
           SizedBox(height: 2.h),
 
           Image.asset(
-            'assets/Admin_New1.png',
+            'assets/branding/admin_transparent.png',
             width: (constraints.maxWidth * 0.31).clamp(112.0, 185.0),
             fit: BoxFit.contain,
           ),

@@ -146,6 +146,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    - lib/assets/branding/security_transparent.png
     - lib/assets/Security_New.png
     - lib/assets/images/security_login_background.png
 

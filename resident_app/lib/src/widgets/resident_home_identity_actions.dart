@@ -9,7 +9,7 @@ class ResidentHomeLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Image.asset(
-    'lib/assets/Resident_New1.png',
+    'lib/assets/branding/resident_transparent.png',
     key: const ValueKey('resident-home-logo'),
     width: 50,
     height: 50,

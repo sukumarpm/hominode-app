@@ -134,31 +134,12 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildLogo() {
-    return Container(
-      width: 120.w,
-      height: 120.w,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24.r),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24.r),
-        child: Image.asset(
-          'assets/Admin_New1.png',
-          width: 120.w,
-          height: 120.w,
-          fit: BoxFit.cover,
-        ),
-      ),
-    );
-  }
+  Widget _buildLogo() => Image.asset(
+    'assets/branding/admin_transparent.png',
+    width: 120.w,
+    height: 120.w,
+    fit: BoxFit.contain,
+  );
 
   // Widget _buildLogo() {
   //   return Container(

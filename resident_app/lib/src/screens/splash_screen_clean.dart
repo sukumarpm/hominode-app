@@ -17,7 +17,7 @@ class CleanSplashScreen extends StatefulWidget {
 
   const CleanSplashScreen({
     super.key,
-    this.logoAssetPath = 'lib/assets/Resident_New1.png',
+    this.logoAssetPath = 'lib/assets/branding/resident_transparent.png',
     this.appName = 'Hominode',
     this.tagline = 'Your Community, Connected',
     this.duration = const Duration(milliseconds: 3000),

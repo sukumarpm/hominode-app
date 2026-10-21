@@ -113,6 +113,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    - assets/branding/admin_transparent.png
     - assets/
     - assets/Admin_New.png
     - assets/images/admin_login_background.png

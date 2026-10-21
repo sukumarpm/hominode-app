@@ -758,7 +758,7 @@ class _LoginScreenState extends State<LoginScreen>
                               children: [
                                 const SizedBox(height: 2),
                                 Image.asset(
-                                  'lib/assets/Security_New.png',
+                                  'lib/assets/branding/security_transparent.png',
                                   width: logoWidth,
                                   fit: BoxFit.contain,
                                 ),

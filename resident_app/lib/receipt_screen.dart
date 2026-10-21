@@ -455,7 +455,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12.r),
                 child: Image.asset(
-                  'lib/assets/Resident_New1.png',
+                  'lib/assets/branding/resident_transparent.png',
                   width: 48.w,
                   height: 48.h,
                   fit: BoxFit.contain,
@@ -954,7 +954,7 @@ Future<Uint8List> generatePdf(
   pw.MemoryImage? hominodeIcon;
 
   try {
-    final iconData = await rootBundle.load('lib/assets/Resident_New.png');
+    final iconData = await rootBundle.load('lib/assets/branding/resident_transparent.png');
 
     hominodeIcon = pw.MemoryImage(
       iconData.buffer.asUint8List(

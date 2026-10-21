@@ -33,7 +33,7 @@ void main() {
     );
     expect(
       (logo.image as AssetImage).assetName,
-      'lib/assets/Resident_New1.png',
+      'lib/assets/branding/resident_transparent.png',
     );
     expect(logo.fit, BoxFit.contain);
     expect(logo.width, 50);
@@ -44,7 +44,7 @@ void main() {
   test(
     'approved transparent Resident artwork has no opaque corner tile',
     () async {
-      final data = await rootBundle.load('lib/assets/Resident_New1.png');
+      final data = await rootBundle.load('lib/assets/branding/resident_transparent.png');
       final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
       final frame = await codec.getNextFrame();
       final pixels = await frame.image.toByteData(

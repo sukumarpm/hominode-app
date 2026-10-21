@@ -1712,25 +1712,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Geometric Node Icon
-        Container(
+        Image.asset(
+          'assets/branding/admin_transparent.png',
           width: 24.w,
           height: 24.w,
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFC66D).withOpacity(0.15),
-            borderRadius: BorderRadius.circular(6.r),
-            border: Border.all(color: const Color(0xFFFFC66D), width: 1.5),
-          ),
-          child: Center(
-            child: Container(
-              width: 8.w,
-              height: 8.w,
-              decoration: const BoxDecoration(
-                color: Color(0xFFFFC66D),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
+          fit: BoxFit.contain,
+          semanticLabel: 'Admin logo',
         ),
         SizedBox(width: 10.w),
         Text(

@@ -490,7 +490,7 @@ class _LoadingScreen extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'lib/assets/Security_New.png',
+                  'lib/assets/branding/security_transparent.png',
                   width: 125,
                   height: 125,
                   fit: BoxFit.contain,
