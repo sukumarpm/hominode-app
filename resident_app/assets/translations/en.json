@@ -1,4 +1,8 @@
 {
+  "notification_read": "Read",
+  "notification_unread": "Unread",
+  "notification_read_failed": "Could not mark this notification as read. Please retry.",
+
   "app_title": "Hominode Resident",
   "home": "Home",
   "profile": "Profile",

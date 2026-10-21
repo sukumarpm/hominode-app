@@ -6,6 +6,10 @@ class NoticeModel {
   final String? eventId;
   final String? billId;
   final bool opensBilling;
+
+  /// Recipient-scoped inbox snapshot only; never serialized into shared notices.
+  /// Null means read status could not be verified.
+  final bool? isRead;
   final String communityId;
   final String title;
   final String content;
@@ -26,6 +30,7 @@ class NoticeModel {
     this.eventId,
     this.billId,
     this.opensBilling = false,
+    this.isRead,
     this.communityId = '',
     required this.title,
     required this.content,
@@ -133,6 +138,7 @@ class NoticeModel {
 
   NoticeModel copyWith({
     String? id,
+    bool? isRead,
     String? communityId,
     String? title,
     String? content,
@@ -153,6 +159,7 @@ class NoticeModel {
       eventId: eventId,
       billId: billId,
       opensBilling: opensBilling,
+      isRead: isRead ?? this.isRead,
       communityId: communityId ?? this.communityId,
       title: title ?? this.title,
       content: content ?? this.content,

@@ -1,4 +1,8 @@
 {
+  "notification_read": "مقروء",
+  "notification_unread": "غير مقروء",
+  "notification_read_failed": "تعذر وضع علامة مقروء على الإشعار. يرجى إعادة المحاولة.",
+
   "app_title": "Hominode ساكن",
   "home": "الرئيسية",
   "profile": "الملف الشخصي",

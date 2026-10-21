@@ -1,4 +1,8 @@
 {
+  "notification_read": "படித்தது",
+  "notification_unread": "படிக்காதது",
+  "notification_read_failed": "இந்த அறிவிப்பைப் படித்ததாகக் குறிக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
+
   "app_title": "Hominode குடியிருப்பாளர்",
   "home": "முகப்பு",
   "profile": "சுயவிவரம்",

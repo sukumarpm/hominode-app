@@ -1,4 +1,3 @@
-import 'dart:async';
 import '../../events_announcements_screen.dart';
 import '../../maintenance_billing_screen.dart';
 // lib/src/screens/notifications_screen.dart
@@ -38,6 +37,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   bool _isLoading = true;
   bool _selecting = false, _deleting = false;
   final Set<String> _selected = {};
+  final Set<String> _markingRead = {};
 
   @override
   void initState() {
@@ -130,17 +130,53 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (!_selected.add(id)) _selected.remove(id);
   });
 
-  void _showNoticeDetail(NoticeModel notice) {
+  Future<void> _showNoticeDetail(NoticeModel notice) async {
     if (_selecting) {
       _toggle(notice.id);
       return;
     }
-    if (_deleting) return;
-    if (widget.markRead != null) {
-      unawaited(widget.markRead!(notice.id));
-    } else if (widget.loadNotifications == null) {
-      unawaited(NoticeFirestoreService.instance.markAsRead(notice.id));
+    if (_deleting || _markingRead.contains(notice.id)) return;
+    final current = _allNotices
+        .where((item) => item.id == notice.id)
+        .firstOrNull;
+    if (current == null) return;
+    if (current.isRead != true) {
+      _markingRead.add(notice.id);
+      try {
+        if (widget.markRead != null) {
+          await widget.markRead!(notice.id);
+        } else if (widget.loadNotifications == null) {
+          await NoticeFirestoreService.instance.markAsRead(notice.id);
+        }
+        if (!mounted) return;
+        if (widget.markRead != null || widget.loadNotifications == null) {
+          setState(() {
+            _allNotices = _allNotices
+                .map(
+                  (item) =>
+                      item.id == notice.id ? item.copyWith(isRead: true) : item,
+                )
+                .toList();
+          });
+        }
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('notification_read_failed'.tr()),
+              action: SnackBarAction(
+                label: 'retry'.tr(),
+                onPressed: () => _showNoticeDetail(notice),
+              ),
+            ),
+          );
+        }
+        return;
+      } finally {
+        _markingRead.remove(notice.id);
+      }
     }
+    if (!mounted || !_allNotices.any((item) => item.id == notice.id)) return;
     if (notice.opensBilling) {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -650,149 +686,184 @@ class _NoticeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.all(16.w),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.96),
-          borderRadius: BorderRadius.circular(20.r),
-          border: Border.all(color: const Color(0xFFE2EAF3), width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF172B4D).withValues(alpha: 0.05),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Icon box
-            Container(
-              width: 48.w,
-              height: 48.h,
-              decoration: BoxDecoration(
-                color: _getIconBgColor(notice.category),
-                borderRadius: BorderRadius.circular(12.r),
+    return Semantics(
+      label: notice.isRead == null
+          ? null
+          : (notice.isRead!
+                ? 'notification_read'.tr()
+                : 'notification_unread'.tr()),
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          key: ValueKey('notification-card/${notice.id}'),
+          padding: EdgeInsets.all(16.w),
+          decoration: BoxDecoration(
+            color: notice.isRead == false
+                ? const Color(0xFFEEF5FF)
+                : Colors.white.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(20.r),
+            border: Border.all(color: const Color(0xFFE2EAF3), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF172B4D).withValues(alpha: 0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
               ),
-              child: Icon(
-                _getIcon(notice.category),
-                size: 24.w,
-                color: _getIconColor(notice.category),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Icon box
+              Container(
+                width: 48.w,
+                height: 48.h,
+                decoration: BoxDecoration(
+                  color: _getIconBgColor(notice.category),
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                child: Icon(
+                  _getIcon(notice.category),
+                  size: 24.w,
+                  color: _getIconColor(notice.category),
+                ),
               ),
-            ),
-            SizedBox(width: 12.w),
-            // Content
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    notice.title,
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF172B4D),
-                    ),
-                  ),
-                  SizedBox(height: 4.h),
-                  Text(
-                    notice.content,
-                    style: TextStyle(
-                      fontSize: 14.sp,
-                      fontWeight: FontWeight.w400,
-                      color: const Color(0xFF52627A),
-                      height: 1.4,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  SizedBox(height: 6.h),
-                  Row(
-                    children: [
-                      // Priority badge
-                      if (notice.priority == 'high' ||
-                          notice.priority == 'urgent')
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 8.w,
-                            vertical: 2.h,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEE2E2),
-                            borderRadius: BorderRadius.circular(4.r),
-                          ),
+              SizedBox(width: 12.w),
+              // Content
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
                           child: Text(
-                            'urgent'.tr().toUpperCase(),
+                            notice.title,
                             style: TextStyle(
-                              fontSize: 11.sp,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFFDC2626),
+                              fontSize: 16.sp,
+                              fontWeight: notice.isRead == false
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: const Color(0xFF172B4D),
                             ),
                           ),
                         ),
-                      if (notice.priority == 'high' ||
-                          notice.priority == 'urgent')
-                        SizedBox(width: 8.w),
-                      // Category label
-                      Text(
-                        _getCategoryDisplayLabel(notice.category),
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          fontWeight: FontWeight.w600,
-                          color: _getIconColor(notice.category),
-                        ),
-                      ),
-                      SizedBox(width: 4.w),
-                      Text(
-                        '•',
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          color: const Color(0xFF52627A),
-                        ),
-                      ),
-                      SizedBox(width: 4.w),
-                      // Time
-                      Expanded(
-                        child: Text(
-                          formatDate(notice.publishDate),
-                          style: TextStyle(
-                            fontSize: 12.sp,
-                            fontWeight: FontWeight.w500,
-                            color: const Color(0xFF52627A),
+                        if (notice.isRead == false)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8, top: 6),
+                            child: Container(
+                              key: ValueKey('notification-unread/${notice.id}'),
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF1558D6),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  // Author name
-                  if (notice.authorName.isNotEmpty) ...[
+                      ],
+                    ),
                     SizedBox(height: 4.h),
+                    Text(
+                      notice.content,
+                      style: TextStyle(
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.w400,
+                        color: const Color(0xFF52627A),
+                        height: 1.4,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    SizedBox(height: 6.h),
                     Row(
                       children: [
-                        Icon(
-                          Icons.person_outline,
-                          size: 12.w,
-                          color: const Color(0xFF52627A),
+                        // Priority badge
+                        if (notice.priority == 'high' ||
+                            notice.priority == 'urgent')
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8.w,
+                              vertical: 2.h,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEE2E2),
+                              borderRadius: BorderRadius.circular(4.r),
+                            ),
+                            child: Text(
+                              'urgent'.tr().toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 11.sp,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFDC2626),
+                              ),
+                            ),
+                          ),
+                        if (notice.priority == 'high' ||
+                            notice.priority == 'urgent')
+                          SizedBox(width: 8.w),
+                        // Category label
+                        Text(
+                          _getCategoryDisplayLabel(notice.category),
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.w600,
+                            color: _getIconColor(notice.category),
+                          ),
                         ),
                         SizedBox(width: 4.w),
                         Text(
-                          notice.authorName,
+                          '•',
                           style: TextStyle(
                             fontSize: 12.sp,
                             color: const Color(0xFF52627A),
                           ),
-                          softWrap: true,
+                        ),
+                        SizedBox(width: 4.w),
+                        // Time
+                        Expanded(
+                          child: Text(
+                            formatDate(notice.publishDate),
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              fontWeight: FontWeight.w500,
+                              color: const Color(0xFF52627A),
+                            ),
+                          ),
                         ),
                       ],
                     ),
+                    // Author name
+                    if (notice.authorName.isNotEmpty) ...[
+                      SizedBox(height: 4.h),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.person_outline,
+                            size: 12.w,
+                            color: const Color(0xFF52627A),
+                          ),
+                          SizedBox(width: 4.w),
+                          Expanded(
+                            child: Text(
+                              notice.authorName,
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                color: const Color(0xFF52627A),
+                              ),
+                              softWrap: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -1,4 +1,8 @@
 {
+  "notification_read": "Leída",
+  "notification_unread": "No leída",
+  "notification_read_failed": "No se pudo marcar la notificación como leída. Inténtalo de nuevo.",
+
   "app_title": "Hominode Residente",
   "home": "Inicio",
   "profile": "Perfil",

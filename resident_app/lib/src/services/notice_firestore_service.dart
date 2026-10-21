@@ -19,22 +19,26 @@ class NoticeFirestoreService {
     : _noticeLoader = null,
       _readLoader = null,
       _authOverride = null,
-      _inboxChangesOverride = null;
+      _inboxChangesOverride = null,
+      _readWriter = null;
   @visibleForTesting
   NoticeFirestoreService.forTesting({
     required Future<List<NoticeModel>> Function() notices,
     required Future<bool> Function(String) isRead,
     FirebaseAuth? auth,
+    Future<void> Function(String, Map<String, dynamic>, bool)? writeReadReceipt,
     Stream<void> Function(String uid)? inboxChanges,
   }) : _noticeLoader = notices,
        _readLoader = isRead,
        _authOverride = auth,
+       _readWriter = writeReadReceipt,
        _inboxChangesOverride = inboxChanges;
   final Future<List<NoticeModel>> Function()? _noticeLoader;
   final Future<bool> Function(String)? _readLoader;
   final FirebaseAuth? _authOverride;
   final Stream<void> Function(String uid)? _inboxChangesOverride;
 
+  final Future<void> Function(String, Map<String, dynamic>, bool)? _readWriter;
   late final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   late final FirebaseAuth _auth = _authOverride ?? FirebaseAuth.instance;
   late final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
@@ -69,7 +73,7 @@ class NoticeFirestoreService {
       debugPrint('Event inbox unavailable (${error.runtimeType}).');
     }
     final visible = <NoticeModel>[];
-    for (final notice in legacy) {
+    for (var notice in legacy) {
       if (!notice.id.startsWith(eventNotificationPrefix)) {
         try {
           final receipt = await _firestore
@@ -79,6 +83,7 @@ class NoticeFirestoreService {
               .doc(uid)
               .get();
           if (receipt.data()?['deletedAt'] != null) continue;
+          notice = notice.copyWith(isRead: receipt.exists);
         } catch (error) {
           debugPrint('Notice dismissal unavailable (${error.runtimeType}).');
         }
@@ -243,6 +248,7 @@ class NoticeFirestoreService {
 
           final notice = NoticeModel(
             id: doc.id,
+            communityId: scope.communityId,
             title: data['title'] as String? ?? 'Notice',
             content: data['content'] as String? ?? '',
             category: categoryValue,
@@ -339,6 +345,7 @@ class NoticeFirestoreService {
     final date = timestamp is Timestamp ? timestamp.toDate() : DateTime.now();
     return NoticeModel(
       id: '$eventNotificationPrefix$id',
+      isRead: data['isRead'] == true,
       eventId: event ? eventId as String : null,
       billId: billing ? billId : null,
       opensBilling: billing,
@@ -383,7 +390,10 @@ class NoticeFirestoreService {
   Stream<void> _watchEventInbox(String uid) async* {
     final scope = await _loadResidentScope(uid);
     if (scope == null || _auth.currentUser?.uid != uid) return;
-    yield* _eventInboxQuery(uid, scope.communityId).snapshots().map((_) {});
+    yield* _eventInboxQuery(uid, scope.communityId)
+        .snapshots(includeMetadataChanges: true)
+        .where((snapshot) => !snapshot.metadata.hasPendingWrites)
+        .map((_) {});
   }
 
   /// Stream notices (real-time updates)
@@ -409,7 +419,7 @@ class NoticeFirestoreService {
   }
 
   // ============================================================================
-  // MARK AS READ (Optional - for future use)
+  // RECIPIENT READ STATE
   // ============================================================================
 
   /// Mark notice as read for current user
@@ -417,29 +427,39 @@ class NoticeFirestoreService {
   Future<void> markAsRead(String noticeId) async {
     try {
       final user = _auth.currentUser;
-      if (user == null) return;
+      if (user == null) throw StateError('Sign in to read notifications.');
+      final source = noticeId.startsWith(eventNotificationPrefix)
+          ? noticeId.substring(eventNotificationPrefix.length)
+          : noticeId;
+      if (!validTarget(source)) throw ArgumentError('Invalid notification.');
 
-      if (noticeId.startsWith(eventNotificationPrefix)) {
+      final canonical = noticeId.startsWith(eventNotificationPrefix);
+      final fields = <String, dynamic>{
+        'readAt': FieldValue.serverTimestamp(),
+        if (canonical) 'isRead': true else 'userId': user.uid,
+      };
+      if (_readWriter != null) {
+        await _readWriter(
+          canonical
+              ? 'notifications/$source'
+              : '$noticesCollection/$source/readBy/${user.uid}',
+          fields,
+          canonical,
+        );
+      } else if (canonical) {
+        await _firestore.collection('notifications').doc(source).update(fields);
+      } else {
         await _firestore
-            .collection('notifications')
-            .doc(noticeId.substring(eventNotificationPrefix.length))
-            .update({'isRead': true, 'readAt': FieldValue.serverTimestamp()});
-        refreshUnreadCount();
-        return;
+            .collection(noticesCollection)
+            .doc(source)
+            .collection('readBy')
+            .doc(user.uid)
+            .set(fields, SetOptions(merge: true));
       }
-      await _firestore
-          .collection(noticesCollection)
-          .doc(noticeId)
-          .collection('readBy')
-          .doc(user.uid)
-          .set({
-            'readAt': FieldValue.serverTimestamp(),
-            'userId': user.uid,
-          }, SetOptions(merge: true));
-
-      _readChanges.add(null);
+      refreshUnreadCount();
     } catch (e) {
-      print('❌ Error marking notice as read: $e');
+      debugPrint('Notification read update failed (${e.runtimeType}).');
+      rethrow;
     }
   }
 

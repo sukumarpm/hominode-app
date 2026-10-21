@@ -1,4 +1,8 @@
 {
+  "notification_read": "വായിച്ചു",
+  "notification_unread": "വായിച്ചിട്ടില്ല",
+  "notification_read_failed": "ഈ അറിയിപ്പ് വായിച്ചതായി അടയാളപ്പെടുത്താനായില്ല. വീണ്ടും ശ്രമിക്കുക.",
+
   "app_title": "Hominode Resident",
   "home": "വീട്",
   "profile": "പ്രൊഫൈൽ",

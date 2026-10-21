@@ -1,4 +1,8 @@
 {
+  "notification_read": "पढ़ा हुआ",
+  "notification_unread": "अपठित",
+  "notification_read_failed": "इस सूचना को पढ़ा हुआ चिह्नित नहीं किया जा सका। फिर से कोशिश करें।",
+
   "app_title": "Hominode निवासी",
   "home": "होम",
   "profile": "प्रोफाइल",

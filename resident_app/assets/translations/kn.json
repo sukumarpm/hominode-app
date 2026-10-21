@@ -1,4 +1,8 @@
 {
+  "notification_read": "ಓದಲಾಗಿದೆ",
+  "notification_unread": "ಓದಿಲ್ಲ",
+  "notification_read_failed": "ಈ ಸೂಚನೆಯನ್ನು ಓದಿದಂತೆ ಗುರುತಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+
   "app_title": "Hominode Resident",
   "home": "ಮುಖಪುಟ",
   "profile": "ಪ್ರೊಫೈಲ್",
