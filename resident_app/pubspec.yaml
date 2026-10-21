@@ -177,10 +177,13 @@ flutter_launcher_icons:
   android: true
   ios: true
 
-  image_path: "lib/assets/Resident_New.png"
+  image_path: "lib/assets/branding/resident.png"
+  image_path_android: "lib/assets/branding/launcher-android.png"
+  image_path_ios: "lib/assets/branding/resident.png"
 
-  adaptive_icon_background: "#000000"
-  adaptive_icon_foreground: "lib/assets/Resident_New.png"
+  adaptive_icon_background: "lib/assets/branding/launcher-adaptive-background.png"
+  adaptive_icon_foreground: "lib/assets/branding/launcher-adaptive-foreground.png"
+  adaptive_icon_foreground_inset: 0
 
   remove_alpha_ios: true
   min_sdk_android: 21
