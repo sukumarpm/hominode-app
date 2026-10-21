@@ -261,7 +261,7 @@ test("private readers enforce complaint privacy, same-building marketplace and c
     }
   }
 });
-test("apartment bytes allow only active residents of the exact building/community", async () => {
+test("legacy apartment bytes preserve community access while enforcing active membership", async () => {
   const s = setup();
   const pending = await s.reserve("apartment");
   s.upload(pending);
@@ -282,8 +282,13 @@ test("apartment bytes allow only active residents of the exact building/communit
     (await read(call(s, { assetId: asset.assetId }))).size,
     jpeg.length,
   );
+  s.db.values.get("users/r").buildingId = "another-building";
+  assert.equal(
+    (await read(call(s, { assetId: asset.assetId }))).size,
+    jpeg.length,
+  );
+  s.db.values.get("users/r").buildingId = "b";
   for (const change of [
-    { buildingId: "wrong" },
     { communityId: "B" },
     { isActive: false },
     { approvalStatus: "pending" },

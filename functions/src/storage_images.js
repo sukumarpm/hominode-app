@@ -14,6 +14,8 @@ const {
   subscriptionCanUseFeature,
 } = require("./subscription_management");
 
+const photoOwnership = require("./photo_ownership");
+
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const UPLOAD_LIFETIME_MS = 15 * 60 * 1000;
 const FEATURES = Object.freeze({
@@ -96,6 +98,10 @@ function publicAsset(asset) {
   return Object.fromEntries(
     [
       "assetId",
+      "contractVersion",
+      "ownershipScope",
+      "buildingId",
+      "unitId",
       "provider",
       "bucket",
       "storagePath",
@@ -120,6 +126,8 @@ async function authority({
   auth,
   feature,
   resourceId,
+  contractVersion,
+  ownershipScope,
   transaction,
   nowMs,
 }) {
@@ -127,6 +135,21 @@ async function authority({
     fail("unauthenticated", "Verified phone authentication is required.");
   if (!Object.hasOwn(FEATURES, feature))
     fail("invalid-argument", "This image feature is not supported.");
+  if (contractVersion !== undefined || ownershipScope !== undefined) {
+    photoOwnership.requestScope({
+      feature,
+      resourceId,
+      contractVersion,
+      ownershipScope,
+    });
+    return photoOwnership.photoAuthority({
+      db,
+      auth,
+      transaction,
+      ownershipScope,
+      resourceId,
+    });
+  }
   const policy = FEATURES[feature];
   const read = (ref) => transaction.get(ref);
   const profileRef = db
@@ -247,7 +270,15 @@ async function prepareStorageImageUploadCore({
   data,
   now = Date.now,
 }) {
-  object(data, ["feature", "resourceId", "contentType", "size"]);
+  object(data, [
+    "feature",
+    "resourceId",
+    "contentType",
+    "size",
+    "contractVersion",
+    "ownershipScope",
+  ]);
+  const ownership = photoOwnership.requestScope(data);
   imageType(data.feature, data.contentType, data.size);
   if (!bucket?.name)
     fail("failed-precondition", "Image storage is unavailable.");
@@ -258,6 +289,7 @@ async function prepareStorageImageUploadCore({
       db,
       auth,
       feature: data.feature,
+      ...ownership,
       resourceId: data.resourceId,
       transaction,
       nowMs,
@@ -306,6 +338,11 @@ function validateAssetRecord(snapshot, bucket) {
   if (!snapshot.exists)
     fail("permission-denied", "This image upload is unavailable.");
   imageType(asset.feature, asset.contentType, asset.size);
+  if (photoOwnership.versioned(asset)) {
+    if (asset.feature !== "apartment")
+      fail("failed-precondition", "Invalid scoped image feature.");
+    photoOwnership.binding(asset);
+  }
   if (
     !UUID.test(asset.assetId) ||
     asset.assetId !== snapshot.id ||
@@ -420,12 +457,16 @@ async function authorizedAsset({
     db,
     auth,
     feature: asset.feature,
+    contractVersion: asset.contractVersion,
+    ownershipScope: asset.ownershipScope,
     resourceId: asset.resourceId,
     transaction,
     nowMs,
   });
   if (
     scope.communityId !== asset.communityId ||
+    (photoOwnership.versioned(asset) &&
+      !photoOwnership.sameBinding(asset, scope)) ||
     !["pending", "verified", "ready"].includes(asset.state) ||
     (asset.state === "pending" && asset.expiresAtMs <= nowMs)
   ) {
@@ -438,6 +479,10 @@ async function authorizedAsset({
 }
 function binding(asset) {
   return {
+    ...(photoOwnership.versioned(asset) &&
+    asset.storagePath === imagePath(asset, true)
+      ? { contractVersion: "2", ownershipScope: asset.ownershipScope }
+      : {}),
     assetId: asset.assetId,
     ownerId: asset.ownerId,
     communityId: asset.communityId,
@@ -530,7 +575,7 @@ async function completeStorageImageUploadCore({
         metadata: {
           contentType: asset.contentType,
           cacheControl: "private, no-store",
-          metadata: { ...binding(asset), sha256: privateAsset.sha256 },
+          metadata: { ...binding(privateAsset), sha256: privateAsset.sha256 },
         },
       });
     } catch (error) {

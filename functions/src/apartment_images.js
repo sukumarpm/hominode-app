@@ -13,10 +13,14 @@ const {
   verifyObjectMetadata,
 } = require("./storage_images");
 
+const photoOwnership = require("./photo_ownership");
+
 const assetRef = (db, id) =>
   db.collection("storageImageUploads").doc(documentId(id));
-const imageRef = (db, id) =>
-  db.collection("apartmentImages").doc(documentId(id));
+const imageRef = (db, id, version) =>
+  db
+    .collection(version === 2 ? "apartmentImagesV2" : "apartmentImages")
+    .doc(documentId(id));
 const revision = (image) => image.revision ?? 0;
 function expectedRevision(value) {
   if (!Number.isSafeInteger(value) || value < 0)
@@ -35,16 +39,20 @@ async function adminForImage(context, image) {
   const scope = await authority({
     ...context,
     feature: "apartment",
-    resourceId: image.buildingId,
+    ...photoOwnership.binding(image, true),
   });
-  if (scope.communityId !== image.communityId)
+  if (
+    scope.communityId !== image.communityId ||
+    (photoOwnership.versioned(image) &&
+      !photoOwnership.sameBinding(scope, image))
+  )
     fail("permission-denied", "The image is outside the authorized community.");
 }
 function boundAsset(snapshot, bucket, image, imageId) {
   const asset = validateAssetRecord(snapshot, bucket);
   if (
     asset.feature !== "apartment" ||
-    asset.resourceId !== image.buildingId ||
+    !photoOwnership.sameBinding(asset, image) ||
     asset.communityId !== image.communityId ||
     asset.imageId !== imageId ||
     asset.state !== "ready" ||
@@ -66,7 +74,7 @@ async function authorizedApartmentRead({
 }) {
   const asset = snapshot.data();
   const id = documentId(asset.imageId);
-  const image = await transaction.get(imageRef(db, id));
+  const image = await transaction.get(imageRef(db, id, asset.contractVersion));
   if (!image.exists)
     fail("permission-denied", "This apartment image is unavailable.");
   const value = image.data();
@@ -89,6 +97,16 @@ async function authorizedApartmentRead({
       auth,
       transaction,
     });
+    if (photoOwnership.versioned(value)) {
+      await photoOwnership.residentRead(
+        { db, auth, transaction },
+        value,
+        profile,
+      );
+      if (value.status !== "active")
+        fail("permission-denied", "This photo is unavailable.");
+      return boundAsset(snapshot, bucket, value, id);
+    }
     const building = await transaction.get(
       db.collection("buildings").doc(value.buildingId),
     );
@@ -137,17 +155,29 @@ async function saveApartmentImageCore({
       db,
       auth,
       feature: "apartment",
+      contractVersion: asset.contractVersion,
+      ownershipScope: asset.ownershipScope,
       resourceId: asset.resourceId,
       transaction,
       nowMs: now(),
     });
-    if (scope.communityId !== asset.communityId)
+    if (
+      scope.communityId !== asset.communityId ||
+      (photoOwnership.versioned(asset) &&
+        !photoOwnership.sameBinding(asset, scope))
+    )
       fail("permission-denied", "The upload community changed.");
-    const existing = await transaction.get(imageRef(db, id));
+    const existing = await transaction.get(
+      imageRef(db, id, asset.contractVersion),
+    );
     const image = existing.data();
     if (asset.imageId) {
       if (asset.imageId === id && image?.imageAsset?.assetId === asset.assetId)
-        return { imageId: id, revision: revision(image) };
+        return {
+          imageId: id,
+          revision: revision(image),
+          ...(asset.contractVersion === 2 ? { contractVersion: 2 } : {}),
+        };
       fail(
         "failed-precondition",
         "This image upload has already been attached.",
@@ -161,7 +191,7 @@ async function saveApartmentImageCore({
       if (revision(image) !== data.expectedRevision)
         fail("aborted", "The image changed. Reload before replacing it.");
       if (
-        image.buildingId !== asset.resourceId ||
+        !photoOwnership.sameBinding(asset, image) ||
         image.communityId !== asset.communityId
       )
         fail(
@@ -187,9 +217,10 @@ async function saveApartmentImageCore({
       revision: nextRevision,
       updatedAt: timestamp,
     };
-    if (replacing) transaction.update(imageRef(db, id), update);
+    if (replacing)
+      transaction.update(imageRef(db, id, asset.contractVersion), update);
     else
-      transaction.create(imageRef(db, id), {
+      transaction.create(imageRef(db, id, asset.contractVersion), {
         ...update,
         title: text(data.title, 200, true),
         description: text(data.description, 2000),
@@ -199,7 +230,9 @@ async function saveApartmentImageCore({
         imageUrl: "",
         adminId: auth.uid,
         adminName: profile.data()?.name || "Admin",
-        buildingId: asset.resourceId,
+        ...(photoOwnership.versioned(asset)
+          ? photoOwnership.binding(asset)
+          : { buildingId: asset.resourceId }),
         communityId: asset.communityId,
         status: "active",
         createdAt: timestamp,
@@ -213,7 +246,11 @@ async function saveApartmentImageCore({
         state: "retired",
         detachedAt: timestamp,
       });
-    return { imageId: id, revision: nextRevision };
+    return {
+      imageId: id,
+      revision: nextRevision,
+      ...(asset.contractVersion === 2 ? { contractVersion: 2 } : {}),
+    };
   });
   // The reference change is committed before any destructive operation. Retired
   // assets are collected by the retryable server sweep, never by a client URL.
@@ -227,13 +264,17 @@ async function deleteApartmentImageCore({
   data,
   now = Date.now,
 }) {
-  object(data, ["imageId", "expectedRevision"]);
+  object(data, ["imageId", "expectedRevision", "contractVersion"]);
+  if (data.contractVersion !== undefined && data.contractVersion !== 2)
+    fail("invalid-argument", "A supported deletion contract is required.");
   const id = documentId(data.imageId);
   expectedRevision(data.expectedRevision);
   return db.runTransaction(async (transaction) => {
-    const ref = imageRef(db, id);
+    const ref = imageRef(db, id, data.contractVersion);
     const snapshot = await transaction.get(ref);
-    const tombstoneRef = db.collection("apartmentImageDeletes").doc(id);
+    const tombstoneRef = db
+      .collection("apartmentImageDeletes")
+      .doc(data.contractVersion === 2 ? `v2_${id}` : id);
     const tombstone = await transaction.get(tombstoneRef);
     const image = snapshot.exists ? snapshot.data() : tombstone.data();
     if (!image) fail("not-found", "The apartment image no longer exists.");
@@ -252,7 +293,9 @@ async function deleteApartmentImageCore({
     const timestamp = Timestamp.fromMillis(now());
     transaction.set(tombstoneRef, {
       communityId: image.communityId,
-      buildingId: image.buildingId,
+      ...(photoOwnership.versioned(image)
+        ? photoOwnership.binding(image, true)
+        : { buildingId: image.buildingId }),
       revision: revision(image),
       deletedAt: timestamp,
     });
@@ -287,7 +330,9 @@ async function collectApartmentAsset({ db, bucket, assetId, now = Date.now }) {
     )
       return null;
     if (value.imageId) {
-      const image = await transaction.get(imageRef(db, value.imageId));
+      const image = await transaction.get(
+        imageRef(db, value.imageId, value.contractVersion),
+      );
       if (image.data()?.imageAsset?.assetId === assetId) return null;
     }
     // Reject malformed server records rather than operating on arbitrary paths.
