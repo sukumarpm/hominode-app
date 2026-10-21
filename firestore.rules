@@ -2570,6 +2570,61 @@ match /marketplaces/{listingId} {
       }
     }
     
+    // V2 is opt-in. Unclassified legacy records keep their original read policy.
+    function photoHasOwnership(data) {
+      return data.keys().hasAny(['contractVersion', 'ownershipScope']);
+    }
+    function photoBuildingMatches(data) {
+      let building = get(/databases/$(database)/documents/buildings/$(data.buildingId)).data;
+      return building.communityId == data.communityId
+        && (!('isActive' in building) || building.isActive != false)
+        && (!('status' in building) || !(building.status in ['deleted', 'removed', 'rejected']));
+    }
+    function photoUnitMatches(data) {
+      let unit = get(/databases/$(database)/documents/flats/$(data.unitId)).data;
+      return unit.communityId == data.communityId && unit.buildingId == data.buildingId
+        && (!('isActive' in unit) || unit.isActive != false)
+        && (!('status' in unit) || !(unit.status in ['deleted', 'removed', 'rejected']));
+    }
+    function photoOwnershipValid(data) {
+      return data.contractVersion == 2 && data.resourceId is string
+        && data.resourceId.size() > 0 && data.communityId is string
+        && ((data.ownershipScope == 'COMMUNITY' && data.resourceId == data.communityId
+              && !data.keys().hasAny(['buildingId', 'unitId']))
+          || (data.ownershipScope in ['BUILDING', 'UNIT'] && data.buildingId is string
+              && photoBuildingMatches(data)
+              && ((data.ownershipScope == 'BUILDING' && data.resourceId == data.buildingId
+                    && !('unitId' in data))
+                || (data.ownershipScope == 'UNIT' && data.unitId is string
+                    && data.resourceId == data.unitId && photoUnitMatches(data)))));
+    }
+    function photoCurrentUnitResident(data) {
+      let unit = get(/databases/$(database)/documents/flats/$(data.unitId)).data;
+      return userProfile().flatId == data.unitId && unit.status == 'occupied'
+        && unit.residentUserId == request.auth.uid
+        && (!('residentUid' in unit) || unit.residentUid == null || unit.residentUid == '' || unit.residentUid == request.auth.uid)
+        && (!('residentId' in unit) || unit.residentId == null || unit.residentId == '' || unit.residentId == request.auth.uid)
+        && (!('residentIds' in unit) || unit.residentIds == null || unit.residentIds == [] || unit.residentIds == [request.auth.uid]);
+    }
+    function photoImageMayRead(data) {
+      return photoOwnershipValid(data) && phoneAuthenticated()
+        && ((adminCanAccessCommunity(data.communityId)
+              && adminProfile().phoneNumber == request.auth.token.phone_number)
+          || (residentSameCommunity(data) && data.status == 'active'
+              && userProfile().uid == request.auth.uid
+              && userProfile().phoneNumber == request.auth.token.phone_number
+              && (data.ownershipScope == 'COMMUNITY'
+                || (userProfile().buildingId == data.buildingId
+                  && (data.ownershipScope == 'BUILDING' || photoCurrentUnitResident(data))))));
+    }
+
+    // Separate metadata namespace preserves old community-wide gallery queries.
+    // All writes, including delete and scope changes, are server-owned.
+    match /apartmentImagesV2/{imageId} {
+      allow read: if photoHasOwnership(resource.data) && photoImageMayRead(resource.data);
+      allow write: if false;
+    }
+
     match /apartmentImages/{imageId} {
 
       // Community gallery: active images for approved residents in this tenant.
