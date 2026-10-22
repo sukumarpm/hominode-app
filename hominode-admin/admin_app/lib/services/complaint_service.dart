@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'admin_service.dart';
 import 'notification_firestore_service.dart';
 import '../models/notification_models.dart';
@@ -205,6 +206,7 @@ class ComplaintService {
     // Null means the admin left this field unchanged; an empty string clears it.
     final normalizedTeam = assignedTeam?.trim();
     final person = assignedTo?.trim();
+    _traceAssignmentValidationInputs(normalizedTeam, person);
     final progress = progressNote?.trim();
     final resolution = resolutionNote?.trim();
     if ((progress?.length ?? 0) > 2000 || (resolution?.length ?? 0) > 2000) {
@@ -246,6 +248,7 @@ class ComplaintService {
           person.isNotEmpty &&
           !unchangedLegacyPerson &&
           _containsPrivateContact(person)) {
+        _traceRejectedAssignment(person);
         throw ArgumentError(
           'Enter a person or vendor name only. Use the community support contact for resident contact details.',
         );
@@ -308,14 +311,21 @@ class ComplaintService {
       final savedPerson = (savedComplaint['assignedTo'] ?? '')
           .toString()
           .trim();
+      // A legacy assignedTo can hold contact data. Keep it in Firestore, but
+      // never include private contact details in resident-visible messages.
       final assignment = [
         if (savedTeam.isNotEmpty) savedTeam,
-        if (savedPerson.isNotEmpty) savedPerson,
+        if (savedPerson.isNotEmpty && !_containsPrivateContact(savedPerson))
+          savedPerson,
       ];
+      final hasStoredAssignment =
+          savedTeam.isNotEmpty || savedPerson.isNotEmpty;
       updateParts.add(
-        assignment.isEmpty
-            ? 'Assignment cleared'
-            : 'Assigned to ${assignment.join(' — ')}',
+        assignment.isNotEmpty
+            ? 'Assigned to ${assignment.join(' — ')}'
+            : hasStoredAssignment
+            ? 'Assignment updated'
+            : 'Assignment cleared',
       );
     }
     if (progress?.isNotEmpty == true) updateParts.add('Progress: $progress');
@@ -348,6 +358,46 @@ class ComplaintService {
     ).hasMatch(value);
     final digitCount = RegExp(r'\d').allMatches(value).length;
     return containsEmail || digitCount >= 7;
+  }
+
+  void _traceAssignmentValidationInputs(String? team, String? person) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[ComplaintWorkflowTrace] updateManualWorkflow inputs: '
+      'assignedTeam=${_classifyAssignmentValue(team, isTeam: true)}, '
+      'assignedTo=${_classifyAssignmentValue(person)}\n'
+      'Call stack:\n${StackTrace.current}',
+    );
+  }
+
+  void _traceRejectedAssignment(String value) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[ComplaintWorkflowTrace] rejected field=assignedTo '
+      'classification=${_classifyAssignmentValue(value)}\n'
+      'Validator stack:\n${StackTrace.current}',
+    );
+  }
+
+  String _classifyAssignmentValue(String? value, {bool isTeam = false}) {
+    final normalized = value?.trim();
+    if (normalized == null) return 'omitted';
+    if (normalized.isEmpty) return 'empty';
+    if (isTeam) {
+      return switch (normalized.toLowerCase()) {
+        'management' => 'team:management',
+        'security' => 'team:security',
+        'maintenance' => 'team:maintenance',
+        _ => 'team:other',
+      };
+    }
+    if (RegExp(r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b').hasMatch(normalized)) {
+      return 'email-like';
+    }
+    if (RegExp(r'\d').allMatches(normalized).length >= 7) {
+      return 'phone-like';
+    }
+    return 'text';
   }
 
   List<Map<String, dynamic>> _noteHistory(dynamic raw) {

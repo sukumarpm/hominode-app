@@ -545,6 +545,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
               padding: EdgeInsets.only(bottom: 12.h),
               child: ComplaintListCard(
                 complaint: complaint,
+                complaintService: _complaintService,
                 onComplaintUpdated: _onComplaintUpdated,
               ),
             ),

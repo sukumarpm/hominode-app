@@ -7,9 +7,14 @@ import 'complaint_firestore_service.dart';
 class ComplaintsService {
   static final ComplaintsService _instance = ComplaintsService._internal();
   factory ComplaintsService() => _instance;
-  ComplaintsService._internal();
 
-  final _firestoreService = ComplaintFirestoreService();
+  ComplaintsService._internal()
+    : _firestoreService = ComplaintFirestoreService();
+
+  ComplaintsService.withFirestoreService(ComplaintFirestoreService service)
+    : _firestoreService = service;
+
+  final ComplaintFirestoreService _firestoreService;
 
   /// Fetch all complaints from Firestore
   Future<List<Complaint>> fetchComplaints() async {
@@ -46,7 +51,7 @@ class ComplaintsService {
   /// Delete a complaint from Firestore
   Future<void> deleteComplaint(String complaintId) async {
     final result = await _firestoreService.deleteComplaint(complaintId);
-    
+
     if (!result.success) {
       throw Exception(result.message ?? 'Failed to delete complaint');
     }

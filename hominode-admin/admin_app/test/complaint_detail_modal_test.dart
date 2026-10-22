@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:admin_app/models/complaint_models.dart';
 import 'package:admin_app/services/complaint_service.dart';
+import 'package:admin_app/services/staff_vendor_service.dart';
 import 'package:admin_app/widgets/complaint_attachments.dart';
 import 'package:admin_app/widgets/complaint_detail_modal.dart';
+import 'package:admin_app/widgets/complaint_list_card.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -41,6 +43,17 @@ class _FakeComplaintService extends Fake implements ComplaintService {
   }
 }
 
+class _FakeStaffVendorService extends Fake implements StaffVendorService {
+  List<StaffMember> staff = const [];
+  List<VendorModel> vendors = const [];
+
+  @override
+  Stream<List<StaffMember>> getStaffMembers() => Stream.value(staff);
+
+  @override
+  Stream<List<VendorModel>> getVendors() => Stream.value(vendors);
+}
+
 final _complaint = ComplaintEntry(
   id: 'complaint-1',
   priority: ComplaintPriority.high,
@@ -59,6 +72,7 @@ Widget _app(
   Widget? attachmentsOverride = const SizedBox.shrink(),
   ComplaintEntry? complaint,
   Function(ComplaintEntry)? onComplaintUpdated,
+  StaffVendorService? staffVendorService,
 }) => ScreenUtilInit(
   designSize: const Size(390, 844),
   minTextAdapt: true,
@@ -73,6 +87,7 @@ Widget _app(
       body: ComplaintDetailModal(
         complaint: complaint ?? _complaint,
         complaintService: service,
+        staffVendorService: staffVendorService,
         attachmentsOverride: attachmentsOverride,
         onComplaintUpdated: onComplaintUpdated,
       ),
@@ -157,6 +172,82 @@ void main() {
     expect(service.lastUpdate?['assignedTo'], isNull);
   });
 
+  testWidgets(
+    'Management status change through complaint card preserves legacy assignment',
+    (tester) async {
+      final firestore = FakeFirebaseFirestore();
+      const legacyAssignment = 'Legacy vendor · +1 555 123 4567';
+      await firestore.collection('complaints').doc('complaint-1').set({
+        'communityId': 'community-a',
+        'residentId': 'resident-1',
+        'status': 'pending',
+        'assignedTeam': 'Management',
+        'assignedTo': legacyAssignment,
+        'title': 'Security concern',
+      });
+      final service = ComplaintService(
+        firestore: firestore,
+        adminIdProvider: () => 'admin-1',
+        communityIdProvider: () => 'community-a',
+        notificationSender:
+            ({
+              required recipientId,
+              required title,
+              required message,
+              required metadata,
+            }) async {},
+      );
+      final complaint = ComplaintEntry(
+        id: 'complaint-1',
+        priority: ComplaintPriority.high,
+        status: ComplaintStatus.pending,
+        title: 'Security concern',
+        residentName: 'Resident',
+        unit: 'A-101',
+        date: DateTime(2026, 10, 22),
+        category: ComplaintCategory.security,
+        assignedTeam: 'Management',
+        assignedTo: legacyAssignment,
+      );
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(390, 844),
+          minTextAdapt: true,
+          builder: (context, child) => MaterialApp(
+            home: Scaffold(
+              body: ComplaintListCard(
+                complaint: complaint,
+                complaintService: service,
+                attachmentsOverride: const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(ComplaintListCard));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('complaint-status-dropdown')),
+      );
+      await tester.tap(find.byKey(const ValueKey('complaint-status-dropdown')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('In Progress').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save-complaint-update')));
+      await tester.pumpAndSettle();
+
+      final persisted =
+          (await firestore.collection('complaints').doc('complaint-1').get())
+              .data()!;
+      expect(persisted['status'], 'inprogress');
+      expect(persisted['assignedTeam'], 'Management');
+      expect(persisted['assignedTo'], legacyAssignment);
+      expect(find.textContaining('Complaint update failed:'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('starts work without staff and saves reassignment and progress', (
     tester,
   ) async {
@@ -196,6 +287,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Maintenance').last);
     await tester.pumpAndSettle();
+    final editAssignment = find.byKey(
+      const ValueKey('complaint-edit-person-assignment'),
+    );
+
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).at(0), 'On-call technician');
     await tester.enterText(
       find.byType(TextField).at(1),
@@ -210,6 +308,135 @@ void main() {
     expect(service.lastUpdate?['assignedTo'], 'On-call technician');
     expect(service.lastUpdate?['progressNote'], contains('inspecting'));
     expect(updated?.status, ComplaintStatus.inProgress);
+  });
+
+  testWidgets(
+    'selects a community directory contact without copying phone data',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final service = _FakeComplaintService();
+      final directory = _FakeStaffVendorService()
+        ..staff = [
+          StaffMember(
+            id: 'staff-1',
+            name: 'Maya Chen',
+            role: 'Maintenance',
+            phone: '+1 555 123 4567',
+            status: 'present',
+          ),
+          StaffMember(
+            id: 'staff-2',
+            name: 'Maya Chen',
+            role: 'Maintenance',
+            phone: '+1 555 999 8888',
+            status: 'present',
+          ),
+        ]
+        ..vendors = [
+          VendorModel(
+            id: 'vendor-1',
+            businessName: 'Gate Services',
+            category: 'Maintenance',
+            contactPerson: 'Jordan Lee',
+            phone: '+1 555 987 6543',
+            status: 'active',
+          ),
+        ];
+      await tester.pumpWidget(_app(service, staffVendorService: directory));
+      final editAssignment = find.byKey(
+        const ValueKey('complaint-edit-person-assignment'),
+      );
+      await tester.ensureVisible(editAssignment);
+      await tester.tap(editAssignment);
+      await tester.pumpAndSettle();
+      final contactDropdown = find.byKey(
+        const ValueKey('complaint-directory-contact-none'),
+      );
+      await tester.ensureVisible(contactDropdown);
+      await tester.tap(contactDropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Maya Chen · Maintenance').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('save-complaint-update')),
+      );
+      await tester.tap(find.byKey(const ValueKey('save-complaint-update')));
+      await tester.pumpAndSettle();
+
+      expect(service.lastUpdate?['assignedTo'], 'Maya Chen');
+      expect(service.lastUpdate?['assignedTo'], isNot(contains('555')));
+    },
+  );
+
+  testWidgets('rejects manually entered phone or email before save', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final service = _FakeComplaintService();
+    await tester.pumpWidget(_app(service));
+    final editAssignment = find.byKey(
+      const ValueKey('complaint-edit-person-assignment'),
+    );
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byType(TextField).first);
+    await tester.enterText(find.byType(TextField).first, '5551234567');
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Enter a name only. Use community support contact for phone or email.',
+      ),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byType(TextField).first, 'vendor@example.com');
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Enter a name only. Use community support contact for phone or email.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<ElevatedButton>(
+            find.byKey(const ValueKey('save-complaint-update')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(service.calls, 0);
+  });
+
+  testWidgets('explicitly clearing the person assignment sends a clear patch', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final service = _FakeComplaintService();
+    await tester.pumpWidget(_app(service));
+    final editAssignment = find.byKey(
+      const ValueKey('complaint-edit-person-assignment'),
+    );
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byType(TextField).first);
+    await tester.enterText(find.byType(TextField).first, '');
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('save-complaint-update')),
+    );
+    await tester.tap(find.byKey(const ValueKey('save-complaint-update')));
+    await tester.pumpAndSettle();
+    expect(service.lastUpdate?['assignedTo'], '');
   });
 
   testWidgets('failed write does not call update callback or claim success', (

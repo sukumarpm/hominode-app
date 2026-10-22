@@ -147,10 +147,18 @@ void main() {
     final firestore = FakeFirebaseFirestore();
     await firestore.collection('complaints').doc('c-1').set({
       ..._record(),
-      'assignedTeam': 'security',
+      'assignedTeam': 'management',
       'assignedTo': null,
     });
     final service = await _service(firestore);
+    await service.updateManualWorkflow(
+      complaintId: 'c-1',
+      status: ComplaintStatus.inProgress,
+      assignedTeam: 'security',
+      assignedTo: null,
+      progressNote: null,
+      resolutionNote: null,
+    );
     await service.updateManualWorkflow(
       complaintId: 'c-1',
       status: ComplaintStatus.inProgress,
@@ -164,6 +172,45 @@ void main() {
     expect(record['assignedTeam'], 'maintenance');
     expect(record['assignedTo'], isNull);
   });
+
+  test(
+    'team-change notification never repeats legacy private assignment data',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      const legacy = 'Old vendor +1 555 123 4567';
+      await firestore.collection('complaints').doc('c-1').set({
+        ..._record(),
+        'assignedTeam': 'security',
+        'assignedTo': legacy,
+      });
+      String? residentMessage;
+      final service = await _service(
+        firestore,
+        notificationSender:
+            ({
+              required recipientId,
+              required title,
+              required message,
+              required metadata,
+            }) async {
+              residentMessage = message;
+            },
+      );
+
+      await service.updateManualWorkflow(
+        complaintId: 'c-1',
+        status: ComplaintStatus.inProgress,
+        assignedTeam: 'maintenance',
+        assignedTo: null,
+        progressNote: null,
+        resolutionNote: null,
+      );
+
+      expect(residentMessage, contains('maintenance'));
+      expect(residentMessage, isNot(contains('555')));
+      expect(residentMessage, isNot(contains('Old vendor')));
+    },
+  );
 
   test(
     'unchanged legacy private assignment is preserved on status update',

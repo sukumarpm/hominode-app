@@ -112,9 +112,16 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
   }
 
   bool isFormValid() {
-    return _selectedCategory != null &&
-        _titleController.text.trim().isNotEmpty &&
-        _descriptionController.text.trim().isNotEmpty;
+    return validateFields().isEmpty;
+  }
+
+  void _refreshFieldErrors() {
+    setState(() {
+      final errors = validateFields();
+      for (final field in _errors.keys) {
+        _errors[field] = errors[field];
+      }
+    });
   }
 
   Map<String, String?> validateFields() {
@@ -149,10 +156,8 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
     );
 
     if (category != null) {
-      setState(() {
-        _selectedCategory = category;
-        _errors['category'] = null;
-      });
+      _selectedCategory = category;
+      _refreshFieldErrors();
     }
   }
 
@@ -284,7 +289,9 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
     // Validate all fields
     final errors = validateFields();
     setState(() {
-      _errors.addAll(errors);
+      for (final field in _errors.keys) {
+        _errors[field] = errors[field];
+      }
     });
 
     if (errors.isNotEmpty) {
@@ -471,9 +478,7 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
       controller: _titleController,
       error: _errors['title'],
       onChanged: (value) {
-        if (_errors['title'] != null) {
-          setState(() => _errors['title'] = null);
-        }
+        _refreshFieldErrors();
       },
     );
   }
@@ -486,9 +491,7 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
       error: _errors['description'],
       maxLength: 1000,
       onChanged: (value) {
-        if (_errors['description'] != null) {
-          setState(() => _errors['description'] = null);
-        }
+        _refreshFieldErrors();
       },
     );
   }
@@ -510,6 +513,7 @@ class _CreateComplaintModalState extends State<CreateComplaintModal> {
           image: _attachedImage,
           onTap: _pickImage,
           onRemove: _removeImage,
+          removeKey: const ValueKey('remove-complaint-photo'),
         ),
       ],
     );
@@ -852,12 +856,14 @@ class UploadPhotoBox extends StatelessWidget {
   final File? image;
   final VoidCallback onTap;
   final VoidCallback onRemove;
+  final Key? removeKey;
 
   const UploadPhotoBox({
     super.key,
     this.image,
     required this.onTap,
     required this.onRemove,
+    this.removeKey,
   });
 
   @override
@@ -918,6 +924,7 @@ class UploadPhotoBox extends StatelessWidget {
               ),
             ),
             IconButton(
+              key: removeKey,
               onPressed: onRemove,
               icon: Icon(Icons.close, size: 20.w, color: Color(0xFF9CA3AF)),
               padding: EdgeInsets.all(8.w),
@@ -981,6 +988,7 @@ class PrimaryButton extends StatelessWidget {
       width: double.infinity,
       height: 50.h,
       child: ElevatedButton(
+        key: const ValueKey('submit-complaint-button'),
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: kPrimary,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/complaint_models.dart';
+import '../services/complaint_service.dart';
 import 'priority_chip.dart';
 import 'status_chip.dart';
 import 'complaint_detail_modal.dart';
@@ -8,11 +9,16 @@ import 'complaint_detail_modal.dart';
 class ComplaintListCard extends StatelessWidget {
   final ComplaintEntry complaint;
   final Function(ComplaintEntry)? onComplaintUpdated;
+  final ComplaintService? complaintService;
+  @visibleForTesting
+  final Widget? attachmentsOverride;
 
   const ComplaintListCard({
     super.key,
     required this.complaint,
     this.onComplaintUpdated,
+    this.complaintService,
+    this.attachmentsOverride,
   });
 
   @override
@@ -23,6 +29,8 @@ class ComplaintListCard extends StatelessWidget {
           context,
           complaint: complaint,
           onComplaintUpdated: onComplaintUpdated,
+          complaintService: complaintService,
+          attachmentsOverride: attachmentsOverride,
         );
       },
       child: Container(

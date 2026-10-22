@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../models/complaint_models.dart';
 import '../services/complaint_service.dart';
+import '../services/staff_vendor_service.dart';
 import 'complaint_attachments.dart';
 import 'status_chip.dart';
 
@@ -12,12 +13,14 @@ class ComplaintDetailModal extends StatefulWidget {
     required this.complaint,
     this.onComplaintUpdated,
     this.complaintService,
+    this.staffVendorService,
     this.attachmentsOverride,
   });
 
   final ComplaintEntry complaint;
   final Function(ComplaintEntry)? onComplaintUpdated;
   final ComplaintService? complaintService;
+  final StaffVendorService? staffVendorService;
   @visibleForTesting
   final Widget? attachmentsOverride;
 
@@ -25,6 +28,9 @@ class ComplaintDetailModal extends StatefulWidget {
     BuildContext context, {
     required ComplaintEntry complaint,
     Function(ComplaintEntry)? onComplaintUpdated,
+    ComplaintService? complaintService,
+    StaffVendorService? staffVendorService,
+    Widget? attachmentsOverride,
   }) {
     showDialog<void>(
       context: context,
@@ -32,6 +38,9 @@ class ComplaintDetailModal extends StatefulWidget {
       builder: (_) => ComplaintDetailModal(
         complaint: complaint,
         onComplaintUpdated: onComplaintUpdated,
+        complaintService: complaintService,
+        staffVendorService: staffVendorService,
+        attachmentsOverride: attachmentsOverride,
       ),
     );
   }
@@ -53,14 +62,27 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
 
   late final ComplaintService _service =
       widget.complaintService ?? ComplaintService();
+  late final StaffVendorService _staffVendorService =
+      widget.staffVendorService ?? StaffVendorService();
   late ComplaintStatus _status = widget.complaint.status;
   late String? _team = _initialTeam(widget.complaint.assignedTeam);
+  Stream<List<StaffMember>>? _staffStream;
+  Stream<List<VendorModel>>? _vendorStream;
+  String? _selectedDirectoryContactId;
+  String? _personFieldError;
+  String? _directoryError;
   late final TextEditingController _assigneeController = TextEditingController(
     text: widget.complaint.assignedTo ?? '',
   );
   final TextEditingController _progressController = TextEditingController();
   final TextEditingController _resolutionController = TextEditingController();
   bool _saving = false;
+  // Do not turn a prefilled legacy assignment into a new entry on status save.
+  // Only an explicit user edit may supply an assignedTo patch.
+  bool _personEdited = false;
+  // An assignment change requires explicit opt-in. Status/team saves ignore
+  // any prefilled or keyboard-modified legacy person value by default.
+  bool _editingPerson = false;
 
   String? _initialTeam(String? value) {
     final normalized = value?.trim();
@@ -192,18 +214,18 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
                           : (value) => setState(() => _team = value),
                     ),
                     SizedBox(height: 12.h),
-                    TextField(
-                      controller: _assigneeController,
-                      enabled: !_saving,
-                      maxLength: 240,
-                      decoration: const InputDecoration(
-                        labelText: 'Person / vendor name (optional)',
-                        hintText: 'Name only; use community support contact',
-                        helperText:
-                            'Do not enter private phone numbers or email addresses.',
-                        border: OutlineInputBorder(),
+                    CheckboxListTile(
+                      key: const ValueKey('complaint-edit-person-assignment'),
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Change assigned person / vendor'),
+                      subtitle: const Text(
+                        'Leave unchecked to keep the existing assignment.',
                       ),
+                      value: _editingPerson,
+                      onChanged: _saving ? null : _setEditingPerson,
                     ),
+                    if (_editingPerson) _buildPersonAssignmentEditor(),
                     if (_status == ComplaintStatus.inProgress) ...[
                       SizedBox(height: 4.h),
                       _noteField(
@@ -381,6 +403,195 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     );
   }
 
+  void _setEditingPerson(bool? value) {
+    final editing = value ?? false;
+    if (editing && _staffStream == null && _vendorStream == null) {
+      try {
+        _staffStream = _staffVendorService.getStaffMembers();
+        _vendorStream = _staffVendorService.getVendors();
+      } catch (_) {
+        _directoryError = 'Directory contacts are unavailable right now.';
+      }
+    }
+    setState(() => _editingPerson = editing);
+  }
+
+  Widget _buildPersonAssignmentEditor() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (_directoryError != null)
+        Padding(
+          padding: EdgeInsets.only(bottom: 8.h),
+          child: Text(
+            _directoryError!,
+            style: const TextStyle(color: Colors.black54),
+          ),
+        )
+      else if (_staffStream != null && _vendorStream != null)
+        StreamBuilder<List<StaffMember>>(
+          stream: _staffStream,
+          builder: (context, staffSnapshot) => StreamBuilder<List<VendorModel>>(
+            stream: _vendorStream,
+            builder: (context, vendorSnapshot) {
+              if (staffSnapshot.hasError || vendorSnapshot.hasError) {
+                return const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Directory contacts could not be loaded. You can enter a name below.',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                );
+              }
+              final contacts = _directoryContacts(
+                staffSnapshot.data ?? const [],
+                vendorSnapshot.data ?? const [],
+              );
+              final selectedId =
+                  contacts.any(
+                    (contact) => contact.id == _selectedDirectoryContactId,
+                  )
+                  ? _selectedDirectoryContactId
+                  : null;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DropdownButtonFormField<String>(
+                    key: ValueKey(
+                      'complaint-directory-contact-${selectedId ?? 'none'}',
+                    ),
+                    initialValue: selectedId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Community directory contact (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('Choose a staff or vendor contact'),
+                      ),
+                      for (final contact in contacts)
+                        DropdownMenuItem<String>(
+                          value: contact.id,
+                          child: Text(
+                            contact.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (id) => _selectDirectoryContact(id, contacts),
+                  ),
+                  if (staffSnapshot.connectionState ==
+                          ConnectionState.waiting &&
+                      !staffSnapshot.hasData)
+                    const LinearProgressIndicator(),
+                  if (staffSnapshot.hasData &&
+                      vendorSnapshot.hasData &&
+                      contacts.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'No staff or vendor contacts are available in this community. Enter a name below.',
+                        style: TextStyle(color: Colors.black54),
+                      ),
+                    ),
+                  SizedBox(height: 10.h),
+                ],
+              );
+            },
+          ),
+        ),
+      TextField(
+        controller: _assigneeController,
+        enabled: !_saving,
+        onChanged: (value) {
+          setState(() {
+            _personEdited = true;
+            _selectedDirectoryContactId = null;
+            _personFieldError = _personErrorFor(value);
+          });
+        },
+        maxLength: 240,
+        decoration: InputDecoration(
+          labelText: 'Person / vendor name (optional)',
+          hintText: 'Name only; use community support contact',
+          helperText: 'Do not enter private phone numbers or email addresses.',
+          errorText: _personFieldError,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    ],
+  );
+
+  List<_ComplaintDirectoryContact> _directoryContacts(
+    List<StaffMember> staff,
+    List<VendorModel> vendors,
+  ) {
+    final contacts = <_ComplaintDirectoryContact>[];
+    for (final member in staff) {
+      final name = member.name.trim();
+      if (name.isEmpty || member.status.toLowerCase() == 'inactive') continue;
+      if (_personErrorFor(name) != null) continue;
+      contacts.add(
+        _ComplaintDirectoryContact(
+          id: 'staff:${member.id}',
+          assignableName: name,
+          label: member.role.trim().isEmpty
+              ? name
+              : '$name · ${member.role.trim()}',
+        ),
+      );
+    }
+    for (final vendor in vendors) {
+      if (vendor.status.toLowerCase() == 'inactive') continue;
+      final name = vendor.contactPerson.trim().isNotEmpty
+          ? vendor.contactPerson.trim()
+          : vendor.businessName.trim();
+      if (name.isEmpty || _personErrorFor(name) != null) continue;
+      final label =
+          vendor.contactPerson.trim().isEmpty ||
+              vendor.businessName.trim().isEmpty
+          ? name
+          : '${vendor.businessName.trim()} · ${vendor.contactPerson.trim()}';
+      contacts.add(
+        _ComplaintDirectoryContact(
+          id: 'vendor:${vendor.id}',
+          assignableName: name,
+          label: label,
+        ),
+      );
+    }
+    contacts.sort(
+      (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+    );
+    return contacts;
+  }
+
+  void _selectDirectoryContact(
+    String? id,
+    List<_ComplaintDirectoryContact> contacts,
+  ) {
+    final selected = contacts.where((contact) => contact.id == id).firstOrNull;
+    setState(() {
+      _selectedDirectoryContactId = selected?.id;
+      _personEdited = true;
+      _personFieldError = null;
+      _assigneeController.text = selected?.assignableName ?? '';
+    });
+  }
+
+  String? _personErrorFor(String value) {
+    final email = RegExp(r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b');
+    final digitCount = RegExp(r'\d').allMatches(value).length;
+    if (email.hasMatch(value) || digitCount >= 7) {
+      return 'Enter a name only. Use community support contact for phone or email.';
+    }
+    return null;
+  }
+
   Widget _buildActions() => Padding(
     padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 16.h),
     child: Row(
@@ -395,7 +606,13 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
         Expanded(
           child: ElevatedButton(
             key: const ValueKey('save-complaint-update'),
-            onPressed: _saving ? null : _save,
+            onPressed:
+                _saving ||
+                    (_editingPerson &&
+                        _personEdited &&
+                        _personFieldError != null)
+                ? null
+                : _save,
             child: _saving
                 ? SizedBox(
                     width: 18.w,
@@ -411,13 +628,16 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
 
   Future<void> _save() async {
     if (_saving) return;
+    if (_editingPerson && _personEdited && _personFieldError != null) return;
     setState(() => _saving = true);
     try {
+      final teamPatch = _changedTeamPatch;
+      final personPatch = _changedPersonPatch;
       final result = await _service.updateManualWorkflow(
         complaintId: widget.complaint.id,
         status: _status,
-        assignedTeam: _changedTeamPatch,
-        assignedTo: _changedPersonPatch,
+        assignedTeam: teamPatch,
+        assignedTo: personPatch,
         progressNote: _progressController.text,
         resolutionNote: _resolutionController.text,
       );
@@ -432,10 +652,13 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
         unit: widget.complaint.unit,
         date: widget.complaint.date,
         category: widget.complaint.category,
-        assignedTeam: _teamValue,
-        assignedTo: _assigneeController.text.trim().isEmpty
-            ? null
-            : _assigneeController.text.trim(),
+        // Mirror fields actually persisted, not any ignored input edits.
+        assignedTeam: teamPatch == null
+            ? widget.complaint.assignedTeam
+            : (teamPatch.isEmpty ? null : teamPatch),
+        assignedTo: personPatch == null
+            ? widget.complaint.assignedTo
+            : (personPatch.isEmpty ? null : personPatch),
         description: widget.complaint.description,
         progressNotes: [
           ...widget.complaint.progressNotes,
@@ -483,6 +706,8 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
   }
 
   String? get _changedPersonPatch {
+    // Status and team updates must not write or revalidate untouched person data.
+    if (!_editingPerson || !_personEdited) return null;
     final current = _assigneeController.text.trim();
     final original = widget.complaint.assignedTo?.trim() ?? '';
     if (current == original) return null;
@@ -509,4 +734,16 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
 
   String _formatDate(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+}
+
+class _ComplaintDirectoryContact {
+  const _ComplaintDirectoryContact({
+    required this.id,
+    required this.assignableName,
+    required this.label,
+  });
+
+  final String id;
+  final String assignableName;
+  final String label;
 }
