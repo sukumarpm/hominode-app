@@ -624,7 +624,9 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
       final imageId = await _imagesService.uploadImage(
         title:
             widget.replacing?.title ??
-            'Apartment Image ${DateTime.now().millisecondsSinceEpoch}',
+            (widget.ownershipScope == 'BUILDING'
+                ? 'Building Photo'
+                : 'Community Photo'),
         description: 'Apartment image',
         type: 'Common Area',
         imageFile: _selectedImage!,

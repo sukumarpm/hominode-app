@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 class _Service extends Fake implements CloudinaryApartmentImagesService {
   final calls = <ApartmentImageModel?>[];
+  final titles = <String>[];
   final dates = <String?>[];
   final times = <String?>[];
   bool fail = false;
@@ -28,6 +29,7 @@ class _Service extends Fake implements CloudinaryApartmentImagesService {
     ApartmentImageModel? replacing,
   }) async {
     calls.add(replacing);
+    titles.add(title);
     dates.add(uploadDate);
     times.add(uploadTime);
     expect(buildingId, expectedBuildingId);
@@ -98,6 +100,7 @@ void main() {
       ApartmentImageModel.fromFirestore('existing-v2', {
         'contractVersion': 2,
         'ownershipScope': 'BUILDING',
+        'title': 'Lobby photo',
         'resourceId': 'building',
         'buildingId': 'building',
         'communityId': 'A',
@@ -118,6 +121,7 @@ void main() {
       expect(service.calls.single!.id, 'existing-v2');
       expect(service.dates.single, '01-02-2020');
       expect(service.times.single, '9:30 AM');
+      expect(service.titles.single, 'Lobby photo');
       expect(find.byType(AddApartmentImageModal), findsNothing);
     },
   );
@@ -139,6 +143,18 @@ void main() {
     await tester.tap(find.widgetWithText(ElevatedButton, 'Upload Image'));
     await tester.pumpAndSettle();
     expect(service.calls, [null]);
+    expect(service.titles, ['Community Photo']);
+  });
+
+  testWidgets('new building upload defaults to Building Photo title', (
+    tester,
+  ) async {
+    await open(tester, null, (_) {});
+    await tester.tap(find.text('Upload image'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Upload Image'));
+    await tester.pumpAndSettle();
+    expect(service.titles, ['Building Photo']);
   });
   testWidgets(
     'failure keeps modal open for retry; upload disables closing and duplicate submit',
@@ -206,6 +222,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(service.dates.single, automaticDate);
       expect(service.times.single, automaticTime);
+      expect(service.titles.single, 'Building Photo');
       expect(saved, 'saved');
       expect(service.calls.single, isNull);
     },

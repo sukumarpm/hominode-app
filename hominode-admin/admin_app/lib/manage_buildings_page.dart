@@ -313,6 +313,8 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
           _buildStatsRow(building),
           SizedBox(height: 16.h),
           _buildOccupancyBar(building),
+          SizedBox(height: 16.h),
+          _buildActionIcons(building),
         ],
       ),
     );
@@ -357,42 +359,49 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
             ],
           ),
         ),
-        _buildActionIcons(building),
       ],
     );
   }
 
   Widget _buildActionIcons(BuildingModel building) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Tooltip(
-          message: 'Building photos',
-          child: _buildIconButton(
-            Icons.photo_library_outlined,
-            const Color(0xFF9CA3AF),
-            () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      ApartmentImagesManagementScreen(buildingId: building.id),
-                ),
-              );
-            },
-          ),
+        BuildingPhotoManagementButton(buildingId: building.id),
+        SizedBox(height: 4.h),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            IconButton(
+              tooltip: 'Manage units',
+              constraints: const BoxConstraints.tightFor(
+                width: kMinInteractiveDimension,
+                height: kMinInteractiveDimension,
+              ),
+              onPressed: () => _showFlatOccupancyGrid(building),
+              icon: const Icon(Icons.grid_view),
+            ),
+            IconButton(
+              tooltip: 'Edit building',
+              constraints: const BoxConstraints.tightFor(
+                width: kMinInteractiveDimension,
+                height: kMinInteractiveDimension,
+              ),
+              onPressed: () => _handleEditBuilding(building),
+              icon: const Icon(Icons.edit_outlined),
+            ),
+            IconButton(
+              tooltip: 'Delete building',
+              constraints: const BoxConstraints.tightFor(
+                width: kMinInteractiveDimension,
+                height: kMinInteractiveDimension,
+              ),
+              color: const Color(0xFFEF4444),
+              onPressed: () => _deleteBuilding(building.id, building.name),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
         ),
-        SizedBox(width: 8.w),
-        _buildIconButton(Icons.grid_view, const Color(0xFF9CA3AF), () {
-          _showFlatOccupancyGrid(building);
-        }),
-        SizedBox(width: 8.w),
-        _buildIconButton(Icons.edit_outlined, const Color(0xFF9CA3AF), () {
-          _handleEditBuilding(building);
-        }),
-        SizedBox(width: 8.w),
-        _buildIconButton(Icons.delete_outline, const Color(0xFFEF4444), () {
-          _deleteBuilding(building.id, building.name);
-        }),
       ],
     );
   }
@@ -700,18 +709,6 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
     }
   }
 
-  Widget _buildIconButton(IconData icon, Color color, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 32.w,
-        height: 32.h,
-        alignment: Alignment.center,
-        child: Icon(icon, color: color, size: 20.w),
-      ),
-    );
-  }
-
   Widget _buildStatsRow(BuildingModel building) {
     return Row(
       children: [
@@ -827,4 +824,36 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
       ],
     );
   }
+}
+
+class BuildingPhotoManagementButton extends StatelessWidget {
+  const BuildingPhotoManagementButton({
+    super.key,
+    required this.buildingId,
+    this.destinationBuilder,
+  });
+
+  final String buildingId;
+  final Widget Function(BuildContext context, String buildingId)?
+  destinationBuilder;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+    onPressed: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (routeContext) =>
+            destinationBuilder?.call(routeContext, buildingId) ??
+            ApartmentImagesManagementScreen(buildingId: buildingId),
+      ),
+    ),
+    icon: const Icon(Icons.photo_library_outlined),
+    label: const Text('Manage Photos'),
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size(double.infinity, kMinInteractiveDimension),
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      foregroundColor: const Color(0xFF0E4778),
+      side: const BorderSide(color: Color(0xFF0E4778)),
+    ),
+  );
 }
