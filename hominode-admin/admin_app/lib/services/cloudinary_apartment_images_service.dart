@@ -165,27 +165,32 @@ class CloudinaryApartmentImagesService {
     bool legacy = false,
   }) {
     if (_adminService.getCurrentAdminId() == null) return Stream.value([]);
+    final communityId = _adminService.requireCurrentCommunityId();
     Query<Map<String, dynamic>> query = _firestore
         .collection(legacy ? 'apartmentImages' : 'apartmentImagesV2')
-        .where(
-          'communityId',
-          isEqualTo: _adminService.requireCurrentCommunityId(),
-        );
+        .where('communityId', isEqualTo: communityId);
+
+    final appliedFields = <String>{'communityId'};
+
     if (!legacy) {
       for (final entry in PhotoOwnership.queryFields(
-        _adminService.requireCurrentCommunityId(),
+        communityId,
         scope,
-        scope == 'COMMUNITY'
-            ? _adminService.requireCurrentCommunityId()
-            : buildingId ?? '',
+        scope == 'COMMUNITY' ? communityId : buildingId ?? '',
       ).entries) {
-        query = query.where(entry.key, isEqualTo: entry.value);
+        if (appliedFields.add(entry.key)) {
+          query = query.where(entry.key, isEqualTo: entry.value);
+        }
       }
     }
+
     if (buildingId != null) {
-      query = query
-          .where('buildingId', isEqualTo: buildingId)
-          .where('status', isEqualTo: 'active');
+      if (appliedFields.add('buildingId')) {
+        query = query.where('buildingId', isEqualTo: buildingId);
+      }
+      if (appliedFields.add('status')) {
+        query = query.where('status', isEqualTo: 'active');
+      }
     }
     return query.snapshots().map((snapshot) {
       final images = snapshot.docs
