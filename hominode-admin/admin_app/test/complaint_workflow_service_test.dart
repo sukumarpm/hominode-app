@@ -49,7 +49,7 @@ void main() {
         complaintId: 'c-1',
         status: ComplaintStatus.inProgress,
         assignedTeam: 'security',
-        assignedTo: 'Night supervisor · 555-0100',
+        assignedTo: 'Night supervisor',
         progressNote: 'Guard checked the gate and ordered a replacement part.',
         resolutionNote: null,
       );
@@ -57,7 +57,7 @@ void main() {
           .data()!;
       expect(data['status'], 'inprogress');
       expect(data['assignedTeam'], 'security');
-      expect(data['assignedTo'], 'Night supervisor · 555-0100');
+      expect(data['assignedTo'], 'Night supervisor');
       expect(
         (data['progressNotes'] as List).single['text'],
         contains('ordered'),
@@ -121,6 +121,49 @@ void main() {
       'pending',
     );
   });
+
+  test(
+    'rejects private contact details in resident-readable assignee text',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.collection('complaints').doc('c-1').set(_record());
+      final service = await _service(firestore);
+
+      await expectLater(
+        service.updateManualWorkflow(
+          complaintId: 'c-1',
+          status: ComplaintStatus.inProgress,
+          assignedTeam: 'security',
+          assignedTo: 'Night supervisor · +1 555 123 4567',
+          progressNote: null,
+          resolutionNote: null,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        (await firestore.collection('complaints').doc('c-1').get())
+            .data()?['status'],
+        'pending',
+      );
+
+      await expectLater(
+        service.updateManualWorkflow(
+          complaintId: 'c-1',
+          status: ComplaintStatus.inProgress,
+          assignedTeam: 'security',
+          assignedTo: 'Night supervisor',
+          progressNote: 'Email the vendor at vendor@example.com.',
+          resolutionNote: null,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        (await firestore.collection('complaints').doc('c-1').get())
+            .data()?['status'],
+        'pending',
+      );
+    },
+  );
 
   test(
     'notification failure is reported after the complaint write succeeds',

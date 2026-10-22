@@ -204,10 +204,23 @@ class ComplaintService {
     if (person != null && person.length > 240) {
       throw ArgumentError.value(assignedTo, 'assignedTo');
     }
+    if (person != null && _containsPrivateContact(person)) {
+      throw ArgumentError(
+        'Enter a person or vendor name only. Use the community support contact for resident contact details.',
+      );
+    }
     final progress = progressNote?.trim();
     final resolution = resolutionNote?.trim();
     if ((progress?.length ?? 0) > 2000 || (resolution?.length ?? 0) > 2000) {
       throw ArgumentError('Complaint notes must be 2000 characters or fewer.');
+    }
+    if ([
+      progress,
+      resolution,
+    ].whereType<String>().any(_containsPrivateContact)) {
+      throw ArgumentError(
+        'Complaint updates are resident-visible. Do not include private phone numbers or email addresses.',
+      );
     }
 
     final ref = _firestore.collection(_collection).doc(complaintId);
@@ -288,6 +301,14 @@ class ComplaintService {
         notificationError: error.toString(),
       );
     }
+  }
+
+  bool _containsPrivateContact(String value) {
+    final containsEmail = RegExp(
+      r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b',
+    ).hasMatch(value);
+    final digitCount = RegExp(r'\d').allMatches(value).length;
+    return containsEmail || digitCount >= 7;
   }
 
   List<Map<String, dynamic>> _noteHistory(dynamic raw) {

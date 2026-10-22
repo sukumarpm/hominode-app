@@ -737,74 +737,10 @@ class ComplaintFirestoreService {
 
   /// Convert Firestore document to Complaint object (public for real-time updates)
   Complaint complaintFromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-
-    // Debug logging
-    print('🔍 Parsing complaint: ${doc.id}');
-    print('📊 Raw status from Firestore: ${data['status']}');
-    print('📊 Assigned to: ${data['assignedTo']}');
-    print('📊 Staff ID: ${data['assignedStaffId']}');
-
-    // Parse category enum
-    ComplaintCategory category;
-    try {
-      category = ComplaintCategory.values.firstWhere(
-        (e) => e.name == data['category'],
-        orElse: () => ComplaintCategory.other,
-      );
-    } catch (e) {
-      category = ComplaintCategory.other;
-    }
-
-    // Explicit workflow status takes precedence over historic resolution fields.
-    // Reopened complaints may retain resolvedAt as an audit timestamp.
-    final status = complaintStatusFromFirestore(
-      data['status'] as String?,
-      isResolved: data['isResolved'] as bool?,
-      hasResolvedAt: data['resolvedAt'] != null,
+    return complaintFromFirestoreData(
+      doc.id,
+      doc.data() as Map<String, dynamic>,
     );
-
-    // Parse createdAt timestamp
-    DateTime createdDate;
-    try {
-      final timestamp = data['createdAt'] as Timestamp?;
-      createdDate = timestamp?.toDate() ?? DateTime.now();
-    } catch (e) {
-      createdDate = DateTime.now();
-    }
-
-    final complaint = Complaint(
-      id: doc.id,
-      title: data['title'] as String? ?? 'Untitled',
-      description: data['description'] as String? ?? '',
-      category: category,
-      status: status,
-      createdDate: createdDate,
-      assignedTo: data['assignedTo'] as String?,
-      technicianPhone: data['technicianPhone'] as String?,
-      assignedStaffId: data['assignedStaffId'] as String?,
-      assignedStaffRole: data['assignedStaffRole'] as String?,
-      assignedTeam: data['assignedTeam'] as String?,
-      progressNotes: _complaintNotesFromFirestore(data['progressNotes']),
-      resolutionNotes: _complaintNotesFromFirestore(data['resolutionNotes']),
-    );
-
-    print('🎯 Final complaint status: ${complaint.status}');
-    print('---');
-
-    return complaint;
-  }
-
-  List<String> _complaintNotesFromFirestore(dynamic raw) {
-    if (raw is! List) return const [];
-    return raw
-        .map((entry) {
-          if (entry is String) return entry;
-          if (entry is Map) return entry['text']?.toString() ?? '';
-          return '';
-        })
-        .where((note) => note.trim().isNotEmpty)
-        .toList(growable: false);
   }
 
   // ============================================================================

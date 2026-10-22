@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/src/models/complaint.dart';
 
@@ -61,4 +63,50 @@ void main() {
     expect(complaint.progressNotes, ['Replacement part ordered.']);
     expect(complaint.resolutionNotes, ['Gate repaired and tested.']);
   });
+
+  test(
+    'resident document stream reflects Admin workflow status writes',
+    () async {
+      final writes = StreamController<Map<String, dynamic>>();
+      final statuses = StreamIterator(
+        writes.stream.map(
+          (data) => complaintFromFirestoreData('cross-client-1', data).status,
+        ),
+      );
+
+      Future<ComplaintStatus> statusAfterWrite(
+        Map<String, dynamic> data,
+      ) async {
+        final nextStatus = statuses.moveNext();
+        writes.add(data);
+        expect(await nextStatus, isTrue);
+        return statuses.current;
+      }
+
+      expect(
+        await statusAfterWrite({'status': 'pending'}),
+        ComplaintStatus.pending,
+      );
+      expect(
+        await statusAfterWrite({'status': 'inprogress'}),
+        ComplaintStatus.inProgress,
+      );
+      expect(
+        await statusAfterWrite({
+          'status': 'completed',
+          'resolvedAt': DateTime(2026, 10, 23),
+        }),
+        ComplaintStatus.completed,
+      );
+      expect(
+        await statusAfterWrite({
+          'status': 'inprogress',
+          'resolvedAt': DateTime(2026, 10, 23),
+        }),
+        ComplaintStatus.inProgress,
+      );
+      await statuses.cancel();
+      await writes.close();
+    },
+  );
 }

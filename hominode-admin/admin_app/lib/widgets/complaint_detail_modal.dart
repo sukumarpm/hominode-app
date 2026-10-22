@@ -196,8 +196,10 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
                       enabled: !_saving,
                       maxLength: 240,
                       decoration: const InputDecoration(
-                        labelText: 'Person / vendor (optional)',
-                        hintText: 'Name or contact details',
+                        labelText: 'Person / vendor name (optional)',
+                        hintText: 'Name only; use community support contact',
+                        helperText:
+                            'Do not enter private phone numbers or email addresses.',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -352,6 +354,8 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
+        helperText:
+            'Updates are resident-visible. Do not include private phone numbers or email addresses.',
         border: const OutlineInputBorder(),
       ),
     ),

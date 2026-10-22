@@ -4,6 +4,25 @@ enum ComplaintPriority { high, medium, low }
 
 enum ComplaintStatus { pending, inProgress, resolved }
 
+ComplaintStatus complaintStatusFromFirestore(String? rawStatus) {
+  final normalized = rawStatus?.toLowerCase().replaceAll(RegExp(r'[ _-]'), '');
+  switch (normalized) {
+    case 'pending':
+    case 'open':
+    case 'new':
+      return ComplaintStatus.pending;
+    case 'inprogress':
+    case 'assigned':
+      return ComplaintStatus.inProgress;
+    case 'resolved':
+    case 'completed':
+    case 'closed':
+      return ComplaintStatus.resolved;
+    default:
+      return ComplaintStatus.pending;
+  }
+}
+
 enum ComplaintCategory {
   plumbing,
   electrical,

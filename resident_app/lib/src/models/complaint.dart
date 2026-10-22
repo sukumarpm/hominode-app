@@ -1,6 +1,8 @@
 // lib/src/models/complaint.dart
 // Complaint model
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 enum ComplaintStatus { pending, inProgress, completed }
 
 ComplaintStatus complaintStatusFromFirestore(
@@ -66,6 +68,8 @@ class Complaint {
   final String? assignedStaffId; // Staff ID for fetching full details
   final String? assignedStaffRole; // Staff role
   final String? assignedTeam;
+  final String? communityId;
+  final String? imageUrl;
   final List<String> progressNotes;
   final List<String> resolutionNotes;
 
@@ -81,6 +85,8 @@ class Complaint {
     this.assignedStaffId,
     this.assignedStaffRole,
     this.assignedTeam,
+    this.communityId,
+    this.imageUrl,
     this.progressNotes = const [],
     this.resolutionNotes = const [],
   });
@@ -101,6 +107,8 @@ class Complaint {
       assignedStaffId: json['assignedStaffId'] as String?,
       assignedStaffRole: json['assignedStaffRole'] as String?,
       assignedTeam: json['assignedTeam'] as String?,
+      communityId: json['communityId'] as String?,
+      imageUrl: json['imageUrl'] as String?,
       progressNotes: _complaintNotesFromJson(json['progressNotes']),
       resolutionNotes: _complaintNotesFromJson(json['resolutionNotes']),
     );
@@ -119,6 +127,8 @@ class Complaint {
       'assignedStaffId': assignedStaffId,
       'assignedStaffRole': assignedStaffRole,
       'assignedTeam': assignedTeam,
+      'communityId': communityId,
+      'imageUrl': imageUrl,
       'progressNotes': progressNotes,
       'resolutionNotes': resolutionNotes,
     };
@@ -158,6 +168,43 @@ class Complaint {
         return 'Other';
     }
   }
+}
+
+Complaint complaintFromFirestoreData(String id, Map<String, dynamic> data) {
+  final rawCreatedAt = data['createdAt'];
+  final createdDate = rawCreatedAt is Timestamp
+      ? rawCreatedAt.toDate()
+      : rawCreatedAt is DateTime
+      ? rawCreatedAt
+      : DateTime.tryParse(data['createdDate']?.toString() ?? '') ??
+            DateTime.now();
+  final rawCategory = data['category']?.toString();
+  final category = ComplaintCategory.values.firstWhere(
+    (candidate) => candidate.name == rawCategory,
+    orElse: () => ComplaintCategory.other,
+  );
+
+  return Complaint(
+    id: id,
+    title: data['title']?.toString() ?? 'Untitled',
+    description: data['description']?.toString() ?? '',
+    category: category,
+    status: complaintStatusFromFirestore(
+      data['status'] as String?,
+      isResolved: data['isResolved'] as bool?,
+      hasResolvedAt: data['resolvedAt'] != null,
+    ),
+    createdDate: createdDate,
+    assignedTo: data['assignedTo'] as String?,
+    technicianPhone: data['technicianPhone'] as String?,
+    assignedStaffId: data['assignedStaffId'] as String?,
+    assignedStaffRole: data['assignedStaffRole'] as String?,
+    assignedTeam: data['assignedTeam'] as String?,
+    communityId: data['communityId'] as String?,
+    imageUrl: data['imageUrl'] as String?,
+    progressNotes: _complaintNotesFromJson(data['progressNotes']),
+    resolutionNotes: _complaintNotesFromJson(data['resolutionNotes']),
+  );
 }
 
 List<String> _complaintNotesFromJson(dynamic raw) {

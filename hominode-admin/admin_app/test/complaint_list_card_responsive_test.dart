@@ -14,6 +14,7 @@ ComplaintEntry _complaint() => ComplaintEntry(
   date: DateTime(2026, 10, 22),
   category: ComplaintCategory.plumbing,
   assignedTo: 'Maintenance Supervisor with a very long display name',
+  assignedTeam: 'maintenance',
 );
 
 Widget _app({required double textScale}) => ScreenUtilInit(
@@ -53,6 +54,14 @@ void main() {
 
       expect(find.text('High'), findsOneWidget);
       expect(find.text('In Progress'), findsOneWidget);
+      expect(find.text('Water leakage in the common corridor'), findsOneWidget);
+      expect(find.text('Resident'), findsOneWidget);
+      expect(find.text('Unit'), findsOneWidget);
+      expect(find.text('Reported'), findsOneWidget);
+      expect(find.text('Category'), findsOneWidget);
+      expect(find.text('Responsible'), findsOneWidget);
+      expect(find.text('Plumbing'), findsOneWidget);
+      expect(find.textContaining('Maintenance Supervisor'), findsOneWidget);
       expect(
         find.byWidgetPredicate(
           (widget) =>
@@ -66,4 +75,51 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('unassigned cards keep the same metadata order', (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final complaint = ComplaintEntry(
+      id: 'c-2',
+      priority: ComplaintPriority.low,
+      status: ComplaintStatus.pending,
+      title: 'Short title',
+      residentName: 'Resident',
+      unit: 'A-101',
+      date: DateTime(2026, 10, 22),
+      category: ComplaintCategory.other,
+    );
+    await tester.pumpWidget(
+      ScreenUtilInit(
+        designSize: const Size(390, 844),
+        minTextAdapt: true,
+        builder: (context, child) => MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 288,
+                child: SingleChildScrollView(
+                  child: ComplaintListCard(complaint: complaint),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final rowTops = [
+      'Resident',
+      'Unit',
+      'Reported',
+      'Category',
+      'Responsible',
+    ].map((label) => tester.getTopLeft(find.text(label).first).dy).toList();
+    expect(rowTops, orderedEquals(rowTops.toList()..sort()));
+    expect(find.text('Management'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

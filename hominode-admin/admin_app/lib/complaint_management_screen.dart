@@ -171,21 +171,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
   }
 
   ComplaintStatus _getStatusFromString(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return ComplaintStatus.pending;
-      case 'in-progress':
-      case 'in progress':
-      case 'in_progress':
-      case 'inprogress':
-        return ComplaintStatus.inProgress;
-      case 'resolved':
-      case 'completed':
-      case 'closed':
-        return ComplaintStatus.resolved;
-      default:
-        return ComplaintStatus.pending;
-    }
+    return complaintStatusFromFirestore(status);
   }
 
   ComplaintCategory _getCategoryFromString(String category) {

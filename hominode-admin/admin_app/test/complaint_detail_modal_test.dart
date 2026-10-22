@@ -183,10 +183,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Maintenance').last);
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byType(TextField).at(0),
-      'On-call technician · 555-0100',
-    );
+    await tester.enterText(find.byType(TextField).at(0), 'On-call technician');
     await tester.enterText(
       find.byType(TextField).at(1),
       'Technician is inspecting the entrance.',
@@ -197,7 +194,7 @@ void main() {
     expect(service.calls, 1);
     expect(service.lastUpdate?['status'], ComplaintStatus.inProgress);
     expect(service.lastUpdate?['assignedTeam'], 'maintenance');
-    expect(service.lastUpdate?['assignedTo'], 'On-call technician · 555-0100');
+    expect(service.lastUpdate?['assignedTo'], 'On-call technician');
     expect(service.lastUpdate?['progressNote'], contains('inspecting'));
     expect(updated?.status, ComplaintStatus.inProgress);
   });

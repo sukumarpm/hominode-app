@@ -8,7 +8,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/complaint.dart';
 import '../models/staff_model.dart';
 import '../screens/chat_with_technician_screen.dart';
-import '../services/complaint_firestore_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:convert';
@@ -98,6 +97,10 @@ class ComplaintDetailModal extends StatefulWidget {
   final StaffModel? assignedStaff;
   final VoidCallback? onChat;
   final VoidCallback? onDelete;
+  final FirebaseFirestore? firestoreOverride;
+  final Stream<Complaint>? complaintUpdates;
+  final Future<String?> Function(String communityId)?
+  communitySupportPhoneLoader;
 
   const ComplaintDetailModal({
     super.key,
@@ -105,6 +108,9 @@ class ComplaintDetailModal extends StatefulWidget {
     this.assignedStaff,
     this.onChat,
     this.onDelete,
+    this.firestoreOverride,
+    this.complaintUpdates,
+    this.communitySupportPhoneLoader,
   });
 
   @override
@@ -113,8 +119,29 @@ class ComplaintDetailModal extends StatefulWidget {
 
 class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
   final bool _isLoading = false;
-  final ComplaintFirestoreService _complaintService =
-      ComplaintFirestoreService.instance;
+  late final FirebaseFirestore _firestore =
+      widget.firestoreOverride ?? FirebaseFirestore.instance;
+  late final Future<String?>? _managementPhone = _loadCommunitySupportPhone(
+    widget.complaint.communityId,
+  );
+
+  Future<String?>? _loadCommunitySupportPhone(String? communityId) {
+    final id = communityId?.trim();
+    if (id == null || id.isEmpty) return null;
+    final loader = widget.communitySupportPhoneLoader;
+    if (loader != null) return loader(id);
+    return _firestore
+        .collection('communities')
+        .doc(id)
+        .get()
+        .then((snapshot) {
+          final phone = snapshot.data()?['supportPhone'];
+          return phone is String && phone.trim().isNotEmpty
+              ? phone.trim()
+              : null;
+        })
+        .catchError((Object _) => null);
+  }
 
   // Generate timeline based on actual complaint status
   List<TimelineEvent> _getTimeline(Complaint complaint, StaffModel? staff) {
@@ -135,19 +162,22 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     );
 
     // 2. Assigned to Staff
-    if (staff != null ||
-        complaint.assignedTo != null ||
-        complaint.assignedTeam != null) {
+    final team = complaint.assignedTeam?.trim();
+    final accountBackedStaff =
+        complaint.assignedStaffId?.trim().isNotEmpty == true
+        ? staff?.name.trim()
+        : null;
+    if ((team != null && team.isNotEmpty) ||
+        (accountBackedStaff != null && accountBackedStaff.isNotEmpty)) {
       final assignment = [
-        if (complaint.assignedTeam?.trim().isNotEmpty == true)
-          complaint.assignedTeam,
-        if ((staff?.name ?? complaint.assignedTo)?.trim().isNotEmpty == true)
-          staff?.name ?? complaint.assignedTo,
+        if (team != null && team.isNotEmpty) _teamDisplayName(team),
+        if (accountBackedStaff != null && accountBackedStaff.isNotEmpty)
+          accountBackedStaff,
       ].join(' · ');
       events.add(
         TimelineEvent(
           id: '2',
-          text: 'Responsible: $assignment',
+          text: 'Responsible team: $assignment',
           datetime: _formatDate(
             complaint.createdDate.add(const Duration(hours: 1)),
           ),
@@ -158,13 +188,12 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       events.add(
         TimelineEvent(
           id: '2',
-          text: 'Waiting for Staff Assignment',
-          datetime: 'Pending',
+          text: 'Management review',
+          datetime: 'Awaiting update',
           status: TimelineStatus.pending,
         ),
       );
-      print('✅ Timeline: Pending assignment');
-      return events; // Stop here if still pending
+      return events;
     }
 
     // 3. Work in Progress
@@ -217,6 +246,25 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     return events;
   }
 
+  String _teamDisplayName(String value) {
+    switch (value.toLowerCase()) {
+      case 'security':
+        return 'Security';
+      case 'maintenance':
+        return 'Maintenance';
+      case 'cleaning':
+        return 'Cleaning';
+      case 'administration':
+        return 'Administration';
+      case 'vendor':
+        return 'Vendor';
+      case 'other':
+        return 'Other';
+      default:
+        return value;
+    }
+  }
+
   String _formatDate(DateTime date) {
     final months = [
       'Jan',
@@ -261,9 +309,9 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
         fullscreenDialog: true,
         builder: (_) => ChatWithTechnicianScreen(
           chatId: 'complaint_${complaint.id}',
-          technicianName: complaint.assignedTo!,
+          technicianName: widget.assignedStaff?.name ?? 'Assigned technician',
           technicianRole: _getTechnicianRole(complaint.category),
-          technicianPhone: complaint.technicianPhone,
+          technicianPhone: null,
         ),
       ),
     );
@@ -290,25 +338,21 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('complaints')
-          .doc(widget.complaint.id)
-          .snapshots(),
+    return StreamBuilder<Complaint>(
+      stream:
+          widget.complaintUpdates ??
+          _firestore
+              .collection('complaints')
+              .doc(widget.complaint.id)
+              .snapshots()
+              .where((snapshot) => snapshot.data() != null)
+              .map(
+                (snapshot) =>
+                    complaintFromFirestoreData(snapshot.id, snapshot.data()!),
+              ),
       builder: (context, snapshot) {
         // Use real-time data if available, otherwise use widget data
-        Complaint currentComplaint = widget.complaint;
-
-        if (snapshot.hasData && snapshot.data != null) {
-          try {
-            currentComplaint = _complaintService.complaintFromFirestore(
-              snapshot.data!,
-            );
-            print('🔄 Real-time update: ${currentComplaint.status}');
-          } catch (e) {
-            print('❌ Error parsing real-time data: $e');
-          }
-        }
+        final currentComplaint = snapshot.data ?? widget.complaint;
 
         return Center(
           child: Container(
@@ -355,13 +399,6 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
                           _buildImageSection(currentComplaint),
 
                           SizedBox(height: 24.h),
-
-                          // Assigned Staff Details
-                          if (widget.assignedStaff != null)
-                            _buildStaffDetailsSection(currentComplaint),
-
-                          if (widget.assignedStaff != null)
-                            SizedBox(height: 24.h),
 
                           // Timeline
                           _buildTimelineSection(currentComplaint),
@@ -532,43 +569,27 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
   }
 
   Widget _buildImageSection(Complaint complaint) {
-    // Fetch image from Firestore using flow function pattern
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('complaints')
-          .doc(complaint.id)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const SizedBox.shrink();
-        }
-
-        final data = snapshot.data?.data() as Map<String, dynamic>?;
-        final imageData = data?['imageUrl'] as String?;
-
-        if (imageData == null || imageData.isEmpty) {
-          return const SizedBox.shrink();
-        }
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Attached Image',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: kTextTitle,
-              ),
-            ),
-            SizedBox(height: 12.h),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12.r),
-              child: _buildImageFromData(imageData),
-            ),
-          ],
-        );
-      },
+    final imageData = complaint.imageUrl;
+    if (imageData == null || imageData.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Attached Image',
+          style: TextStyle(
+            fontSize: 16.sp,
+            fontWeight: FontWeight.w600,
+            color: kTextTitle,
+          ),
+        ),
+        SizedBox(height: 12.h),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12.r),
+          child: _buildImageFromData(imageData),
+        ),
+      ],
     );
   }
 
@@ -662,192 +683,6 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     }
   }
 
-  Widget _buildStaffDetailsSection(Complaint complaint) {
-    final staff = widget.assignedStaff!;
-
-    return Container(
-      padding: EdgeInsets.all(16.w),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F9FF),
-        borderRadius: BorderRadius.circular(12.r),
-        border: Border.all(color: const Color(0xFFBAE6FD), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Assigned Staff',
-            style: TextStyle(
-              fontSize: 16.sp,
-              fontWeight: FontWeight.w600,
-              color: kTextTitle,
-            ),
-          ),
-          SizedBox(height: 16.h),
-          Row(
-            children: [
-              Container(
-                width: 56.w,
-                height: 56.h,
-                decoration: BoxDecoration(
-                  color: kPrimary.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.person, color: kPrimary, size: 28.w),
-              ),
-              SizedBox(width: 16.w),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      staff.name,
-                      style: TextStyle(
-                        fontSize: 16.sp,
-                        fontWeight: FontWeight.w600,
-                        color: kTextTitle,
-                      ),
-                    ),
-                    SizedBox(height: 4.h),
-                    Text(
-                      staff.roleDisplayName,
-                      style: TextStyle(fontSize: 14.sp, color: kTextMuted),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 16.h),
-          _buildStaffActionRow(
-            Icons.phone_outlined,
-            staff.phone,
-            'Call',
-            () => _handleCallStaff(staff.phone),
-          ),
-          SizedBox(height: 8.h),
-          _buildStaffActionRow(
-            Icons.chat_bubble_outline,
-            'Chat with ${staff.name.split(' ').first}',
-            'Chat',
-            () => _handleChatPressed(complaint),
-          ),
-          if (staff.email != null) ...[
-            SizedBox(height: 8.h),
-            _buildStaffInfoRow(Icons.email_outlined, staff.email!),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStaffActionRow(
-    IconData icon,
-    String text,
-    String action,
-    VoidCallback onTap,
-  ) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8.r),
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 12.w),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8.r),
-          border: Border.all(color: kPrimary.withOpacity(0.3)),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 20.w, color: kPrimary),
-            SizedBox(width: 12.w),
-            Expanded(
-              child: Text(
-                text,
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  color: kTextTitle,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            Text(
-              action,
-              style: TextStyle(
-                fontSize: 13.sp,
-                color: kPrimary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            SizedBox(width: 4.w),
-            Icon(Icons.arrow_forward_ios, size: 14.w, color: kPrimary),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStaffInfoRow(IconData icon, String text) {
-    return Container(
-      padding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 12.w),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(8.r),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18.w, color: kTextMuted),
-          SizedBox(width: 12.w),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(fontSize: 14.sp, color: kTextMuted),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _handleCallStaff(String phoneNumber) async {
-    // Remove any formatting from phone number
-    final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
-
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Call Staff Member'),
-        content: Text('Do you want to call $phoneNumber?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Call'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      // In a real app, use url_launcher package
-      // await launchUrl(Uri.parse('tel:$cleanNumber'));
-
-      // For now, show a message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Calling $phoneNumber...'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    }
-  }
-
   Widget _buildTimelineSection(Complaint complaint) {
     final timeline = _getTimeline(complaint, widget.assignedStaff);
     return Container(
@@ -928,40 +763,13 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
   }
 
   Widget _buildCTAButton(Complaint complaint) {
-    // Show different buttons based on status
     if (complaint.status == ComplaintStatus.pending) {
       return Container(
         padding: EdgeInsets.all(24.w),
-        child: Column(
-          children: [
-            Container(
-              padding: EdgeInsets.all(16.w),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E8),
-                borderRadius: BorderRadius.circular(12.r),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    color: Color(0xFFF97316),
-                    size: 20.w,
-                  ),
-                  SizedBox(width: 12.w),
-                  Expanded(
-                    child: Text(
-                      'Waiting for staff assignment',
-                      style: TextStyle(
-                        fontSize: 14.sp,
-                        color: Color(0xFFF97316),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        child: _managementUpdateCard(
+          'Management is reviewing your complaint.',
+          background: const Color(0xFFFFF3E8),
+          foreground: const Color(0xFFF97316),
         ),
       );
     }
@@ -1002,16 +810,10 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     if (complaint.assignedStaffId?.trim().isNotEmpty != true) {
       return Container(
         padding: EdgeInsets.all(24.w),
-        child: Container(
-          padding: EdgeInsets.all(16.w),
-          decoration: BoxDecoration(
-            color: const Color(0xFFEFF6FF),
-            borderRadius: BorderRadius.circular(12.r),
-          ),
-          child: Text(
-            'Work is in progress. Contact management for further updates.',
-            style: TextStyle(fontSize: 14.sp, color: kTextTitle),
-          ),
+        child: _managementUpdateCard(
+          'Work is in progress. Contact management for updates.',
+          background: const Color(0xFFEFF6FF),
+          foreground: kTextTitle,
         ),
       );
     }
@@ -1027,6 +829,41 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       ),
     );
   }
+
+  Widget _managementUpdateCard(
+    String message, {
+    required Color background,
+    required Color foreground,
+  }) => Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(16.w),
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(12.r),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          message,
+          style: TextStyle(fontSize: 14.sp, color: foreground),
+        ),
+        SizedBox(height: 8.h),
+        FutureBuilder<String?>(
+          future: _managementPhone,
+          builder: (context, snapshot) {
+            final phone = snapshot.data;
+            return Text(
+              phone == null
+                  ? 'Contact your community management for assistance.'
+                  : 'Community support: $phone',
+              style: TextStyle(fontSize: 14.sp, color: kTextTitle),
+            );
+          },
+        ),
+      ],
+    ),
+  );
 
   // Helper methods for category-based styling
   IconData _getIconForCategory(ComplaintCategory category) {
