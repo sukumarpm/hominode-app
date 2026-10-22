@@ -18,7 +18,9 @@ import 'community_settings_screen.dart';
 import 'widgets/standard_header.dart';
 
 class QuickAccessPage extends StatelessWidget {
-  const QuickAccessPage({super.key});
+  const QuickAccessPage({super.key, this.communityPhotosBuilder});
+
+  final WidgetBuilder? communityPhotosBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -136,14 +138,16 @@ class QuickAccessPage extends StatelessWidget {
       ),
       ModernQuickAccessTile(
         icon: Icons.image_rounded,
-        label: 'Apartment Images',
+        label: 'Community Photos',
         color: const Color(0xFF0EA5E9),
         bgColor: const Color(0xFFE0F2FE),
         onTap: (context) {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const ApartmentImagesManagementScreen(),
+              builder:
+                  communityPhotosBuilder ??
+                  (context) => const ApartmentImagesManagementScreen(),
             ),
           );
         },

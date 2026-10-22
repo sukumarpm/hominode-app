@@ -13,15 +13,18 @@ import 'widgets/community_payment_settings_card.dart';
 import 'widgets/standard_header.dart';
 
 class CommunitySettingsScreen extends StatefulWidget {
-  const CommunitySettingsScreen({super.key});
+  const CommunitySettingsScreen({super.key, this.service});
+  final CommunityInviteService? service;
   @override
   State<CommunitySettingsScreen> createState() =>
       _CommunitySettingsScreenState();
 }
 
 class _CommunitySettingsScreenState extends State<CommunitySettingsScreen> {
-  final _service = CommunityInviteService();
+  late final CommunityInviteService _service =
+      widget.service ?? CommunityInviteService();
   late Future<TenantConfig> _community;
+  bool _openingLocationDialog = false;
 
   @override
   void initState() {
@@ -215,16 +218,27 @@ class _CommunitySettingsScreenState extends State<CommunitySettingsScreen> {
   }
 
   Future<void> _editLocation(TenantConfig community) async {
-    final freshCommunity = await showDialog<TenantConfig>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) =>
-          _EditCommunityLocationDialog(service: _service, community: community),
-    );
-    if (!mounted || freshCommunity == null) return;
-    setState(() {
-      _community = Future.value(freshCommunity);
-    });
+    if (_openingLocationDialog) return;
+    _openingLocationDialog = true;
+    try {
+      final freshCommunity = await showDialog<TenantConfig>(
+        context: context,
+        barrierDismissible: true,
+        builder: (context) => CommunityAttendanceLocationDialog(
+          service: _service,
+          community: community,
+        ),
+      );
+      if (!mounted || freshCommunity == null) return;
+      setState(() {
+        _community = Future.value(freshCommunity);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Community attendance location saved.')),
+      );
+    } finally {
+      _openingLocationDialog = false;
+    }
   }
 
   Widget _inviteCard(CommunityInvite invite) {
@@ -426,36 +440,48 @@ class _CommunitySettingsScreenState extends State<CommunitySettingsScreen> {
   }
 }
 
-class _EditCommunityLocationDialog extends StatefulWidget {
-  const _EditCommunityLocationDialog({
+typedef CommunityLocationPickerBuilder =
+    Widget Function(
+      BuildContext context,
+      ValueChanged<CommunityLocation?> onChanged,
+    );
+
+class CommunityAttendanceLocationDialog extends StatefulWidget {
+  const CommunityAttendanceLocationDialog({
+    super.key,
     required this.service,
     required this.community,
+    this.pickerBuilder,
   });
   final CommunityInviteService service;
   final TenantConfig community;
+  final CommunityLocationPickerBuilder? pickerBuilder;
 
   @override
-  State<_EditCommunityLocationDialog> createState() =>
-      _EditCommunityLocationDialogState();
+  State<CommunityAttendanceLocationDialog> createState() =>
+      _CommunityAttendanceLocationDialogState();
 }
 
-class _EditCommunityLocationDialogState
-    extends State<_EditCommunityLocationDialog> {
+class _CommunityAttendanceLocationDialogState
+    extends State<CommunityAttendanceLocationDialog> {
   CommunityLocation? _location;
+  bool _locationChanged = false;
   bool _saving = false;
+  String? _error;
 
   Future<void> _save() async {
-    final location = _location ?? widget.community.location;
+    if (_saving) return;
+    final location = _locationChanged ? _location : widget.community.location;
     if (location == null || location.formattedAddress.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Property address is required.'),
-          backgroundColor: Colors.red,
-        ),
+      setState(
+        () => _error = 'Choose a map location and enter the property address.',
       );
       return;
     }
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
       final fresh = await widget.service.updateCommunityLocation(
         widget.community,
@@ -464,45 +490,66 @@ class _EditCommunityLocationDialogState
       if (mounted) Navigator.pop(context, fresh);
     } catch (error) {
       if (mounted) {
-        setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.toString()),
-            backgroundColor: Colors.red,
-          ),
-        );
+        setState(() {
+          _saving = false;
+          _error =
+              'Could not save the attendance location. ${error.toString()}';
+        });
       }
     }
   }
 
+  void _setLocation(CommunityLocation? value) {
+    _locationChanged = true;
+    _location = value;
+  }
+
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Community attendance location'),
-    content: SizedBox(
-      width: 640,
-      child: SingleChildScrollView(
-        child: CommunityLocationPicker(
-          initialLocation: widget.community.location,
-          countryCode: widget.community.countryCode,
-          onChanged: (value) => _location = value,
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving,
+    child: AlertDialog(
+      title: const Text('Community attendance location'),
+      content: SizedBox(
+        width: 640,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              widget.pickerBuilder?.call(context, _setLocation) ??
+                  CommunityLocationPicker(
+                    initialLocation: widget.community.location,
+                    countryCode: widget.community.countryCode,
+                    onChanged: _setLocation,
+                  ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  key: const Key('location-dialog-error'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
+        ),
+      ],
     ),
-    actions: [
-      TextButton(
-        onPressed: _saving ? null : () => Navigator.pop(context, false),
-        child: const Text('Cancel'),
-      ),
-      FilledButton(
-        onPressed: _saving ? null : _save,
-        child: _saving
-            ? const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Text('Save'),
-      ),
-    ],
   );
 }
 
@@ -530,6 +577,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
     _idController = TextEditingController(
       text: AdminTenantContext.instance.selectedCommunityId ?? '',
     );
+
     _nameController = TextEditingController();
     _slugController = TextEditingController();
     _timeZoneController = TextEditingController();

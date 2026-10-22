@@ -14,6 +14,9 @@ class ApartmentImagesManagementScreen extends StatefulWidget {
   final String? buildingId;
   const ApartmentImagesManagementScreen({super.key, this.buildingId});
 
+  static String ownershipScopeFor(String? buildingId) =>
+      buildingId == null ? 'COMMUNITY' : 'BUILDING';
+
   @override
   State<ApartmentImagesManagementScreen> createState() =>
       _ApartmentImagesManagementScreenState();
@@ -38,7 +41,8 @@ class _ApartmentImagesManagementScreenState
   int _initialization = 0;
   String? _buildingId;
   bool _legacy = false;
-  String get _scope => widget.buildingId == null ? 'COMMUNITY' : 'BUILDING';
+  String get _scope =>
+      ApartmentImagesManagementScreen.ownershipScopeFor(widget.buildingId);
 
   @override
   void initState() {
@@ -237,7 +241,7 @@ class _ApartmentImagesManagementScreenState
                     ),
                     SizedBox(height: 8.h),
                     Text(
-                      'Upload your first apartment image to get started',
+                      'Upload your first ${_scope.toLowerCase()} photo to get started',
                       style: TextStyle(
                         fontSize: 13.sp,
                         color: Colors.grey[500],
@@ -769,8 +773,8 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
               children: [
                 Text(
                   widget.replacing == null
-                      ? 'Add Apartment Image'
-                      : 'Replace Apartment Image',
+                      ? 'Add ${widget.ownershipScope.toLowerCase()} photo'
+                      : 'Replace ${widget.ownershipScope.toLowerCase()} photo',
                   style: TextStyle(
                     fontSize: 20.sp,
                     fontWeight: FontWeight.bold,
@@ -779,7 +783,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  'Upload apartment images',
+                  'Upload ${widget.ownershipScope.toLowerCase()} photos',
                   style: TextStyle(fontSize: 14.sp, color: Color(0xFF6B7280)),
                 ),
               ],

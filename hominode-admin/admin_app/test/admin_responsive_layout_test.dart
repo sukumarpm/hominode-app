@@ -1,4 +1,5 @@
 import 'package:admin_app/quick_access_page.dart';
+import 'package:admin_app/apartment_images_management_screen.dart';
 import 'package:admin_app/widgets/standard_bottom_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -42,6 +43,37 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('Community Photos quick access opens COMMUNITY management', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _testApp(
+        home: QuickAccessPage(
+          communityPhotosBuilder: (_) =>
+              const Scaffold(body: Text('Community photos scope: COMMUNITY')),
+        ),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.text('Community Photos'),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(find.text('Community Photos'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Community Photos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Community photos scope: COMMUNITY'), findsOneWidget);
+    expect(
+      ApartmentImagesManagementScreen.ownershipScopeFor(null),
+      'COMMUNITY',
+    );
+    expect(
+      ApartmentImagesManagementScreen.ownershipScopeFor('building-1'),
+      'BUILDING',
+    );
+  });
 
   testWidgets('bottom navigation labels wrap at narrow width and large text', (
     tester,

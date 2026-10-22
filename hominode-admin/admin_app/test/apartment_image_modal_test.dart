@@ -12,6 +12,8 @@ class _Service extends Fake implements CloudinaryApartmentImagesService {
   final dates = <String?>[];
   final times = <String?>[];
   bool fail = false;
+  String expectedScope = 'BUILDING';
+  String? expectedBuildingId = 'building';
   Completer<String>? pending;
   @override
   Future<String> uploadImage({
@@ -28,7 +30,8 @@ class _Service extends Fake implements CloudinaryApartmentImagesService {
     calls.add(replacing);
     dates.add(uploadDate);
     times.add(uploadTime);
-    expect(buildingId, 'building');
+    expect(buildingId, expectedBuildingId);
+    expect(ownershipScope, expectedScope);
     if (fail) throw StateError('Synthetic failure');
     return pending?.future ?? Future.value('saved');
   }
@@ -53,8 +56,10 @@ void main() {
   Future<void> open(
     WidgetTester tester,
     ApartmentImageModel? model,
-    void Function(String) saved,
-  ) async {
+    void Function(String) saved, {
+    String? buildingId = 'building',
+    String ownershipScope = 'BUILDING',
+  }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -70,7 +75,8 @@ void main() {
                   context: context,
                   barrierDismissible: false,
                   builder: (context) => AddApartmentImageModal(
-                    buildingId: 'building',
+                    buildingId: buildingId,
+                    ownershipScope: ownershipScope,
                     replacing: model,
                     imagesService: service,
                     pickImage: () async => file,
@@ -115,6 +121,25 @@ void main() {
       expect(find.byType(AddApartmentImageModal), findsNothing);
     },
   );
+
+  testWidgets('community entry uploads with COMMUNITY scope and no building', (
+    tester,
+  ) async {
+    service.expectedScope = 'COMMUNITY';
+    service.expectedBuildingId = null;
+    await open(
+      tester,
+      null,
+      (_) {},
+      buildingId: null,
+      ownershipScope: 'COMMUNITY',
+    );
+    await tester.tap(find.text('Upload image'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Upload Image'));
+    await tester.pumpAndSettle();
+    expect(service.calls, [null]);
+  });
   testWidgets(
     'failure keeps modal open for retry; upload disables closing and duplicate submit',
     (tester) async {
