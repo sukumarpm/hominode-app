@@ -3884,9 +3884,13 @@ class _BillingScreenState extends State<BillingScreen> {
                     SizedBox(height: 16.h),
                     _buildTabs(),
                     SizedBox(height: 12.h),
-                    _selectedTab == 0
-                        ? _buildBillsList(bills)
-                        : _buildPaymentHistory(bills),
+                  ],
+                ),
+              ),
+              _buildBillListSliver(bills, paymentHistory: _selectedTab == 1),
+              SliverToBoxAdapter(
+                child: Column(
+                  children: [
                     SizedBox(height: 12.h),
                     _buildExportSection(bills),
                     SizedBox(height: 100.h), // Space for bottom nav
@@ -4311,6 +4315,34 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
+  Widget _buildBillListSliver(
+    List<BillModel> allBills, {
+    required bool paymentHistory,
+  }) {
+    final bills = _filterBills(allBills, paymentHistory: paymentHistory);
+    if (bills.isEmpty) {
+      return SliverToBoxAdapter(
+        child: paymentHistory
+            ? _buildPaymentHistory(allBills)
+            : _buildBillsList(allBills),
+      );
+    }
+
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(horizontal: 16.w),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final bill = bills[index];
+          return Padding(
+            key: ValueKey(bill.id),
+            padding: EdgeInsets.only(bottom: 12.h),
+            child: _buildBillCard(bill),
+          );
+        }, childCount: bills.length),
+      ),
+    );
+  }
+
   Widget _buildDueDate(BillModel bill) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -4600,11 +4632,6 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   Widget _buildActionButtons(BillModel bill) {
-    print(
-      '💳 BUILD ACTIONS: bill=${bill.id}, '
-      'status=${bill.status}, community=${bill.communityId}',
-    );
-
     if (bill.isV2 && !bill.hasValidInrV2Financials) {
       return const Text('Payment and proof review unavailable');
     }
