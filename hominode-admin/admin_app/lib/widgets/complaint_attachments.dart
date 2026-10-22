@@ -132,7 +132,12 @@ class _ComplaintAttachmentsState extends State<ComplaintAttachments> {
         }.toList();
         if (references.isEmpty) return const Text('No attachments.');
         final assets = data['managedImageAssets'];
+        // This widget is displayed inside the complaint detail's
+        // SingleChildScrollView. Keep the attachment list in that scroll
+        // rather than asking a nested viewport to expand to infinite height.
         return ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
           itemCount: references.length,
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, index) {

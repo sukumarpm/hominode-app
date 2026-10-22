@@ -85,6 +85,10 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.sizeOf(context);
+    final keyboardInsets = MediaQuery.viewInsetsOf(context).vertical;
+    final availableHeight = (media.height - keyboardInsets - 40.h)
+        .clamp(0.0, media.height)
+        .toDouble();
     return Dialog(
       insetPadding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 20.h),
       backgroundColor: Colors.white,
@@ -92,7 +96,7 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: 520,
-          maxHeight: media.height * 0.9,
+          maxHeight: availableHeight * 0.9,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
