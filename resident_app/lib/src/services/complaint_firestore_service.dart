@@ -756,50 +756,13 @@ class ComplaintFirestoreService {
       category = ComplaintCategory.other;
     }
 
-    // Parse status enum with detailed logging and support for multiple values
-    ComplaintStatus status;
-    try {
-      final statusString = data['status'] as String?;
-      final isResolved = data['isResolved'] as bool?;
-      final resolvedAt = data['resolvedAt'];
-
-      print('📊 Status string: "$statusString"');
-      print('📊 isResolved: $isResolved');
-      print('📊 resolvedAt: $resolvedAt');
-
-      // Check if complaint is resolved (admin app might use isResolved field)
-      if (isResolved == true || resolvedAt != null) {
-        status = ComplaintStatus.completed;
-        print('✅ Marked as completed (isResolved=true or resolvedAt exists)');
-      }
-      // Map different status values to our enum
-      // Support both resident app and admin app status values
-      else if (statusString == 'completed' ||
-          statusString == 'resolved' ||
-          statusString == 'closed') {
-        status = ComplaintStatus.completed;
-        print('✅ Mapped to: completed');
-      } else if (statusString == 'inProgress' ||
-          statusString == 'in_progress' ||
-          statusString == 'in-progress' ||
-          statusString == 'assigned') {
-        status = ComplaintStatus.inProgress;
-        print('✅ Mapped to: inProgress');
-      } else if (statusString == 'pending' ||
-          statusString == 'open' ||
-          statusString == null) {
-        status = ComplaintStatus.pending;
-        print('✅ Mapped to: pending');
-      } else {
-        print('⚠️ Unknown status "$statusString", defaulting to pending');
-        status = ComplaintStatus.pending;
-      }
-
-      print('✅ Final parsed status: $status');
-    } catch (e) {
-      print('❌ Error parsing status: $e');
-      status = ComplaintStatus.pending;
-    }
+    // Explicit workflow status takes precedence over historic resolution fields.
+    // Reopened complaints may retain resolvedAt as an audit timestamp.
+    final status = complaintStatusFromFirestore(
+      data['status'] as String?,
+      isResolved: data['isResolved'] as bool?,
+      hasResolvedAt: data['resolvedAt'] != null,
+    );
 
     // Parse createdAt timestamp
     DateTime createdDate;
@@ -821,12 +784,27 @@ class ComplaintFirestoreService {
       technicianPhone: data['technicianPhone'] as String?,
       assignedStaffId: data['assignedStaffId'] as String?,
       assignedStaffRole: data['assignedStaffRole'] as String?,
+      assignedTeam: data['assignedTeam'] as String?,
+      progressNotes: _complaintNotesFromFirestore(data['progressNotes']),
+      resolutionNotes: _complaintNotesFromFirestore(data['resolutionNotes']),
     );
 
     print('🎯 Final complaint status: ${complaint.status}');
     print('---');
 
     return complaint;
+  }
+
+  List<String> _complaintNotesFromFirestore(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .map((entry) {
+          if (entry is String) return entry;
+          if (entry is Map) return entry['text']?.toString() ?? '';
+          return '';
+        })
+        .where((note) => note.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   // ============================================================================

@@ -135,12 +135,19 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     );
 
     // 2. Assigned to Staff
-    if (staff != null || complaint.assignedTo != null) {
-      final staffName = staff?.name ?? complaint.assignedTo ?? 'Staff';
+    if (staff != null ||
+        complaint.assignedTo != null ||
+        complaint.assignedTeam != null) {
+      final assignment = [
+        if (complaint.assignedTeam?.trim().isNotEmpty == true)
+          complaint.assignedTeam,
+        if ((staff?.name ?? complaint.assignedTo)?.trim().isNotEmpty == true)
+          staff?.name ?? complaint.assignedTo,
+      ].join(' · ');
       events.add(
         TimelineEvent(
           id: '2',
-          text: 'Assigned to $staffName',
+          text: 'Responsible: $assignment',
           datetime: _formatDate(
             complaint.createdDate.add(const Duration(hours: 1)),
           ),
@@ -232,11 +239,11 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
 
   Future<void> _handleChatPressed(Complaint complaint) async {
     // Check if technician is assigned
-    if (complaint.assignedTo == null) {
+    if (complaint.assignedStaffId?.trim().isNotEmpty != true) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'No technician assigned yet. Please wait for assignment.',
+            'Management is coordinating this work. A staff chat is not available for this assignment.',
           ),
           duration: Duration(seconds: 3),
         ),
@@ -359,6 +366,12 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
                           // Timeline
                           _buildTimelineSection(currentComplaint),
 
+                          if (currentComplaint.progressNotes.isNotEmpty ||
+                              currentComplaint.resolutionNotes.isNotEmpty) ...[
+                            SizedBox(height: 20.h),
+                            _buildAdminNotesSection(currentComplaint),
+                          ],
+
                           SizedBox(height: 24.h),
                         ],
                       ),
@@ -476,7 +489,7 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       case ComplaintStatus.pending:
         backgroundColor = const Color(0xFFFEE2E2);
         textColor = const Color(0xFFDC2626);
-        label = 'Pending';
+        label = 'New';
         break;
       case ComplaintStatus.inProgress:
         backgroundColor = kStatusInProgressBg;
@@ -486,7 +499,7 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       case ComplaintStatus.completed:
         backgroundColor = const Color(0xFFE8FDEB);
         textColor = const Color(0xFF10B981);
-        label = 'Completed';
+        label = 'Resolved';
         break;
     }
 
@@ -862,6 +875,58 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     );
   }
 
+  Widget _buildAdminNotesSection(Complaint complaint) {
+    final notes = <(String, String)>[
+      for (final note in complaint.progressNotes) ('Progress update', note),
+      for (final note in complaint.resolutionNotes) ('Resolution', note),
+    ];
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: kCardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Management updates',
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w600,
+              color: kTextTitle,
+            ),
+          ),
+          SizedBox(height: 10.h),
+          for (final (label, note) in notes)
+            Padding(
+              padding: EdgeInsets.only(bottom: 10.h),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12.sp,
+                      fontWeight: FontWeight.w600,
+                      color: kTextMuted,
+                    ),
+                  ),
+                  SizedBox(height: 3.h),
+                  Text(
+                    note,
+                    style: TextStyle(fontSize: 14.sp, color: kTextTitle),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCTAButton(Complaint complaint) {
     // Show different buttons based on status
     if (complaint.status == ComplaintStatus.pending) {
@@ -934,7 +999,24 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       );
     }
 
-    // In Progress - show chat button
+    if (complaint.assignedStaffId?.trim().isNotEmpty != true) {
+      return Container(
+        padding: EdgeInsets.all(24.w),
+        child: Container(
+          padding: EdgeInsets.all(16.w),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            borderRadius: BorderRadius.circular(12.r),
+          ),
+          child: Text(
+            'Work is in progress. Contact management for further updates.',
+            style: TextStyle(fontSize: 14.sp, color: kTextTitle),
+          ),
+        ),
+      );
+    }
+
+    // In Progress with an account-backed assignment: show chat button.
     return Container(
       padding: EdgeInsets.all(24.w),
       child: PrimaryButton(

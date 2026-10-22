@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,6 +25,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
 
   List<ComplaintEntry> _complaints = [];
   bool _isLoading = true;
+  StreamSubscription<List<ComplaintModel>>? _complaintsSubscription;
 
   @override
   void initState() {
@@ -32,7 +35,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
 
   void _loadComplaints() {
     print('ComplaintManagementScreen: Loading complaints from Firestore');
-    _complaintService.getComplaints().listen(
+    _complaintsSubscription = _complaintService.getComplaints().listen(
       (complaints) async {
         print(
           'ComplaintManagementScreen: Received ${complaints.length} complaints',
@@ -45,6 +48,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
           entries.add(entry);
         }
 
+        if (!mounted) return;
         setState(() {
           _complaints = entries;
           _isLoading = false;
@@ -52,6 +56,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
       },
       onError: (error) {
         print('ComplaintManagementScreen ERROR: $error');
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
         });
@@ -140,6 +145,15 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
       category: _getCategoryFromString(complaint.category),
       description: complaint.description,
       assignedTo: complaint.assignedTo, // Use assignedTo from Firestore
+      assignedTeam: complaint.assignedTeam,
+      progressNotes: complaint.progressNotes
+          .map((note) => note['text']?.toString() ?? '')
+          .where((note) => note.isNotEmpty)
+          .toList(growable: false),
+      resolutionNotes: complaint.resolutionNotes
+          .map((note) => note['text']?.toString() ?? '')
+          .where((note) => note.isNotEmpty)
+          .toList(growable: false),
     );
   }
 
@@ -162,8 +176,12 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
         return ComplaintStatus.pending;
       case 'in-progress':
       case 'in progress':
+      case 'in_progress':
+      case 'inprogress':
         return ComplaintStatus.inProgress;
       case 'resolved':
+      case 'completed':
+      case 'closed':
         return ComplaintStatus.resolved;
       default:
         return ComplaintStatus.pending;
@@ -192,6 +210,7 @@ class _ComplaintManagementScreenState extends State<ComplaintManagementScreen> {
 
   @override
   void dispose() {
+    _complaintsSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
   }

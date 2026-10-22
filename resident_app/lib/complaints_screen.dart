@@ -610,7 +610,8 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                   ],
                 ),
               ),
-            ] else if (complaint.assignedTo != null) ...[
+            ] else if (complaint.assignedTo != null ||
+                complaint.assignedTeam != null) ...[
               SizedBox(height: 12.h),
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
@@ -626,11 +627,15 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                       color: Color(0xFF6B7280),
                     ),
                     SizedBox(width: 8.w),
-                    Text(
-                      'Assigned to: ${complaint.assignedTo}',
-                      style: TextStyle(
-                        fontSize: 13.sp,
-                        color: Color(0xFF6B7280),
+                    Expanded(
+                      child: Text(
+                        'Responsible: ${[if (complaint.assignedTeam?.trim().isNotEmpty == true) complaint.assignedTeam, if (complaint.assignedTo?.trim().isNotEmpty == true) complaint.assignedTo].join(' · ')}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          color: Color(0xFF6B7280),
+                        ),
                       ),
                     ),
                   ],
@@ -652,17 +657,17 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
       case ComplaintStatus.pending:
         color = kPendingRed;
         backgroundColor = const Color(0xFFFEE2E2);
-        label = 'Pending';
+        label = 'New';
         break;
       case ComplaintStatus.inProgress:
         color = kInProgressOrange;
         backgroundColor = const Color(0xFFFFF3E8);
-        label = 'in-progress';
+        label = 'In Progress';
         break;
       case ComplaintStatus.completed:
         color = kCompletedGreen;
         backgroundColor = const Color(0xFFE8FDEB);
-        label = 'completed';
+        label = 'Resolved';
         break;
     }
 

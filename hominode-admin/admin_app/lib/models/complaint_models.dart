@@ -1,16 +1,8 @@
 import 'package:flutter/material.dart';
 
-enum ComplaintPriority {
-  high,
-  medium,
-  low,
-}
+enum ComplaintPriority { high, medium, low }
 
-enum ComplaintStatus {
-  pending,
-  inProgress,
-  resolved,
-}
+enum ComplaintStatus { pending, inProgress, resolved }
 
 enum ComplaintCategory {
   plumbing,
@@ -49,7 +41,7 @@ extension ComplaintStatusExtension on ComplaintStatus {
   String get label {
     switch (this) {
       case ComplaintStatus.pending:
-        return 'Pending';
+        return 'New';
       case ComplaintStatus.inProgress:
         return 'In Progress';
       case ComplaintStatus.resolved:
@@ -115,7 +107,10 @@ class ComplaintEntry {
   final DateTime date;
   final ComplaintCategory category;
   final String? assignedTo;
+  final String? assignedTeam;
   final String? description;
+  final List<String> progressNotes;
+  final List<String> resolutionNotes;
 
   ComplaintEntry({
     required this.id,
@@ -127,6 +122,9 @@ class ComplaintEntry {
     required this.date,
     required this.category,
     this.assignedTo,
+    this.assignedTeam,
     this.description,
+    this.progressNotes = const [],
+    this.resolutionNotes = const [],
   });
 }

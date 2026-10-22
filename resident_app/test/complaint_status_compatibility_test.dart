@@ -1,0 +1,64 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:resident_app/src/models/complaint.dart';
+
+void main() {
+  test('reads the status values written by existing complaint clients', () {
+    expect(complaintStatusFromFirestore('pending'), ComplaintStatus.pending);
+    expect(
+      complaintStatusFromFirestore('inProgress'),
+      ComplaintStatus.inProgress,
+    );
+    expect(
+      complaintStatusFromFirestore('in-progress'),
+      ComplaintStatus.inProgress,
+    );
+    expect(
+      complaintStatusFromFirestore('inprogress'),
+      ComplaintStatus.inProgress,
+    );
+    expect(complaintStatusFromFirestore('resolved'), ComplaintStatus.completed);
+    expect(
+      complaintStatusFromFirestore('completed'),
+      ComplaintStatus.completed,
+    );
+  });
+
+  test('explicit reopened status overrides a historic resolved timestamp', () {
+    expect(
+      complaintStatusFromFirestore(
+        'inprogress',
+        isResolved: true,
+        hasResolvedAt: true,
+      ),
+      ComplaintStatus.inProgress,
+    );
+    expect(
+      complaintStatusFromFirestore(null, hasResolvedAt: true),
+      ComplaintStatus.completed,
+    );
+  });
+
+  test('parses admin assignments and notes for the resident detail view', () {
+    final complaint = Complaint.fromJson({
+      'id': 'c-1',
+      'title': 'Gate repair',
+      'description': 'The gate is stuck.',
+      'category': 'security',
+      'status': 'inprogress',
+      'createdDate': '2026-10-22T10:00:00.000',
+      'assignedTeam': 'security',
+      'assignedTo': 'Night supervisor',
+      'progressNotes': [
+        {'text': 'Replacement part ordered.'},
+      ],
+      'resolutionNotes': [
+        {'text': 'Gate repaired and tested.'},
+      ],
+    });
+
+    expect(complaint.assignedTeam, 'security');
+    expect(complaint.assignedTo, 'Night supervisor');
+    expect(complaint.progressNotes, ['Replacement part ordered.']);
+    expect(complaint.resolutionNotes, ['Gate repaired and tested.']);
+  });
+}

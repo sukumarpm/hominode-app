@@ -3,7 +3,37 @@
 
 enum ComplaintStatus { pending, inProgress, completed }
 
-enum ComplaintCategory { plumbing, electrical, maintenance, cleaning, security, other }
+ComplaintStatus complaintStatusFromFirestore(
+  String? rawStatus, {
+  bool? isResolved,
+  bool hasResolvedAt = false,
+}) {
+  final normalized = rawStatus?.toLowerCase().replaceAll(RegExp(r'[ _-]'), '');
+  switch (normalized) {
+    case 'pending':
+    case 'open':
+    case 'new':
+      return ComplaintStatus.pending;
+    case 'inprogress':
+    case 'assigned':
+      return ComplaintStatus.inProgress;
+    case 'completed':
+    case 'resolved':
+    case 'closed':
+      return ComplaintStatus.completed;
+  }
+  if (isResolved == true || hasResolvedAt) return ComplaintStatus.completed;
+  return ComplaintStatus.pending;
+}
+
+enum ComplaintCategory {
+  plumbing,
+  electrical,
+  maintenance,
+  cleaning,
+  security,
+  other,
+}
 
 extension ComplaintCategoryExtension on ComplaintCategory {
   String get categoryDisplayName {
@@ -35,6 +65,9 @@ class Complaint {
   final String? technicianPhone; // Staff phone
   final String? assignedStaffId; // Staff ID for fetching full details
   final String? assignedStaffRole; // Staff role
+  final String? assignedTeam;
+  final List<String> progressNotes;
+  final List<String> resolutionNotes;
 
   Complaint({
     required this.id,
@@ -47,6 +80,9 @@ class Complaint {
     this.technicianPhone,
     this.assignedStaffId,
     this.assignedStaffRole,
+    this.assignedTeam,
+    this.progressNotes = const [],
+    this.resolutionNotes = const [],
   });
 
   factory Complaint.fromJson(Map<String, dynamic> json) {
@@ -58,15 +94,15 @@ class Complaint {
         (e) => e.name == json['category'],
         orElse: () => ComplaintCategory.other,
       ),
-      status: ComplaintStatus.values.firstWhere(
-        (e) => e.name == json['status'],
-        orElse: () => ComplaintStatus.pending,
-      ),
+      status: complaintStatusFromFirestore(json['status'] as String?),
       createdDate: DateTime.parse(json['createdDate'] as String),
       assignedTo: json['assignedTo'] as String?,
       technicianPhone: json['technicianPhone'] as String?,
       assignedStaffId: json['assignedStaffId'] as String?,
       assignedStaffRole: json['assignedStaffRole'] as String?,
+      assignedTeam: json['assignedTeam'] as String?,
+      progressNotes: _complaintNotesFromJson(json['progressNotes']),
+      resolutionNotes: _complaintNotesFromJson(json['resolutionNotes']),
     );
   }
 
@@ -82,11 +118,27 @@ class Complaint {
       'technicianPhone': technicianPhone,
       'assignedStaffId': assignedStaffId,
       'assignedStaffRole': assignedStaffRole,
+      'assignedTeam': assignedTeam,
+      'progressNotes': progressNotes,
+      'resolutionNotes': resolutionNotes,
     };
   }
 
   String get formattedDate {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     return '${months[createdDate.month - 1]} ${createdDate.day}, ${createdDate.year}';
   }
 
@@ -106,4 +158,16 @@ class Complaint {
         return 'Other';
     }
   }
+}
+
+List<String> _complaintNotesFromJson(dynamic raw) {
+  if (raw is! List) return const [];
+  return raw
+      .map((entry) {
+        if (entry is String) return entry;
+        if (entry is Map) return entry['text']?.toString() ?? '';
+        return '';
+      })
+      .where((note) => note.trim().isNotEmpty)
+      .toList(growable: false);
 }
