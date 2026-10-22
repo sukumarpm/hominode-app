@@ -144,6 +144,19 @@ void main() {
     },
   );
 
+  testWidgets('status-only save omits unchanged legacy assignment fields', (
+    tester,
+  ) async {
+    final service = _FakeComplaintService();
+    await tester.pumpWidget(_app(service));
+    await tester.tap(find.byKey(const ValueKey('save-complaint-update')));
+    await tester.pumpAndSettle();
+
+    expect(service.calls, 1);
+    expect(service.lastUpdate?['assignedTeam'], isNull);
+    expect(service.lastUpdate?['assignedTo'], isNull);
+  });
+
   testWidgets('starts work without staff and saves reassignment and progress', (
     tester,
   ) async {

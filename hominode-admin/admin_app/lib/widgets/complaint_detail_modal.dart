@@ -42,6 +42,7 @@ class ComplaintDetailModal extends StatefulWidget {
 
 class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
   static const _teams = <(String, String)>[
+    ('management', 'Management'),
     ('security', 'Security'),
     ('maintenance', 'Maintenance'),
     ('cleaning', 'Cleaning'),
@@ -415,8 +416,8 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
       final result = await _service.updateManualWorkflow(
         complaintId: widget.complaint.id,
         status: _status,
-        assignedTeam: _teamValue,
-        assignedTo: _assigneeController.text,
+        assignedTeam: _changedTeamPatch,
+        assignedTo: _changedPersonPatch,
         progressNote: _progressController.text,
         resolutionNote: _resolutionController.text,
       );
@@ -471,6 +472,21 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
         SnackBar(content: Text('Complaint update failed: $error')),
       );
     }
+  }
+
+  String? get _changedTeamPatch {
+    final current = _teamValue?.trim();
+    final original = widget.complaint.assignedTeam?.trim();
+    if ((current ?? '').isEmpty && (original ?? '').isEmpty) return null;
+    if (current == original) return null;
+    return current ?? '';
+  }
+
+  String? get _changedPersonPatch {
+    final current = _assigneeController.text.trim();
+    final original = widget.complaint.assignedTo?.trim() ?? '';
+    if (current == original) return null;
+    return current;
   }
 
   String _teamLabel(String team) {

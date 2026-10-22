@@ -12,6 +12,9 @@ typedef ComplaintNotificationSender =
       required Map<String, dynamic> metadata,
     });
 
+typedef ComplaintWorkflowTransactionRunner =
+    Future<T> Function<T>(TransactionHandler<T> transactionHandler);
+
 class ComplaintWorkflowUpdateResult {
   const ComplaintWorkflowUpdateResult({
     required this.notificationSent,
@@ -30,12 +33,14 @@ class ComplaintService {
     String? Function()? adminIdProvider,
     String Function()? communityIdProvider,
     ComplaintNotificationSender? notificationSender,
+    ComplaintWorkflowTransactionRunner? transactionRunner,
   }) : _firestoreOverride = firestore,
        _adminServiceOverride = adminService,
        _notificationServiceOverride = notificationService,
        _adminIdProvider = adminIdProvider,
        _communityIdProvider = communityIdProvider,
-       _notificationSender = notificationSender;
+       _notificationSender = notificationSender,
+       _transactionRunner = transactionRunner;
 
   final FirebaseFirestore? _firestoreOverride;
   late final FirebaseFirestore _firestore =
@@ -49,6 +54,7 @@ class ComplaintService {
   final String? Function()? _adminIdProvider;
   final String Function()? _communityIdProvider;
   final ComplaintNotificationSender? _notificationSender;
+  final ComplaintWorkflowTransactionRunner? _transactionRunner;
   final String _collection = 'complaints';
 
   String? _currentAdminId() {
@@ -196,19 +202,9 @@ class ComplaintService {
       throw ArgumentError.value(complaintId, 'complaintId');
     }
 
+    // Null means the admin left this field unchanged; an empty string clears it.
     final normalizedTeam = assignedTeam?.trim();
-    if (normalizedTeam != null && normalizedTeam.length > 80) {
-      throw ArgumentError.value(assignedTeam, 'assignedTeam');
-    }
     final person = assignedTo?.trim();
-    if (person != null && person.length > 240) {
-      throw ArgumentError.value(assignedTo, 'assignedTo');
-    }
-    if (person != null && _containsPrivateContact(person)) {
-      throw ArgumentError(
-        'Enter a person or vendor name only. Use the community support contact for resident contact details.',
-      );
-    }
     final progress = progressNote?.trim();
     final resolution = resolutionNote?.trim();
     if ((progress?.length ?? 0) > 2000 || (resolution?.length ?? 0) > 2000) {
@@ -225,7 +221,7 @@ class ComplaintService {
 
     final ref = _firestore.collection(_collection).doc(complaintId);
     late Map<String, dynamic> savedComplaint;
-    await _firestore.runTransaction((transaction) async {
+    Future<void> transactionHandler(Transaction transaction) async {
       final snapshot = await transaction.get(ref);
       if (!snapshot.exists) throw StateError('Complaint not found.');
       final current = snapshot.data();
@@ -233,15 +229,41 @@ class ComplaintService {
         throw StateError('Complaint is outside the selected community.');
       }
 
+      final existingPerson = current['assignedTo']?.toString().trim();
+      final unchangedLegacyPerson = person != null && person == existingPerson;
+      final existingTeam = current['assignedTeam']?.toString().trim();
+      final unchangedLegacyTeam =
+          normalizedTeam != null && normalizedTeam == existingTeam;
+      if (normalizedTeam != null &&
+          !unchangedLegacyTeam &&
+          normalizedTeam.length > 80) {
+        throw ArgumentError.value(assignedTeam, 'assignedTeam');
+      }
+      if (person != null && !unchangedLegacyPerson && person.length > 240) {
+        throw ArgumentError.value(assignedTo, 'assignedTo');
+      }
+      if (person != null &&
+          person.isNotEmpty &&
+          !unchangedLegacyPerson &&
+          _containsPrivateContact(person)) {
+        throw ArgumentError(
+          'Enter a person or vendor name only. Use the community support contact for resident contact details.',
+        );
+      }
+
       final now = Timestamp.now();
       final updates = <String, dynamic>{
         'status': statusValue(status),
-        'assignedTeam': normalizedTeam == null || normalizedTeam.isEmpty
-            ? null
-            : normalizedTeam,
-        'assignedTo': person == null || person.isEmpty ? null : person,
         'updatedAt': FieldValue.serverTimestamp(),
       };
+      if (normalizedTeam != null) {
+        updates['assignedTeam'] = normalizedTeam.isEmpty
+            ? null
+            : normalizedTeam;
+      }
+      if (person != null) {
+        updates['assignedTo'] = person.isEmpty ? null : person;
+      }
       if (progress?.isNotEmpty == true) {
         updates['progressNotes'] = [
           ..._noteHistory(current['progressNotes']),
@@ -261,7 +283,14 @@ class ComplaintService {
       }
       transaction.update(ref, updates);
       savedComplaint = {...current, ...updates};
-    });
+    }
+
+    final transactionRunner = _transactionRunner;
+    if (transactionRunner == null) {
+      await _firestore.runTransaction(transactionHandler);
+    } else {
+      await transactionRunner(transactionHandler);
+    }
 
     final residentId =
         (savedComplaint['residentId'] ?? savedComplaint['userId'] ?? '')
@@ -272,12 +301,22 @@ class ComplaintService {
     }
     final title = (savedComplaint['title'] ?? 'Complaint').toString();
     final updateParts = <String>['Status: ${status.label}'];
-    if (normalizedTeam?.isNotEmpty == true || person?.isNotEmpty == true) {
+    if (normalizedTeam != null || person != null) {
+      final savedTeam = (savedComplaint['assignedTeam'] ?? '')
+          .toString()
+          .trim();
+      final savedPerson = (savedComplaint['assignedTo'] ?? '')
+          .toString()
+          .trim();
+      final assignment = [
+        if (savedTeam.isNotEmpty) savedTeam,
+        if (savedPerson.isNotEmpty) savedPerson,
+      ];
       updateParts.add(
-        'Assigned to ${[if (normalizedTeam?.isNotEmpty == true) normalizedTeam, if (person?.isNotEmpty == true) person].join(' — ')}',
+        assignment.isEmpty
+            ? 'Assignment cleared'
+            : 'Assigned to ${assignment.join(' — ')}',
       );
-    } else if (normalizedTeam == null && person == null) {
-      updateParts.add('Assignment cleared');
     }
     if (progress?.isNotEmpty == true) updateParts.add('Progress: $progress');
     if (resolution?.isNotEmpty == true) {

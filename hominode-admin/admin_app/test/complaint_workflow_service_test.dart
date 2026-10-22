@@ -84,8 +84,8 @@ void main() {
       await service.updateManualWorkflow(
         complaintId: 'c-1',
         status: ComplaintStatus.inProgress,
-        assignedTeam: null,
-        assignedTo: null,
+        assignedTeam: '',
+        assignedTo: '',
         progressNote: 'Issue returned; reopening.',
         resolutionNote: null,
       );
@@ -96,6 +96,98 @@ void main() {
       expect(data['assignedTeam'], isNull);
       expect(data['assignedTo'], isNull);
       expect((data['progressNotes'] as List), hasLength(2));
+    },
+  );
+
+  test(
+    'team-only status transitions preserve an optional person assignment',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.collection('complaints').doc('c-1').set({
+        ..._record(),
+        'assignedTeam': 'Management',
+        'assignedTo': null,
+      });
+      final service = await _service(firestore);
+
+      await service.updateManualWorkflow(
+        complaintId: 'c-1',
+        status: ComplaintStatus.inProgress,
+        assignedTeam: null,
+        assignedTo: null,
+        progressNote: null,
+        resolutionNote: null,
+      );
+      await service.updateManualWorkflow(
+        complaintId: 'c-1',
+        status: ComplaintStatus.resolved,
+        assignedTeam: null,
+        assignedTo: null,
+        progressNote: null,
+        resolutionNote: null,
+      );
+      await service.updateManualWorkflow(
+        complaintId: 'c-1',
+        status: ComplaintStatus.inProgress,
+        assignedTeam: null,
+        assignedTo: null,
+        progressNote: null,
+        resolutionNote: null,
+      );
+
+      final record = (await firestore.collection('complaints').doc('c-1').get())
+          .data()!;
+      expect(record['status'], 'inprogress');
+      expect(record['assignedTeam'], 'Management');
+      expect(record['assignedTo'], isNull);
+    },
+  );
+
+  test('team reassignment works without a person or vendor name', () async {
+    final firestore = FakeFirebaseFirestore();
+    await firestore.collection('complaints').doc('c-1').set({
+      ..._record(),
+      'assignedTeam': 'security',
+      'assignedTo': null,
+    });
+    final service = await _service(firestore);
+    await service.updateManualWorkflow(
+      complaintId: 'c-1',
+      status: ComplaintStatus.inProgress,
+      assignedTeam: 'maintenance',
+      assignedTo: null,
+      progressNote: null,
+      resolutionNote: null,
+    );
+    final record = (await firestore.collection('complaints').doc('c-1').get())
+        .data()!;
+    expect(record['assignedTeam'], 'maintenance');
+    expect(record['assignedTo'], isNull);
+  });
+
+  test(
+    'unchanged legacy private assignment is preserved on status update',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      const legacy = 'Old contractor · +1 555 123 4567';
+      await firestore.collection('complaints').doc('c-1').set({
+        ..._record(),
+        'assignedTeam': 'security',
+        'assignedTo': legacy,
+      });
+      final service = await _service(firestore);
+      await service.updateManualWorkflow(
+        complaintId: 'c-1',
+        status: ComplaintStatus.inProgress,
+        assignedTeam: 'security',
+        assignedTo: legacy,
+        progressNote: null,
+        resolutionNote: null,
+      );
+      final record = (await firestore.collection('complaints').doc('c-1').get())
+          .data()!;
+      expect(record['status'], 'inprogress');
+      expect(record['assignedTo'], legacy);
     },
   );
 
@@ -195,6 +287,37 @@ void main() {
         (await firestore.collection('complaints').doc('c-1').get())
             .data()?['status'],
         'inprogress',
+      );
+    },
+  );
+
+  test(
+    'failed Firestore write leaves persisted complaint status unchanged',
+    () async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.collection('complaints').doc('c-1').set(_record());
+      final service = ComplaintService(
+        firestore: firestore,
+        adminIdProvider: () => 'admin-1',
+        communityIdProvider: () => 'community-a',
+        transactionRunner: <T>(handler) async =>
+            throw StateError('Firestore write failed'),
+      );
+      await expectLater(
+        service.updateManualWorkflow(
+          complaintId: 'c-1',
+          status: ComplaintStatus.inProgress,
+          assignedTeam: null,
+          assignedTo: null,
+          progressNote: null,
+          resolutionNote: null,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        (await firestore.collection('complaints').doc('c-1').get())
+            .data()?['status'],
+        'pending',
       );
     },
   );
