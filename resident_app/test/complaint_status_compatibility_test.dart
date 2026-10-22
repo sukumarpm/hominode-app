@@ -65,6 +65,41 @@ void main() {
   });
 
   test(
+    'resident list summary shows safe manual assignment and formats team',
+    () {
+      final complaint = complaintFromFirestoreData('c-list', {
+        'title': 'Gate repair',
+        'status': 'inprogress',
+        'assignedTeam': 'maintenance',
+        'assignedTo': 'Rahim',
+      });
+
+      expect(
+        complaintResponsibilitySummary(complaint),
+        'Responsible: Maintenance · Rahim',
+      );
+      expect(
+        complaintResponsibilitySummary(
+          complaintFromFirestoreData('c-linked', {
+            'assignedStaffId': 'staff-1',
+            'assignedTo': 'legacy@example.com',
+          }),
+          linkedStaffName: 'Linked Technician',
+        ),
+        'Responsible: Linked Technician',
+      );
+      expect(
+        complaintResponsibilitySummary(
+          complaintFromFirestoreData('c-private', {
+            'assignedTo': 'Private vendor +1 555 123 4567',
+          }),
+        ),
+        'Responsible: Unassigned',
+      );
+    },
+  );
+
+  test(
     'resident document stream reflects Admin workflow status writes',
     () async {
       final writes = StreamController<Map<String, dynamic>>();

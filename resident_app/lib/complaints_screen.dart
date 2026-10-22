@@ -66,9 +66,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
         print('🔄 Real-time update received: ${complaints.length} complaints');
 
         for (var complaint in complaints) {
-          print(
-            '  - ${complaint.id}: ${complaint.status} (${complaint.assignedTo ?? "unassigned"})',
-          );
+          print('  - ${complaint.id}: ${complaint.status}');
         }
 
         // Fetch staff details for assigned complaints
@@ -589,7 +587,10 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            staff.name,
+                            complaintResponsibilitySummary(
+                              complaint,
+                              linkedStaffName: staff.name,
+                            ),
                             style: TextStyle(
                               fontSize: 14.sp,
                               fontWeight: FontWeight.w600,
@@ -598,7 +599,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                           ),
                           SizedBox(height: 2.h),
                           Text(
-                            '${staff.roleDisplayName} • ${staff.phone}',
+                            staff.roleDisplayName,
                             style: TextStyle(
                               fontSize: 12.sp,
                               color: Color(0xFF6B7280),
@@ -610,8 +611,10 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                   ],
                 ),
               ),
-            ] else if (complaint.assignedTo != null ||
-                complaint.assignedTeam != null) ...[
+            ] else if (complaintAssignmentTeamDisplay(complaint.assignedTeam) !=
+                    null ||
+                complaintResidentVisibleAssignee(complaint.assignedTo) !=
+                    null) ...[
               SizedBox(height: 12.h),
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
@@ -629,7 +632,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                     SizedBox(width: 8.w),
                     Expanded(
                       child: Text(
-                        'Responsible: ${[if (complaint.assignedTeam?.trim().isNotEmpty == true) complaint.assignedTeam, if (complaint.assignedTo?.trim().isNotEmpty == true) complaint.assignedTo].join(' · ')}',
+                        complaintResponsibilitySummary(complaint),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

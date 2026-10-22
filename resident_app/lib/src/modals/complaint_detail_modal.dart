@@ -162,22 +162,19 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     );
 
     // 2. Assigned to Staff
-    final team = complaint.assignedTeam?.trim();
-    final accountBackedStaff =
-        complaint.assignedStaffId?.trim().isNotEmpty == true
-        ? staff?.name.trim()
-        : null;
-    if ((team != null && team.isNotEmpty) ||
-        (accountBackedStaff != null && accountBackedStaff.isNotEmpty)) {
+    final team = complaintAssignmentTeamDisplay(complaint.assignedTeam);
+    final assignedPerson = _residentAssignedPerson(complaint, staff);
+    if (team != null || assignedPerson != null) {
       final assignment = [
-        if (team != null && team.isNotEmpty) _teamDisplayName(team),
-        if (accountBackedStaff != null && accountBackedStaff.isNotEmpty)
-          accountBackedStaff,
+        if (team != null) team,
+        if (assignedPerson != null) assignedPerson,
       ].join(' · ');
       events.add(
         TimelineEvent(
           id: '2',
-          text: 'Responsible team: $assignment',
+          text: team != null
+              ? 'Responsible team: $assignment'
+              : 'Assigned to: $assignment',
           datetime: _formatDate(
             complaint.createdDate.add(const Duration(hours: 1)),
           ),
@@ -246,24 +243,77 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     return events;
   }
 
-  String _teamDisplayName(String value) {
-    switch (value.toLowerCase()) {
-      case 'security':
-        return 'Security';
-      case 'maintenance':
-        return 'Maintenance';
-      case 'cleaning':
-        return 'Cleaning';
-      case 'administration':
-        return 'Administration';
-      case 'vendor':
-        return 'Vendor';
-      case 'other':
-        return 'Other';
-      default:
-        return value;
+  String? _residentAssignedPerson(Complaint complaint, StaffModel? staff) {
+    final assignedPerson = complaintResidentVisibleAssignee(
+      complaint.assignedTo,
+    );
+    if (assignedPerson != null) return assignedPerson;
+    if (complaint.assignedStaffId?.trim().isNotEmpty == true) {
+      return complaintResidentVisibleAssignee(staff?.name);
     }
+    return null;
   }
+
+  Widget _buildResponsibleAssignmentSection(
+    Complaint complaint,
+    StaffModel? staff,
+  ) {
+    final team = complaintAssignmentTeamDisplay(complaint.assignedTeam);
+    final person = _residentAssignedPerson(complaint, staff);
+    return Container(
+      key: const ValueKey('complaint-responsible-assignment'),
+      width: double.infinity,
+      padding: EdgeInsets.all(20.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFA),
+        borderRadius: BorderRadius.circular(12.r),
+        border: Border.all(color: kCardBorder, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Responsible Assignment',
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w600,
+              color: kTextTitle,
+            ),
+          ),
+          SizedBox(height: 12.h),
+          if (team != null) _assignmentDetailRow('Responsible team', team),
+          if (person != null) ...[
+            if (team != null) SizedBox(height: 8.h),
+            _assignmentDetailRow('Assigned person/vendor', person),
+          ],
+          if (team == null && person == null)
+            Text(
+              'Unassigned',
+              style: TextStyle(fontSize: 14.sp, color: kTextMuted),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _assignmentDetailRow(String label, String value) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: TextStyle(fontSize: 12.sp, color: kTextMuted),
+      ),
+      SizedBox(height: 2.h),
+      Text(
+        value,
+        style: TextStyle(
+          fontSize: 14.sp,
+          fontWeight: FontWeight.w500,
+          color: kTextTitle,
+        ),
+      ),
+    ],
+  );
 
   String _formatDate(DateTime date) {
     final months = [
@@ -392,6 +442,13 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
 
                           // Description
                           _buildDescriptionSection(currentComplaint),
+
+                          SizedBox(height: 24.h),
+
+                          _buildResponsibleAssignmentSection(
+                            currentComplaint,
+                            widget.assignedStaff,
+                          ),
 
                           SizedBox(height: 24.h),
 
@@ -1065,11 +1122,14 @@ class PrimaryButton extends StatelessWidget {
                     Icon(icon, size: 22.w),
                     SizedBox(width: 12.w),
                   ],
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 17.sp,
-                      fontWeight: FontWeight.w600,
+                  Flexible(
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 17.sp,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],

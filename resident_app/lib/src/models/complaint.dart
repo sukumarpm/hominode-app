@@ -170,6 +170,48 @@ class Complaint {
   }
 }
 
+/// Formats the persisted assignment for resident-facing UI without exposing
+/// private phone numbers or email addresses from legacy free-text values.
+String? complaintResidentVisibleAssignee(String? value) {
+  final name = value?.trim();
+  if (name == null || name.isEmpty) return null;
+  final email = RegExp(r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b');
+  final digitCount = RegExp(r'\d').allMatches(name).length;
+  if (email.hasMatch(name) || digitCount >= 7) return null;
+  return name;
+}
+
+String? complaintAssignmentTeamDisplay(String? value) {
+  final team = value?.trim();
+  if (team == null || team.isEmpty) return null;
+  return team
+      .split(RegExp(r'[\s_-]+'))
+      .where((part) => part.isNotEmpty)
+      .map(
+        (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+      )
+      .join(' ');
+}
+
+String complaintResponsibilitySummary(
+  Complaint complaint, {
+  String? linkedStaffName,
+}) {
+  final team = complaintAssignmentTeamDisplay(complaint.assignedTeam);
+  final person =
+      complaintResidentVisibleAssignee(complaint.assignedTo) ??
+      (complaint.assignedStaffId?.trim().isNotEmpty == true
+          ? complaintResidentVisibleAssignee(linkedStaffName)
+          : null);
+  final assignment = [
+    if (team != null) team,
+    if (person != null) person,
+  ].join(' · ');
+  return assignment.isEmpty
+      ? 'Responsible: Unassigned'
+      : 'Responsible: $assignment';
+}
+
 Complaint complaintFromFirestoreData(String id, Map<String, dynamic> data) {
   final rawCreatedAt = data['createdAt'];
   final createdDate = rawCreatedAt is Timestamp
