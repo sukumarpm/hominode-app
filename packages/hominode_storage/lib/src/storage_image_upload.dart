@@ -32,6 +32,11 @@ class StorageImageAsset {
     'marketplace',
   };
 
+  int? get contractVersion => _data['contractVersion'] as int?;
+  String? get ownershipScope => _data['ownershipScope'] as String?;
+  String? get buildingId => _data['buildingId'] as String?;
+  String? get unitId => _data['unitId'] as String?;
+
   String get assetId => _data['assetId'] as String;
   String get communityId => _data['communityId'] as String;
   String get ownerId => _data['ownerId'] as String;
@@ -56,6 +61,10 @@ class StorageImageAsset {
       'bucket',
     ];
     const fields = {
+      'contractVersion',
+      'ownershipScope',
+      'buildingId',
+      'unitId',
       'assetId',
       'provider',
       'bucket',
@@ -71,7 +80,16 @@ class StorageImageAsset {
       'generation',
       'sha256',
     };
-    if (data.keys.any((key) => !fields.contains(key)) ||
+    if ((PhotoOwnership.isVersioned(data) &&
+            (data['feature'] != 'apartment' ||
+                !PhotoOwnership.matches(
+                  data,
+                  data['communityId'],
+                  data['ownershipScope'],
+                  data['resourceId'],
+                  buildingId: data['buildingId'],
+                ))) ||
+        data.keys.any((key) => !fields.contains(key)) ||
         data['storagePath'] is! String ||
         identifiers.any(
           (key) =>
@@ -134,6 +152,7 @@ class StorageImageUploadClient {
     required String resourceId,
     required String contentType,
     required Uint8List bytes,
+    String? ownershipScope,
     void Function(StorageImageAsset)? onReserved,
     void Function()? onStored,
   }) async {
@@ -152,7 +171,15 @@ class StorageImageUploadClient {
         bytes.length > StorageImageAsset.maxBytes) {
       throw ArgumentError('Choose a supported image no larger than 10 MB.');
     }
+    if (ownershipScope != null &&
+        (feature != 'apartment' ||
+            !PhotoOwnership.scopes.contains(ownershipScope)))
+      throw ArgumentError('Unsupported photo scope.');
     final request = {
+      if (ownershipScope != null) ...{
+        'contractVersion': 2,
+        'ownershipScope': ownershipScope,
+      },
       'feature': feature,
       'resourceId': resourceId,
       'contentType': contentType,
@@ -161,7 +188,9 @@ class StorageImageUploadClient {
     final pending = StorageImageAsset.fromMap(
       await call('prepareStorageImageUpload', request).timeout(timeout),
     );
-    if (pending.state != 'pending' ||
+    if (pending.ownershipScope != ownershipScope ||
+        (ownershipScope != null && pending.contractVersion != 2) ||
+        pending.state != 'pending' ||
         pending.ownerId != uid ||
         pending.feature != feature ||
         pending.resourceId != resourceId ||
@@ -196,6 +225,10 @@ class StorageImageUploadClient {
     if (currentUid() != uid ||
         ready.state != 'ready' ||
         [
+          'contractVersion',
+          'ownershipScope',
+          'buildingId',
+          'unitId',
           'assetId',
           'ownerId',
           'communityId',
@@ -243,5 +276,69 @@ class StorageImageUploadClient {
       throw const FormatException('Invalid private image size.');
     }
     return bytes;
+  }
+}
+
+/// Ownership is explicit. Legacy categories never determine permissions.
+class PhotoOwnership {
+  static const scopes = {'COMMUNITY', 'BUILDING', 'UNIT'};
+  static bool isVersioned(Map<String, dynamic> data) =>
+      data.containsKey('contractVersion') || data.containsKey('ownershipScope');
+  static bool _id(dynamic value) =>
+      value is String &&
+      value.isNotEmpty &&
+      value == value.trim() &&
+      value.length <= 128 &&
+      value != '.' &&
+      value != '..' &&
+      !RegExp(r'[/\\\s\x00-\x1f]').hasMatch(value);
+  static bool matches(
+    Map<String, dynamic> data,
+    dynamic community,
+    dynamic scope,
+    dynamic resource, {
+    dynamic buildingId,
+  }) {
+    if (!_id(community) ||
+        !_id(resource) ||
+        !scopes.contains(scope) ||
+        data['contractVersion'] is! int ||
+        data['contractVersion'] != 2 ||
+        data['ownershipScope'] != scope ||
+        data['communityId'] != community ||
+        data['resourceId'] != resource)
+      return false;
+    if (scope == 'COMMUNITY')
+      return resource == community &&
+          !data.containsKey('buildingId') &&
+          !data.containsKey('unitId');
+    if (scope == 'BUILDING')
+      return data['buildingId'] == resource && !data.containsKey('unitId');
+    return _id(buildingId) &&
+        data['buildingId'] == buildingId &&
+        data['unitId'] == resource;
+  }
+
+  static Map<String, dynamic> queryFields(
+    String community,
+    String scope,
+    String resource, {
+    String? buildingId,
+  }) {
+    if (!_id(community) ||
+        !_id(resource) ||
+        !scopes.contains(scope) ||
+        (scope == 'COMMUNITY' && community != resource) ||
+        (scope == 'UNIT' && !_id(buildingId)))
+      throw ArgumentError('A canonical photo scope is required.');
+    return {
+      'communityId': community,
+      'status': 'active',
+      'contractVersion': 2,
+      'ownershipScope': scope,
+      'resourceId': resource,
+      if (scope == 'BUILDING') 'buildingId': resource,
+      if (scope == 'UNIT') ...{'buildingId': buildingId, 'unitId': resource},
+    };
   }
 }

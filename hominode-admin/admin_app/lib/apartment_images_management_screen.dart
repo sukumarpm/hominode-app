@@ -6,13 +6,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'widgets/standard_header.dart';
 import 'services/cloudinary_apartment_images_service.dart';
-import 'services/admin_service.dart';
 import 'services/admin_tenant_context.dart';
 import 'services/firebase_image_upload_service.dart';
 import 'widgets/private_apartment_image.dart';
 
 class ApartmentImagesManagementScreen extends StatefulWidget {
-  const ApartmentImagesManagementScreen({super.key});
+  final String? buildingId;
+  const ApartmentImagesManagementScreen({super.key, this.buildingId});
 
   @override
   State<ApartmentImagesManagementScreen> createState() =>
@@ -23,7 +23,6 @@ class _ApartmentImagesManagementScreenState
     extends State<ApartmentImagesManagementScreen> {
   final CloudinaryApartmentImagesService _imagesService =
       CloudinaryApartmentImagesService();
-  final AdminService _adminService = AdminService();
   bool _isInitialized = false;
   Stream<List<ApartmentImageModel>>? _images;
   StreamSubscription<User?>? _authSubscription;
@@ -38,6 +37,8 @@ class _ApartmentImagesManagementScreenState
   );
   int _initialization = 0;
   String? _buildingId;
+  bool _legacy = false;
+  String get _scope => widget.buildingId == null ? 'COMMUNITY' : 'BUILDING';
 
   @override
   void initState() {
@@ -73,7 +74,6 @@ class _ApartmentImagesManagementScreenState
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final community = AdminTenantContext.instance.communityId;
     if (uid == null || community == null) return;
-    final buildingIds = await _adminService.getAdminBuildingIds();
     if (!mounted ||
         attempt != _initialization ||
         uid != FirebaseAuth.instance.currentUser?.uid ||
@@ -81,31 +81,26 @@ class _ApartmentImagesManagementScreenState
       return;
     }
     setState(() {
-      _buildingId = buildingIds.isEmpty ? null : buildingIds.first;
-      _images = _imagesService.getImages();
+      _buildingId = widget.buildingId;
+      _images = _legacy
+          ? _imagesService.getLegacyImages(_buildingId)
+          : _buildingId == null
+          ? _imagesService.getImages()
+          : _imagesService.getImagesForBuilding(_buildingId!);
       _isInitialized = true;
     });
   }
 
   void _showUploadModal([ApartmentImageModel? replacing]) {
-    if (_buildingId == null || _buildingId!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Building ID not found. Please ensure your profile is set up correctly.',
-          ),
-          backgroundColor: Color(0xFFEF4444),
-        ),
-      );
-      return;
-    }
+    if (_legacy) return;
 
     showDialog(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withOpacity(0.4),
       builder: (context) => AddApartmentImageModal(
-        buildingId: replacing?.buildingId ?? _buildingId!,
+        buildingId: _buildingId,
+        ownershipScope: _scope,
         replacing: replacing,
         onImageAdded: (imageId) {
           // UI will update automatically via StreamBuilder
@@ -128,7 +123,11 @@ class _ApartmentImagesManagementScreenState
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          const StandardHeader(title: 'Apartment Images'),
+          StandardHeader(
+            title: _scope == 'COMMUNITY'
+                ? 'Community photos'
+                : 'Building photos',
+          ),
           SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -137,15 +136,27 @@ class _ApartmentImagesManagementScreenState
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16.w),
                   child: Text(
-                    'Manage apartment and common area images',
+                    _legacy
+                        ? 'Legacy photos (read-only)'
+                        : _scope == 'COMMUNITY'
+                        ? 'Manage community photos'
+                        : 'Manage building photos',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
+                ),
+                SwitchListTile(
+                  title: const Text('Legacy photos (read-only)'),
+                  value: _legacy,
+                  onChanged: (value) {
+                    setState(() => _legacy = value);
+                    _scopeChanged();
+                  },
                 ),
                 SizedBox(height: 16.h),
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16.w),
                   child: ElevatedButton.icon(
-                    onPressed: _showUploadModal,
+                    onPressed: _legacy ? null : _showUploadModal,
                     icon: const Icon(Icons.add_photo_alternate),
                     label: const Text('Add Image'),
                     style: ElevatedButton.styleFrom(
@@ -401,18 +412,20 @@ class _ApartmentImagesManagementScreenState
                       ),
                     ),
                     const Spacer(),
-                    IconButton(
-                      tooltip: 'Replace image',
-                      icon: const Icon(Icons.edit_outlined),
-                      onPressed: () => _showUploadModal(image),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        color: Color(0xFFEF4444),
+                    if (!_legacy)
+                      IconButton(
+                        tooltip: 'Replace image',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => _showUploadModal(image),
                       ),
-                      onPressed: () => _deleteImage(image),
-                    ),
+                    if (!_legacy)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Color(0xFFEF4444),
+                        ),
+                        onPressed: () => _deleteImage(image),
+                      ),
                   ],
                 ),
               ],
@@ -476,7 +489,8 @@ class _ApartmentImagesManagementScreenState
 
 // ==================== Add Apartment Image Modal ====================
 class AddApartmentImageModal extends StatefulWidget {
-  final String buildingId;
+  final String? buildingId;
+  final String ownershipScope;
   final ApartmentImageModel? replacing;
   final CloudinaryApartmentImagesService? imagesService;
   final Future<File?> Function()? pickImage;
@@ -484,7 +498,8 @@ class AddApartmentImageModal extends StatefulWidget {
 
   const AddApartmentImageModal({
     super.key,
-    required this.buildingId,
+    this.buildingId,
+    this.ownershipScope = 'BUILDING',
     this.replacing,
     this.imagesService,
     this.pickImage,
@@ -610,6 +625,7 @@ class _AddApartmentImageModalState extends State<AddApartmentImageModal> {
         type: 'Common Area',
         imageFile: _selectedImage!,
         buildingId: widget.buildingId,
+        ownershipScope: widget.ownershipScope,
         replacing: widget.replacing,
         uploadDate: _dateController.text,
         uploadTime: _timeController.text,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'apartment_images_management_screen.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import 'desktop/admin_desktop_page_frame.dart';
@@ -365,6 +366,22 @@ class _ManageBuildingsPageState extends State<ManageBuildingsPage> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        Tooltip(
+          message: 'Building photos',
+          child: _buildIconButton(
+            Icons.photo_library_outlined,
+            const Color(0xFF9CA3AF),
+            () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      ApartmentImagesManagementScreen(buildingId: building.id),
+                ),
+              );
+            },
+          ),
+        ),
+        SizedBox(width: 8.w),
         _buildIconButton(Icons.grid_view, const Color(0xFF9CA3AF), () {
           _showFlatOccupancyGrid(building);
         }),

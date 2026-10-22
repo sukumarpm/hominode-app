@@ -19,6 +19,7 @@ import 'src/screens/messages_screen.dart';
 import 'src/screens/notifications_screen.dart';
 import 'events_announcements_screen.dart';
 import 'src/services/apartment_images_service.dart';
+import 'src/widgets/resident_photo_galleries.dart';
 import 'src/services/bill_firestore_service.dart';
 import 'src/services/recent_activity_flow_function.dart';
 import 'src/services/subscription_entitlement_service.dart';
@@ -388,6 +389,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const ResidentHomeEmergencySosButton(),
           SizedBox(height: 15.h),
           _communityHeroCard(),
+          TextButton.icon(
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Community, building and apartment photos'),
+            onPressed: () {
+              final community = Provider.of<TenantResolutionService>(
+                context,
+                listen: false,
+              ).communityId;
+              if (community != null)
+                showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => FractionallySizedBox(
+                    heightFactor: .85,
+                    child: ResidentPhotoGalleries(communityId: community),
+                  ),
+                );
+            },
+          ),
         ],
       ),
     );

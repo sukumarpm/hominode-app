@@ -10,22 +10,26 @@ import 'package:hominode_storage/hominode_storage.dart';
 import 'package:http/http.dart' as http;
 
 const assetId = 'a1111111-1111-4111-8111-111111111111';
-StorageImageAsset ticket({bool ready = false}) => StorageImageAsset.fromMap({
-  'assetId': assetId,
-  'provider': 'firebase',
-  'bucket': 'demo-images.appspot.com',
-  'ownerId': 'a',
-  'communityId': 'A',
-  'feature': 'apartment',
-  'resourceId': 'building-test',
-  'contentType': 'image/jpeg',
-  'size': 4,
-  'state': ready ? 'ready' : 'pending',
-  'storagePath': ready
-      ? 'private_images/A/a/apartment/$assetId.jpg'
-      : 'apartment_images/A/a/$assetId.jpg',
-  if (ready) ...{'generation': '7', 'sha256': 'a' * 64},
-});
+StorageImageAsset ticket({bool ready = false, String scope = 'BUILDING'}) =>
+    StorageImageAsset.fromMap({
+      'contractVersion': 2,
+      'ownershipScope': scope,
+      if (scope == 'BUILDING') 'buildingId': 'building-test',
+      'assetId': assetId,
+      'provider': 'firebase',
+      'bucket': 'demo-images.appspot.com',
+      'ownerId': 'a',
+      'communityId': 'A',
+      'feature': 'apartment',
+      'resourceId': scope == 'COMMUNITY' ? 'A' : 'building-test',
+      'contentType': 'image/jpeg',
+      'size': 4,
+      'state': ready ? 'ready' : 'pending',
+      'storagePath': ready
+          ? 'private_images/A/a/apartment/$assetId.jpg'
+          : 'apartment_images/A/a/$assetId.jpg',
+      if (ready) ...{'generation': '7', 'sha256': 'a' * 64},
+    });
 
 class _Admin extends Fake implements AdminService {
   String? uid = 'a';
@@ -38,6 +42,7 @@ class _Admin extends Fake implements AdminService {
 
 class _Uploads extends Fake implements FirebaseImageUploadService {
   int uploads = 0, completions = 0;
+  String scope = 'BUILDING';
   bool failComplete = false, failSave = false, failUpload = false;
   void Function()? afterUpload;
   final calls = <(String, Map<String, dynamic>)>[];
@@ -47,26 +52,28 @@ class _Uploads extends Fake implements FirebaseImageUploadService {
     required String resourceId,
     required String contentType,
     required Uint8List bytes,
+    String? ownershipScope,
     void Function(StorageImageAsset)? onReserved,
     void Function()? onStored,
   }) async {
     uploads++;
     expect(feature, 'apartment');
-    expect(resourceId, 'building-test');
+    expect(ownershipScope, scope);
+    expect(resourceId, scope == 'COMMUNITY' ? 'A' : 'building-test');
     expect(contentType, 'image/jpeg');
-    onReserved?.call(ticket());
+    onReserved?.call(ticket(scope: scope));
     if (failUpload) throw StateError('Storage failed.');
     onStored?.call();
     afterUpload?.call();
     if (failComplete) throw StateError('Finalization unavailable.');
-    return ticket(ready: true);
+    return ticket(ready: true, scope: scope);
   }
 
   @override
   Future<StorageImageAsset> complete(StorageImageAsset reservation) async {
     completions++;
     expect(reservation.assetId, assetId);
-    return ticket(ready: true);
+    return ticket(ready: true, scope: scope);
   }
 
   @override
@@ -76,7 +83,12 @@ class _Uploads extends Fake implements FirebaseImageUploadService {
   ) async {
     calls.add((name, data));
     if (failSave) throw StateError('Save response lost.');
-    return {'imageId': data['imageId'] ?? assetId, 'revision': 1};
+    return {
+      'imageId': data['imageId'] ?? assetId,
+      'revision': 1,
+      'contractVersion': 2,
+      if (name == 'deleteApartmentImage') 'deleted': true,
+    };
   }
 }
 
@@ -208,6 +220,9 @@ void main() {
       final model = ApartmentImageModel.fromFirestore('legacy', {
         'buildingId': 'building-test',
         'communityId': 'A',
+        'contractVersion': 2,
+        'ownershipScope': 'BUILDING',
+        'resourceId': 'building-test',
         'revision': 4,
         'title': 'Original',
         'createdAt': Timestamp.fromMillisecondsSinceEpoch(1000),
@@ -230,6 +245,7 @@ void main() {
       await service.deleteImage('existing', expectedRevision: 2);
       expect(uploads.calls.single.$1, 'deleteApartmentImage');
       expect(uploads.calls.single.$2, {
+        'contractVersion': 2,
         'imageId': 'existing',
         'expectedRevision': 2,
       });
@@ -246,14 +262,92 @@ void main() {
       });
       await firestore.collection('apartmentImages').doc('new').set({
         'communityId': 'A',
-        'imageAsset': ticket(ready: true).toMap(),
+        'imageAsset': (ticket(ready: true).toMap()
+          ..remove('contractVersion')
+          ..remove('ownershipScope')
+          ..remove('buildingId')),
         'createdAt': Timestamp.fromMillisecondsSinceEpoch(2000),
       });
-      final images = await service.getImages().first;
+      final images = await service.getLegacyImages().first;
       expect(images.map((image) => image.id), ['new', 'old']);
       expect(images.first.imageAsset!.assetId, assetId);
       expect(images.last.imageUrl, 'https://example.invalid/legacy.jpg');
       expect(images.last.imageAsset, isNull);
     },
   );
+  test(
+    'COMMUNITY upload requires no building and confirms V2 attachment',
+    () async {
+      uploads.scope = 'COMMUNITY';
+      expect(
+        await service.uploadImage(
+          title: 'Community',
+          description: '',
+          type: 'Common Area',
+          imageFile: file,
+          ownershipScope: 'COMMUNITY',
+        ),
+        assetId,
+      );
+      expect(uploads.uploads, 1);
+    },
+  );
+  test(
+    'community and building queries never include legacy or unit metadata',
+    () async {
+      await firestore.collection('apartmentImagesV2').doc('community').set({
+        'contractVersion': 2,
+        'ownershipScope': 'COMMUNITY',
+        'communityId': 'A',
+        'resourceId': 'A',
+        'status': 'active',
+      });
+      await firestore.collection('apartmentImagesV2').doc('building').set({
+        'contractVersion': 2,
+        'ownershipScope': 'BUILDING',
+        'communityId': 'A',
+        'resourceId': 'building-test',
+        'buildingId': 'building-test',
+        'status': 'active',
+      });
+      await firestore.collection('apartmentImagesV2').doc('unit').set({
+        'contractVersion': 2,
+        'ownershipScope': 'UNIT',
+        'communityId': 'A',
+        'resourceId': 'unit',
+        'unitId': 'unit',
+        'buildingId': 'building-test',
+        'status': 'active',
+      });
+      await firestore.collection('apartmentImages').doc('legacy').set({
+        'communityId': 'A',
+        'buildingId': 'building-test',
+        'status': 'active',
+      });
+      expect((await service.getImages().first).map((image) => image.id), [
+        'community',
+      ]);
+      expect(
+        (await service.getImagesForBuilding('building-test').first).map(
+          (image) => image.id,
+        ),
+        ['building'],
+      );
+      expect((await service.getLegacyImages().first).map((image) => image.id), [
+        'legacy',
+      ]);
+    },
+  );
+  test('legacy replacement is rejected before an upload starts', () async {
+    await expectLater(
+      upload(
+        replacing: ApartmentImageModel.fromFirestore('legacy', {
+          'communityId': 'A',
+          'buildingId': 'building-test',
+        }),
+      ),
+      throwsStateError,
+    );
+    expect(uploads.uploads, 0);
+  });
 }

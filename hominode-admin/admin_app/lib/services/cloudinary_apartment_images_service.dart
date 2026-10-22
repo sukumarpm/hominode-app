@@ -29,12 +29,26 @@ class CloudinaryApartmentImagesService {
     required String description,
     required String type,
     required File imageFile,
-    required String buildingId,
+    String? buildingId,
+    String ownershipScope = 'BUILDING',
     String? uploadDate,
     String? uploadTime,
     ApartmentImageModel? replacing,
   }) async {
     final community = _adminService.requireCurrentCommunityId();
+    if (!{'COMMUNITY', 'BUILDING'}.contains(ownershipScope))
+      throw ArgumentError('Unsupported management scope.');
+    final resource = ownershipScope == 'COMMUNITY'
+        ? community
+        : buildingId ?? '';
+    PhotoOwnership.queryFields(community, ownershipScope, resource);
+    if (replacing != null &&
+        (replacing.contractVersion != 2 ||
+            replacing.ownershipScope != ownershipScope ||
+            replacing.resourceId != resource))
+      throw StateError(
+        'Legacy or differently scoped photos cannot be replaced.',
+      );
     final uid = _adminService.getCurrentAdminId();
     if (uid == null) throw StateError('Sign in to upload an image.');
     final stat = await imageFile.stat();
@@ -42,7 +56,7 @@ class CloudinaryApartmentImagesService {
       throw ArgumentError('Choose an image no larger than 10 MB.');
     }
     final attempt =
-        '$uid/$community/$buildingId/${replacing?.id}/${replacing?.revision}/${imageFile.path}/${stat.size}/${stat.modified.millisecondsSinceEpoch}';
+        '$uid/$community/$ownershipScope/$resource/${replacing?.id}/${replacing?.revision}/${imageFile.path}/${stat.size}/${stat.modified.millisecondsSinceEpoch}';
     if (_attempt != attempt) {
       _attempt = attempt;
       _reservation = null;
@@ -93,7 +107,8 @@ class CloudinaryApartmentImagesService {
         checkScope();
         _ready = await _uploads.upload(
           feature: 'apartment',
-          resourceId: buildingId,
+          resourceId: resource,
+          ownershipScope: ownershipScope,
           contentType: mime,
           bytes: bytes,
           onReserved: (asset) => _reservation = asset,
@@ -102,7 +117,13 @@ class CloudinaryApartmentImagesService {
       }
     }
     checkScope();
-    if (_ready!.communityId != community || _ready!.resourceId != buildingId) {
+    if (_ready!.communityId != community ||
+        !PhotoOwnership.matches(
+          _ready!.toMap(),
+          community,
+          ownershipScope,
+          resource,
+        )) {
       throw StateError('The image belongs to another community or building.');
     }
     final result = await _uploads.call('saveApartmentImage', {
@@ -121,7 +142,9 @@ class CloudinaryApartmentImagesService {
     });
     checkScope();
     final id = result['imageId'];
-    if (id is! String || id != (replacing?.id ?? _ready!.assetId)) {
+    if (result['contractVersion'] != 2 ||
+        id is! String ||
+        id != (replacing?.id ?? _ready!.assetId)) {
       throw const FormatException(
         'The image save was not confirmed. Retry to check it.',
       );
@@ -131,17 +154,34 @@ class CloudinaryApartmentImagesService {
     return id;
   }
 
-  Stream<List<ApartmentImageModel>> getImages() => _images();
+  Stream<List<ApartmentImageModel>> getImages() => _images(scope: 'COMMUNITY');
+  Stream<List<ApartmentImageModel>> getLegacyImages([String? buildingId]) =>
+      _images(buildingId: buildingId, legacy: true);
   Stream<List<ApartmentImageModel>> getImagesForBuilding(String buildingId) =>
-      _images(buildingId);
-  Stream<List<ApartmentImageModel>> _images([String? buildingId]) {
+      _images(buildingId: buildingId, scope: 'BUILDING');
+  Stream<List<ApartmentImageModel>> _images({
+    String? buildingId,
+    String scope = 'COMMUNITY',
+    bool legacy = false,
+  }) {
     if (_adminService.getCurrentAdminId() == null) return Stream.value([]);
     Query<Map<String, dynamic>> query = _firestore
-        .collection('apartmentImages')
+        .collection(legacy ? 'apartmentImages' : 'apartmentImagesV2')
         .where(
           'communityId',
           isEqualTo: _adminService.requireCurrentCommunityId(),
         );
+    if (!legacy) {
+      for (final entry in PhotoOwnership.queryFields(
+        _adminService.requireCurrentCommunityId(),
+        scope,
+        scope == 'COMMUNITY'
+            ? _adminService.requireCurrentCommunityId()
+            : buildingId ?? '',
+      ).entries) {
+        query = query.where(entry.key, isEqualTo: entry.value);
+      }
+    }
     if (buildingId != null) {
       query = query
           .where('buildingId', isEqualTo: buildingId)
@@ -149,6 +189,18 @@ class CloudinaryApartmentImagesService {
     }
     return query.snapshots().map((snapshot) {
       final images = snapshot.docs
+          .where(
+            (doc) => legacy
+                ? !PhotoOwnership.isVersioned(doc.data())
+                : PhotoOwnership.matches(
+                    doc.data(),
+                    _adminService.requireCurrentCommunityId(),
+                    scope,
+                    scope == 'COMMUNITY'
+                        ? _adminService.requireCurrentCommunityId()
+                        : buildingId,
+                  ),
+          )
           .map((doc) => ApartmentImageModel.fromFirestore(doc.id, doc.data()))
           .toList();
       images.sort(
@@ -164,10 +216,13 @@ class CloudinaryApartmentImagesService {
     String imageId, {
     required int expectedRevision,
   }) async {
-    await _uploads.call('deleteApartmentImage', {
+    final result = await _uploads.call('deleteApartmentImage', {
+      'contractVersion': 2,
       'imageId': imageId,
       'expectedRevision': expectedRevision,
     });
+    if (result['imageId'] != imageId || result['deleted'] != true)
+      throw const FormatException('Image deletion could not be confirmed.');
   }
 }
 
@@ -187,6 +242,8 @@ class ApartmentImageModel {
   final DateTime? createdAt, updatedAt;
   final StorageImageAsset? imageAsset;
   final int revision;
+  final int? contractVersion;
+  final String? ownershipScope, resourceId;
   ApartmentImageModel({
     required this.id,
     required this.title,
@@ -204,6 +261,9 @@ class ApartmentImageModel {
     this.updatedAt,
     this.imageAsset,
     this.revision = 0,
+    this.contractVersion,
+    this.ownershipScope,
+    this.resourceId,
   });
 
   factory ApartmentImageModel.fromFirestore(
@@ -211,6 +271,9 @@ class ApartmentImageModel {
     Map<String, dynamic> data,
   ) => ApartmentImageModel(
     id: id,
+    contractVersion: data['contractVersion'] as int?,
+    ownershipScope: data['ownershipScope'] as String?,
+    resourceId: data['resourceId'] as String?,
     title: data['title'] ?? '',
     description: data['description'] ?? '',
     type: data['type'] ?? 'Common Area',

@@ -19,7 +19,8 @@ class _Service extends Fake implements CloudinaryApartmentImagesService {
     required String description,
     required String type,
     required File imageFile,
-    required String buildingId,
+    String? buildingId,
+    String ownershipScope = 'BUILDING',
     String? uploadDate,
     String? uploadTime,
     ApartmentImageModel? replacing,
@@ -87,13 +88,17 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  ApartmentImageModel model() => ApartmentImageModel.fromFirestore('legacy', {
-    'buildingId': 'building',
-    'communityId': 'A',
-    'imageUrl': 'https://example.invalid/legacy.jpg',
-    'uploadDate': '01-02-2020',
-    'uploadTime': '9:30 AM',
-  });
+  ApartmentImageModel model() =>
+      ApartmentImageModel.fromFirestore('existing-v2', {
+        'contractVersion': 2,
+        'ownershipScope': 'BUILDING',
+        'resourceId': 'building',
+        'buildingId': 'building',
+        'communityId': 'A',
+        'imageUrl': '',
+        'uploadDate': '01-02-2020',
+        'uploadTime': '9:30 AM',
+      });
   testWidgets(
     'existing image picker and replacement button call Firebase service and close on confirmed save',
     (tester) async {
@@ -104,7 +109,7 @@ void main() {
       await tester.tap(find.text('Replace Image'));
       await tester.pumpAndSettle();
       expect(saved, 'saved');
-      expect(service.calls.single!.id, 'legacy');
+      expect(service.calls.single!.id, 'existing-v2');
       expect(service.dates.single, '01-02-2020');
       expect(service.times.single, '9:30 AM');
       expect(find.byType(AddApartmentImageModal), findsNothing);

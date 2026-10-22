@@ -85,6 +85,7 @@ class FirebaseImageUploadService {
     required String resourceId,
     required String contentType,
     required Uint8List bytes,
+    String? ownershipScope,
     void Function(StorageImageAsset)? onReserved,
     void Function()? onStored,
   }) {
@@ -93,6 +94,7 @@ class FirebaseImageUploadService {
     }
     return _client.upload(
       feature: feature,
+      ownershipScope: ownershipScope,
       resourceId: resourceId,
       contentType: contentType,
       bytes: bytes,

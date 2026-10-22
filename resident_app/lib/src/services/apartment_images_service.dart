@@ -51,13 +51,32 @@ class ApartmentImagesService {
   final FirebaseAuth _auth;
 
   static String? imageReference(Map<String, dynamic> data) {
+    if (PhotoOwnership.isVersioned(data) &&
+        (data['imageAsset'] == null ||
+            !PhotoOwnership.matches(
+              data,
+              data['communityId'],
+              data['ownershipScope'],
+              data['resourceId'],
+              buildingId: data['buildingId'],
+            )))
+      throw const FormatException('Invalid scoped photo.');
     if (data['imageAsset'] != null) {
       final asset = StorageImageAsset.fromMap(
         Map<String, dynamic>.from(data['imageAsset'] as Map),
       );
-      if (asset.feature != 'apartment' ||
+      if ((PhotoOwnership.isVersioned(data) &&
+              !PhotoOwnership.matches(
+                asset.toMap(),
+                data['communityId'],
+                data['ownershipScope'],
+                data['resourceId'],
+                buildingId: data['buildingId'],
+              )) ||
+          asset.feature != 'apartment' ||
           asset.state != 'ready' ||
-          (data['buildingId'] != null &&
+          (!PhotoOwnership.isVersioned(data) &&
+              data['buildingId'] != null &&
               asset.resourceId != data['buildingId'])) {
         throw const FormatException('Invalid apartment image.');
       }
@@ -75,7 +94,9 @@ class ApartmentImagesService {
     final sorted = records
         .where(
           (data) =>
-              data['communityId'] == communityId && data['status'] == 'active',
+              !PhotoOwnership.isVersioned(data) &&
+              data['communityId'] == communityId &&
+              data['status'] == 'active',
         )
         .toList();
     DateTime created(Map<String, dynamic> data) =>
@@ -99,7 +120,44 @@ class ApartmentImagesService {
     return references;
   }
 
-  Stream<List<String>> streamCommunityImages(String communityId) {
+  static List<String> scopedReferences(
+    Iterable<Map<String, dynamic>> records,
+    String community,
+    String scope,
+    String resource, {
+    String? buildingId,
+  }) {
+    final sorted = records
+        .where(
+          (data) =>
+              data['status'] == 'active' &&
+              PhotoOwnership.matches(
+                data,
+                community,
+                scope,
+                resource,
+                buildingId: buildingId,
+              ),
+        )
+        .toList();
+    sorted.sort(
+      (a, b) => ((b['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+          .compareTo(
+            (a['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0,
+          ),
+    );
+    return sorted
+        .map(imageReference)
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .toList();
+  }
+
+  Stream<List<String>> streamCommunityImages(
+    String communityId, {
+    bool legacy = false,
+    String ownershipScope = 'COMMUNITY',
+  }) {
     late StreamController<List<String>> controller;
     StreamSubscription<User?>? authSubscription;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
@@ -136,33 +194,79 @@ class ApartmentImagesService {
                     final data = profile.data();
                     if (controller.isClosed ||
                         request != epoch ||
-                        _auth.currentUser?.uid != user.uid ||
-                        data?['communityId'] != communityId ||
-                        data?['isActive'] != true ||
-                        data?['approvalStatus'] != 'approved')
+                        _auth.currentUser?.uid != user.uid)
                       return;
-                    imagesSubscription = _firestore
-                        .collection('apartmentImages')
-                        .where('communityId', isEqualTo: communityId)
-                        .where('status', isEqualTo: 'active')
-                        .snapshots()
-                        .listen(
-                          (snapshot) {
-                            if (!controller.isClosed &&
-                                request == epoch &&
-                                _auth.currentUser?.uid == user.uid) {
-                              controller.add(
-                                communityReferences(
-                                  snapshot.docs.map((doc) => doc.data()),
-                                  communityId,
-                                ),
-                              );
-                            }
-                          },
-                          onError: (Object _) {
-                            if (request == epoch) clear();
-                          },
-                        );
+                    if (data?['communityId'] != communityId ||
+                        data?['isActive'] != true ||
+                        data?['approvalStatus'] != 'approved') {
+                      controller.addError(
+                        StateError('Photo access is unavailable.'),
+                      );
+                      return;
+                    }
+                    final building = data?['buildingId'] as String?;
+                    final resource = ownershipScope == 'COMMUNITY'
+                        ? communityId
+                        : ownershipScope == 'UNIT'
+                        ? (data?['flatId'] as String?)
+                        : building;
+                    if (!legacy && (resource == null || resource.isEmpty)) {
+                      controller.addError(
+                        StateError('Photo assignment is unavailable.'),
+                      );
+                      return;
+                    }
+                    Query<Map<String, dynamic>> query = _firestore.collection(
+                      legacy ? 'apartmentImages' : 'apartmentImagesV2',
+                    );
+                    final fields = legacy
+                        ? {'communityId': communityId, 'status': 'active'}
+                        : PhotoOwnership.queryFields(
+                            communityId,
+                            ownershipScope,
+                            resource!,
+                            buildingId: building,
+                          );
+                    for (final entry in fields.entries) {
+                      query = query.where(entry.key, isEqualTo: entry.value);
+                    }
+                    imagesSubscription = query.snapshots().listen(
+                      (snapshot) {
+                        if (!controller.isClosed &&
+                            request == epoch &&
+                            _auth.currentUser?.uid == user.uid) {
+                          try {
+                            controller.add(
+                              legacy
+                                  ? communityReferences(
+                                      snapshot.docs.map((doc) => doc.data()),
+                                      communityId,
+                                    )
+                                  : scopedReferences(
+                                      snapshot.docs.map((doc) => doc.data()),
+                                      communityId,
+                                      ownershipScope,
+                                      resource!,
+                                      buildingId: building,
+                                    ),
+                            );
+                          } catch (_) {
+                            clear();
+                            controller.addError(
+                              StateError('Photo data is unavailable.'),
+                            );
+                          }
+                        }
+                      },
+                      onError: (Object _) {
+                        if (request == epoch) {
+                          clear();
+                          controller.addError(
+                            StateError('Photo access could not be verified.'),
+                          );
+                        }
+                      },
+                    );
                   },
                   onError: (Object _) {
                     ++epoch;

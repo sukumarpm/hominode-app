@@ -213,6 +213,7 @@ class ResidentPrivateImages {
                   'role',
                   'communityId',
                   'buildingId',
+                  'flatId',
                   'isActive',
                   'approvalStatus',
                   'status',
