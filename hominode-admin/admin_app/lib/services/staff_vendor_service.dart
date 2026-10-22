@@ -2,8 +2,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'admin_service.dart';
 
 class StaffVendorService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final AdminService _adminService = AdminService();
+  StaffVendorService({FirebaseFirestore? firestore, AdminService? adminService})
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _adminService = adminService ?? AdminService();
+
+  final FirebaseFirestore _firestore;
+  final AdminService _adminService;
   final String _staffCollection = 'staff';
   final String _vendorCollection = 'vendors';
 
@@ -111,18 +115,28 @@ class StaffVendorService {
     }
   }
 
-  /// Get all staff members (real-time stream) filtered by adminId
-  Stream<List<StaffMember>> getStaffMembers() {
+  /// Get all staff members (real-time stream) filtered by current community.
+  Stream<List<StaffMember>> getStaffMembers({bool propagateErrors = false}) {
     final adminId = _adminService.getCurrentAdminId();
-    if (adminId == null) return Stream.value([]);
+    if (adminId == null) {
+      return propagateErrors
+          ? Stream.error(StateError('Admin directory context is unavailable'))
+          : Stream.value([]);
+    }
+
+    late final String communityId;
+    try {
+      communityId = _adminService.requireCurrentCommunityId();
+    } catch (error, stackTrace) {
+      return propagateErrors
+          ? Stream.error(error, stackTrace)
+          : Stream.value([]);
+    }
 
     print('StaffVendorService: Fetching staff members for admin: $adminId');
     return _firestore
         .collection(_staffCollection)
-        .where(
-          'communityId',
-          isEqualTo: _adminService.requireCurrentCommunityId(),
-        )
+        .where('communityId', isEqualTo: communityId)
         .snapshots()
         .map((snapshot) {
           print(
@@ -137,7 +151,7 @@ class StaffVendorService {
           print('StaffVendorService ERROR: $error');
           // Return empty list instead of throwing
           return <StaffMember>[];
-        });
+        }, test: (_) => !propagateErrors);
   }
 
   /// Security roster for the Admin attendance flow.
@@ -277,6 +291,7 @@ class StaffVendorService {
         'totalServices': 0,
         'status': 'active',
         'adminId': adminId, // Link to admin
+        'communityId': _adminService.requireCurrentCommunityId(),
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -325,6 +340,7 @@ class StaffVendorService {
         'totalServices': 0,
         'status': 'active',
         'adminId': adminId, // Link to admin
+        'communityId': _adminService.requireCurrentCommunityId(),
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -337,18 +353,28 @@ class StaffVendorService {
     }
   }
 
-  /// Get all vendors (real-time stream) filtered by adminId
-  Stream<List<VendorModel>> getVendors() {
+  /// Get all vendors (real-time stream) filtered by current community.
+  Stream<List<VendorModel>> getVendors({bool propagateErrors = false}) {
     final adminId = _adminService.getCurrentAdminId();
-    if (adminId == null) return Stream.value([]);
+    if (adminId == null) {
+      return propagateErrors
+          ? Stream.error(StateError('Admin directory context is unavailable'))
+          : Stream.value([]);
+    }
+
+    late final String communityId;
+    try {
+      communityId = _adminService.requireCurrentCommunityId();
+    } catch (error, stackTrace) {
+      return propagateErrors
+          ? Stream.error(error, stackTrace)
+          : Stream.value([]);
+    }
 
     print('StaffVendorService: Fetching vendors for admin: $adminId');
     return _firestore
         .collection(_vendorCollection)
-        .where(
-          'communityId',
-          isEqualTo: _adminService.requireCurrentCommunityId(),
-        )
+        .where('communityId', isEqualTo: communityId)
         .snapshots()
         .map((snapshot) {
           print('StaffVendorService: Received ${snapshot.docs.length} vendors');
@@ -361,7 +387,7 @@ class StaffVendorService {
           print('StaffVendorService ERROR: $error');
           // Return empty list instead of throwing
           return <VendorModel>[];
-        });
+        }, test: (_) => !propagateErrors);
   }
 
   /// Get vendor by ID

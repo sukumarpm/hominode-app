@@ -46,12 +46,22 @@ class _FakeComplaintService extends Fake implements ComplaintService {
 class _FakeStaffVendorService extends Fake implements StaffVendorService {
   List<StaffMember> staff = const [];
   List<VendorModel> vendors = const [];
+  Object? staffFailure;
+  Object? vendorFailure;
+  Stream<List<StaffMember>>? staffStream;
+  Stream<List<VendorModel>>? vendorStream;
 
   @override
-  Stream<List<StaffMember>> getStaffMembers() => Stream.value(staff);
+  Stream<List<StaffMember>> getStaffMembers({bool propagateErrors = false}) =>
+      staffFailure != null
+      ? Stream.error(staffFailure!)
+      : staffStream ?? Stream.value(staff);
 
   @override
-  Stream<List<VendorModel>> getVendors() => Stream.value(vendors);
+  Stream<List<VendorModel>> getVendors({bool propagateErrors = false}) =>
+      vendorFailure != null
+      ? Stream.error(vendorFailure!)
+      : vendorStream ?? Stream.value(vendors);
 }
 
 final _complaint = ComplaintEntry(
@@ -69,6 +79,7 @@ final _complaint = ComplaintEntry(
 Widget _app(
   ComplaintService service, {
   double textScale = 1,
+  EdgeInsets viewInsets = EdgeInsets.zero,
   Widget? attachmentsOverride = const SizedBox.shrink(),
   ComplaintEntry? complaint,
   Function(ComplaintEntry)? onComplaintUpdated,
@@ -78,9 +89,10 @@ Widget _app(
   minTextAdapt: true,
   builder: (context, child) => MaterialApp(
     builder: (context, child) => MediaQuery(
-      data: MediaQuery.of(
-        context,
-      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      data: MediaQuery.of(context).copyWith(
+        textScaler: TextScaler.linear(textScale),
+        viewInsets: viewInsets,
+      ),
       child: child!,
     ),
     home: Scaffold(
@@ -370,6 +382,137 @@ void main() {
       expect(service.lastUpdate?['assignedTo'], isNot(contains('555')));
     },
   );
+
+  testWidgets('directory empty and failed lookup have distinct feedback', (
+    tester,
+  ) async {
+    final emptyDirectory = _FakeStaffVendorService();
+    await tester.pumpWidget(
+      _app(_FakeComplaintService(), staffVendorService: emptyDirectory),
+    );
+    final editAssignment = find.byKey(
+      const ValueKey('complaint-edit-person-assignment'),
+    );
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No staff or vendor contacts'), findsOneWidget);
+    expect(
+      find.textContaining('Directory contacts could not be loaded'),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    final failedDirectory = _FakeStaffVendorService()
+      ..staffFailure = StateError('permission denied');
+    await tester.pumpWidget(
+      _app(_FakeComplaintService(), staffVendorService: failedDirectory),
+    );
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Directory contacts could not be loaded'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('No staff or vendor contacts'), findsNothing);
+  });
+
+  testWidgets('directory shows loading before an empty result arrives', (
+    tester,
+  ) async {
+    final staffResults = StreamController<List<StaffMember>>();
+    addTearDown(staffResults.close);
+    final directory = _FakeStaffVendorService()
+      ..staffStream = staffResults.stream;
+    await tester.pumpWidget(
+      _app(_FakeComplaintService(), staffVendorService: directory),
+    );
+    final editAssignment = find.byKey(
+      const ValueKey('complaint-edit-person-assignment'),
+    );
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.textContaining('No staff or vendor contacts'), findsNothing);
+
+    staffResults.add(const []);
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.textContaining('No staff or vendor contacts'), findsOneWidget);
+  });
+
+  testWidgets('person and note helper text wrap at narrow keyboard viewport', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final progressComplaint = ComplaintEntry(
+      id: _complaint.id,
+      priority: _complaint.priority,
+      status: ComplaintStatus.inProgress,
+      title: _complaint.title,
+      residentName: _complaint.residentName,
+      unit: _complaint.unit,
+      date: _complaint.date,
+      category: _complaint.category,
+      assignedTo: _complaint.assignedTo,
+    );
+    await tester.pumpWidget(
+      _app(
+        _FakeComplaintService(),
+        complaint: progressComplaint,
+        viewInsets: const EdgeInsets.only(bottom: 280),
+      ),
+    );
+    final editAssignment = find.byKey(
+      const ValueKey('complaint-edit-person-assignment'),
+    );
+    await tester.ensureVisible(editAssignment);
+    await tester.tap(editAssignment);
+    await tester.pumpAndSettle();
+    final personHelper = find.text(
+      'Do not enter private phone numbers or email addresses.',
+    );
+    await tester.ensureVisible(personHelper);
+    await tester.pumpAndSettle();
+    expect(personHelper, findsOneWidget);
+    expect(tester.widget<Text>(personHelper).maxLines, 3);
+    final progressField = tester.widget<TextField>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Progress note (optional)',
+      ),
+    );
+    expect(progressField.decoration?.helperMaxLines, 3);
+    final noteHelper = find.text(
+      'Updates are resident-visible. Do not include private phone numbers or email addresses.',
+    );
+    await tester.ensureVisible(noteHelper);
+    expect(noteHelper, findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('complaint-status-dropdown')),
+    );
+    await tester.tap(find.byKey(const ValueKey('complaint-status-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Resolved').last);
+    await tester.pumpAndSettle();
+    final resolutionField = tester.widget<TextField>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Resolution note (optional)',
+      ),
+    );
+    expect(resolutionField.decoration?.helperMaxLines, 3);
+    await tester.ensureVisible(noteHelper);
+    expect(noteHelper, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('rejects manually entered phone or email before save', (
     tester,

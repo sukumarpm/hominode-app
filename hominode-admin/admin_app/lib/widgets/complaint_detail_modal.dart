@@ -379,6 +379,7 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
         hintText: hint,
         helperText:
             'Updates are resident-visible. Do not include private phone numbers or email addresses.',
+        helperMaxLines: 3,
         border: const OutlineInputBorder(),
       ),
     ),
@@ -407,8 +408,10 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
     final editing = value ?? false;
     if (editing && _staffStream == null && _vendorStream == null) {
       try {
-        _staffStream = _staffVendorService.getStaffMembers();
-        _vendorStream = _staffVendorService.getVendors();
+        _staffStream = _staffVendorService.getStaffMembers(
+          propagateErrors: true,
+        );
+        _vendorStream = _staffVendorService.getVendors(propagateErrors: true);
       } catch (_) {
         _directoryError = 'Directory contacts are unavailable right now.';
       }
@@ -440,6 +443,14 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
                     'Directory contacts could not be loaded. You can enter a name below.',
                     style: TextStyle(color: Colors.black54),
                   ),
+                );
+              }
+              if ((!staffSnapshot.hasData || !vendorSnapshot.hasData) &&
+                  !staffSnapshot.hasError &&
+                  !vendorSnapshot.hasError) {
+                return const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: LinearProgressIndicator(),
                 );
               }
               final contacts = _directoryContacts(
@@ -484,10 +495,6 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
                         ? null
                         : (id) => _selectDirectoryContact(id, contacts),
                   ),
-                  if (staffSnapshot.connectionState ==
-                          ConnectionState.waiting &&
-                      !staffSnapshot.hasData)
-                    const LinearProgressIndicator(),
                   if (staffSnapshot.hasData &&
                       vendorSnapshot.hasData &&
                       contacts.isEmpty)
@@ -519,6 +526,7 @@ class _ComplaintDetailModalState extends State<ComplaintDetailModal> {
           labelText: 'Person / vendor name (optional)',
           hintText: 'Name only; use community support contact',
           helperText: 'Do not enter private phone numbers or email addresses.',
+          helperMaxLines: 3,
           errorText: _personFieldError,
           border: const OutlineInputBorder(),
         ),
