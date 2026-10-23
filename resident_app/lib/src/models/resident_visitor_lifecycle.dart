@@ -1,3 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../services/visitor_qr_contract.dart';
+
 enum ResidentVisitorTab { expected, checkedIn, history }
 
 /// Presentation-only classification of a visitor's physical lifecycle.
@@ -35,7 +39,33 @@ class ResidentVisitorLifecycle {
   static bool _hasArrival(Map<String, dynamic> visitor) =>
       _hasValue(visitor['actualArrival']) || _hasValue(visitor['checkInTime']);
 
-  static ResidentVisitorTab tabFor(Map<String, dynamic> visitor) {
+  // Align the resident's expected/history tabs with the existing QR pass
+  // expiration rule. This is a display-only classification: Firestore status
+  // and gate authorization are never changed by this code.
+  static DateTime? _expectedArrival(Map<String, dynamic> visitor) {
+    final value = visitor['expectedArrival'] ?? visitor['expectedTime'];
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int && value >= 100000000000) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  static bool _isExpired(Map<String, dynamic> visitor, {DateTime? now}) {
+    final expectedArrival = _expectedArrival(visitor);
+    // Unknown dates must not be advertised as still-valid invitations.
+    if (expectedArrival == null) return true;
+    return (now ?? DateTime.now()).isAfter(
+      expectedArrival.add(VisitorQrContract.validityWindow),
+    );
+  }
+
+  static ResidentVisitorTab tabFor(
+    Map<String, dynamic> visitor, {
+    DateTime? now,
+  }) {
     final status = visitor['status']?.toString().toLowerCase();
     if (_hasDeparture(visitor) || _checkedOutStates.contains(status)) {
       return ResidentVisitorTab.history;
@@ -48,13 +78,17 @@ class ResidentVisitorLifecycle {
     if (_hasArrival(visitor) || _checkedInStates.contains(status)) {
       return ResidentVisitorTab.checkedIn;
     }
-    if (_expectedStates.contains(status)) return ResidentVisitorTab.expected;
+    if (_expectedStates.contains(status)) {
+      return _isExpired(visitor, now: now)
+          ? ResidentVisitorTab.history
+          : ResidentVisitorTab.expected;
+    }
 
     // Keep legacy/unknown states visible instead of dropping a host's record.
     return ResidentVisitorTab.history;
   }
 
-  static String statusKeyFor(Map<String, dynamic> visitor) {
+  static String statusKeyFor(Map<String, dynamic> visitor, {DateTime? now}) {
     final status = visitor['status']?.toString().toLowerCase();
     if (_hasDeparture(visitor) || _checkedOutStates.contains(status)) {
       return 'visitor_status_checked_out';
@@ -65,7 +99,11 @@ class ResidentVisitorLifecycle {
     if (_hasArrival(visitor) || _checkedInStates.contains(status)) {
       return 'visitor_status_checked_in';
     }
-    if (_expectedStates.contains(status)) return 'visitor_status_expected';
+    if (_expectedStates.contains(status)) {
+      return _isExpired(visitor, now: now)
+          ? 'visitor_status_expired'
+          : 'visitor_status_expected';
+    }
     return 'visitor_status_unknown';
   }
 
@@ -80,12 +118,12 @@ class ResidentVisitorLifecycle {
     return null;
   }
 
-  static bool isExpected(Map<String, dynamic> visitor) =>
-      tabFor(visitor) == ResidentVisitorTab.expected;
+  static bool isExpected(Map<String, dynamic> visitor, {DateTime? now}) =>
+      tabFor(visitor, now: now) == ResidentVisitorTab.expected;
 
   static bool isCheckedIn(Map<String, dynamic> visitor) =>
       tabFor(visitor) == ResidentVisitorTab.checkedIn;
 
-  static bool isHistory(Map<String, dynamic> visitor) =>
-      tabFor(visitor) == ResidentVisitorTab.history;
+  static bool isHistory(Map<String, dynamic> visitor, {DateTime? now}) =>
+      tabFor(visitor, now: now) == ResidentVisitorTab.history;
 }

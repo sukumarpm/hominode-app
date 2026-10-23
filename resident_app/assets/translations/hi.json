@@ -533,5 +533,6 @@
   "price_value": "मूल्य: {price}",
   "capacity_value": "क्षमता: {count} लोग",
   "profile_device_verification_failed": "डिवाइस सत्यापन विफल हुआ; फ़ोटो अपडेट नहीं हुई। बाद में फिर प्रयास करें। समस्या बनी रहे तो सहायता से संपर्क करें।",
-  "profile_details_saved": "प्रोफ़ाइल विवरण सहेजे गए।"
+  "profile_details_saved": "प्रोफ़ाइल विवरण सहेजे गए।",
+  "visitor_status_expired": "समय सीमा समाप्त"
 }
