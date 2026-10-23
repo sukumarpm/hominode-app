@@ -201,45 +201,10 @@ import 'src/services/firebase_auth_service.dart';
 import 'src/services/resident_auth_routing.dart';
 import 'src/services/resident_notification_router.dart';
 import 'src/services/tenant_resolution_service.dart';
+import 'src/widgets/resident_startup_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // ------------------------------------------------------------
-  // Firebase
-  // ------------------------------------------------------------
-  await Firebase.initializeApp();
-  await FirebaseAppCheck.instance.activate(
-    androidProvider: kDebugMode
-        ? AndroidProvider.debug
-        : AndroidProvider.playIntegrity,
-    appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
-  );
-  try {
-    final token = await FirebaseAppCheck.instance.getToken();
-    if (token == null || token.isEmpty) {
-      throw StateError('App Check did not provide an attestation token.');
-    }
-  } catch (error) {
-    debugPrint('App Check token acquisition failed (${error.runtimeType}).');
-    if (!kDebugMode) {
-      rethrow;
-    }
-  }
-  unawaited(
-    HominodePushNotifications.instance
-        .initialize(
-          onAuthorizedTap: ResidentNotificationRouter.handle,
-          registrationPreferences:
-              NotificationPreferencesService().registrationPreferences,
-        )
-        .timeout(const Duration(seconds: 8))
-        .catchError((Object error, StackTrace _) {
-          debugPrint(
-            'Notification initialization failed (${error.runtimeType}).',
-          );
-        }),
-  );
 
   // ------------------------------------------------------------
   // Localization
@@ -261,30 +226,90 @@ Future<void> main() async {
   // App
   // ------------------------------------------------------------
   runApp(
-    EasyLocalization(
-      supportedLocales: const [
-        Locale('en'),
-        Locale('ta'),
-        Locale('hi'),
-        Locale('es'),
-        Locale('ar'),
-        Locale('ml'),
-        Locale('te'),
-        Locale('kn'),
-      ],
-      path: 'assets/translations',
-      fallbackLocale: const Locale('en'),
-      startLocale: const Locale('en'),
-      child: MultiProvider(
-        providers: [
-          ChangeNotifierProvider(create: (_) => LanguageProvider()),
-          ChangeNotifierProvider(create: (_) => LocalizationProvider()),
-          ChangeNotifierProvider(create: (_) => TenantResolutionService()),
+    ResidentStartupGate(
+      initialize: _initializeResidentServices,
+      onReady: _initializeResidentNotificationsSafely,
+      child: EasyLocalization(
+        supportedLocales: const [
+          Locale('en'),
+          Locale('ta'),
+          Locale('hi'),
+          Locale('es'),
+          Locale('ar'),
+          Locale('ml'),
+          Locale('te'),
+          Locale('kn'),
         ],
-        child: const MyApp(),
+        path: 'assets/translations',
+        fallbackLocale: const Locale('en'),
+        startLocale: const Locale('en'),
+        child: MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => LanguageProvider()),
+            ChangeNotifierProvider(create: (_) => LocalizationProvider()),
+            ChangeNotifierProvider(create: (_) => TenantResolutionService()),
+          ],
+          child: const MyApp(),
+        ),
       ),
     ),
   );
+}
+
+bool _residentAppCheckActivated = false;
+Future<void>? _residentInitializationInFlight;
+
+Future<void> _initializeResidentServices() {
+  final pending = _residentInitializationInFlight;
+  if (pending != null) return pending;
+  late final Future<void> attempt;
+  attempt = _performResidentInitialization().whenComplete(() {
+    if (identical(_residentInitializationInFlight, attempt)) {
+      _residentInitializationInFlight = null;
+    }
+  });
+  _residentInitializationInFlight = attempt;
+  return attempt;
+}
+
+Future<void> _performResidentInitialization() async {
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp().timeout(const Duration(seconds: 20));
+  }
+  if (!_residentAppCheckActivated) {
+    await FirebaseAppCheck.instance
+        .activate(
+          androidProvider: kDebugMode
+              ? AndroidProvider.debug
+              : AndroidProvider.playIntegrity,
+          appleProvider: kDebugMode
+              ? AppleProvider.debug
+              : AppleProvider.appAttest,
+        )
+        .timeout(const Duration(seconds: 20));
+    _residentAppCheckActivated = true;
+  }
+  // Let the SDK reuse a valid cached token. A new one is fetched if expired.
+  final token = await FirebaseAppCheck.instance.getToken().timeout(
+    const Duration(seconds: 20),
+  );
+  if (token == null || token.isEmpty) {
+    throw StateError('App Check did not provide an attestation token.');
+  }
+}
+
+Future<void> _initializeResidentNotificationsSafely() async {
+  try {
+    await HominodePushNotifications.instance
+        .initialize(
+          onAuthorizedTap: ResidentNotificationRouter.handle,
+          registrationPreferences:
+              NotificationPreferencesService().registrationPreferences,
+        )
+        .timeout(const Duration(seconds: 8));
+  } catch (error) {
+    debugPrint('Notification initialization failed (${error.runtimeType}).');
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -339,7 +364,8 @@ class MyApp extends StatelessWidget {
               case '/splash':
                 return MaterialPageRoute(
                   builder: (context) => CleanSplashScreen(
-                    logoAssetPath: 'lib/assets/branding/resident_transparent.png',
+                    logoAssetPath:
+                        'lib/assets/branding/resident_transparent.png',
                     appName: 'Hominode',
                     tagline: 'Your Community, Connected',
                     duration: const Duration(milliseconds: 3000),

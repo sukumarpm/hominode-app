@@ -48,7 +48,6 @@ Future<void> main() async {
 }
 
 bool _appCheckActivated = false;
-bool _hasRequestedAttestation = false;
 Future<void> _initializeServices() async {
   try {
     if (Firebase.apps.isEmpty) {
@@ -81,11 +80,11 @@ Future<void> _initializeServices() async {
     }
 
     try {
-      final forceRefresh = _hasRequestedAttestation;
-      _hasRequestedAttestation = true;
-      final appCheckToken = await FirebaseAppCheck.instance
-          .getToken(forceRefresh)
-          .timeout(const Duration(seconds: 20));
+      // SDK caching handles refresh of expired tokens. Do not force refresh
+      // merely because a previous acquisition failed.
+      final appCheckToken = await FirebaseAppCheck.instance.getToken().timeout(
+        const Duration(seconds: 20),
+      );
       if (appCheckToken == null || appCheckToken.isEmpty) {
         throw StateError('App Check did not provide an attestation token.');
       }

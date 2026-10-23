@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../theme/hominode_theme.dart';
@@ -10,6 +12,7 @@ class AdminStartupGate extends StatefulWidget {
     required this.child,
     this.timeout = const Duration(seconds: 75),
   });
+
   final Future<void> Function() initialize;
   final Widget child;
   final Duration timeout;
@@ -19,7 +22,10 @@ class AdminStartupGate extends StatefulWidget {
 }
 
 class _AdminStartupGateState extends State<AdminStartupGate> {
-  bool _loading = true, _ready = false;
+  bool _loading = true;
+  bool _ready = false;
+  int _generation = 0;
+  Future<void>? _inFlight;
 
   @override
   void initState() {
@@ -27,14 +33,51 @@ class _AdminStartupGateState extends State<AdminStartupGate> {
     _start();
   }
 
+  // Reuse an ongoing native Firebase initialization after a gate timeout,
+  // rather than launching an overlapping second initialization.
+  Future<void> _initializeOnce() {
+    final existing = _inFlight;
+    if (existing != null) return existing;
+    late final Future<void> attempt;
+    attempt = Future<void>.sync(widget.initialize).whenComplete(() {
+      if (identical(_inFlight, attempt)) _inFlight = null;
+    });
+    _inFlight = attempt;
+    return attempt;
+  }
+
+  Future<void> _initializeWithRetries() async {
+    const delays = [Duration(milliseconds: 400), Duration(milliseconds: 900)];
+    for (var attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        await _initializeOnce();
+        return;
+      } catch (error, stackTrace) {
+        debugPrint(
+          'Admin secure startup attempt ${attempt + 1}/${delays.length + 1} '
+          'failed (${error.runtimeType}).',
+        );
+        if (kDebugMode) debugPrintStack(stackTrace: stackTrace);
+        if (attempt == delays.length) rethrow;
+        await Future<void>.delayed(delays[attempt]);
+      }
+    }
+  }
+
   Future<void> _start() async {
+    final generation = ++_generation;
     setState(() => _loading = true);
     try {
-      await widget.initialize().timeout(widget.timeout);
-      if (mounted) setState(() => _ready = true);
+      await _initializeWithRetries().timeout(widget.timeout);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _loading = false;
+        _ready = true;
+      });
     } catch (_) {
       // Do not display SDK exception bodies, attestation tokens or account data.
-      if (mounted) setState(() => _loading = false);
+      if (!mounted || generation != _generation) return;
+      setState(() => _loading = false);
     }
   }
 
