@@ -26,11 +26,21 @@ class SecurityStartupInitializer {
     required this.initializeFirebase,
     required this.activateAppCheck,
     required this.verifyAppCheckToken,
+    this.retryDelays = const [
+      Duration(milliseconds: 600),
+      Duration(milliseconds: 1200),
+    ],
+    this.tokenAttemptTimeout = const Duration(seconds: 8),
   });
 
   final Future<void> Function() initializeFirebase;
   final Future<void> Function() activateAppCheck;
   final Future<void> Function() verifyAppCheckToken;
+
+  /// Only retry startup; do not weaken the authorization checks that follow.
+  /// Injected values also let tests run without waiting for real delays.
+  final List<Duration> retryDelays;
+  final Duration tokenAttemptTimeout;
 
   Future<void>? _inFlight;
   bool _firebaseReady = false;
@@ -49,15 +59,37 @@ class SecurityStartupInitializer {
   }
 
   Future<void> _initialize() async {
-    if (!_firebaseReady) {
-      await initializeFirebase();
-      _firebaseReady = true;
+    for (var attempt = 0; attempt <= retryDelays.length; attempt++) {
+      var stage = 'firebase';
+      try {
+        if (!_firebaseReady) {
+          await initializeFirebase();
+          _firebaseReady = true;
+        }
+        stage = 'app-check-activation';
+        if (!_appCheckReady) {
+          await activateAppCheck();
+          _appCheckReady = true;
+        }
+        stage = 'app-check-token';
+        // A fresh iOS App Attest token may not be immediately available on a
+        // cold start. Retry only a bounded number of times; never proceed
+        // without a verified nonempty token.
+        await verifyAppCheckToken().timeout(tokenAttemptTimeout);
+        return;
+      } catch (error, stackTrace) {
+        final code = error is FirebaseException
+            ? error.code
+            : error.runtimeType.toString();
+        debugPrint(
+          'Security startup $stage attempt '
+          '${attempt + 1}/${retryDelays.length + 1} failed ($code).',
+        );
+        if (kDebugMode) debugPrintStack(stackTrace: stackTrace);
+        if (attempt == retryDelays.length) rethrow;
+        await Future<void>.delayed(retryDelays[attempt]);
+      }
     }
-    if (!_appCheckReady) {
-      await activateAppCheck();
-      _appCheckReady = true;
-    }
-    await verifyAppCheckToken();
   }
 }
 
@@ -93,9 +125,9 @@ Future<void> _verifyAppCheckToken() async {
     debugPrint('App Check token acquisition failed (${error.runtimeType}).');
     if (kDebugMode) {
       debugPrintStack(stackTrace: stackTrace);
-    } else {
-      rethrow;
     }
+    // An invalid/missing token must never be accepted in debug OR release.
+    rethrow;
   }
 }
 
