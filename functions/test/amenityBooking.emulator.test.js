@@ -41,6 +41,24 @@ async function fixture() {
   const cancel = (bookingId, caller = uid) => cancelAmenityBookingCore({db, auth: {uid: caller}, data: {bookingId}});
   return {communityId, uid, amenityId, resident, userRef, communityRef, subscriptionRef, amenityRef, create, availability, cancel};
 }
+integration('Philippines phone books an Indian facility on the selected community day', async () => {
+  const f = await fixture();
+  await f.communityRef.update({timeZone: 'Asia/Calcutta'});
+  // Nov 15 at midnight in Manila is Nov 14 16:00 UTC and Nov 14 21:30 in India.
+  const phoneMidnightMs = Date.parse('2035-11-14T16:00:00Z');
+  const data = {startDateMs: phoneMidnightMs, endDateMs: phoneMidnightMs, timezoneOffsetMinutes: 480};
+  const before = await f.availability(data);
+  assert.equal(before.dates['2035-11-15'].slots.Morning.available, true);
+  const result = await f.create({dateMs: phoneMidnightMs, timezoneOffsetMinutes: 480});
+  const booking = (await db.collection('bookings').doc(result.bookingId).get()).data();
+  assert.equal(booking.bookingDateKey, '2035-11-15');
+  assert.equal(booking.date.toMillis(), Date.parse('2035-11-14T18:30:00Z'));
+  assert.equal(booking.bookingTimeZone, 'Asia/Calcutta');
+  const after = await f.availability(data);
+  assert.equal(after.dates['2035-11-15'].slots.Morning.available, false);
+  await assert.rejects(f.create({dateMs: phoneMidnightMs, timezoneOffsetMinutes: 480}), {code: 'failed-precondition'});
+});
+
 integration('approved verified tenant with Plus creates a canonical trusted-date booking', async () => {
   const f = await fixture();
   const result = await f.create({timezoneOffsetMinutes: 840});
@@ -111,12 +129,17 @@ integration('missing or invalid trusted timezone fails safely despite client off
     await assert.rejects(f.availability({timezoneOffsetMinutes: -480}), {code: 'failed-precondition'});
   }
 });
-integration('mixed offsets and timestamps within one trusted date cannot evade capacity', async () => {
+integration('different device timezones booking one selected day cannot evade capacity', async () => {
   const f = await fixture();
-  await f.create({dateMs: Date.parse('2035-11-14T16:00:00Z'), timezoneOffsetMinutes: -480});
-  await assert.rejects(f.create({dateMs: Date.parse('2035-11-15T08:00:00Z'), timezoneOffsetMinutes: 480}), {code: 'failed-precondition'});
-  for (const timezoneOffsetMinutes of [-840, 0, 840]) {
-    const view = await f.availability({timezoneOffsetMinutes});
+  // Both residents select Nov 15 in their own calendars (UTC-8 and UTC+8).
+  await f.create({dateMs: Date.parse('2035-11-15T08:00:00Z'), timezoneOffsetMinutes: -480});
+  await assert.rejects(f.create({dateMs: Date.parse('2035-11-14T16:00:00Z'), timezoneOffsetMinutes: 480}), {code: 'failed-precondition'});
+  for (const [dateMs, timezoneOffsetMinutes] of [
+    [Date.parse('2035-11-15T08:00:00Z'), -480],
+    [Date.parse('2035-11-15T00:00:00Z'), 0],
+    [Date.parse('2035-11-14T16:00:00Z'), 480],
+  ]) {
+    const view = await f.availability({startDateMs: dateMs, endDateMs: dateMs, timezoneOffsetMinutes});
     assert.equal(view.dates['2035-11-15'].slots.Morning.bookingCount, 1);
   }
 });
@@ -124,7 +147,12 @@ integration('exclusive capacity holds for concurrent residents with different cl
   const f = await fixture();
   const callers = [f.uid, `r-${randomUUID()}`, `r-${randomUUID()}`];
   for (const uid of callers.slice(1)) await db.collection('users').doc(uid).set({...f.resident, uid});
-  const results = await Promise.allSettled(callers.map((uid, i) => f.create({timezoneOffsetMinutes: (i - 1) * 480}, uid)));
+  const localMidnights = [
+    {dateMs: Date.parse('2035-11-15T08:00:00Z'), timezoneOffsetMinutes: -480},
+    {dateMs: Date.parse('2035-11-15T00:00:00Z'), timezoneOffsetMinutes: 0},
+    {dateMs: Date.parse('2035-11-14T16:00:00Z'), timezoneOffsetMinutes: 480},
+  ];
+  const results = await Promise.allSettled(callers.map((uid, i) => f.create(localMidnights[i], uid)));
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   for (const r of results.filter(r => r.status === 'rejected')) assert.equal(r.reason.code, 'failed-precondition');
   assert.equal((await db.collection('bookings').where('amenityId', '==', f.amenityId).get()).size, 1);

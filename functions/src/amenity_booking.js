@@ -192,6 +192,20 @@ function localDateKeyFromMillis(value, timeZone) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+// Interpret the resident-selected civil date in the phone's offset, not the
+// community's timezone. The resulting day is then booked in community time.
+// Old clients without an offset retain their original community-time behavior.
+function requestedDateKey(value, timeZone, timezoneOffsetMinutes = null) {
+  if (timezoneOffsetMinutes == null) {
+    return localDateKeyFromMillis(value, timeZone);
+  }
+  const shifted = new Date(value + timezoneOffsetMinutes * 60 * 1000);
+  if (!Number.isFinite(shifted.getTime())) {
+    throw new RegistrationError('invalid-argument', 'Booking date is invalid.');
+  }
+  return shifted.toISOString().slice(0, 10);
+}
+
 function nextDateKey(key) {
   return new Date(Date.parse(`${key}T00:00:00Z`) + MILLIS_PER_DAY).toISOString().slice(0, 10);
 }
@@ -210,15 +224,32 @@ function startOfLocalDay(key, timeZone) {
   return low;
 }
 
-function dayBounds(value, timeZone) {
-  const key = localDateKeyFromMillis(value, timeZone);
+function dayBounds(value, timeZone, timezoneOffsetMinutes = null) {
+  const key = requestedDateKey(value, timeZone, timezoneOffsetMinutes);
   return {key, startMs: startOfLocalDay(key, timeZone),
     endMs: startOfLocalDay(nextDateKey(key), timeZone) - 1};
 }
 
-function enumerateDays(startDateMs, endDateMs, timeZone) {
-  const first = localDateKeyFromMillis(startDateMs, timeZone);
-  const last = localDateKeyFromMillis(endDateMs, timeZone);
+function enumerateDays(startDateMs, endDateMs, timeZone, timezoneOffsetMinutes = null) {
+  const first = requestedDateKey(startDateMs, timeZone, timezoneOffsetMinutes);
+  let last;
+  if (timezoneOffsetMinutes == null) {
+    last = localDateKeyFromMillis(endDateMs, timeZone);
+  } else {
+    // The mobile app sends device-local midnights. Across device DST changes,
+    // the UTC interval may be 23 or 25 hours; round to civil calendar days.
+    // This preserves the correct last date without knowing the device IANA zone.
+    if (endDateMs < startDateMs) {
+      throw new RegistrationError('invalid-argument', 'The availability date range is invalid.');
+    }
+    const calendarDays = Math.round((endDateMs - startDateMs) / MILLIS_PER_DAY);
+    if (calendarDays >= MAX_AVAILABILITY_DAYS) {
+      throw new RegistrationError('invalid-argument',
+        `Availability can be checked for at most ${MAX_AVAILABILITY_DAYS} days at a time.`);
+    }
+    last = first;
+    for (let index = 0; index < calendarDays; index++) last = nextDateKey(last);
+  }
   if (last < first) throw new RegistrationError("invalid-argument", "The availability date range is invalid.");
   const days = [];
   for (let key = first; key <= last; key = nextDateKey(key)) {
@@ -478,7 +509,8 @@ function validateCreateInput(data) {
     ]),
   );
 
-  if (input.timezoneOffsetMinutes != null) requireTimezoneOffset(input.timezoneOffsetMinutes);
+  const timezoneOffsetMinutes = input.timezoneOffsetMinutes == null
+    ? null : requireTimezoneOffset(input.timezoneOffsetMinutes);
   const amenityId = requireDocumentId(input.amenityId, "Amenity");
   const dateMs = requireMillis(input.dateMs, "dateMs");
   const timeSlot = requireTimeSlot(input.timeSlot);
@@ -497,6 +529,7 @@ function validateCreateInput(data) {
       max: 1000,
     }),
     familyMembers: validateFamilyMembers(input.familyMembers),
+    timezoneOffsetMinutes,
   };
 }
 
@@ -513,11 +546,13 @@ function validateAvailabilityInput(data) {
     ]),
   );
 
-  if (input.timezoneOffsetMinutes != null) requireTimezoneOffset(input.timezoneOffsetMinutes);
+  const timezoneOffsetMinutes = input.timezoneOffsetMinutes == null
+    ? null : requireTimezoneOffset(input.timezoneOffsetMinutes);
   return {
     amenityId: requireDocumentId(input.amenityId, "Amenity"),
     startDateMs: requireMillis(input.startDateMs, "startDateMs"),
     endDateMs: requireMillis(input.endDateMs, "endDateMs"),
+    timezoneOffsetMinutes,
     numberOfPeople: requireFiniteInteger(input.numberOfPeople ?? 1, "numberOfPeople", {
       min: 1,
       max: 1000,
@@ -561,6 +596,7 @@ async function getAmenityAvailabilityCore({ db, auth, data }) {
     input.startDateMs,
     input.endDateMs,
     timeZone,
+    input.timezoneOffsetMinutes,
   );
 
   if (input.numberOfPeople > amenity.maxCapacity && amenity.allowMultipleBookings) {
@@ -643,7 +679,7 @@ async function createAmenityBookingCore({ db, auth, data }) {
       );
     }
 
-    const selectedDay = dayBounds(input.dateMs, timeZone);
+    const selectedDay = dayBounds(input.dateMs, timeZone, input.timezoneOffsetMinutes);
     if (selectedDay.key < todayKey(timeZone)) {
       throw new RegistrationError(
         "failed-precondition",
@@ -840,6 +876,10 @@ async function cancelAmenityBookingCore({ db, auth, data }) {
 }
 
 module.exports = {
+  // Pure helpers exported for date-contract regression tests.
+  requestedDateKey,
+  dayBounds,
+  enumerateDays,
   ACTIVE_BOOKING_STATUSES,
   getAmenityAvailabilityCore,
   createAmenityBookingCore,
