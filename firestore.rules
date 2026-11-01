@@ -520,6 +520,11 @@ function securityCanAccessCommunity(communityId) {
       allow create, update, delete: if false;
     }
 
+    // Private deletion routing is managed only by trusted Cloud Functions.
+    match /communityDeletionContacts/{communityId} {
+      allow read, write: if false;
+    }
+
     // Community payment destinations are private community data. The Admin
     // SDK callable is the only write path; clients may fetch one authorized
     // community's config by document ID.
