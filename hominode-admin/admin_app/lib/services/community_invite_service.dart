@@ -53,6 +53,7 @@ class CommunityInviteService {
     required String name,
     required String slug,
     required String timeZone,
+    required String deletionEmail,
     CommunityLocation? location,
   }) {
     final canonicalTimeZone = timeZone.trim();
@@ -65,6 +66,7 @@ class CommunityInviteService {
       'name': name.trim(),
       'slug': normalizeSlug(slug),
       'timeZone': canonicalTimeZone,
+      'deletionEmail': deletionEmail.trim(),
       'locationConfigured': location != null,
     };
 
@@ -91,6 +93,7 @@ class CommunityInviteService {
     required String name,
     required String slug,
     required String timeZone,
+    required String deletionEmail,
     CommunityLocation? location,
   }) async {
     final payload = communityCreationPayload(
@@ -98,6 +101,7 @@ class CommunityInviteService {
       name: name,
       slug: slug,
       timeZone: timeZone,
+      deletionEmail: deletionEmail,
       location: location,
     );
 
