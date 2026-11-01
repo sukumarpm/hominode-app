@@ -681,7 +681,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
                   controller: _deletionEmailController,
                   keyboardType: TextInputType.emailAddress,
                   decoration: const InputDecoration(labelText: 'Community deletion email *'),
-                  validator: (value) => RegExp(r'^[^\\s@]+@[^\\s@]+\\.[^\\s@]+
+                  validator: (value) => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+
                   onChanged: (location) {
                     _location = location;
                   },
