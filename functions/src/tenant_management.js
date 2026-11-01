@@ -354,6 +354,10 @@ async function updateCommunityCore({ db, auth, data }) {
     if (oldSlugRef && oldSlugReservation?.data()?.communityId === input.communityId) transaction.delete(oldSlugRef);
     if (oldPathRef && oldPathReservation?.data()?.communityId === input.communityId) transaction.delete(oldPathRef);
     const { communityId, deletionEmail, ...metadata } = input;
+    // Admin edit forms do not provide these optional display fields. Preserve
+    // the existing branding unless the caller explicitly supplies a change.
+    if (!hasOwn(data, "logoUrl")) delete metadata.logoUrl;
+    if (!hasOwn(data, "primaryColor")) delete metadata.primaryColor;
     changedFields = [...Object.keys(metadata), "deletionEmail"];
 
     const updateData = {
