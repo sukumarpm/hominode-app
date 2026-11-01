@@ -714,6 +714,7 @@ function securityCanAccessCommunity(communityId) {
             'occupancyStatus',
             'approvedAt',
             'approvedBy',
+            'registrationCompletedAt',
             'rejectedAt',
             'rejectedBy',
             'rejectedReason',
@@ -1499,6 +1500,11 @@ function securityCanAccessCommunity(communityId) {
     // ============================================================
 
     match /posts/{postId} {
+      function safeWallText(text) {
+        return text is string && text.size() <= 10000
+          && !text.matches('(?is).*\\b(sex|porn|escort|xxx|nude|naked|sexual|illegal|crime|criminal|steal|robbery|fraud|drug|cocaine|heroin|meth|weed|marijuana|cannabis|gun|weapon|bomb|explosive|rifle|pistol|knife|kill|murder|violence|violent|assault|attack|hit|scam|fake|counterfeit|phishing|hack|hacker|malware|virus|ransomware)\\b.*');
+      }
+
 
       function initialLikesAreEmpty() {
         return request.resource.data.get('likes', 0) is int
@@ -1519,6 +1525,7 @@ function securityCanAccessCommunity(communityId) {
           && request.auth.token.phone_number == userProfile().phoneNumber
           && residentSameCommunity(resource.data)
           && resource.data.get('status', 'active') == 'active'
+          && resource.data.get('moderationState', 'visible') != 'hidden'
           && before is list && after is list
           && oldCount is int && oldCount >= 0
           && oldCount == before.size()
@@ -1539,18 +1546,19 @@ function securityCanAccessCommunity(communityId) {
         let profile = userProfile();
         return data.keys().hasAll([
             'postId', 'communityId', 'authorId', 'authorName',
-            'profileImage', 'comment', 'createdAt'
+            'profileImage', 'comment', 'createdAt', 'moderationVersion'
           ])
           && data.keys().hasOnly([
             'postId', 'communityId', 'authorId', 'authorName',
-            'profileImage', 'comment', 'createdAt'
+            'profileImage', 'comment', 'createdAt', 'moderationVersion'
           ])
           && data.postId == postId
           && residentCanAccessCommunity(data.communityId)
           && data.authorId == request.auth.uid
           && data.authorName == (profile.get('name', null) == null ? 'Unknown User' : profile.name)
           && data.profileImage == (profile.get('profileImage', null) == null ? '' : profile.profileImage)
-          && data.comment is string && data.comment.size() > 0
+          && data.comment is string && data.comment.size() > 0 && safeWallText(data.comment)
+          && data.moderationVersion == 1
           && data.createdAt == request.time;
       }
 
@@ -1559,6 +1567,7 @@ function securityCanAccessCommunity(communityId) {
         let commentPath = /databases/$(database)/documents/posts/$(postId)/comments/$(data.lastCommentId);
         return residentSameCommunity(resource.data)
           && resource.data.get('status', 'active') == 'active'
+          && resource.data.get('moderationState', 'visible') != 'hidden'
           && data.diff(resource.data).affectedKeys().hasOnly([
             'comments', 'updatedAt', 'lastCommentId'
           ])
@@ -1575,24 +1584,36 @@ function securityCanAccessCommunity(communityId) {
         function parentPost() {
           return get(/databases/$(database)/documents/posts/$(postId)).data;
         }
-        allow read: if residentSameCommunity(parentPost())
+        allow get: if (residentSameCommunity(parentPost())
+            && parentPost().get('moderationState', 'visible') != 'hidden'
+            && !(parentPost().get('status', 'active') in ['hidden', 'deleted'])
+            && (resource == null || (resource.data.get('moderationState', 'visible') != 'hidden'
+              && !(resource.data.get('status', 'active') in ['hidden', 'deleted']))))
           || adminCanAccessCommunity(parentPost().communityId);
+        allow list: if adminCanAccessCommunity(parentPost().communityId);
         allow create: if validComment(request.resource.data)
           && request.resource.data.communityId == parentPost().communityId
           && parentPost().get('status', 'active') == 'active'
+          && parentPost().get('moderationState', 'visible') != 'hidden'
           && getAfter(/databases/$(database)/documents/posts/$(postId)).data.lastCommentId == commentId
           && getAfter(/databases/$(database)/documents/posts/$(postId)).data.comments == parentPost().get('comments', 0) + 1
           && getAfter(/databases/$(database)/documents/posts/$(postId)).data.updatedAt == request.time;
       }
 
-      allow read: if residentSameCommunity(resource.data)
-        || residentSameBuilding(resource.data)
-        || (
+      allow get: if (
           ('communityId' in resource.data)
           && adminCanAccessCommunity(resource.data.communityId)
-        );
+        ) || (resource.data.get('moderationState', 'visible') != 'hidden'
+          && !(resource.data.get('status', 'active') in ['hidden', 'deleted'])
+          && (residentSameCommunity(resource.data) || residentSameBuilding(resource.data)));
+      allow list: if ('communityId' in resource.data)
+        && adminCanAccessCommunity(resource.data.communityId);
 
       allow create: if initialLikesAreEmpty()
+        && request.resource.data.get('moderationVersion', 0) == 1
+        && request.resource.data.get('createdAt', null) == request.time
+        && safeWallText(request.resource.data.get('content', ''))
+        && !('moderationState' in request.resource.data)
         && legacyImagesOnly(request.resource.data)
         && (residentContentCreate(request.resource.data)
         || (adminCanAccessCommunity(request.resource.data.communityId)
@@ -1600,6 +1621,8 @@ function securityCanAccessCommunity(communityId) {
 
       allow update: if residentLikeUpdate() || commentCounterUpdate()
         || (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['likes', 'likedBy'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['moderationState', 'moderationVersion'])
+        && safeWallText(request.resource.data.get('content', ''))
         && managedImagesSafeUpdate()
         && ((residentContentOwner(resource.data)
           || adminCanAccessCommunity(resource.data.communityId))
@@ -1799,6 +1822,12 @@ function securityCanAccessCommunity(communityId) {
     match /auditLogs/{auditLogId} {
       // Critical audit records are append-only through the Admin SDK. V1 has
       // no client audit-log reader or mutation surface.
+      allow read, write: if false;
+    }
+
+    // Account deletion requests are written and read through App Check
+    // protected callables only; request ownership is checked server-side.
+    match /accountDeletionRequests/{requestId} {
       allow read, write: if false;
     }
 
@@ -2155,6 +2184,11 @@ function securityCanAccessCommunity(communityId) {
     // REMAINING TENANT COLLECTIONS
     // ============================================================
 
+    match /moderationChanges/{communityId} {
+      allow read: if residentCanAccessCommunity(communityId) || adminCanAccessCommunity(communityId);
+      allow write: if false;
+    }
+
     match /{collectionName}/{documentId} {
       function marketplaceCollectionAllowed(data) {
         return collectionName != 'marketplace'
@@ -2171,7 +2205,7 @@ function securityCanAccessCommunity(communityId) {
       }
 
       function residentOwnedCollection() {
-        return collectionName in ['marketplace', 'comments', 'reports', 'requests', 'readBy'];
+        return collectionName in ['marketplace', 'comments', 'requests', 'readBy'];
       }
 
       function residentRecordOwner(data) {

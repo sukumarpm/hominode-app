@@ -76,6 +76,7 @@ const {
 
 const {
   getBillingV2FinancialReportCore,
+  getBillingV2DetailedReportCore,
 } = require("./billing_v2_reports");
 
 const {
@@ -126,6 +127,7 @@ const {
   reactivateResidentCore,
   reassignResidentCore,
   createResidentOnboardingCore,
+  createAdminResidentCore,
   submitResidentIdentityProofCore,
   getResidentIdentityProofUrlCore,
   reviewResidentIdentityProofCore,
@@ -144,6 +146,16 @@ const {
 } = require("./notifications");
 const { acceptCurrentLegalTermsCore } = require("./legal_acceptance");
 const { getResidentNoticeIdsCore } = require("./resident_notices");
+const {
+  submitAccountDeletionRequestCore,
+  getAccountDeletionRequestStatusCore,
+  listCommunityDeletionRequestsCore,
+  recordDeletionFinancialReviewCore,
+  reassessAccountDeletionRequestCore,
+  reviewAccountDeletionEligibilityForRequestCore,
+} = require("./account_deletion_requests");
+const { runAccountDeletionRetryCore } = require("./account_deletion_retry");
+const { createAdminAssistedDeletionRequestCore, verifyAdminAssistedDeletionRequestCore } = require("./account_deletion_assisted");
 const {
   resolveResidentCommunityCore,
 } = require("./resident_community_resolution");
@@ -182,7 +194,7 @@ const GOOGLE_GEOCODING_API_KEY = defineSecret("GOOGLE_GEOCODING_API_KEY");
 const VISITOR_CREDENTIAL_HMAC_KEY = defineSecret("VISITOR_CREDENTIAL_HMAC_KEY");
 // Empty means the SEC-003 legacy compatibility window has not been retired.
 // Set only through an explicitly approved deployment configuration.
-const VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC = defineString("VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC", {default: "DISABLED"});
+const VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC = defineString("VISITOR_LEGACY_CREDENTIAL_CUTOFF_UTC", { default: "DISABLED" });
 
 function requireVisitorCredentialHmacKey() {
   let key;
@@ -232,6 +244,19 @@ function appCheckedCallable(
   );
 }
 
+const moderation = require('./content_moderation');
+exports.reportWallContent = appCheckedCallable(moderation.reportContentCore, 'Content report could not be submitted.');
+exports.setWallUserBlock = appCheckedCallable(moderation.blockContentUserCore, 'User block could not be updated.');
+exports.listWallUserBlocks = appCheckedCallable(moderation.listBlockedContentUsersCore, 'Blocked users could not be loaded.');
+exports.listWallModerationReports = appCheckedCallable(moderation.listModerationReportsCore, 'Moderation queue could not be loaded.');
+exports.resolveWallModerationReport = appCheckedCallable(moderation.resolveModerationReportCore, 'Moderation decision could not be saved.');
+exports.dispatchModerationDecisionNotification = onDocumentCreated({
+  region: REGION, document: 'moderationAudit/{auditId}', retry: true,
+}, event => require('./moderation_notifications').dispatchModerationDecisionCore({
+  db: getFirestore(), messaging: getMessaging(), auditId: event.params.auditId,
+}));
+exports.readVisibleWall = appCheckedCallable(moderation.readVisibleWallCore, 'Community wall could not be loaded.');
+
 function callableHandler(
   core,
   failureMessage,
@@ -240,11 +265,13 @@ function callableHandler(
     includeMessaging = false,
     requirePhoneAuth: requirePhone = false,
     requireCanonicalPhoneProfile = false,
+    requireRecentAuth = false,
   } = {}
 ) {
   return async (request) => {
     try {
       if (requirePhone) requirePhoneAuth(request.auth);
+      if (requireRecentAuth) requireRecentAuthTime(request.auth);
       const db = getFirestore();
       if (requireCanonicalPhoneProfile &&
         !await hasCanonicalPhoneProfile(db, request.auth)) {
@@ -276,15 +303,63 @@ function callableHandler(
     }
   };
 }
+
+function requireRecentAuthTime(auth, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const authTime = auth?.token?.auth_time;
+  if (!auth?.uid || !Number.isInteger(authTime) || authTime <= 0 ||
+    authTime > nowSeconds || nowSeconds - authTime > 300) {
+    throw new HttpsError("failed-precondition", "Please reauthenticate before submitting this request.");
+  }
+}
+
+function accountDeletionCallable(core, failureMessage, recentAuth = false, options = {}) {
+  return onCall({ region: REGION, enforceAppCheck: true, ...options }, callableHandler(
+    core, failureMessage, { includeAppContext: true, requireRecentAuth: recentAuth }
+  ));
+}
+
+exports.submitAccountDeletionRequest = accountDeletionCallable(
+  submitAccountDeletionRequestCore, "Account deletion request could not be submitted.", true,
+  { timeoutSeconds: 540 }
+);
+exports.getAccountDeletionRequestStatus = accountDeletionCallable(
+  getAccountDeletionRequestStatusCore, "Account deletion request status could not be loaded."
+);
+exports.createAdminAssistedDeletionRequest = appCheckedCallable(
+  createAdminAssistedDeletionRequestCore, "Assisted deletion intake could not be recorded."
+);
+exports.verifyAdminAssistedDeletionRequest = appCheckedCallable(
+  verifyAdminAssistedDeletionRequestCore, "Assisted deletion verification could not be recorded."
+);
+exports.listCommunityAccountDeletionRequests = accountDeletionCallable(
+  listCommunityDeletionRequestsCore, "Community account-deletion requests could not be loaded."
+);
+exports.recordAccountDeletionFinancialReview = accountDeletionCallable(
+  recordDeletionFinancialReviewCore, "Account-deletion review finding could not be recorded."
+);
+exports.reassessAccountDeletionRequest = accountDeletionCallable(
+  reassessAccountDeletionRequestCore,
+  "Account deletion could not be reassessed."
+);
+exports.reviewAccountDeletionEligibility = accountDeletionCallable(
+  reviewAccountDeletionEligibilityForRequestCore,
+  "Account deletion eligibility could not be reviewed."
+);
+exports.retryVerifiedAccountDeletions = onSchedule({
+  schedule: "every 4 hours", region: REGION, timeoutSeconds: 540,
+  memory: "512MiB", maxInstances: 1, concurrency: 1,
+}, () => runAccountDeletionRetryCore({ db: getFirestore(), bucket: getStorage().bucket() }));
 exports.prepareStorageImageUpload = appCheckedCallable(
   prepareStorageImageUploadCore, 'Image upload could not be prepared.',
 );
 // Image verification/read operations buffer at most 10 MiB. Limit concurrency
 // independently of the existing financial/SOS callables.
 function storageImageCallable(core, failureMessage) {
-  return onCall({region: REGION, enforceAppCheck: true, memory: '512MiB', concurrency: 1},
-    callableHandler(core, failureMessage, {includeAppContext: true,
-      requirePhoneAuth: true, requireCanonicalPhoneProfile: true}));
+  return onCall({ region: REGION, enforceAppCheck: true, memory: '512MiB', concurrency: 1 },
+    callableHandler(core, failureMessage, {
+      includeAppContext: true,
+      requirePhoneAuth: true, requireCanonicalPhoneProfile: true
+    }));
 }
 exports.completeStorageImageUpload = storageImageCallable(
   completeStorageImageUploadCore, 'Image upload could not be verified.',
@@ -361,7 +436,7 @@ exports.dispatchBillingV2PaymentNotification = onDocumentCreated({
   timeoutSeconds: 120,
 }, (event) => dispatchPaymentV2NotificationCore({
   db: getFirestore(), messaging: getMessaging(), event,
-  logger: {warn: (message, context) => logger.warn(message, context)},
+  logger: { warn: (message, context) => logger.warn(message, context) },
 }));
 exports.notifyResidentOfSubmittedV2PaymentProof = onObjectFinalized({
   // Storage triggers must match this bucket's location, even when a selective
@@ -376,11 +451,15 @@ exports.notifyResidentOfSubmittedV2PaymentProof = onObjectFinalized({
   // Firestore notification bookkeeping is independent from proof/settlement
   // writes. Let transient storage-trigger bookkeeping errors escape so the
   // configured retry can complete the deterministic in-app notification.
-  await createProofSubmittedNotification({db: getFirestore(), object: event.data});
+  await createProofSubmittedNotification({ db: getFirestore(), object: event.data });
 });
 exports.getBillingV2FinancialReport = appCheckedCallable(
   getBillingV2FinancialReportCore,
   'Billing V2 financial report could not be generated.'
+);
+exports.getAdminBillingV2DetailedReport = appCheckedCallable(
+  getBillingV2DetailedReportCore,
+  'Billing V2 detailed report could not be generated.'
 );
 exports.getResidentBillingV2Statement = appCheckedCallable(
   getResidentBillingV2StatementCore,
@@ -401,8 +480,8 @@ exports.dispatchSosNotifications = onDocumentCreated({
   retry: true, timeoutSeconds: 300
 }, (event) => dispatchSosEventCore({ db: getFirestore(), messaging: getMessaging(), eventId: event.params.eventId }));
 
-function securityVisitorCallable(core, failureMessage, {legacyCutoff = false} = {}) {
-  return onCall({region: REGION, enforceAppCheck: true, secrets: [VISITOR_CREDENTIAL_HMAC_KEY]}, async (request) => {
+function securityVisitorCallable(core, failureMessage, { legacyCutoff = false } = {}) {
+  return onCall({ region: REGION, enforceAppCheck: true, secrets: [VISITOR_CREDENTIAL_HMAC_KEY] }, async (request) => {
     try {
       requirePhoneAuth(request.auth);
       return await core({
@@ -416,7 +495,7 @@ function securityVisitorCallable(core, failureMessage, {legacyCutoff = false} = 
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
-      logger.error(failureMessage, {code: error?.code || "unknown"});
+      logger.error(failureMessage, { code: error?.code || "unknown" });
       throw new HttpsError("internal", failureMessage);
     }
   });
@@ -425,12 +504,12 @@ function securityVisitorCallable(core, failureMessage, {legacyCutoff = false} = 
 exports.resolveVisitorQr = securityVisitorCallable(
   resolveVisitorQrCore,
   "This visitor QR could not be verified.",
-  {legacyCutoff: true}
+  { legacyCutoff: true }
 );
 exports.transitionVisitorFromQr = securityVisitorCallable(
   transitionVisitorFromQrCore,
   "This visitor request could not be processed.",
-  {legacyCutoff: true}
+  { legacyCutoff: true }
 );
 exports.verifyVisitorCredential = onCall({
   region: REGION,
@@ -447,19 +526,19 @@ exports.verifyVisitorCredential = onCall({
     if (error instanceof HttpsError) throw error;
     if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
     // Do not log request data, credential values, HMAC indexes, or exception messages.
-    logger.error("Visitor credential verification failed.", {code: error?.code || "unknown"});
+    logger.error("Visitor credential verification failed.", { code: error?.code || "unknown" });
     throw new HttpsError("internal", "Visitor credential could not be verified.");
   }
 });
 function securityWorkflowCallable(core, failureMessage) {
-  return onCall({region: REGION, enforceAppCheck: true}, async (request) => {
+  return onCall({ region: REGION, enforceAppCheck: true }, async (request) => {
     try {
       requirePhoneAuth(request.auth);
-      return await core({db: getFirestore(), auth: request.auth, data: request.data});
+      return await core({ db: getFirestore(), auth: request.auth, data: request.data });
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
-      logger.error(failureMessage, {code: error?.code || "unknown"});
+      logger.error(failureMessage, { code: error?.code || "unknown" });
       throw new HttpsError("internal", failureMessage);
     }
   });
@@ -502,7 +581,7 @@ function residentVisitorCallable(core, failureMessage) {
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
-      logger.error(failureMessage, {code: error?.code || "unknown"});
+      logger.error(failureMessage, { code: error?.code || "unknown" });
       throw new HttpsError("internal", failureMessage);
     }
   });
@@ -690,7 +769,7 @@ exports.runRecurringBillingV2Scheduler = onSchedule({
   maxInstances: 1,
   concurrency: 1,
   timeoutSeconds: 540,
-}, async () => runRecurringBillingV2SchedulerCore({db: getFirestore(), logger}));
+}, async () => runRecurringBillingV2SchedulerCore({ db: getFirestore(), logger }));
 initializeApp();
 
 /*
@@ -735,6 +814,10 @@ exports.reassignResident = appCheckedCallable(
 exports.createResidentOnboarding = appCheckedCallable(
   createResidentOnboardingCore,
   "Resident onboarding could not be created."
+);
+exports.createAdminResident = appCheckedCallable(
+  (context) => createAdminResidentCore({ ...context, authAdmin: getAuth() }),
+  "Resident could not be added."
 );
 
 exports.auditResidentAction = appCheckedCallable(
@@ -962,4 +1045,71 @@ exports.createCommunityInvite = appCheckedCallable(
 exports.revokeCommunityInvite = appCheckedCallable(
   revokeCommunityInviteCore,
   "Invite could not be revoked."
+);
+
+
+// PUBLIC ACCOUNT DELETION REQUEST FORM (does not delete resident accounts)
+const { onRequest: deletionOnRequest } = require("firebase-functions/v2/https");
+const { FieldValue: DeletionFieldValue } = require("firebase-admin/firestore");
+const { handleDeletionRequest, ALLOWED_ORIGINS } = require("./public_deletion_requests");
+const DELETION_TURNSTILE_SECRET = defineSecret("HOMINODE_DELETION_TURNSTILE_SECRET");
+const DELETION_SMTP_PASSWORD = defineSecret("HOMINODE_DELETION_SMTP_APP_PASSWORD");
+exports.submitPublicAccountDeletionRequest = deletionOnRequest(
+  {
+    region: "asia-southeast1",
+    cors: [...ALLOWED_ORIGINS],
+    secrets: [DELETION_TURNSTILE_SECRET, DELETION_SMTP_PASSWORD],
+    maxInstances: 3,
+    timeoutSeconds: 35,
+    memory: "256MiB",
+  },
+  (req, res) => handleDeletionRequest(req, res, {
+    db: getFirestore(),
+    timestamp: () => DeletionFieldValue.serverTimestamp(),
+    captchaSecret: DELETION_TURNSTILE_SECRET.value(),
+    smtpPassword: DELETION_SMTP_PASSWORD.value(),
+    sendMail: async (message, password) => {
+      const nodemailer = require("nodemailer");
+      const transport = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user: "hominodecare@gmail.com", pass: password },
+      });
+      const result = await transport.sendMail(message);
+      if (!result.accepted?.some(x => x.toLowerCase() === "hominodecare@gmail.com")) {
+        throw new Error("SMTP recipient not accepted");
+      }
+    },
+  })
+);
+
+// PUBLIC HOMINODE CLIENT INQUIRIES (independent of deletion requests)
+const { onRequest: inquiryOnRequest } = require("firebase-functions/v2/https");
+const { FieldValue: InquiryFieldValue } = require("firebase-admin/firestore");
+const { handleInquiry, ALLOWED_ORIGINS: INQUIRY_ORIGINS } = require("./public_contact_inquiries");
+exports.submitPublicContactInquiry = inquiryOnRequest(
+  {
+    region: "asia-southeast1",
+    cors: [...INQUIRY_ORIGINS],
+    secrets: [DELETION_TURNSTILE_SECRET, DELETION_SMTP_PASSWORD],
+    maxInstances: 3,
+    timeoutSeconds: 35,
+    memory: "256MiB",
+  },
+  (req, res) => handleInquiry(req, res, {
+    db: getFirestore(),
+    timestamp: () => InquiryFieldValue.serverTimestamp(),
+    captchaSecret: DELETION_TURNSTILE_SECRET.value(),
+    smtpPassword: DELETION_SMTP_PASSWORD.value(),
+    sendMail: async (message, password) => {
+      const nodemailer = require("nodemailer");
+      const transport = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user: "hominodecare@gmail.com", pass: password },
+      });
+      const result = await transport.sendMail(message);
+      if (!result.accepted?.some(x => x.toLowerCase() === "hominodecare@gmail.com")) {
+        throw new Error("Support mailbox did not accept inquiry");
+      }
+    },
+  })
 );
