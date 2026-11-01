@@ -243,6 +243,8 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
     final database = TextEditingController(
       text: data?['databaseId']?.toString() ?? '(default)',
     );
+    final deletionEmail = TextEditingController();
+    String? emailError;
 
     final result = await showDialog<bool>(
       context: context,
@@ -267,6 +269,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
                     ),
                     _Field(controller: website, label: 'Website Path *'),
                     _Field(controller: database, label: 'Database ID'),
+                    _Field(controller: deletionEmail, label: 'Community deletion email *', errorText: emailError),
                   ],
                 ),
               ),
@@ -282,10 +285,8 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
                   final validationError = CommunitySlugPolicy.validationError(
                     candidate,
                   );
-                  if (name.text.trim().isEmpty ||
-                      website.text.trim().isEmpty ||
-                      validationError != null) {
-                    setDialogState(() => slugError = validationError);
+                  final email = deletionEmail.text.trim();
+                  final validEmail = RegExp(r'^[^\\s@]+@[^\\s@]+\\.[^\\s@]+
                     return;
                   }
 
@@ -312,6 +313,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
           slug: slug.text,
           websitePath: website.text,
           databaseId: database.text,
+          deletionEmail: deletionEmail.text,
         );
       } else {
         await SuperAdminService.createCommunity(
@@ -320,6 +322,220 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
           slug: slug.text,
           websitePath: website.text,
           databaseId: database.text,
+          deletionEmail: deletionEmail.text,
+        );
+      }
+    } catch (e) {
+      if (mounted) _error(e);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  void _error(Object error) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Operation failed: $error')));
+  }
+}
+
+class _CommunityRow extends StatelessWidget {
+  const _CommunityRow({
+    required this.id,
+    required this.data,
+    required this.busy,
+    required this.onEdit,
+    required this.onStatus,
+  });
+
+  final String id;
+  final Map<String, dynamic> data;
+  final bool busy;
+  final VoidCallback onEdit;
+  final VoidCallback onStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = data['isActive'] == true;
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          data['name']?.toString() ?? id,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: WebDesign.text,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          data['websitePath']?.toString() ?? '—',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: WebDesign.muted, fontSize: 10),
+        ),
+      ],
+    );
+    final menu = PopupMenuButton<String>(
+      enabled: !busy,
+      iconSize: 19,
+      onSelected: (value) {
+        if (value == 'edit') {
+          onEdit();
+        } else if (value == 'status') {
+          onStatus();
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'edit', child: Text('Edit')),
+        PopupMenuItem(
+          value: 'status',
+          child: Text(active ? 'Deactivate' : 'Activate'),
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: WebDesign.border)),
+        ),
+        child: constraints.maxWidth < 760
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const _CommunityAvatar(),
+                      const SizedBox(width: 12),
+                      Expanded(child: identity),
+                      StatusBadge(active: active),
+                      menu,
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Resident URL: ${data['slug']?.toString() ?? '—'}',
+                    style: const TextStyle(
+                      color: WebDesign.muted,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  const _CommunityAvatar(),
+                  const SizedBox(width: 12),
+                  Expanded(flex: 2, child: identity),
+                  Expanded(
+                    child: Text(
+                      data['slug']?.toString() ?? '—',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  Expanded(
+                    child: Align(child: StatusBadge(active: active)),
+                  ),
+                  Expanded(child: Align(child: menu)),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _CommunityAvatar extends StatelessWidget {
+  const _CommunityAvatar();
+
+  @override
+  Widget build(BuildContext context) => CircleAvatar(
+    radius: 18,
+    backgroundColor: RolePalette.superAdmin.soft,
+    child: Icon(
+      Icons.apartment_outlined,
+      size: 18,
+      color: RolePalette.superAdmin.primary,
+    ),
+  );
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.controller,
+    required this.label,
+    this.readOnly = false,
+    this.errorText,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final bool readOnly;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        readOnly: readOnly,
+        decoration: InputDecoration(
+          labelText: label,
+          errorText: errorText,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+}
+).hasMatch(email);
+                  if (name.text.trim().isEmpty ||
+                      website.text.trim().isEmpty ||
+                      validationError != null || !validEmail) {
+                    setDialogState(() { slugError = validationError; emailError = validEmail ? null : 'Enter the community email'; });
+                    return;
+                  }
+
+                  Navigator.pop(dialogContext, true);
+                },
+                child: Text(editing ? 'Save Changes' : 'Create Community'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (result != true) return;
+
+    setState(() => _busy = true);
+
+    try {
+      if (editing) {
+        await SuperAdminService.updateCommunity(
+          communityId: id,
+          name: name.text,
+          brandName: brand.text,
+          slug: slug.text,
+          websitePath: website.text,
+          databaseId: database.text,
+          deletionEmail: deletionEmail.text,
+        );
+      } else {
+        await SuperAdminService.createCommunity(
+          name: name.text,
+          brandName: brand.text.isEmpty ? name.text : brand.text,
+          slug: slug.text,
+          websitePath: website.text,
+          databaseId: database.text,
+          deletionEmail: deletionEmail.text,
         );
       }
     } catch (e) {
