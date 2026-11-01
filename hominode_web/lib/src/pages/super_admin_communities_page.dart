@@ -243,6 +243,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
     final database = TextEditingController(
       text: data?['databaseId']?.toString() ?? '(default)',
     );
+    final timeZone = TextEditingController();
     final deletionEmail = TextEditingController();
     String? emailError;
 
@@ -269,6 +270,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
                     ),
                     _Field(controller: website, label: 'Website Path *'),
                     _Field(controller: database, label: 'Database ID'),
+                    if (!editing) _Field(controller: timeZone, label: 'Time zone (IANA, e.g. Asia/Kolkata) *'),
                     _Field(controller: deletionEmail, label: 'Community deletion email *', errorText: emailError),
                   ],
                 ),
@@ -323,6 +325,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
           websitePath: website.text,
           databaseId: database.text,
           deletionEmail: deletionEmail.text,
+          timeZone: timeZone.text,
         );
       }
     } catch (e) {
@@ -498,6 +501,7 @@ class _Field extends StatelessWidget {
 ).hasMatch(email);
                   if (name.text.trim().isEmpty ||
                       website.text.trim().isEmpty ||
+                      (!editing && timeZone.text.trim().isEmpty) ||
                       validationError != null || !validEmail) {
                     setDialogState(() { slugError = validationError; emailError = validEmail ? null : 'Enter the community email'; });
                     return;
