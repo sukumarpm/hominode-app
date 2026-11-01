@@ -13,6 +13,7 @@ class SuperAdminService {
     required String slug,
     required String websitePath,
     required String databaseId,
+    required String deletionEmail,
   }) async {
     await _functions.httpsCallable('createCommunity').call({
       'name': name.trim(),
@@ -20,6 +21,7 @@ class SuperAdminService {
       'slug': slug.trim(),
       'websitePath': websitePath.trim(),
       'databaseId': databaseId.trim(),
+      'deletionEmail': deletionEmail.trim(),
       'isActive': true,
     });
   }
@@ -31,6 +33,7 @@ class SuperAdminService {
     required String slug,
     required String websitePath,
     required String databaseId,
+    required String deletionEmail,
   }) async {
     await _functions.httpsCallable('updateCommunity').call({
       'communityId': communityId.trim(),
@@ -39,6 +42,7 @@ class SuperAdminService {
       'slug': slug.trim(),
       'websitePath': websitePath.trim(),
       'databaseId': databaseId.trim(),
+      'deletionEmail': deletionEmail.trim(),
     });
   }
 
