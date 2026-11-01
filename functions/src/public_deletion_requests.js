@@ -3,6 +3,7 @@
 // Public, manually reviewed account-deletion requests. Never delete a user here.
 const { randomBytes } = require("node:crypto");
 const SUPPORT_ADDRESS = "hominodecare@gmail.com";
+const { findActiveRecipient, validateCommunityId } = require("./community_deletion_contacts");
 const MAX_JSON_LENGTH = 8_000;
 const ALLOWED_HOSTNAMES = new Set([
   "hominode.com", "www.hominode.com", "hominode-prod.web.app",
@@ -52,10 +53,11 @@ function normalizeRequest(input) {
   if (!/^[+0-9()\s.\-]{8,32}$/.test(contactPhone) || !/^\+?\d/.test(contactPhone.replace(/[()\s.\-]/g, "")) || contactPhone.replace(/\D/g, "").length < 8 || contactPhone.replace(/\D/g, "").length > 15) {
     throw new InputError("Enter a current contact phone number (8–15 digits, include country code if available).");
   }
-  const community = field(input, "community", 120);
+  const communityId = field(input, "communityId", 80);
+  if (!validateCommunityId(communityId)) throw new InputError("Select a valid community.");
   const unit = field(input, "unit", 80);
   const captchaToken = field(input, "captchaToken", 2048);
-  return { name, email, phone, contactPhone, community, unit, captchaToken };
+  return { name, email, phone, contactPhone, communityId, unit, captchaToken };
 }
 function makeReference(clock = new Date(), random = randomBytes) {
   return `HD-DEL-${clock.toISOString().slice(0, 10).replaceAll("-", "")}-${random(5).toString("hex").toUpperCase()}`;
@@ -66,7 +68,7 @@ function emailBody(request, reference) {
     `Reference: ${reference}`, `Name: ${request.name}`, `Contact email: ${request.email}`,
     `Registered phone (account lookup): ${request.phone}`,
     `Current contact phone (for follow-up): ${request.contactPhone}`,
-    `Community: ${request.community}`, `Building / unit: ${request.unit}`, "",
+    `Community: ${request.communityName} (${request.communityId})`, `Building / unit: ${request.unit}`, "",
     "Status: AWAITING IDENTITY VERIFICATION AND MANUAL REVIEW", "",
     "This message is a request only. Do not delete an account without verifying ownership and completing required retention checks.",
   ].join("\n");
@@ -109,8 +111,14 @@ async function handleDeletionRequest(req, res, options = {}) {
     return res.status(503).json({ error: "Verification is temporarily unavailable. Please retry." });
   }
 
+  let recipient;
+  try { recipient = await findActiveRecipient(options.db, input.communityId); }
+  catch (error) { console.error("Community routing lookup failed", error); return res.status(503).json({ error: "Community routing temporarily unavailable." }); }
+  if (!recipient) return res.status(400).json({ error: "Selected community is unavailable for deletion requests." });
+
   // Preflight succeeded; only now touch Firestore and mail transport.
-  const { captchaToken, ...details } = input;
+  const { captchaToken, ...requestDetails } = input;
+  const details = { ...requestDetails, communityName: recipient.name };
   const ref = makeReference();
   const db = options.db;
   const doc = db.collection("publicAccountDeletionRequests").doc(ref);
@@ -124,7 +132,7 @@ async function handleDeletionRequest(req, res, options = {}) {
   try {
     await options.sendMail({
       from: `Hominode Account Deletion <${SUPPORT_ADDRESS}>`,
-      to: SUPPORT_ADDRESS,
+      to: recipient.email,
       replyTo: details.email,
       subject: `[Hominode] Account deletion request ${ref}`,
       text: emailBody(details, ref),
