@@ -99,6 +99,12 @@ dependencies:
 
   mobile_scanner: any
   firebase_storage: ^12.4.10
+# image 4.11.0 calls ZLibDecoder.decodeLazy, introduced in archive 4.4.0.
+# Pin a compatible archive version until image's corrected constraint is
+# adopted across the release dependency graph.
+dependency_overrides:
+  archive: 4.5.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
