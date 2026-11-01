@@ -270,8 +270,13 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
                     ),
                     _Field(controller: website, label: 'Website Path *'),
                     _Field(controller: database, label: 'Database ID'),
-                    if (!editing) _Field(controller: timeZone, label: 'Time zone (IANA, e.g. Asia/Kolkata) *'),
-                    _Field(controller: deletionEmail, label: 'Community deletion email *', errorText: emailError),
+                    if (!editing)
+                      _Field(controller: timeZone, label: 'Time zone (IANA, e.g. Asia/Kolkata) *'),
+                    _Field(
+                      controller: deletionEmail,
+                      label: 'Community deletion email *',
+                      errorText: emailError,
+                    ),
                   ],
                 ),
               ),
@@ -289,8 +294,6 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
                   );
                   final email = deletionEmail.text.trim();
                   final validEmail = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+
-                    return;
-                  }
 
                   Navigator.pop(dialogContext, true);
                 },
@@ -502,8 +505,12 @@ class _Field extends StatelessWidget {
                   if (name.text.trim().isEmpty ||
                       website.text.trim().isEmpty ||
                       (!editing && timeZone.text.trim().isEmpty) ||
-                      validationError != null || !validEmail) {
-                    setDialogState(() { slugError = validationError; emailError = validEmail ? null : 'Enter the community email'; });
+                      validationError != null ||
+                      !validEmail) {
+                    setDialogState(() {
+                      slugError = validationError;
+                      emailError = validEmail ? null : 'Enter a valid community email';
+                    });
                     return;
                   }
 
@@ -530,7 +537,6 @@ class _Field extends StatelessWidget {
           slug: slug.text,
           websitePath: website.text,
           databaseId: database.text,
-          deletionEmail: deletionEmail.text,
         );
       } else {
         await SuperAdminService.createCommunity(
@@ -539,7 +545,6 @@ class _Field extends StatelessWidget {
           slug: slug.text,
           websitePath: website.text,
           databaseId: database.text,
-          deletionEmail: deletionEmail.text,
         );
       }
     } catch (e) {
