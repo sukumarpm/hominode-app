@@ -34,15 +34,16 @@ test("timezone validator canonicalizes valid IANA values and rejects invalid val
 
 test("duplicate slug and websitePath are rejected", async () => {
   const db = fakeDb({ ...superSeed, "communities/OTHER": { slug: "taken", websitePath: "taken-path" } });
-  await assert.rejects(updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley", slug: "taken", websitePath: "new-path" } }), { code: "already-exists" });
-  await assert.rejects(updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley", slug: "new-slug", websitePath: "taken-path" } }), { code: "already-exists" });
+  await assert.rejects(updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley", slug: "taken", websitePath: "new-path", deletionEmail: "admin@greenvalley.example" } }), { code: "already-exists" });
+  await assert.rejects(updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley", slug: "new-slug", websitePath: "taken-path", deletionEmail: "admin@greenvalley.example" } }), { code: "already-exists" });
 });
 
 test("superAdmin edits metadata and changes active status", async () => {
   const db = fakeDb(superSeed);
-  await updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley Prime", slug: "green-valley", websitePath: "green-valley-prime", databaseId: "(default)", brandName: "GV Prime" } });
+  await updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley Prime", slug: "green-valley", websitePath: "green-valley-prime", databaseId: "(default)", brandName: "GV Prime", deletionEmail: "admin@greenvalley.example" } });
   assert.equal(db.values.get("communities/GV").name, "Green Valley Prime");
   assert.equal(db.values.get("communities/GV").brandName, "GV Prime");
+  assert.equal(db.values.get("communityDeletionContacts/GV").email, "admin@greenvalley.example");
   await setCommunityActiveCore({ db, auth, data: { communityId: "GV", isActive: false } });
   assert.equal(db.values.get("communities/GV").isActive, false);
   await setCommunityActiveCore({ db, auth, data: { communityId: "GV", isActive: true } });
@@ -60,6 +61,7 @@ test("update with supplied timezone persists canonical timezone", async () => {
       slug: "green-valley",
       websitePath: "green-valley",
       timeZone: " Asia/Manila ",
+      deletionEmail: "admin@greenvalley.example",
     },
   });
   assert.equal(db.values.get("communities/GV").timeZone, "Asia/Manila");
@@ -76,6 +78,7 @@ test("update without timezone preserves existing stored timezone", async () => {
       slug: "green-valley",
       websitePath: "green-valley",
       brandName: "Green Valley Community",
+      deletionEmail: "admin@greenvalley.example",
     },
   });
   assert.equal(db.values.get("communities/GV").timeZone, "Asia/Manila");
@@ -84,4 +87,13 @@ test("update without timezone preserves existing stored timezone", async () => {
 test("ordinary admin cannot mutate tenant registry", async () => {
   const db = fakeDb({ ...superSeed, "admins/super-1": { uid: "super-1", role: "admin", isActive: true } });
   await assert.rejects(setCommunityActiveCore({ db, auth, data: { communityId: "GV", isActive: false } }), { code: "permission-denied" });
+});
+
+
+test("community update requires a private routing email", async () => {
+  const db = fakeDb(superSeed);
+  await assert.rejects(
+    updateCommunityCore({ db, auth, data: { communityId: "GV", name: "Green Valley", slug: "green-valley", websitePath: "green-valley" } }),
+    { code: "invalid-argument" },
+  );
 });
