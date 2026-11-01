@@ -568,6 +568,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
   late final TextEditingController _nameController;
   late final TextEditingController _slugController;
   late final TextEditingController _timeZoneController;
+  late final TextEditingController _deletionEmailController;
   bool _submitting = false;
   CommunityLocation? _location;
 
@@ -581,6 +582,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
     _nameController = TextEditingController();
     _slugController = TextEditingController();
     _timeZoneController = TextEditingController();
+    _deletionEmailController = TextEditingController();
   }
 
   @override
@@ -589,6 +591,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
     _nameController.dispose();
     _slugController.dispose();
     _timeZoneController.dispose();
+    _deletionEmailController.dispose();
     super.dispose();
   }
 
@@ -601,6 +604,7 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
         name: _nameController.text,
         slug: _slugController.text,
         timeZone: _timeZoneController.text,
+        deletionEmail: _deletionEmailController.text,
         location: _location,
       );
       if (!mounted) return;
@@ -673,6 +677,45 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
                       : null,
                 ),
 
+                TextFormField(
+                  controller: _deletionEmailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'Community deletion email *'),
+                  validator: (value) => RegExp(r'^[^\\s@]+@[^\\s@]+\\.[^\\s@]+
+                  onChanged: (location) {
+                    _location = location;
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+
+      actions: [
+        TextButton(
+          onPressed: _submitting
+              ? null
+              : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+
+        FilledButton(
+          onPressed: _submitting ? null : _createCommunity,
+          child: _submitting
+              ? SizedBox(
+                  width: 18.w,
+                  height: 18.h,
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Create'),
+        ),
+      ],
+    );
+  }
+}
+).hasMatch((value ?? '').trim()) ? null : 'Enter a valid community email',
+                ),
                 CommunityLocationPicker(
                   initialLocation: null,
                   onChanged: (location) {
