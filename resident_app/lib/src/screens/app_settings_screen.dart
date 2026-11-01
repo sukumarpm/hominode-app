@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hominode_legal/hominode_legal.dart';
 import 'package:provider/provider.dart';
+import '../utils/account_deletion_request.dart';
 
 import '../providers/language_provider.dart';
 import '../widgets/resident_visitor_page_background.dart';
@@ -434,20 +435,26 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   }
 
   void _showDeleteAccountDialog(BuildContext context) {
-    showDialog(
+    showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('delete_account'.tr()),
-        content: Text('delete_account'.tr()),
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Request account deletion'),
+        content: const Text(
+          'Account deletion requires identity verification and manual review. '
+          'Open the secure Hominode request form to submit your request. '
+          'Your account will not be deleted immediately.',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('cancel'.tr()),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text('delete'.tr()),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              openAccountDeletionRequest(context);
+            },
+            child: const Text('Open request form'),
           ),
         ],
       ),
