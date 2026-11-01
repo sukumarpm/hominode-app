@@ -14,6 +14,7 @@ class SuperAdminService {
     required String websitePath,
     required String databaseId,
     required String deletionEmail,
+    required String timeZone,
   }) async {
     await _functions.httpsCallable('createCommunity').call({
       'name': name.trim(),
@@ -22,7 +23,7 @@ class SuperAdminService {
       'websitePath': websitePath.trim(),
       'databaseId': databaseId.trim(),
       'deletionEmail': deletionEmail.trim(),
-      'isActive': true,
+      'timeZone': timeZone.trim(),
     });
   }
 
