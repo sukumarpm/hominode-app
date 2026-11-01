@@ -2,6 +2,7 @@
 // Main Settings screen
 
 import 'package:flutter/material.dart';
+import '../utils/account_deletion_request.dart';
 import '../models/setting_item.dart';
 import '../components/setting_tile.dart';
 import '../components/standard_screen.dart';
@@ -473,34 +474,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showDeleteAccountConfirmation() {
-    showDialog(
+    showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text('Delete Account'),
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Request account deletion'),
         content: const Text(
-          'Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently deleted.',
+          'Open the secure request form to ask for account deletion. '
+          'An authorized reviewer will verify your identity first. '
+          'Submitting a request does not immediately delete your account.',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () {
-              Navigator.pop(context);
-              // TODO: Perform account deletion
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Account deletion initiated'),
-                  backgroundColor: Color(0xFFEF4444),
-                ),
-              );
+              Navigator.pop(dialogContext);
+              openAccountDeletionRequest(context);
             },
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFEF4444),
-            ),
-            child: const Text('Delete'),
+            child: const Text('Open request form'),
           ),
         ],
       ),
