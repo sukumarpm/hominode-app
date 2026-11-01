@@ -286,7 +286,7 @@ class _SuperAdminCommunitiesPageState extends State<SuperAdminCommunitiesPage> {
                     candidate,
                   );
                   final email = deletionEmail.text.trim();
-                  final validEmail = RegExp(r'^[^\\s@]+@[^\\s@]+\\.[^\\s@]+
+                  final validEmail = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+
                     return;
                   }
 
