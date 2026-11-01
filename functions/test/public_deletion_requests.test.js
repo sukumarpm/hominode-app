@@ -103,3 +103,13 @@ test("rejects missing or forged community ID before sending", async () => {
     assert.equal(h.emails.length, 0);
   }
 });
+
+
+test("legacy public form remains functional during dropdown rollout", async () => {
+  const { communityId, ...legacy } = base;
+  const h = harness({ ...legacy, community: "Green Wave" });
+  await handleDeletionRequest(h.req, h.res, h.options);
+  assert.equal(h.res.statusCode, 200);
+  assert.equal(h.emails[0].to, "hominodecare@gmail.com");
+  assert.equal(h.records[0].community, "Green Wave");
+});
