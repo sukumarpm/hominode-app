@@ -680,42 +680,15 @@ class _CreateCommunityDialogState extends State<_CreateCommunityDialog> {
                 TextFormField(
                   controller: _deletionEmailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Community deletion email *'),
-                  validator: (value) => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+
-                  onChanged: (location) {
-                    _location = location;
-                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Community deletion email *',
+                  ),
+                  validator: (value) => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+                      .hasMatch((value ?? '').trim())
+                      ? null
+                      : 'Enter a valid community email',
                 ),
-              ],
-            ),
-          ),
-        ),
-      ),
 
-      actions: [
-        TextButton(
-          onPressed: _submitting
-              ? null
-              : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
-        ),
-
-        FilledButton(
-          onPressed: _submitting ? null : _createCommunity,
-          child: _submitting
-              ? SizedBox(
-                  width: 18.w,
-                  height: 18.h,
-                  child: const CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Create'),
-        ),
-      ],
-    );
-  }
-}
-).hasMatch((value ?? '').trim()) ? null : 'Enter a valid community email',
-                ),
                 CommunityLocationPicker(
                   initialLocation: null,
                   onChanged: (location) {
