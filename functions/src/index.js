@@ -1052,6 +1052,8 @@ exports.revokeCommunityInvite = appCheckedCallable(
 const { onRequest: deletionOnRequest } = require("firebase-functions/v2/https");
 const { FieldValue: DeletionFieldValue } = require("firebase-admin/firestore");
 const { handleDeletionRequest, ALLOWED_ORIGINS } = require("./public_deletion_requests");
+const { listActiveCommunities } = require("./community_deletion_contacts");
+exports.listPublicDeletionCommunities = deletionOnRequest({ region: "asia-southeast1", cors: [...ALLOWED_ORIGINS], maxInstances: 3, memory: "256MiB" }, (req, res) => listActiveCommunities(req, res, { db: getFirestore(), allowedOrigins: ALLOWED_ORIGINS }));
 const DELETION_TURNSTILE_SECRET = defineSecret("HOMINODE_DELETION_TURNSTILE_SECRET");
 const DELETION_SMTP_PASSWORD = defineSecret("HOMINODE_DELETION_SMTP_APP_PASSWORD");
 exports.submitPublicAccountDeletionRequest = deletionOnRequest(
@@ -1075,7 +1077,7 @@ exports.submitPublicAccountDeletionRequest = deletionOnRequest(
         auth: { user: "hominodecare@gmail.com", pass: password },
       });
       const result = await transport.sendMail(message);
-      if (!result.accepted?.some(x => x.toLowerCase() === "hominodecare@gmail.com")) {
+      if (!result.accepted?.some(x => x.toLowerCase() === String(message.to).toLowerCase())) {
         throw new Error("SMTP recipient not accepted");
       }
     },
