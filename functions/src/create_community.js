@@ -86,6 +86,7 @@ async function createCommunityCore({
 
   const input =
     validateCommunityInput(data);
+  if (!input.deletionEmail) throw new RegistrationError("invalid-argument", "Community deletion email is required.");
 
   await rejectLegacyDuplicate(
     db,
@@ -182,6 +183,7 @@ async function createCommunityCore({
 
       const {
         communityId,
+        deletionEmail,
         ...metadata
       } = input;
 
@@ -218,6 +220,9 @@ async function createCommunityCore({
         communityRef,
         createData,
       );
+      transaction.set(db.collection("communityDeletionContacts").doc(communityId), {
+        communityId, email: deletionEmail, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid,
+      });
 
       return {
         communityId,
