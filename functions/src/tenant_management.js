@@ -241,6 +241,7 @@ function validateTenantMetadata(data, options = {}) {
     "timeZone",
     "locationConfigured",
     "location",
+    "deletionEmail",
   ]);
   if (!data || typeof data !== "object" || Object.keys(data).some((key) => !allowedKeys.has(key))) {
     throw new RegistrationError("invalid-argument", "Unsupported tenant metadata field.");
@@ -273,6 +274,9 @@ function validateTenantMetadata(data, options = {}) {
     );
   }
 
+  const { normalizeDeletionEmail } = require("./community_deletion_contacts");
+  const deletionEmail = Object.prototype.hasOwnProperty.call(data, "deletionEmail") ? normalizeDeletionEmail(data.deletionEmail) : undefined;
+
   const locationMetadata =
     validateCommunityLocationMetadata(data);
 
@@ -297,6 +301,7 @@ function validateTenantMetadata(data, options = {}) {
     primaryColor:
       optionalString(data?.primaryColor, 32),
     ...(timeZone ? { timeZone } : {}),
+    ...(deletionEmail ? { deletionEmail } : {}),
     ...locationMetadata,
   };
 }
@@ -319,6 +324,7 @@ const reservationRef = (db, type, value) => db.collection(`tenant_${type}`).doc(
 async function updateCommunityCore({ db, auth, data }) {
   const uid = await requireActiveSuperAdmin(db, auth);
   const input = validateTenantMetadata(data);
+  if (!input.deletionEmail) throw new RegistrationError("invalid-argument", "Community deletion email is required.");
   await rejectLegacyDuplicate(db, "slug", input.slug, input.communityId);
   await rejectLegacyDuplicate(db, "websitePath", input.websitePath, input.communityId);
   const communityRef = db.collection("communities").doc(input.communityId);
@@ -347,8 +353,8 @@ async function updateCommunityCore({ db, auth, data }) {
     transaction.set(pathRef, { communityId: input.communityId });
     if (oldSlugRef && oldSlugReservation?.data()?.communityId === input.communityId) transaction.delete(oldSlugRef);
     if (oldPathRef && oldPathReservation?.data()?.communityId === input.communityId) transaction.delete(oldPathRef);
-    const { communityId, ...metadata } = input;
-    changedFields = Object.keys(metadata);
+    const { communityId, deletionEmail, ...metadata } = input;
+    changedFields = [...Object.keys(metadata), "deletionEmail"];
 
     const updateData = {
       ...metadata,
@@ -367,6 +373,9 @@ async function updateCommunityCore({ db, auth, data }) {
       communityRef,
       updateData,
     );
+    transaction.set(db.collection("communityDeletionContacts").doc(communityId), {
+      communityId, email: deletionEmail, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid,
+    }, { merge: true });
 
     return { communityId };
   });
