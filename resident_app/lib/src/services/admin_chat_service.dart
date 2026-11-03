@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/admin_chat_model.dart';
 
 class AdminChatService {
@@ -114,8 +115,25 @@ class AdminChatService {
   }
 
   Future<void> markAsRead(String chatId) async {
-    // Reconciliation of per-user read receipts needs its own scoped workflow.
-    // The Resident never modifies another participant's message content.
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final snapshot = await _firestore.collection(adminChatsCollection)
+        .doc(chatId).collection(messagesSubcollection)
+        .limit(200).get();
+    final batch = _firestore.batch();
+    var changed = 0;
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      if (data['senderId'] == uid) continue;
+      final readBy = List<String>.from(data['readBy'] ?? const <String>[]);
+      if (readBy.contains(uid)) continue;
+      batch.update(doc.reference, {
+        'readBy': FieldValue.arrayUnion([uid]),
+        'isRead': true,
+      });
+      changed++;
+    }
+    if (changed > 0) await batch.commit();
   }
 
   Future<int> getOpenQueryCount() async {
