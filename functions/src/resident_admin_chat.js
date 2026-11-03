@@ -18,7 +18,7 @@ function validateRequest(data, app) {
     throw new RegistrationError("failed-precondition", "Use the Hominode Resident application.");
   }
   if (!data || typeof data !== "object" || Array.isArray(data) ||
-      Object.keys(data).some((key) => !["action", "category", "message", "requestId"].includes(key))) {
+      Object.keys(data).some((key) => !["action", "category", "message", "requestId", "isQuery"].includes(key))) {
     throw new RegistrationError("invalid-argument", "Invalid Admin chat request.");
   }
   const action = clean(data.action);
@@ -31,11 +31,13 @@ function validateRequest(data, app) {
   const category = clean(data.category);
   const message = clean(data.message);
   const requestId = clean(data.requestId);
+  const isQuery = data.isQuery;
   if (action !== "send" || !CATEGORIES.has(category) || message.length === 0 ||
-      message.length > 2000 || !/^[A-Za-z0-9_-]{16,100}$/.test(requestId)) {
+      message.length > 2000 || (isQuery != null && typeof isQuery !== "boolean") ||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(requestId)) {
     throw new RegistrationError("invalid-argument", "A category, message and unique request ID are required.");
   }
-  return {action, category, message, requestId};
+  return {action, category, message, requestId, isQuery: isQuery ?? false};
 }
 
 async function residentContext(db, auth) {
@@ -178,8 +180,8 @@ async function createResidentAdminChatCore({db, auth, app, data}) {
       communityId: resident.communityId,
       message: input.message,
       text: input.message, // Resident legacy renderer compatibility.
-      isQuery: true,
-      queryType: input.category,
+      isQuery: input.isQuery,
+      queryType: input.isQuery ? input.category : null,
       timestamp: now,
       isRead: false,
       readBy: [resident.uid],
