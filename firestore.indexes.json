@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "pinnedPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "communityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "bills",
       "queryScope": "COLLECTION",
       "fields": [
