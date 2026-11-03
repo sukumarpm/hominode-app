@@ -274,7 +274,7 @@ class AdminChatMessageModel {
       senderId: data['senderId'] ?? '',
       senderName: data['senderName'] ?? 'Unknown',
       senderRole: data['senderRole'] ?? 'resident',
-      text: data['text'] ?? '',
+      text: data['text'] ?? data['message'] ?? '',
       isQuery: data['isQuery'] ?? false,
       queryType: data['queryType'] != null 
           ? AdminChatModel._parseCategory(data['queryType'])

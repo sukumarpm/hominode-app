@@ -89,6 +89,7 @@ const {
 } = require("./notifications");
 const { acceptCurrentLegalTermsCore } = require("./legal_acceptance");
 const { getResidentNoticeIdsCore } = require("./resident_notices");
+const { createResidentAdminChatCore } = require("./resident_admin_chat");
 const {
   resolveResidentCommunityCore,
 } = require("./resident_community_resolution");
@@ -234,6 +235,11 @@ exports.acceptCurrentLegalTerms = appCheckedCallable(
 exports.getResidentNoticeIds = appCheckedCallable(
   getResidentNoticeIdsCore,
   "Resident notices could not be loaded."
+);
+
+exports.createResidentAdminChat = appCheckedCallable(
+  createResidentAdminChatCore,
+  "Unable to process the Resident Admin chat request."
 );
 
 exports.resolveResidentCommunity = appCheckedCallable(

@@ -2,6 +2,7 @@
 // Query template selection screen for admin chat
 
 import 'package:flutter/material.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/admin_chat_model.dart';
 import '../services/admin_chat_service.dart';
@@ -239,6 +240,7 @@ class _AdminChatQueryTemplateScreenState
   }
 
   Future<void> _sendTemplateQuery(String template) async {
+    if (_isLoading) return;
     setState(() {
       _selectedTemplate = template;
       _isLoading = true;
@@ -248,6 +250,7 @@ class _AdminChatQueryTemplateScreenState
   }
 
   Future<void> _sendCustomQuery() async {
+    if (_isLoading) return;
     final query = _customQueryController.text.trim();
 
     if (query.isEmpty) {
@@ -304,8 +307,11 @@ class _AdminChatQueryTemplateScreenState
         _isLoading = false;
       });
 
+      final message = e is FirebaseFunctionsException
+          ? (e.message ?? 'Admin chat is temporarily unavailable.')
+          : 'Could not open the Admin conversation. Please try again.';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
       );
     }
   }
