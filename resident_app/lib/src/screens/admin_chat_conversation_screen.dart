@@ -24,11 +24,14 @@ class _AdminChatConversationScreenState
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final AdminChatService _adminChatService = AdminChatService.instance;
+  late final Stream<List<AdminChatMessageModel>> _messagesStream;
   bool _isSending = false;
 
   @override
   void initState() {
     super.initState();
+    // Keep the same subscription across Send-button loading-state rebuilds.
+    _messagesStream = _adminChatService.streamMessages(widget.chat.id);
     // Mark messages as read
     _adminChatService.markAsRead(widget.chat.id);
   }
@@ -55,7 +58,7 @@ class _AdminChatConversationScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.chat.adminName,
+              'Chat with Admin',
               style: TextStyle(
                 fontSize: 18.sp,
                 fontWeight: FontWeight.w700,
@@ -63,7 +66,7 @@ class _AdminChatConversationScreenState
               ),
             ),
             Text(
-              widget.chat.category.displayName,
+              widget.chat.adminName,
               style: TextStyle(
                 fontSize: 13.sp,
                 fontWeight: FontWeight.w500,
@@ -101,7 +104,7 @@ class _AdminChatConversationScreenState
           // Messages list
           Expanded(
             child: StreamBuilder<List<AdminChatMessageModel>>(
-              stream: _adminChatService.streamMessages(widget.chat.id),
+              stream: _messagesStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -177,6 +180,27 @@ class _AdminChatConversationScreenState
         ],
       ),
     );
+  }
+
+  // Labels come from the individual message, not the shared chat document.
+  // Legacy query messages without queryType keep a neutral label.
+  String _queryLabel(QueryCategory? category) {
+    switch (category) {
+      case QueryCategory.billing:
+        return 'Billing';
+      case QueryCategory.maintenance:
+        return 'Maintenance';
+      case QueryCategory.amenities:
+        return 'Amenities';
+      case QueryCategory.complaints:
+        return 'Complaints';
+      case QueryCategory.building:
+        return 'Building';
+      case QueryCategory.other:
+        return 'Other';
+      case null:
+        return 'Query';
+    }
   }
 
   Widget _buildMessageBubble(AdminChatMessageModel message, bool isResident) {
@@ -267,7 +291,7 @@ class _AdminChatConversationScreenState
                         ),
                         SizedBox(width: 4.w),
                         Text(
-                          'Query',
+                          _queryLabel(message.queryType),
                           style: TextStyle(
                             fontSize: 10.sp,
                             fontWeight: FontWeight.w600,

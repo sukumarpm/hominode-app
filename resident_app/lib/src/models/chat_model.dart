@@ -2,6 +2,7 @@
 // Chat and Message models for Firestore
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 /// Chat model - represents a conversation
 class ChatModel {
@@ -45,6 +46,15 @@ class ChatModel {
     required this.updatedAt,
   });
 
+  static int _parseUnreadCount(dynamic value, String? uid) {
+    if (value is int) return value;
+    if (value is Map && uid != null) {
+      final count = value[uid];
+      if (count is num) return count.toInt();
+    }
+    return 0;
+  }
+
   factory ChatModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
 
@@ -59,7 +69,10 @@ class ChatModel {
           : null,
       lastMessage: data['lastMessage'],
       lastMessageTime: (data['lastMessageTime'] as Timestamp?)?.toDate(),
-      unreadCount: data['unreadCount'] ?? 0,
+      unreadCount: _parseUnreadCount(
+        data['unreadCount'],
+        FirebaseAuth.instance.currentUser?.uid,
+      ),
       iconUrl: data['iconUrl'],
       iconName: data['iconName'],
       iconBg: data['iconBg'],

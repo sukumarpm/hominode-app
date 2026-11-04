@@ -7,11 +7,9 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../models/chat_model.dart';
 import '../services/chat_firestore_service.dart';
-import '../services/admin_chat_service.dart';
 import '../widgets/skeleton_loader.dart';
 import 'chat_conversation_screen.dart';
 import 'admin_chat_query_selection_screen.dart';
-import 'admin_chat_conversation_screen.dart';
 import '../components/app_segmented_control.dart';
 import '../components/primary_header.dart';
 import '../constants/app_colors.dart';
@@ -209,28 +207,15 @@ class _MessagesScreenEnhancedState extends State<MessagesScreenEnhanced> {
 
   Widget _buildAdminChatCard() {
     return GestureDetector(
-      onTap: () async {
-        // Check if admin chat exists
-        final existingChat = await AdminChatService.instance
-            .getExistingAdminChat();
-
-        if (existingChat != null && mounted) {
-          // Open existing chat conversation
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AdminChatConversationScreen(chat: existingChat),
-            ),
-          );
-        } else if (mounted) {
-          // Show query selection screen
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const AdminChatQuerySelectionScreen(),
-            ),
-          );
-        }
+      onTap: () {
+        // Always let the resident choose a query category, even when
+        // a previous Admin conversation already exists.
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const AdminChatQuerySelectionScreen(),
+          ),
+        );
       },
       child: Container(
         padding: EdgeInsets.all(16.w),

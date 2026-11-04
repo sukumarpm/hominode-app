@@ -25,7 +25,7 @@ class ContentModerationService {
     final lowerText = text.toLowerCase();
 
     for (final keyword in bannedKeywords) {
-      if (lowerText.contains(keyword)) {
+      if (RegExp('\\b${RegExp.escape(keyword)}\\b').hasMatch(lowerText)) {
         print('❌ Banned keyword detected: $keyword');
         return false;
       }
@@ -37,9 +37,7 @@ class ContentModerationService {
 
   /// Comprehensive content check (text only)
   /// Returns ModerationResult with safety status and reason
-  Future<ModerationResult> checkContent({
-    required String text,
-  }) async {
+  Future<ModerationResult> checkContent({required String text}) async {
     // Check text
     if (!isTextSafe(text)) {
       return ModerationResult(
@@ -48,10 +46,7 @@ class ContentModerationService {
       );
     }
 
-    return ModerationResult(
-      isSafe: true,
-      reason: 'Content is safe',
-    );
+    return ModerationResult(isSafe: true, reason: 'Content is safe');
   }
 }
 
@@ -60,8 +55,5 @@ class ModerationResult {
   final bool isSafe;
   final String reason;
 
-  ModerationResult({
-    required this.isSafe,
-    required this.reason,
-  });
+  ModerationResult({required this.isSafe, required this.reason});
 }

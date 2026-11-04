@@ -244,6 +244,26 @@ function appCheckedCallable(
   );
 }
 
+const { getOrCreateResidentAdminChatCore, ChatSetupError } = require('./resident_admin_chat');
+exports.getOrCreateResidentAdminChat = onCall(
+  { region: REGION, enforceAppCheck: true },
+  async (request) => {
+    try {
+      requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (!await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError('permission-denied', 'An active resident profile is required.');
+      }
+      return await getOrCreateResidentAdminChatCore({ db, auth: request.auth });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error instanceof ChatSetupError) throw new HttpsError(error.code, error.message);
+      logger.error('Resident Admin chat setup failed', { message: error?.message });
+      throw new HttpsError('internal', 'Could not set up Admin chat.');
+    }
+  }
+);
+
 const moderation = require('./content_moderation');
 exports.reportWallContent = appCheckedCallable(moderation.reportContentCore, 'Content report could not be submitted.');
 exports.setWallUserBlock = appCheckedCallable(moderation.blockContentUserCore, 'User block could not be updated.');
