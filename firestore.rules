@@ -1722,7 +1722,12 @@ function securityCanAccessCommunity(communityId) {
         && contentIdentityUnchanged()
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'participantIds', 'participants', 'buildingId', 'flatId'
-        ]);
+        ])
+        && (resource.data.get('type', '') != 'admin'
+          || (adminCanAccessCommunity(resource.data.communityId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'unreadCount'
+            ])));
 
       // Keep chat deletion admin-only for safety.
       allow delete: if
@@ -1750,11 +1755,20 @@ function securityCanAccessCommunity(communityId) {
 
         allow read: if isChatParticipant();
 
+        // Admin-support chats must be written only by the verified callable.
+        // Other messaging retains the existing client-write contract.
         allow create: if isChatParticipant()
+          && parentChatData().get('type', '') != 'admin'
           && request.resource.data.senderId == request.auth.uid;
 
         allow update: if isChatParticipant()
-          && contentIdentityUnchanged();
+          && contentIdentityUnchanged()
+          && (
+            parentChatData().get('type', '') != 'admin'
+            || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'readBy', 'isRead'
+            ])
+          );
 
         allow delete: if isChatParticipant();
       }
