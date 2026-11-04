@@ -44,6 +44,14 @@ async function signInPhone(phoneNumber) {
   });
   assert.equal(result.status, 200, JSON.stringify(result.body));
   assert.ok(result.body.idToken);
+  // Log only non-sensitive token metadata; never print the token itself.
+  const claims = JSON.parse(Buffer.from(result.body.idToken.split('.')[1], 'base64url').toString('utf8'));
+  assert.equal(claims.sub, result.body.localId, 'The emulator JWT must identify its signed-in user');
+  assert.equal(claims.phone_number, phoneNumber,
+    'Emulator phone ID token missing the canonical phone_number claim. Observed provider: ' +
+    String(claims.firebase?.sign_in_provider));
+  assert.equal(claims.firebase?.sign_in_provider, 'phone',
+    'Emulator phone ID token must use phone as sign_in_provider');
   return { uid: result.body.localId, token: result.body.idToken, phoneNumber };
 }
 async function call(token, data) {
