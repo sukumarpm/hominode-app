@@ -80,6 +80,7 @@ class AdminChatService {
       print('Admin chat Firestore failure: ${error.code}: ${error.message}');
       return null;
     } catch (error) {
+      if (error is StateError) rethrow;
       print('Admin chat setup failure: $error');
       return null;
     }
