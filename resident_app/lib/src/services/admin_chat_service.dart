@@ -71,6 +71,9 @@ class AdminChatService {
       }
       return result;
     } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'failed-precondition') {
+        throw StateError(error.message ?? 'Please revise your message.');
+      }
       print('Admin chat setup failed: ${error.code}: ${error.message}');
       return null;
     } on FirebaseException catch (error) {
