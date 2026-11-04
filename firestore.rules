@@ -1736,11 +1736,9 @@ function securityCanAccessCommunity(communityId) {
             ])));
 
       // Keep chat deletion admin-only for safety.
-      allow delete: if
-        (
-          ('communityId' in resource.data)
-          && adminCanAccessCommunity(resource.data.communityId)
-        );
+      allow delete: if !isAdminSupportChat(resource.data)
+        && ('communityId' in resource.data)
+        && adminCanAccessCommunity(resource.data.communityId);
 
 
       // ----------------------------------------------------------
@@ -1770,13 +1768,14 @@ function securityCanAccessCommunity(communityId) {
         allow update: if isChatParticipant()
           && contentIdentityUnchanged()
           && (
-            parentChatData().get('type', '') != 'admin'
+            !isAdminSupportChat(parentChatData())
             || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'readBy', 'isRead'
             ])
           );
 
-        allow delete: if isChatParticipant();
+        allow delete: if isChatParticipant()
+          && !isAdminSupportChat(parentChatData());
       }
     }
     
