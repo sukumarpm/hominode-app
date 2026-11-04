@@ -31,8 +31,13 @@ async function signInPhone(phoneNumber) {
   assert.equal(start.status, 200, JSON.stringify(start.body));
   const codes = await json(`${base}/emulator/v1/projects/${projectId}/verificationCodes`);
   assert.equal(codes.status, 200);
-  const code = codes.body.verificationCodes.find(c => c.phoneNumber === phoneNumber)?.sessionCode;
-  assert.ok(code, 'Auth emulator should generate SMS code');
+  // Firebase Auth emulator versions expose the OTP as either 'code'
+  // or 'sessionCode'. Select the most recent match, avoiding stale OTPs.
+  const pending = (codes.body.verificationCodes || [])
+    .filter(c => c.phoneNumber === phoneNumber);
+  const code = pending.at(-1)?.code ?? pending.at(-1)?.sessionCode;
+  assert.ok(code, 'Auth emulator should generate SMS code: ' +
+    JSON.stringify({status: codes.status, matches: pending.length, fields: Object.keys(pending.at(-1) || {})}));
   const result = await post(`${base}/identitytoolkit.googleapis.com/v1/accounts:signInWithPhoneNumber?key=demo-key`, {
     sessionInfo: start.body.sessionInfo,
     code,
