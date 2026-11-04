@@ -121,6 +121,7 @@ class ChatService {
       print('ChatService: Creating new chat');
       final chatDoc = await _firestore.collection(_chatsCollection).add({
         'chatType': 'individual',
+        'type': 'admin',
         'participants': [adminId, residentId],
         'participantNames': {
           adminId: adminProfile?['name'] ?? 'Admin',
