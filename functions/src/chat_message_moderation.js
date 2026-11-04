@@ -55,6 +55,9 @@ async function sendModeratedChatMessageCore({ db, auth, data, fieldValue = Field
   if (!chatSnap.exists) throw new ChatSendError('not-found', 'Conversation not found.');
   const chat = chatSnap.data();
   const communityId = chat.communityId;
+  if (chat.type !== 'admin' && !(chat.adminId && chat.residentId)) {
+    throw new ChatSendError('failed-precondition', 'This operation is only for Admin conversations.');
+  }
   if (!communityId || !Array.isArray(chat.participants) || !chat.participants.includes(uid)) {
     throw new ChatSendError('permission-denied', 'Not a member of this conversation.');
   }
@@ -80,6 +83,8 @@ async function sendModeratedChatMessageCore({ db, auth, data, fieldValue = Field
     const currentChat = await tx.get(chatRef);
     const currentMessage = await tx.get(messageRef);
     if (!currentChat.exists || currentChat.data().communityId !== communityId ||
+        currentChat.data().adminId !== chat.adminId ||
+        currentChat.data().residentId !== chat.residentId ||
         !currentChat.data().participants?.includes(uid)) {
       throw new ChatSendError('permission-denied', 'Conversation access changed.');
     }
