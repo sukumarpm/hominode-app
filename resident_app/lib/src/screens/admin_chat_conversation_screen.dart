@@ -464,14 +464,16 @@ class _AdminChatConversationScreenState
       _isSending = true;
     });
 
-    _messageController.clear();
-
     try {
-      await _adminChatService.sendMessage(
+      final messageId = await _adminChatService.sendMessage(
         chatId: widget.chat.id,
         text: text,
         isQuery: false,
       );
+      if (messageId == null) throw StateError('Unable to send message.');
+      if (mounted && _messageController.text.trim() == text) {
+        _messageController.clear();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
