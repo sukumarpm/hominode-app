@@ -286,6 +286,14 @@ exports.sendModeratedAdminChatMessage = onCall(
   }
 );
 
+// Every accepted moderated chat message produces one server-managed inbox entry.
+exports.dispatchAdminChatMessageNotification = onDocumentCreated({
+  region: REGION, document: 'chats/{chatId}/messages/{messageId}', retry: true,
+}, event => require('./chat_message_notifications').dispatchChatMessageNotificationCore({
+  db: getFirestore(), messaging: getMessaging(),
+  chatId: event.params.chatId, messageId: event.params.messageId,
+}));
+
 const moderation = require('./content_moderation');
 exports.reportWallContent = appCheckedCallable(moderation.reportContentCore, 'Content report could not be submitted.');
 exports.setWallUserBlock = appCheckedCallable(moderation.blockContentUserCore, 'User block could not be updated.');
