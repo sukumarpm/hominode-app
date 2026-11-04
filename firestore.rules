@@ -1706,6 +1706,12 @@ function securityCanAccessCommunity(communityId) {
     // ============================================================
 
     match /chats/{chatId} {
+      function isAdminSupportChat(data) {
+        return data.get('type', '') == 'admin'
+          || (data.get('adminId', '') is string && data.get('adminId', '').size() > 0
+            && data.get('residentId', '') is string && data.get('residentId', '').size() > 0);
+      }
+
       function chatMember(data) {
         return signedIn()
           && (request.auth.uid in data.get('participantIds', [])
@@ -1723,7 +1729,7 @@ function securityCanAccessCommunity(communityId) {
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'participantIds', 'participants', 'buildingId', 'flatId'
         ])
-        && (resource.data.get('type', '') != 'admin'
+        && (!isAdminSupportChat(resource.data)
           || (adminCanAccessCommunity(resource.data.communityId)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'status', 'unreadCount'
@@ -1758,7 +1764,7 @@ function securityCanAccessCommunity(communityId) {
         // Admin-support chats must be written only by the verified callable.
         // Other messaging retains the existing client-write contract.
         allow create: if isChatParticipant()
-          && parentChatData().get('type', '') != 'admin'
+          && !isAdminSupportChat(parentChatData())
           && request.resource.data.senderId == request.auth.uid;
 
         allow update: if isChatParticipant()
