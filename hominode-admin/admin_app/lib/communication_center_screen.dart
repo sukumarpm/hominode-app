@@ -291,7 +291,7 @@ class _CommunicationCenterScreenState extends State<CommunicationCenterScreen> {
                       ),
                       child: Row(
                         children: [
-                          Expanded(child: _buildTabButton('Messages', 0)),
+                          Expanded(child: _buildTabButton('Broadcasts', 0)),
                           Expanded(child: _buildTabButton('Pinned Posts', 1)),
                           Expanded(child: _buildTabButton('Analytics', 2)),
                         ],

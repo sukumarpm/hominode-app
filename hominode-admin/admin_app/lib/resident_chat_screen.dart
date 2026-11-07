@@ -253,20 +253,20 @@ class _ResidentChatScreenState extends State<ResidentChatScreen> {
                         );
                       }
 
-                      // Reverse messages to show newest at bottom
-                      final reversedMessages = messages.reversed.toList();
-
+                      // Firestore already returns newest first. A reversed
+                      // ListView places index 0 at the bottom, so reversing
+                      // the data again would show old messages first.
                       return ListView.builder(
                         controller: _scrollController,
                         padding: EdgeInsets.all(16.w),
                         reverse: true,
-                        itemCount: reversedMessages.length,
+                        itemCount: messages.length,
                         itemBuilder: (context, index) {
-                          final message = reversedMessages[index];
+                          final message = messages[index];
                           final isAdmin = message.isSentByAdmin;
                           final showAvatar =
-                              index == reversedMessages.length - 1 ||
-                              reversedMessages[index + 1].senderId !=
+                              index == messages.length - 1 ||
+                              messages[index + 1].senderId !=
                                   message.senderId;
 
                           return _buildMessageBubbleFromModel(

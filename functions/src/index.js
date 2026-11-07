@@ -264,6 +264,36 @@ exports.getOrCreateResidentAdminChat = onCall(
   }
 );
 
+const { sendModeratedChatMessageCore, ChatSendError } = require('./chat_message_moderation');
+exports.sendModeratedAdminChatMessage = onCall(
+  { region: REGION, enforceAppCheck: true },
+  async (request) => {
+    try {
+      requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (!await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError('permission-denied', 'An active Hominode profile is required.');
+      }
+      return await sendModeratedChatMessageCore({
+        db, auth: request.auth, data: request.data,
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error instanceof ChatSendError) throw new HttpsError(error.code, error.message);
+      logger.error('Admin chat send failed', { message: error?.message });
+      throw new HttpsError('internal', 'Could not send chat message.');
+    }
+  }
+);
+
+// Every accepted moderated chat message produces one server-managed inbox entry.
+exports.dispatchAdminChatMessageNotification = onDocumentCreated({
+  region: REGION, document: 'chats/{chatId}/messages/{messageId}', retry: true,
+}, event => require('./chat_message_notifications').dispatchChatMessageNotificationCore({
+  db: getFirestore(), messaging: getMessaging(),
+  chatId: event.params.chatId, messageId: event.params.messageId,
+}));
+
 const moderation = require('./content_moderation');
 exports.reportWallContent = appCheckedCallable(moderation.reportContentCore, 'Content report could not be submitted.');
 exports.setWallUserBlock = appCheckedCallable(moderation.blockContentUserCore, 'User block could not be updated.');

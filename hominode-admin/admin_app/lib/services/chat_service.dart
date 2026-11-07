@@ -1,5 +1,7 @@
 import '../utils/resident_phone.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'dart:math';
 import 'admin_service.dart';
 
 class ChatService {
@@ -60,39 +62,20 @@ class ChatService {
     String? imageUrl,
   }) async {
     try {
-      final adminId = _adminService.getCurrentAdminId();
-      if (adminId == null) throw Exception('Admin not logged in');
-
-      final adminProfile = await _adminService.getAdminProfile();
-      final senderName = adminProfile?['name'] ?? 'Admin';
-
-      print('ChatService: Sending message to chat: $chatId');
-
-      // Add message to messages subcollection
-      await _firestore
-          .collection(_chatsCollection)
-          .doc(chatId)
-          .collection(_messagesCollection)
-          .add({
-            'senderId': adminId,
-            'senderName': senderName,
-            'senderRole': 'admin',
-            'communityId': _adminService.requireCurrentCommunityId(),
-            'message': message,
-            'imageUrl': imageUrl,
-            'timestamp': FieldValue.serverTimestamp(),
-            'isRead': false,
-          });
-
-      // Update chat document with last message info
-      await _firestore.collection(_chatsCollection).doc(chatId).update({
-        'lastMessage': message,
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageSenderId': adminId,
-        'updatedAt': FieldValue.serverTimestamp(),
+      if (imageUrl != null && imageUrl.trim().isNotEmpty) {
+        throw StateError('Chat image sending is not supported by moderated messaging yet.');
+      }
+      final rand = Random.secure();
+      final submissionId = List.generate(
+        20, (_) => rand.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
+      await FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+          .httpsCallable('sendModeratedAdminChatMessage').call({
+        'chatId': chatId,
+        'message': message,
+        'submissionId': submissionId,
+        'isQuery': false,
       });
-
-      print('ChatService: Message sent successfully');
     } catch (e) {
       print('ChatService ERROR: Failed to send message: $e');
       throw Exception('Failed to send message: $e');
@@ -138,6 +121,7 @@ class ChatService {
       print('ChatService: Creating new chat');
       final chatDoc = await _firestore.collection(_chatsCollection).add({
         'chatType': 'individual',
+        'type': 'admin',
         'participants': [adminId, residentId],
         'participantNames': {
           adminId: adminProfile?['name'] ?? 'Admin',
