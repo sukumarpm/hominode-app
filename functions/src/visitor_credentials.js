@@ -1,7 +1,12 @@
+const {dayBounds} = require("./amenity_booking");
+const {normalizeIanaTimeZone} = require("./tenant_management");
 const crypto = require("node:crypto");
 const {FieldValue, Timestamp} = require("firebase-admin/firestore");
 const {RegistrationError} = require("./register_resident");
 const {resolveFlatOccupant} = require("./resident_identity");
+const {residentIdentity, bringingPet, invitationDecision, assertVisitorAuthorized} = require("./visitor_policy");
+const {buildAuditLog} = require("./audit_log");
+const {visitorPolicyRevalidationAt} = require("./visitor_policy_resolver");
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const QR_BYTES = 32;
@@ -52,10 +57,10 @@ function visitorEligible(visitor, nowMs = Date.now()) {
   if (visitor?.gateAccessStatus === "denied" || visitor?.gateEntryDeniedAt != null) return false;
   const status = visitor?.status;
   const pending = ["expected", "pending"].includes(status) && visitor?.isApproved === false;
-  const approved = status === "approved" && visitor?.isApproved === true;
+  const approved = ["expected", "approved"].includes(status) && visitor?.isApproved === true;
   const arrival = millis(visitor?.expectedArrival ?? visitor?.expectedTime);
   return (pending || approved) && visitor?.actualArrival == null && visitor?.departure == null &&
-    arrival != null && Math.abs(nowMs - arrival) <= WINDOW_MS;
+    arrival != null && nowMs <= arrival + WINDOW_MS;
 }
 function residentProfileValid(profile, uid, auth) {
   return profile?.uid === uid && profile?.role === "resident" &&
@@ -65,28 +70,23 @@ function residentProfileValid(profile, uid, auth) {
     typeof profile?.flatId === "string" && !!profile.flatId.trim() &&
     profile?.phoneNumber === auth?.token?.phone_number;
 }
-async function authorizedResident(db, auth) {
+async function authorizedResident(db, auth, read = (ref) => ref.get()) {
   const uid = auth?.uid;
   if (!uid || !auth?.token?.phone_number || auth?.token?.firebase?.sign_in_provider !== "phone") {
     fail("unauthenticated", "Verified phone authentication is required.");
   }
-  const userSnapshot = await db.collection("users").doc(uid).get();
+  const userSnapshot = await read(db.collection("users").doc(uid));
   const profile = userSnapshot.data();
   if (!userSnapshot.exists || !residentProfileValid(profile, uid, auth)) {
     fail("permission-denied", "An active, approved Resident account is required.");
   }
-  const communitySnapshot = await db.collection("communities").doc(profile.communityId).get();
+  const communitySnapshot = await read(db.collection("communities").doc(profile.communityId));
   const community = communitySnapshot.data();
-  const residentType = profile.residentType ?? profile.ownershipType;
-  const identityValid = residentType === "owner"
-    ? community?.ownerIdentityVerificationRequired !== true ||
-      (profile.identityVerified === true && profile.identityVerificationStatus === "verified")
-    : residentType === "tenant" && profile.identityVerified === true &&
-      profile.identityVerificationStatus === "verified";
-  if (!communitySnapshot.exists || community?.isActive !== true || !identityValid) {
+  residentIdentity(profile, community);
+  if (!communitySnapshot.exists || community?.isActive !== true) {
     fail("permission-denied", "Resident community or identity authorization is unavailable.");
   }
-  const flatSnapshot = await db.collection("flats").doc(profile.flatId).get();
+  const flatSnapshot = await read(db.collection("flats").doc(profile.flatId));
   const flat = flatSnapshot.data();
   let occupant;
   try { occupant = resolveFlatOccupant(flat); } catch (_) {
@@ -96,11 +96,21 @@ async function authorizedResident(db, auth) {
       flat?.status !== "occupied" || occupant?.uid !== uid) {
     fail("permission-denied", "The Resident's assigned unit is not available in this community.");
   }
-  return {uid, profile, communityId: profile.communityId, flatId: profile.flatId, flat};
+  return {uid, profile, community, communityId: profile.communityId, flatId: profile.flatId, flat};
 }
 function visitorFields(input, host, nowMs) {
   const arrivalMs = Number(input?.expectedArrival);
-  if (!Number.isFinite(arrivalMs) || arrivalMs < new Date(nowMs).setHours(0, 0, 0, 0)) {
+  let zone;
+  try {
+    if (typeof host.community.timeZone === "string" && /^[+-]/.test(host.community.timeZone.trim())) {
+      throw Error("IANA zone required");
+    }
+    zone = normalizeIanaTimeZone(host.community.timeZone);
+  } catch (_) {
+    fail("failed-precondition", "Configure a valid community timeZone before inviting visitors.");
+  }
+  const startOfToday = dayBounds(nowMs, zone).startMs;
+  if (!Number.isFinite(arrivalMs) || arrivalMs < startOfToday) {
     fail("invalid-argument", "Choose a valid expected arrival time.");
   }
   const visitorName = text(input?.visitorName, 120);
@@ -117,6 +127,7 @@ function visitorFields(input, host, nowMs) {
     adminId: host.profile.adminId || null,
     visitorName,
     purpose,
+    bringingPet: bringingPet(input.bringingPet),
     expectedArrival,
     phoneNumber: input.phoneNumber == null || input.phoneNumber === "" ? null : text(input.phoneNumber, 40),
     vehicleNumber: input.vehicleNumber == null || input.vehicleNumber === "" ? null : text(input.vehicleNumber, 40),
@@ -142,30 +153,23 @@ function makeCredentialIndex({hash, visitorId, communityId, type, validFrom, exp
 
 async function createVisitorInvitationCore({db, auth, data, hmacKey, now = Date.now,
   makeQrToken = generateQrToken, makeManualCode = generateManualCode}) {
-  const host = await authorizedResident(db, auth);
   const serverOwnedFields = [
     "status", "isApproved", "approvedBy", "approvedAt", "rejectedBy", "rejectedAt",
     "rejectionReason", "actualArrival", "departure", "checkedInBy", "checkedOutBy",
     "checkedInAt", "checkedOutAt", "gateAccessStatus", "gateEntryDeniedAt",
     "gateEntryDeniedBy", "gateEntryDenialReason", "verificationMethod", "qrToken",
-    "visitorPassCode",
+    "visitorPassCode", "authorizationState", "authorizationManaged", "authorizationRevision",
+    "visitorPolicySnapshot", "credentialValidFrom", "credentialExpiresAt", "credentialVersion",
   ];
   if (serverOwnedFields.some((field) => Object.prototype.hasOwnProperty.call(data || {}, field))) {
     fail("invalid-argument", "Visitor status and credentials are assigned by the server.");
   }
-  const trustedScope = {
-    hostUserId: host.uid, residentId: host.uid, communityId: host.communityId,
-    flatId: host.flatId,
-  };
-  for (const [field, trustedValue] of Object.entries(trustedScope)) {
-    if (data?.[field] != null && data[field] !== trustedValue) {
-      fail("permission-denied", "Visitor invitation scope does not match the authenticated Resident.");
-    }
-  }
   const visitorId = db.collection("visitors").doc().id;
   const visitorRef = db.collection("visitors").doc(visitorId);
   const credentialRef = db.collection("visitorHostCredentials").doc(visitorId);
-  const visitor = visitorFields(data, host, now());
+  let visitor;
+  let decision;
+  const auditRef = db.collection("auditLogs").doc();
   for (let attempt = 0; attempt < MAX_COLLISION_ATTEMPTS; attempt++) {
     const qrToken = makeQrToken();
     const manualCode = makeManualCode();
@@ -175,6 +179,24 @@ async function createVisitorInvitationCore({db, auth, data, hmacKey, now = Date.
     const manualIndexRef = db.collection("visitorGateCredentialIndex").doc(manualHash);
     try {
       await db.runTransaction(async (transaction) => {
+        const host = await authorizedResident(db, auth, (ref) => transaction.get(ref));
+        const trustedScope = {hostUserId: host.uid, residentId: host.uid,
+          communityId: host.communityId, flatId: host.flatId};
+        for (const [field, trustedValue] of Object.entries(trustedScope)) {
+          if (data?.[field] != null && data[field] !== trustedValue) {
+            fail("permission-denied", "Visitor invitation scope does not match the authenticated Resident.");
+          }
+        }
+        const nowMs = now();
+        visitor = visitorFields(data, host, nowMs);
+        decision = invitationDecision({community: host.community, profile: host.profile,
+          arrival: Number(data.expectedArrival), pet: visitor.bringingPet, now: nowMs});
+        visitor.visitorPolicySnapshot = decision.snapshot;
+        // Preserve direct-write contracts until client migration. Strict records
+        // are always backend-owned, even after a community disables enforcement.
+        if (decision.snapshot.enforced) Object.assign(visitor, {
+          authorizationManaged: true, authorizationState: decision.authorizationState, authorizationRevision: 1,
+        });
         const [qrIndex, manualIndex] = await Promise.all([
           transaction.get(qrIndexRef), transaction.get(manualIndexRef),
         ]);
@@ -186,9 +208,17 @@ async function createVisitorInvitationCore({db, auth, data, hmacKey, now = Date.
           validFrom: visitor.credentialValidFrom, expiresAt: visitor.credentialExpiresAt,
           createdAt: FieldValue.serverTimestamp(),
         });
-        transaction.create(qrIndexRef, makeCredentialIndex({hash: qrHash, visitorId, communityId: host.communityId, type: "qr", validFrom: visitor.credentialValidFrom, expiresAt: visitor.credentialExpiresAt}));
-        transaction.create(manualIndexRef, makeCredentialIndex({hash: manualHash, visitorId, communityId: host.communityId, type: "manual", validFrom: visitor.credentialValidFrom, expiresAt: visitor.credentialExpiresAt}));
+        transaction.create(qrIndexRef, {...makeCredentialIndex({hash: qrHash, visitorId, communityId: host.communityId, type: "qr", validFrom: visitor.credentialValidFrom, expiresAt: visitor.credentialExpiresAt}), hostUserId: host.uid});
+        transaction.create(manualIndexRef, {...makeCredentialIndex({hash: manualHash, visitorId, communityId: host.communityId, type: "manual", validFrom: visitor.credentialValidFrom, expiresAt: visitor.credentialExpiresAt}), hostUserId: host.uid});
+        transaction.create(auditRef, buildAuditLog({actorUid: host.uid, actorRole: "resident",
+          communityId: host.communityId, action: "visitor.invite", targetType: "visitor", targetId: visitorId,
+          summary: "Visitor invitation created.", metadata: {newState: decision.authorizationState,
+            revision: decision.snapshot.revision, enforced: decision.snapshot.enforced,
+            effectivePolicy: decision.snapshot.approvalMode, emergency: decision.snapshot.emergency,
+            identityBasis: decision.snapshot.identityBasis, bringingPet: visitor.bringingPet}}));
       });
+      if (decision.authorizationState === "pending_admin") return {visitorId,
+        authorizationState: "pending_admin", authorizationRevision: 1, credentialsAvailable: false};
       return {visitorId, qrToken, visitorPassCode: `${manualCode.slice(0, 4)}-${manualCode.slice(4)}`};
     } catch (error) {
       if (!error?.collision) throw error;
@@ -197,47 +227,113 @@ async function createVisitorInvitationCore({db, auth, data, hmacKey, now = Date.
   fail("resource-exhausted", "Could not issue unique visitor credentials. Retry shortly.");
 }
 
-async function getVisitorCredentialsCore({db, auth, data, hmacKey}) {
-  const host = await authorizedResident(db, auth);
+async function getVisitorCredentialsCore({ db, auth, data, hmacKey, now = Date.now }) {
   const visitorId = text(data?.visitorId, 160);
   const visitorRef = db.collection("visitors").doc(visitorId);
-  const [visitorSnapshot, credentialSnapshot] = await Promise.all([
-    visitorRef.get(), db.collection("visitorHostCredentials").doc(visitorId).get(),
-  ]);
-  if (!visitorSnapshot.exists) fail("not-found", "Visitor pass is unavailable.");
-  const visitor = visitorSnapshot.data();
-  if (visitor.hostUserId !== host.uid || visitor.communityId !== host.communityId ||
-      !visitorEligible(visitor)) {
-    fail("permission-denied", "This visitor pass is not available to this Resident.");
-  }
-  if (credentialSnapshot.exists) {
-    const credentials = credentialSnapshot.data();
-    if (credentials.hostUserId !== host.uid || credentials.communityId !== host.communityId) {
-      fail("permission-denied", "Visitor credential access is denied.");
-    }
-    const qrHash = credentialHash(hmacKey, "qr", credentials.qrToken);
-    const manualHash = credentialHash(hmacKey, "manual", credentials.manualCode);
-    const [qrIndex, manualIndex] = await Promise.all([
-      db.collection("visitorGateCredentialIndex").doc(qrHash).get(),
-      db.collection("visitorGateCredentialIndex").doc(manualHash).get(),
+  return db.runTransaction(async (transaction) => {
+    const host = await authorizedResident(db, auth, (ref) =>
+      transaction.get(ref),
+    );
+    const [visitorSnapshot, credentialSnapshot] = await Promise.all([
+      transaction.get(visitorRef),
+      transaction.get(db.collection("visitorHostCredentials").doc(visitorId)),
     ]);
-    if (!qrIndex.exists || !manualIndex.exists || qrIndex.data()?.credentialType !== "qr" ||
-        manualIndex.data()?.credentialType !== "manual" || qrIndex.data()?.credentialVersion !== 1 ||
-        manualIndex.data()?.credentialVersion !== 1 || qrIndex.data()?.visitorId !== visitorId ||
-        manualIndex.data()?.visitorId !== visitorId || qrIndex.data()?.communityId !== host.communityId ||
-        manualIndex.data()?.communityId !== host.communityId) {
-      fail("failed-precondition", "Visitor credentials are unavailable. Contact support.");
+    if (!visitorSnapshot.exists)
+      fail("not-found", "Visitor pass is unavailable.");
+    const visitor = visitorSnapshot.data();
+    const nowMs = now();
+    if (
+      visitor.hostUserId !== host.uid ||
+      visitor.communityId !== host.communityId
+    ) {
+      fail(
+        "permission-denied",
+        "This visitor pass is not available to this Resident.",
+      );
     }
-    return {qrToken: credentials.qrToken, visitorPassCode: credentials.manualCode};
-  }
-  if (visitor.credentialVersion === 1 || visitor.legacyCredentialSunsetAt != null) {
-    fail("failed-precondition", "Migrated visitor credentials are unavailable. Contact support.");
-  }
-  // Transitional retrieval is host-authenticated; legacy data is not copied or changed here.
-  const qrToken = typeof visitor.qrToken === "string" ? visitor.qrToken : null;
-  const visitorPassCode = typeof visitor.visitorPassCode === "string" ? visitor.visitorPassCode : null;
-  if (!qrToken && !visitorPassCode) fail("not-found", "Visitor credentials are unavailable.");
-  return {qrToken, visitorPassCode, legacy: true};
+    const arrival = millis(visitor.expectedArrival ?? visitor.expectedTime);
+    const deadlines = [visitorPolicyRevalidationAt(host.community, nowMs),
+      arrival == null ? null : arrival - WINDOW_MS,
+      arrival == null ? null : arrival + WINDOW_MS + 1]
+      .filter((value) => value != null && value > nowMs);
+    const timing = {serverTime: nowMs,
+      revalidateAt: deadlines.length ? Math.min(...deadlines) : null};
+    try {
+      if (!visitorEligible(visitor, nowMs)) {
+        fail("permission-denied", "This visitor pass is not available to this Resident.");
+      }
+      assertVisitorAuthorized(visitor, host.community, { now: nowMs, profile: host.profile });
+    } catch (error) {
+      // Only after host/community ownership has been checked. These details
+      // contain no credential or authorization grant, including on denial.
+      if (error instanceof RegistrationError) error.details = timing;
+      throw error;
+    }
+    if (credentialSnapshot.exists) {
+      const credentials = credentialSnapshot.data();
+      if (
+        credentials.hostUserId !== host.uid ||
+        credentials.communityId !== host.communityId
+      ) {
+        fail("permission-denied", "Visitor credential access is denied.");
+      }
+      const qrHash = credentialHash(hmacKey, "qr", credentials.qrToken);
+      const manualHash = credentialHash(
+        hmacKey,
+        "manual",
+        credentials.manualCode,
+      );
+      const [qrIndex, manualIndex] = await Promise.all([
+        transaction.get(
+          db.collection("visitorGateCredentialIndex").doc(qrHash),
+        ),
+        transaction.get(
+          db.collection("visitorGateCredentialIndex").doc(manualHash),
+        ),
+      ]);
+      if (
+        !qrIndex.exists ||
+        !manualIndex.exists ||
+        qrIndex.data()?.credentialType !== "qr" ||
+        manualIndex.data()?.credentialType !== "manual" ||
+        qrIndex.data()?.credentialVersion !== 1 ||
+        manualIndex.data()?.credentialVersion !== 1 ||
+        qrIndex.data()?.visitorId !== visitorId ||
+        manualIndex.data()?.visitorId !== visitorId ||
+        qrIndex.data()?.communityId !== host.communityId ||
+        manualIndex.data()?.communityId !== host.communityId
+      ) {
+        fail(
+          "failed-precondition",
+          "Visitor credentials are unavailable. Contact support.",
+        );
+      }
+      return {
+        ...timing,
+        qrToken: credentials.qrToken,
+        visitorPassCode: credentials.manualCode,
+      };
+    }
+    if (
+      visitor.credentialVersion === 1 ||
+      visitor.legacyCredentialSunsetAt != null
+    ) {
+      fail(
+        "failed-precondition",
+        "Migrated visitor credentials are unavailable. Contact support.",
+      );
+    }
+    // Transitional retrieval is host-authenticated; legacy data is not copied or changed here.
+    const qrToken =
+      typeof visitor.qrToken === "string" ? visitor.qrToken : null;
+    const visitorPassCode =
+      typeof visitor.visitorPassCode === "string"
+        ? visitor.visitorPassCode
+        : null;
+    if (!qrToken && !visitorPassCode)
+      fail("not-found", "Visitor credentials are unavailable.");
+    return { qrToken, visitorPassCode, legacy: true };
+  });
 }
 
 function planLegacyCredentialMigration({visitorId, visitor, hmacKey, now = Date.now(), forceNewManualCode = false}) {
