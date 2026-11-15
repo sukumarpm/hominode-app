@@ -413,7 +413,7 @@ test(
   },
 );
 test(
-  "pre-cutover legacy passes work; post-cutover missing authorization fails; pending follows relaxed policy",
+  "legacy records of every age follow the current policy; pending follows relaxed policy",
   { skip: !enabled },
   async () => {
     const f = await fixture();
@@ -436,7 +436,10 @@ test(
     };
     assert.equal((await resolveVisitorQrCore(args)).visitorId, legacyId);
     await ref.update({ createdAt: Timestamp.now() });
-    await assert.rejects(resolveVisitorQrCore(args));
+    assert.equal((await resolveVisitorQrCore(args)).visitorId, legacyId);
+    await f.configure(policy({approvalMode: 'all_approval_required'}), 1);
+    await assert.rejects(resolveVisitorQrCore(args), {code: 'failed-precondition'});
+    await f.configure(policy(), 2);
     await ref.update({
       createdAt: Timestamp.fromMillis(1),
       authorizationManaged: true,
@@ -568,13 +571,13 @@ test(
   },
 );
 test(
-  "disabling relaxes pending approval; re-enabling requires approval for existing invitations",
+  "saving a relaxed policy releases pending invitations; stricter saves recheck every invitation",
   { skip: !enabled },
   async () => {
     const f = await fixture({ mode: "all_approval_required" }),
       pending = await f.create();
     await f.configure(
-      policy({ enabled: false, approvalMode: "all_approval_required" }),
+      policy({ approvalMode: "resident_authorized" }),
       1,
     );
     const compatible = await f.create();
@@ -603,16 +606,13 @@ test(
         auth: auth(f.other),
         data: {
           communityId: f.communityId,
-          policy: policy({ enabled: false }),
+          policy: policy(),
           expectedRevision: 0,
         },
       }),
       { code: "permission-denied" },
     );
     await f.configure(policy({ enabled: false }));
-    await assert.rejects(f.configure(policy({ enabled: false }), 0), {
-      code: "aborted",
-    });
     const result = await getCommunityVisitorPolicyCore({
       db,
       auth: auth(f.admin),
@@ -622,6 +622,7 @@ test(
     assert.equal(result.policy.revision, 1);
     await f.communityRef.update({ visitorPolicyRolloutReady: true });
     await f.configure(policy(), 1);
+    await assert.rejects(f.configure(policy(), 0), {code: 'aborted'});
     const issued = await f.create();
     await f.decide(issued.visitorId, "approve");
     const history = await getVisitorPolicyHistoryCore({
@@ -954,7 +955,8 @@ for (const [mode, role] of [["all_approval_required", "owner"], ["tenant_approva
       await assertAccessDenied(accessAt(f, issued.visitorId, secret, time), "failed-precondition");
     }
     assert.equal((await f.get(issued.visitorId)).authorizationState, "auto_authorized");
-    await f.decide(issued.visitorId);
+    await decideVisitorInvitationCore({db, auth: auth(f.admin), now: () => effectiveAt,
+      data: {communityId: f.communityId, visitorId: issued.visitorId, action: 'approve', expectedRevision: 1}});
     const after = accessAt(f, issued.visitorId, secret, effectiveAt);
     assert.equal((await after.retrieve()).qrToken, secret.qrToken);
     assert.equal((await after.resolve()).visitorId, issued.visitorId);
@@ -962,7 +964,7 @@ for (const [mode, role] of [["all_approval_required", "owner"], ["tenant_approva
   });
 }
 
-test("scheduled first enforcement preserves pre-cutover legacy compatibility and blocks unmanaged post-cutover passes", { skip: !enabled }, async () => {
+test("scheduled first enforcement evaluates all legacy records identically under current policy", { skip: !enabled }, async () => {
   const f = await fixture({ enforce: false });
   const effectiveAt = Date.now() + 3600_000;
   await schedule(f, policy(), effectiveAt, 0);
@@ -976,8 +978,7 @@ test("scheduled first enforcement preserves pre-cutover legacy compatibility and
     const resolve = () => resolveVisitorQrCore({
       db, auth: auth(f.security), data: { legacyVisitorId: ref.id }, now: () => effectiveAt,
     });
-    if (createdAt === effectiveAt - 1) assert.equal((await resolve()).visitorId, ref.id);
-    else await assert.rejects(resolve(), { code: "failed-precondition" });
+    assert.equal((await resolve()).visitorId, ref.id);
 
     // Also cover migrated legacy records with private QR/manual credentials.
     const issued = await f.create({ expectedArrival: effectiveAt });
@@ -986,11 +987,14 @@ test("scheduled first enforcement preserves pre-cutover legacy compatibility and
       createdAt: createdAt == null ? null : Timestamp.fromMillis(createdAt),
     });
     const access = accessAt(f, issued.visitorId, await f.secret(issued.visitorId), effectiveAt);
-    if (createdAt === effectiveAt - 1) {
-      assert.equal((await access.retrieve()).qrToken, issued.qrToken);
-      assert.equal((await access.resolve()).visitorId, issued.visitorId);
-      assert.equal((await access.manual()).status, "inside");
-    } else await assertAccessDenied(access, "failed-precondition");
+    assert.equal((await access.retrieve()).qrToken, issued.qrToken);
+    assert.equal((await access.resolve()).visitorId, issued.visitorId);
+    // Tighten the effective policy: neither creation date nor missing snapshot
+    // exempts these same old records from current approval requirements.
+    await f.communityRef.update({'scheduledVisitorPolicy.policy.approvalMode': 'all_approval_required'});
+    await assert.rejects(resolve(), {code: 'failed-precondition'});
+    await assertAccessDenied(access, 'failed-precondition');
+    await f.communityRef.update({'scheduledVisitorPolicy.policy.approvalMode': 'resident_authorized'});
   }
 });
 
@@ -1030,7 +1034,7 @@ test("scheduled first enforcement closes legacy client writes at request.time", 
   await assertFails(admin.delete());
 });
 
-test("terminal authorization and gate denials survive relaxation and disabling", { skip: !enabled }, async () => {
+test("terminal authorization and gate denials survive relaxed policy saves and enforcement OFF", { skip: !enabled }, async () => {
   for (const action of ["reject", "revoke", "cancel", "gate-deny"]) {
     const f = await fixture();
     const issued = await f.create();
@@ -1042,7 +1046,7 @@ test("terminal authorization and gate denials survive relaxation and disabling",
     await f.configure(policy({ approvalMode: "all_approval_required" }), 1);
     await f.configure(policy(), 2);
     await assertAccessDenied(accessAt(f, issued.visitorId, secret, Date.now()));
-    await f.configure(policy({ enabled: false }), 3);
+    await f.configure(policy({enabled: false}), 3);
     await assertAccessDenied(accessAt(f, issued.visitorId, secret, Date.now()));
     await assert.rejects(f.decide(issued.visitorId, "approve", 2));
     await assert.rejects(f.mutate(issued.visitorId, "reschedule", 2, { expectedArrival: Date.now() + 1000 }));
@@ -1240,4 +1244,138 @@ test("Resident pass deadlines hide at scheduled enforcement and retry a denied p
     assert.equal(error.details, undefined);
     return true;
   });
+});
+
+// Phase 2A.4: stored snapshots are audit history; every access path evaluates
+// the same effective community policy without migrating existing visitors.
+test('old Admin approval cannot survive a policy revision; reapproval binds the current revision', {skip: !enabled}, async () => {
+  const f = await fixture({mode: 'all_approval_required'});
+  const issued = await f.create();
+  await f.decide(issued.visitorId);
+  const secret = await f.secret(issued.visitorId);
+  assert.equal((await f.get(issued.visitorId)).authorizationPolicyRevision, 1);
+  await f.configure(policy({approvalMode: 'all_approval_required'}), 1);
+  await assertAccessDenied(accessAt(f, issued.visitorId, secret, Date.now()), 'failed-precondition');
+  const unchanged = await f.get(issued.visitorId);
+  assert.equal(unchanged.status, 'approved');
+  assert.equal(unchanged.actualArrival, null);
+  assert.equal(unchanged.visitorPolicySnapshot.revision, 1);
+  await f.decide(issued.visitorId, 'approve', 2);
+  assert.equal((await f.get(issued.visitorId)).authorizationPolicyRevision, 2);
+  assert.equal((await f.retrieve(issued.visitorId)).qrToken, secret.qrToken);
+  assert.equal((await f.verify({manualCode: secret.manualCode})).currentStatus, 'inside');
+});
+
+test('emergency start invalidates earlier Admin approval even within the same policy revision', {skip: !enabled}, async () => {
+  const f = await fixture({enforce: false});
+  const start = Date.now() + 3600_000, end = start + 1000;
+  await f.configure(policy({approvalMode: 'all_approval_required', emergency: {startAt: start, endAt: end}}));
+  const issued = await f.create({expectedArrival: start});
+  await f.decide(issued.visitorId);
+  const secret = await f.secret(issued.visitorId);
+  assert.equal((await accessAt(f, issued.visitorId, secret, start - 1).retrieve()).qrToken, secret.qrToken);
+  await assertAccessDenied(accessAt(f, issued.visitorId, secret, start), 'failed-precondition');
+  await decideVisitorInvitationCore({db, auth: auth(f.admin), now: () => start,
+    data: {communityId: f.communityId, visitorId: issued.visitorId, action: 'approve', expectedRevision: 2}});
+  assert.equal((await accessAt(f, issued.visitorId, secret, start).retrieve()).qrToken, secret.qrToken);
+  assert.equal((await accessAt(f, issued.visitorId, secret, start).manual()).currentStatus, 'inside');
+});
+
+test('scheduled revisions require fresh approval at activation for QR, manual and legacy routes', {skip: !enabled}, async () => {
+  const f = await fixture({mode: 'all_approval_required'});
+  const at = Date.now() + 3600_000;
+  const issued = await f.create({expectedArrival: at});
+  await f.decide(issued.visitorId);
+  const secret = await f.secret(issued.visitorId);
+  await schedule(f, policy({approvalMode: 'all_approval_required'}), at);
+  assert.equal((await accessAt(f, issued.visitorId, secret, at - 1).retrieve()).qrToken, secret.qrToken);
+  for (const time of [at, at + 1]) await assertAccessDenied(accessAt(f, issued.visitorId, secret, time), 'failed-precondition');
+  await decideVisitorInvitationCore({db, auth: auth(f.admin), now: () => at,
+    data: {communityId: f.communityId, visitorId: issued.visitorId, action: 'approve', expectedRevision: 2}});
+  assert.equal((await f.get(issued.visitorId)).authorizationPolicyRevision, 2);
+  assert.equal((await accessAt(f, issued.visitorId, secret, at).qr()).currentStatus, 'inside');
+});
+
+test('Admin approval cannot override current pet restrictions, including older approved passes', {skip: !enabled}, async () => {
+  const f = await fixture({mode: 'all_approval_required'});
+  const issued = await f.create({bringingPet: true});
+  await f.decide(issued.visitorId);
+  const secret = await f.secret(issued.visitorId);
+  await f.configure(policy({pets: {mode: 'not_allowed', normalMode: 'not_allowed', restriction: null}}), 1);
+  await assert.rejects(f.decide(issued.visitorId, 'approve', 2), {message: 'Pets are not permitted for this visit. You may continue without a pet.'});
+  await assertAccessDenied(accessAt(f, issued.visitorId, secret, Date.now()), 'failed-precondition');
+  assert.equal((await f.get(issued.visitorId)).authorizationRevision, 2);
+});
+
+test('disabled historical policies do not exempt the current host from eligibility checks', {skip: !enabled}, async () => {
+  const f = await fixture({enforce: false});
+  const issued = await f.create();
+  const secret = await f.secret(issued.visitorId);
+  await db.collection('users').doc(f.host).update({isActive: false});
+  await assertAccessDenied(accessAt(f, issued.visitorId, secret, Date.now()), 'permission-denied');
+});
+
+test('policy saves need readiness, enforce immediately or on schedule, and deny Super Admin control', {skip: !enabled}, async () => {
+  const f = await fixture({enforce: false});
+  await f.communityRef.update({visitorPolicyRolloutReady: false});
+  await assert.rejects(f.configure(policy()), {code: 'failed-precondition'});
+  await assert.rejects(schedule(f, policy(), Date.now() + 3600_000, 0), {code: 'failed-precondition'});
+  await f.configure(policy({enabled: false}));
+  assert.equal((await f.communityRef.get()).data().visitorPolicy.enabled, false);
+  await f.communityRef.update({visitorPolicyRolloutReady: true});
+  await f.configure(policy({approvalMode: 'all_approval_required'}), 1);
+  assert.equal((await f.create()).credentialsAvailable, false);
+  await db.collection('admins').doc(f.admin).update({role: 'superAdmin'});
+  await assert.rejects(f.configure(policy(), 1), {code: 'permission-denied'});
+  await assert.rejects(getCommunityVisitorPolicyCore({db, auth: auth(f.admin), data: {communityId: f.communityId}}), {code: 'permission-denied'});
+});
+
+test('clients cannot forge the current-policy approval stamp', {skip: !enabled}, async () => {
+  const f = await fixture({enforce: false});
+  const issued = await f.create();
+  await assert.rejects(f.create({authorizationPolicyRevision: 1}), {code: 'invalid-argument'});
+  for (const uid of [f.host, f.admin, f.security]) {
+    await assertFails(f.client(uid).collection('visitors').doc(issued.visitorId).update({authorizationPolicyRevision: 1}));
+  }
+});
+
+for (const targetEnabled of [true, false]) {
+  for (const scheduled of [false, true]) {
+    test(`enforcement toggle ${targetEnabled ? 'ON' : 'OFF'} ${scheduled ? 'scheduled' : 'immediate'} is audited and follows server time`, {skip: !enabled}, async () => {
+      const f = await fixture({enforce: !targetEnabled, mode: 'all_approval_required'});
+      const revision = targetEnabled ? 0 : 1;
+      const clock = Date.now(), at = scheduled ? clock + 1000 : clock;
+      if (!targetEnabled) await f.communityRef.update({visitorPolicyRolloutReady: false});
+      const result = await updateCommunityVisitorPolicyCore({db, auth: auth(f.admin), now: () => clock,
+        data: {communityId: f.communityId, policy: policy({enabled: targetEnabled, approvalMode: 'all_approval_required'}),
+          expectedRevision: revision, ...(scheduled ? {effectiveAt: at} : {})}});
+      assert.equal(result.enabled, targetEnabled);
+      assert.equal(result.scheduled, scheduled);
+      const load = time => getCommunityVisitorPolicyCore({db, auth: auth(f.admin), now: () => time, data: {communityId: f.communityId}});
+      if (scheduled) assert.equal((await load(at - 1)).policy.enabled, !targetEnabled);
+      assert.equal((await load(at)).policy.enabled, targetEnabled);
+      assert.equal((await load(at + 1)).policy.enabled, targetEnabled);
+      const audits = await db.collection('auditLogs').where('targetId', '==', f.communityId).get();
+      const event = audits.docs.map(doc => doc.data()).find(doc => doc.after?.revision === revision + 1);
+      assert.equal(event.actorUid, f.admin);
+      assert.equal(event.after.enabled, targetEnabled);
+      await assert.rejects(updateCommunityVisitorPolicyCore({db, auth: auth(f.admin), now: () => clock,
+        data: {communityId: f.communityId, policy: policy({enabled: targetEnabled}), expectedRevision: revision}}), {code: 'aborted'});
+    });
+  }
+}
+
+test('enforcement toggle OFF restores baseline for pending visits without reviving invalid credentials', {skip: !enabled}, async () => {
+  const f = await fixture({mode: 'all_approval_required'});
+  const pending = await f.create();
+  const secret = await f.secret(pending.visitorId);
+  await assertAccessDenied(accessAt(f, pending.visitorId, secret, Date.now()), 'failed-precondition');
+  await f.communityRef.update({visitorPolicyRolloutReady: false});
+  await f.configure(policy({enabled: false, approvalMode: 'all_approval_required'}), 1);
+  assert.equal((await f.retrieve(pending.visitorId)).qrToken, secret.qrToken);
+  assert.equal((await f.verify({manualCode: secret.manualCode})).currentStatus, 'inside');
+  const expired = await f.create();
+  await db.collection('visitors').doc(expired.visitorId).update({expectedArrival: Timestamp.fromMillis(Date.now() - 3 * 86400000)});
+  await assertAccessDenied(accessAt(f, expired.visitorId, await f.secret(expired.visitorId), Date.now()));
+  await assert.rejects(f.verify({qrToken: 'Z'.repeat(43)}));
 });

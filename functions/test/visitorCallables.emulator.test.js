@@ -83,8 +83,8 @@ test("visitor callable wrappers enforce request contracts through Auth, Function
   const foreignFlatId = `foreign-flat-${suffix}`;
 
   await Promise.all([
-    db.collection("communities").doc(communityId).set({isActive: true}),
-    db.collection("communities").doc(foreignCommunityId).set({isActive: true}),
+    db.collection("communities").doc(communityId).set({isActive: true, timeZone: "Asia/Manila"}),
+    db.collection("communities").doc(foreignCommunityId).set({isActive: true, timeZone: "Asia/Manila"}),
     db.collection("users").doc(residentUid).set({
       uid: residentUid, role: "resident", phoneNumber: resident.phoneNumber, approvalStatus: "approved",
       status: "active", isActive: true, residentType: "owner", communityId, flatId, name: "Synthetic Host",
@@ -225,7 +225,7 @@ test("invalid HMAC secret produces a controlled callable failure without creatin
   const resident = await phoneAuth("+639171234567");
   const flatId = `secret-flat-${suffix}`;
   await Promise.all([
-    db.collection("communities").doc(communityId).set({isActive: true}),
+    db.collection("communities").doc(communityId).set({isActive: true, timeZone: "Asia/Manila"}),
     db.collection("users").doc(resident.localId).set({
       uid: resident.localId, role: "resident", phoneNumber: resident.phoneNumber,
       approvalStatus: "approved", status: "active", isActive: true, residentType: "owner",

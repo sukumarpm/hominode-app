@@ -8,9 +8,13 @@ import 'package:permission_handler/permission_handler.dart';
 import '../utils/app_colors.dart';
 import '../services/visitor_service.dart';
 import '../utils/visitor_qr_payload.dart';
+import '../models/visitor_verification_receipt.dart';
+import '../models/visitor_model.dart';
+import '../widgets/visitor_verification_receipt_dialog.dart';
 
 class QRScannerScreen extends StatefulWidget {
-  const QRScannerScreen({super.key});
+  const QRScannerScreen({super.key, this.visitorWorkflow});
+  final VisitorWorkflow? visitorWorkflow;
 
   @override
   State<QRScannerScreen> createState() => _QRScannerScreenState();
@@ -18,6 +22,8 @@ class QRScannerScreen extends StatefulWidget {
 
 class _QRScannerScreenState extends State<QRScannerScreen>
     with WidgetsBindingObserver {
+  late final VisitorWorkflow _visitorService =
+      widget.visitorWorkflow ?? VisitorService();
   late final MobileScannerController cameraController = MobileScannerController(
     autoStart: false,
     detectionSpeed: DetectionSpeed.noDuplicates,
@@ -175,13 +181,30 @@ class _QRScannerScreenState extends State<QRScannerScreen>
   }
 
   Future<void> _verifyQrCredential(String token, {String? operationId}) async {
-    final attemptId = operationId ?? VisitorService().newOperationId();
+    final attemptId = operationId ?? _visitorService.newOperationId();
     try {
-      final result = await VisitorService().verifyVisitorCredential(
+      final result = await _visitorService.verifyVisitorCredential(
         qrToken: token,
         operationId: attemptId,
       );
       if (!mounted) return;
+      final receipt = VisitorVerificationReceipt(result);
+      if (!receipt.isFreshEntry) {
+        unawaited(
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => VisitorVerificationReceiptDialog(
+              receipt: receipt,
+              onDone: () {
+                Navigator.pop(dialogContext);
+                _resetScanner();
+              },
+            ),
+          ),
+        );
+        return;
+      }
       _showSuccessDialog(result, isCheckIn: true);
     } on FirebaseFunctionsException catch (error) {
       debugPrint('Visitor credential verification failed: ${error.code}');
@@ -259,7 +282,7 @@ class _QRScannerScreenState extends State<QRScannerScreen>
       barrierDismissible: false,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Container(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -312,6 +335,12 @@ class _QRScannerScreenState extends State<QRScannerScreen>
                     _buildInfoRow(Icons.phone, 'Phone', phone),
                     const SizedBox(height: 12),
                     _buildInfoRow(Icons.description, 'Purpose', purpose),
+                    const SizedBox(height: 12),
+                    _buildInfoRow(
+                      Icons.pets,
+                      'Pet declared',
+                      VisitorModel.describePetDeclaration(data['bringingPet']),
+                    ),
                   ],
                 ),
               ),
@@ -337,14 +366,16 @@ class _QRScannerScreenState extends State<QRScannerScreen>
                       size: 20,
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      isCheckIn
-                          ? 'Entry Time: ${_formatTime(DateTime.now())}'
-                          : 'Exit Time: ${_formatTime(DateTime.now())}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF16A34A),
+                    Flexible(
+                      child: Text(
+                        isCheckIn
+                            ? 'Server processing time (UTC): ${VisitorVerificationReceipt(data).processedTime}'
+                            : 'Exit recorded by the server',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF16A34A),
+                        ),
                       ),
                     ),
                   ],
@@ -440,15 +471,6 @@ class _QRScannerScreenState extends State<QRScannerScreen>
       flashOn = !flashOn;
     });
     cameraController.toggleTorch();
-  }
-
-  String _formatTime(DateTime dateTime) {
-    final hour = dateTime.hour > 12
-        ? dateTime.hour - 12
-        : (dateTime.hour == 0 ? 12 : dateTime.hour);
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $period';
   }
 
   @override

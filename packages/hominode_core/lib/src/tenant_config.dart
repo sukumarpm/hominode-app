@@ -9,6 +9,7 @@ class TenantConfig {
     this.logoUrl,
     required this.brandName,
     this.primaryColor,
+    this.timeZone,
   });
   static const defaultDatabaseId = '(default)';
   final String communityId;
@@ -20,6 +21,7 @@ class TenantConfig {
   final String? logoUrl;
   final String brandName;
   final String? primaryColor;
+  final String? timeZone;
 
   factory TenantConfig.fromMap(String documentId, Map<String, dynamic> data) {
     final name = _string(data['name']);
@@ -37,6 +39,7 @@ class TenantConfig {
       logoUrl: _nullableString(data['logoUrl']),
       brandName: brandName.isEmpty ? name : brandName,
       primaryColor: _nullableString(data['primaryColor']),
+      timeZone: _nullableString(data['timeZone']),
     );
   }
 

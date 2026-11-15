@@ -5,6 +5,7 @@ import 'package:hominode_notifications/hominode_notifications.dart';
 import 'package:hominode_sos/hominode_sos.dart';
 
 import '../notifications_screen.dart';
+import 'admin_chat_notification_navigation.dart';
 import 'admin_tenant_context.dart';
 
 final adminNotificationNavigatorKey = GlobalKey<NavigatorState>();
@@ -80,6 +81,19 @@ class AdminNotificationRouter {
         ),
       );
       return;
+    }
+
+    if (notification['eventType'] == 'admin_chat_message' &&
+        notification['data'] is Map) {
+      final data = notification['data'] as Map;
+      final chatId = data['chatId'];
+      if (chatId is String) {
+        final context = navigator.context;
+        final opened = await AdminChatNotificationNavigation.open(
+          context, chatId: chatId, communityId: payload.communityId,
+        );
+        if (opened) return;
+      }
     }
 
     await navigator.push(

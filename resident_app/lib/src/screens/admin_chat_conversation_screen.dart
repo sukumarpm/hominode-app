@@ -464,20 +464,28 @@ class _AdminChatConversationScreenState
       _isSending = true;
     });
 
-    _messageController.clear();
-
     try {
-      await _adminChatService.sendMessage(
+      final messageId = await _adminChatService.sendMessage(
         chatId: widget.chat.id,
         text: text,
         isQuery: false,
       );
+      if (messageId == null) throw StateError('Unable to send message.');
+      if (mounted && _messageController.text.trim() == text) {
+        _messageController.clear();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to send message: $e'),
-            backgroundColor: Colors.red,
+            content: Text(
+              e.toString().contains('Please revise your message')
+                  ? 'Message not sent. This message may not follow our community chat guidelines. Please edit it and try again.'
+                  : 'Unable to send your message. Please try again.',
+            ),
+            backgroundColor: Colors.deepOrange.shade700,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
           ),
         );
       }

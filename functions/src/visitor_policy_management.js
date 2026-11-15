@@ -188,6 +188,15 @@ async function updateCommunityVisitorPolicyCore({
     );
     const latestRevision = visitorPolicyWriteRevision(actor.community);
 
+    // Release safety interlock: never activate strict enforcement
+    // before the community has completed client and gate validation.
+    if (input.enabled && actor.community.visitorPolicyRolloutReady !== true) {
+      fail(
+        "failed-precondition",
+        "Visitor policy enforcement is not ready for this community.",
+      );
+    }
+
     if (latestRevision !== expected)
       fail("aborted", "Visitor policy changed. Reload before saving.");
     // The timeZone is community-owned; an Admin may not reinterpret schedules
@@ -280,7 +289,7 @@ async function updateCommunityVisitorPolicyCore({
   });
 }
 
-async function decideVisitorInvitationCore({ db, auth, data }) {
+async function decideVisitorInvitationCore({ db, auth, data, now = Date.now }) {
   keys(data, [
     "communityId",
     "visitorId",
@@ -325,7 +334,7 @@ async function decideVisitorInvitationCore({ db, auth, data }) {
     if (
       ["rejected", "revoked"].includes(before) ||
       (data.action === "approve" &&
-        !["pending_admin", "auto_authorized"].includes(before)) ||
+        !["pending_admin", "auto_authorized", "admin_authorized"].includes(before)) ||
       (data.action === "revoke" &&
         !["auto_authorized", "admin_authorized"].includes(before))
     ) {
@@ -336,13 +345,28 @@ async function decideVisitorInvitationCore({ db, auth, data }) {
       reject: "rejected",
       revoke: "revoked",
     }[data.action];
-    if (data.action === "approve")
-      await assertVisitorHost({
+    let approvalPolicy, approvalTime;
+    if (data.action === "approve") {
+      const profile = await assertVisitorHost({
         db,
         read: (ref) => tx.get(ref),
         visitor: { ...visitor, authorizationManaged: true },
         community: actor.community,
       });
+      const arrival = millis(visitor.expectedArrival ?? visitor.expectedTime);
+      if (arrival == null) {
+        fail("failed-precondition", "This invitation has no valid arrival time.");
+      }
+      approvalTime = now();
+      approvalPolicy = invitationDecision({
+        community: actor.community, profile,
+        arrival,
+        pet: bringingPet(visitor.bringingPet), now: approvalTime,
+      }).snapshot;
+      if (approvalPolicy.enforced && (!Number.isSafeInteger(approvalPolicy.revision) || approvalPolicy.revision < 1)) {
+        fail("failed-precondition", "Save a valid community policy before approving this invitation.");
+      }
+    }
     const patch = {
       authorizationManaged: true,
       authorizationState: state,
@@ -362,7 +386,10 @@ async function decideVisitorInvitationCore({ db, auth, data }) {
     if (data.action === "approve")
       Object.assign(patch, {
         approvedBy: actor.uid,
-        approvedAt: FieldValue.serverTimestamp(),
+        // Decision time is trusted server time, also used to resolve schedules
+        // and emergency boundaries. Clients cannot supply this clock.
+        approvedAt: Timestamp.fromMillis(approvalTime),
+        authorizationPolicyRevision: approvalPolicy.revision,
       });
     if (data.action === "reject")
       Object.assign(patch, {
@@ -385,7 +412,7 @@ async function decideVisitorInvitationCore({ db, auth, data }) {
         reason: why,
         revision: expected + 1,
         effectivePolicy:
-          visitor.visitorPolicySnapshot?.approvalMode || "resident_authorized",
+          approvalPolicy?.approvalMode || "unchanged",
       },
     );
     return {
@@ -533,6 +560,7 @@ async function mutateResidentVisitorCore({
         isApproved: false,
         approvedBy: null,
         approvedAt: null,
+        authorizationPolicyRevision: null,
         expectedArrival: Timestamp.fromMillis(arrival),
         bringingPet: pet,
         credentialValidFrom: from,

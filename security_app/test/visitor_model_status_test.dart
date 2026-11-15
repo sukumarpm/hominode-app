@@ -3,6 +3,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:security_app/models/visitor_model.dart';
 
 void main() {
+  for (final declaration in [true, false, null, 'true']) {
+    test('preserves only explicit boolean pet declarations ($declaration)', () {
+      final data = <String, dynamic>{
+        if (declaration != null) 'bringingPet': declaration,
+      };
+      final expected = declaration is bool ? declaration : null;
+      for (final visitor in [
+        VisitorModel.fromSanitizedMap(data),
+        VisitorModel.fromFirestore('visitor-1', data),
+      ]) {
+        expect(visitor.bringingPet, expected);
+        expect(
+          visitor.petDeclaration,
+          expected == null
+              ? 'Not recorded'
+              : expected
+              ? 'Yes'
+              : 'No',
+        );
+        if (expected == null) {
+          expect(visitor.toMap().containsKey('bringingPet'), isFalse);
+        } else {
+          expect(visitor.toMap()['bringingPet'], expected);
+        }
+      }
+    });
+  }
+
   test('inside status is preserved when Admin approval is false', () {
     final visitor = VisitorModel.fromFirestore('visitor-1', {
       'visitorName': 'Guest',

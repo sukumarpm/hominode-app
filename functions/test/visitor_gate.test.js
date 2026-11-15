@@ -6,7 +6,7 @@ const now = Date.UTC(2026, 9, 10, 4, 0);
 const qrToken = 'opaque-random-visitor-qr-token-1234567890';
 const auth = {uid: 'security-1', token: {phone_number: '+639170000000', firebase: {sign_in_provider: 'phone'}}};
 const visitor = () => ({communityId: 'community-a', hostUserId: 'resident-a', hostName: 'Resident A',
-  visitorName: 'Guest A', flatLabel: 'A-101', phoneNumber: '+639171111111', purpose: 'Visit',
+  visitorName: 'Guest A', flatLabel: 'A-101', phoneNumber: '+639171111111', purpose: 'Visit', flatId: 'flat-1',
   qrToken, expectedArrival: new Date(now), status: 'expected', isApproved: false,
   actualArrival: null, departure: null});
 
@@ -16,6 +16,8 @@ function fakeDb(visitorData = visitor(), communityId = 'community-a') {
     securityStaff: {'security-1': {uid: 'security-1', phoneNumber: auth.token.phone_number,
       role: 'security', isActive: true, communityId}},
     communities: {[communityId]: {isActive: true}},
+    users: {'resident-a': {uid: 'resident-a', role: 'resident', approvalStatus: 'approved', isActive: true, communityId, flatId: 'flat-1', residentType: 'owner'}},
+    flats: {'flat-1': {communityId, status: 'occupied', residentUserId: 'resident-a'}},
   };
   const document = (collection, id) => ({
     __collection: collection,

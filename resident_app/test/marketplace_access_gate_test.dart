@@ -134,6 +134,66 @@ void main() {
     expect(find.text('Authorized content'), findsOneWidget);
   });
 
+  for (final fail in [false, true]) {
+    testWidgets(
+      'retained lifecycle content is hidden while checking and disposed on ${fail ? 'failure' : 'downgrade'}',
+      (tester) async {
+        final pending = Completer<HominodeEntitlement?>();
+        var calls = 0;
+        await tester.pumpWidget(
+          host(
+            MarketplaceAccessGate(
+              preserveContentOnLifecycleChange: true,
+              loader: () => ++calls == 1
+                  ? Future.value(entitlement('plus'))
+                  : pending.future,
+              builder: (_) => const Text('Authorized content'),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        // Rendering is suspended while paused; the existing subtree survives.
+        expect(
+          find.text('Authorized content', skipOffstage: false),
+          findsOneWidget,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(find.text('Authorized content'), findsNothing);
+        if (fail) {
+          pending.completeError(StateError('offline'));
+        } else {
+          pending.complete(entitlement('essential'));
+        }
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Authorized content', skipOffstage: false),
+          findsNothing,
+        );
+        expect(
+          find.text(
+            fail
+                ? 'Marketplace access could not be verified.'
+                : 'Marketplace requires Plus or Pro.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+  }
+
   testWidgets('expired Pro cannot mount content', (tester) async {
     await tester.pumpWidget(
       host(

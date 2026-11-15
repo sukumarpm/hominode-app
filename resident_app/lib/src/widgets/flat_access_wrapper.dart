@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
@@ -9,8 +11,14 @@ import '../services/flat_access_control_service.dart';
 class FlatAccessWrapper extends StatefulWidget {
   final Widget child;
   final Stream<AccessControlResult>? accessStream;
+  final Duration verificationTimeout;
 
-  const FlatAccessWrapper({super.key, required this.child, this.accessStream});
+  const FlatAccessWrapper({
+    super.key,
+    required this.child,
+    this.accessStream,
+    this.verificationTimeout = const Duration(seconds: 15),
+  });
 
   @override
   State<FlatAccessWrapper> createState() => _FlatAccessWrapperState();
@@ -18,6 +26,9 @@ class FlatAccessWrapper extends StatefulWidget {
 
 class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
   late Stream<AccessControlResult> _accessStream;
+  bool _identityRedirectScheduled = false;
+  Timer? _verificationTimer;
+  bool _verificationTimedOut = false;
 
   @override
   void initState() {
@@ -31,10 +42,23 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
   void didUpdateWidget(covariant FlatAccessWrapper oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.accessStream != widget.accessStream) {
+      _resetVerification();
       _accessStream =
           widget.accessStream ??
           FlatAccessControlService.instance.streamFlatAccess();
     }
+  }
+
+  void _resetVerification() {
+    _verificationTimer?.cancel();
+    _verificationTimer = null;
+    _verificationTimedOut = false;
+  }
+
+  @override
+  void dispose() {
+    _verificationTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -42,7 +66,13 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
     return StreamBuilder<AccessControlResult>(
       stream: _accessStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (!snapshot.hasError &&
+            (snapshot.connectionState == ConnectionState.waiting ||
+                snapshot.data?.state == FlatAccessState.verifying)) {
+          _verificationTimer ??= Timer(widget.verificationTimeout, () {
+            if (mounted) setState(() => _verificationTimedOut = true);
+          });
+          if (_verificationTimedOut) return _buildTransientError();
           return Scaffold(
             backgroundColor: const Color(0xFF06182B),
             body: Stack(
@@ -82,9 +112,14 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
           );
         }
 
+        _resetVerification();
         final result = snapshot.data;
         if (snapshot.hasError) {
-          return _buildTransientError();
+          return FlatAccessControlService.failureResult(
+                snapshot.error!,
+              ).isTransient
+              ? _buildTransientError()
+              : _buildMembershipError();
         }
 
         if (result?.isTransient == true) {
@@ -92,22 +127,27 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
         }
 
         if (result == null || result.state == FlatAccessState.error) {
-          return Scaffold(
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  'community_resolution_error'.tr(),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-          );
+          return _buildMembershipError();
         }
         if (result.state == FlatAccessState.unauthenticated) {
           return const SimpleLoginScreen();
         }
         if (result.state == FlatAccessState.denied) {
+          if (result.identityVerificationRequired) {
+            if (!_identityRedirectScheduled) {
+              _identityRedirectScheduled = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                Navigator.of(context).pushNamedAndRemoveUntil(
+                  '/resident-identity-verification',
+                  (_) => false,
+                );
+              });
+            }
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
           return AccessBlockedScreen(
             message:
                 result.message ??
@@ -118,6 +158,18 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
       },
     );
   }
+
+  Widget _buildMembershipError() => Scaffold(
+    body: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          'community_resolution_error'.tr(),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    ),
+  );
 
   Widget _buildTransientError() => Scaffold(
     body: Center(
@@ -141,6 +193,7 @@ class _FlatAccessWrapperState extends State<FlatAccessWrapper> {
 
   void _retryAccessCheck() {
     setState(() {
+      _resetVerification();
       _accessStream =
           widget.accessStream ??
           FlatAccessControlService.instance.streamFlatAccess();

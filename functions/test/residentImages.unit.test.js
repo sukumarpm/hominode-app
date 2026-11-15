@@ -150,6 +150,7 @@ test("owned drafts publish Wall/Marketplace content and images atomically with c
     );
     assert.equal(record.managedImageAssets[0].assetId, asset.assetId);
     if (feature === "community_wall") {
+      assert.equal(record.moderationVersion, 1);
       assert.equal(record.flat, "Garden-07");
       assert.equal(record.flatLabel, "Garden-07");
       assert.equal(record.flatId, null);
@@ -522,6 +523,45 @@ test("content moderation blocks a draft publication without creating a partial r
     "invalid-argument",
   );
   assert.equal(s.db.values.has(`posts/${ticket.resourceId}`), false);
+});
+test("content moderation preserves harmless substrings for wall and marketplace", async () => {
+  for (const feature of ['community_wall', 'marketplace']) {
+    const s = setup(), ticket = await draft(call(s, {feature}));
+    const content = feature === 'community_wall' ? {content: 'White Essex sign'} : {title: 'White Essex chair', description: 'Bright', price: 100, category: 'Furniture', condition: 'Good'};
+    const result = await commit(call(s, {feature, resourceId: ticket.resourceId, operationId: `safe-${feature}`, expectedRevision: 0, references: [], content}));
+    assert.equal(result.resourceId, ticket.resourceId);
+  }
+});
+test("content moderation hides managed wall images from residents", async () => {
+  const s = setup(), asset = await ready(s, 'community_wall');
+  await save(s, 'community_wall', asset);
+  assert.equal((await read(call(s, {assetId: asset.assetId}, 'other'))).size, jpeg.length);
+  s.db.values.get('posts/p').moderationState = 'hidden';
+  await deny(read(call(s, {assetId: asset.assetId}, 'other')));
+  assert.equal((await read(call(s, {assetId: asset.assetId}, 'a'))).size, jpeg.length);
+});
+test("image authorization requires explicit verified tenant identity for commit and read", async () => {
+  const s = setup();
+  const profile = s.db.values.get("users/r");
+  Object.assign(profile, {residentType: "tenant", ownershipType: "tenant", identityVerified: true, identityVerificationStatus: "verified"});
+  const ticket = await draft(call(s, {feature: "community_wall"}));
+  const asset = await ready(s, "community_wall", ticket.resourceId);
+  const payload = {feature: "community_wall", resourceId: ticket.resourceId, operationId: "verified-save", expectedRevision: 0, references: [reference(asset.assetId)], content: {content: "Hello"}};
+  for (const status of [undefined, "unknown", "pending", "rejected"]) {
+    profile.identityVerificationStatus = status;
+    await deny(commit(call(s, payload)));
+  }
+  profile.identityVerificationStatus = "verified";
+  await commit(call(s, payload));
+  assert.equal((await read(call(s, {assetId: asset.assetId}))).size, jpeg.length);
+  for (const status of [undefined, "unknown", "pending", "rejected"]) {
+    profile.identityVerificationStatus = status;
+    await deny(read(call(s, {assetId: asset.assetId})));
+  }
+  profile.identityVerificationStatus = "verified";
+  s.db.values.get(`posts/${ticket.resourceId}`).moderationState = "hidden";
+  await deny(read(call(s, {assetId: asset.assetId})));
+  assert.equal((await read(call(s, {assetId: asset.assetId}, "a"))).size, jpeg.length);
 });
 test("transient retirement failure retries safely without touching an attached replacement", async () => {
   const s = setup(),

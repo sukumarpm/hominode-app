@@ -10,13 +10,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/src/services/visitor_firestore_service.dart';
 import 'package:resident_app/src/services/visitor_qr_contract.dart';
 
+const _qrToken = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmno12';
+
 void main() {
   final now = DateTime.utc(2026, 10, 11, 8);
 
   Map<String, dynamic> visitor({
     String status = 'expected',
     bool isApproved = false,
-    Object? qrToken = 'opaque-token-123',
+    Object? qrToken = _qrToken,
     Object? actualArrival,
     Object? departure,
     Object? expectedArrival,
@@ -40,7 +42,7 @@ void main() {
       );
       expect(
         VisitorQrContract.statusLabel(visitor(status: 'rejected')),
-        'Rejected by Admin',
+        'Rejected',
       );
       expect(
         VisitorQrContract.statusLabel(
@@ -99,7 +101,7 @@ void main() {
       expect(jsonDecode(first!), <String, dynamic>{
         'type': 'hominode_visitor',
         'version': 1,
-        'token': 'opaque-token-123',
+        'token': _qrToken,
       });
       expect(
         VisitorQrContract.payloadFor(
@@ -158,36 +160,40 @@ void main() {
       );
     });
 
-    test('uses legacy document ID only when qrToken is absent', () {
-      final missingTokenRecord = visitor();
-      missingTokenRecord.remove('qrToken');
-      final payload = VisitorQrContract.payloadFor(
-        missingTokenRecord,
-        visitorId: 'legacy-visitor',
-        now: now,
-      );
+    test(
+      'never generates a document-ID credential when the private token is absent',
+      () {
+        final missingTokenRecord = visitor();
+        missingTokenRecord.remove('qrToken');
+        final payload = VisitorQrContract.payloadFor(
+          missingTokenRecord,
+          visitorId: 'legacy-visitor',
+          now: now,
+        );
 
-      expect(jsonDecode(payload!), {
-        'visitorId': 'legacy-visitor',
-        'legacy': true,
-      });
-      expect(
-        VisitorQrContract.payloadFor(
-          visitor(qrToken: ''),
-          visitorId: 'visitor-1',
-          now: now,
-        ),
-        isNull,
-      );
-      expect(
-        VisitorQrContract.payloadFor(
-          visitor(qrToken: 'bad token'),
-          visitorId: 'visitor-1',
-          now: now,
-        ),
-        isNull,
-      );
-    });
+        expect(payload, isNull);
+        expect(
+          VisitorQrContract.canDisplay(missingTokenRecord, now: now),
+          isTrue,
+        );
+        expect(
+          VisitorQrContract.payloadFor(
+            visitor(qrToken: ''),
+            visitorId: 'visitor-1',
+            now: now,
+          ),
+          isNull,
+        );
+        expect(
+          VisitorQrContract.payloadFor(
+            visitor(qrToken: 'bad token'),
+            visitorId: 'visitor-1',
+            now: now,
+          ),
+          isNull,
+        );
+      },
+    );
 
     test('diagnostic message does not include token or visitor details', () {
       final record = {
@@ -231,6 +237,7 @@ void main() {
         purpose: 'Visit',
         expectedDate: now,
         expectedTime: now,
+        timeZone: 'Asia/Manila',
       );
 
       expect(result.success, isTrue);
@@ -242,7 +249,7 @@ void main() {
       expect(request, isNot(contains('visitorPassCode')));
       expect(request, isNot(contains('communityId')));
       expect(request, isNot(contains('flatId')));
-      final saved = visitor(qrToken: 'server-issued-persisted-token');
+      final saved = visitor(qrToken: _qrToken);
       expect(
         VisitorQrContract.payloadFor(
           saved,

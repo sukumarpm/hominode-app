@@ -1,3 +1,4 @@
+import 'package:hominode_time/community_time.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -181,6 +182,7 @@ class _AdminVisitorsPageState extends State<AdminVisitorsPage> {
                         if (constraints.maxWidth >= 980) {
                           return _VisitorsTable(
                             visitors: filteredVisitors,
+                            timeZone: widget.session.activeTenant?.timeZone,
                             onNavigate: widget.onNavigate,
                           );
                         }
@@ -194,6 +196,7 @@ class _AdminVisitorsPageState extends State<AdminVisitorsPage> {
                             ) ...[
                               _VisitorMobileCard(
                                 document: filteredVisitors[i],
+                                timeZone: widget.session.activeTenant?.timeZone,
                                 onNavigate: widget.onNavigate,
                               ),
                               if (i != filteredVisitors.length - 1)
@@ -510,7 +513,12 @@ class _VisitorToolbar extends StatelessWidget {
 //
 
 class _VisitorsTable extends StatelessWidget {
-  const _VisitorsTable({required this.visitors, required this.onNavigate});
+  const _VisitorsTable({
+    required this.visitors,
+    required this.onNavigate,
+    this.timeZone,
+  });
+  final String? timeZone;
 
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> visitors;
   final ValueChanged<String> onNavigate;
@@ -559,7 +567,7 @@ class _VisitorsTable extends StatelessWidget {
         _LocationCell(building: _building(data), flat: _flat(data)),
         _PurposeCell(
           purpose: _visitorPurpose(data),
-          time: _visitorDateLabel(data),
+          time: _visitorDateLabel(data, timeZone),
         ),
         _VisitorStatusCell(status: _visitorStatus(data)),
         _VisitorActionsCell(
@@ -820,7 +828,12 @@ class _VisitorActionsCell extends StatelessWidget {
 //
 
 class _VisitorMobileCard extends StatelessWidget {
-  const _VisitorMobileCard({required this.document, required this.onNavigate});
+  const _VisitorMobileCard({
+    required this.document,
+    required this.onNavigate,
+    this.timeZone,
+  });
+  final String? timeZone;
 
   final QueryDocumentSnapshot<Map<String, dynamic>> document;
   final ValueChanged<String> onNavigate;
@@ -837,7 +850,7 @@ class _VisitorMobileCard extends StatelessWidget {
     final flat = _flat(data);
     final purpose = _visitorPurpose(data);
     final status = _visitorStatus(data);
-    final time = _visitorDateLabel(data);
+    final time = _visitorDateLabel(data, timeZone);
 
     final initial = name.trim().isEmpty
         ? '?'
@@ -1194,6 +1207,8 @@ String _visitorStatus(Map<String, dynamic> data) {
 
 DateTime _visitorSortDate(Map<String, dynamic> data) {
   for (final key in const [
+    'expectedArrival',
+    'expectedTime',
     'visitDate',
     'visitAt',
     'expectedAt',
@@ -1222,30 +1237,11 @@ DateTime _visitorSortDate(Map<String, dynamic> data) {
   return DateTime.fromMillisecondsSinceEpoch(0);
 }
 
-String _visitorDateLabel(Map<String, dynamic> data) {
+String _visitorDateLabel(Map<String, dynamic> data, String? timeZone) {
   final date = _visitorSortDate(data);
-
-  if (date.millisecondsSinceEpoch == 0) {
-    return '';
-  }
-
-  final local = date.toLocal();
-
-  final day = local.day.toString().padLeft(2, '0');
-  final month = local.month.toString().padLeft(2, '0');
-  final year = local.year.toString();
-
-  var hour = local.hour;
-  final minute = local.minute.toString().padLeft(2, '0');
-  final period = hour >= 12 ? 'PM' : 'AM';
-
-  if (hour == 0) {
-    hour = 12;
-  } else if (hour > 12) {
-    hour -= 12;
-  }
-
-  return '$day/$month/$year · $hour:$minute $period';
+  return date.millisecondsSinceEpoch == 0
+      ? ''
+      : CommunityTime.format(date, timeZone);
 }
 
 String _titleCase(String value) {

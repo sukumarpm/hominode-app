@@ -4,9 +4,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import '../models/tenant_profile.dart';
+import 'resident_access_policy.dart';
 
 /// Access Control Result
-enum FlatAccessState { granted, unauthenticated, denied, error }
+enum FlatAccessState { granted, unauthenticated, denied, error, verifying }
 
 class AccessControlResult {
   final FlatAccessState state;
@@ -15,6 +17,7 @@ class AccessControlResult {
   final String? message;
   final Map<String, dynamic>? userData;
   final bool isTransient;
+  final bool identityVerificationRequired;
 
   const AccessControlResult({
     required this.state,
@@ -23,6 +26,7 @@ class AccessControlResult {
     this.message,
     this.userData,
     this.isTransient = false,
+    this.identityVerificationRequired = false,
   });
 
   bool get hasAccess => state == FlatAccessState.granted;
@@ -42,6 +46,9 @@ class AccessControlResult {
     );
   }
 
+  factory AccessControlResult.verifying() =>
+      const AccessControlResult(state: FlatAccessState.verifying);
+
   factory AccessControlResult.unauthenticated() {
     return const AccessControlResult(
       state: FlatAccessState.unauthenticated,
@@ -49,8 +56,15 @@ class AccessControlResult {
     );
   }
 
-  factory AccessControlResult.denied({required String message}) {
-    return AccessControlResult(state: FlatAccessState.denied, message: message);
+  factory AccessControlResult.denied({
+    required String message,
+    bool identityVerificationRequired = false,
+  }) {
+    return AccessControlResult(
+      state: FlatAccessState.denied,
+      message: message,
+      identityVerificationRequired: identityVerificationRequired,
+    );
   }
 
   factory AccessControlResult.error({
@@ -103,7 +117,10 @@ class FlatAccessControlService {
         return _cachedResult!;
       }
 
-      final userDoc = await _firestore.collection('users').doc(userId).get();
+      final userDoc = await _firestore
+          .collection('users')
+          .doc(userId)
+          .get(const GetOptions(source: Source.server));
 
       if (!userDoc.exists) {
         return AccessControlResult.error(
@@ -120,10 +137,7 @@ class FlatAccessControlService {
       return result;
     } catch (error) {
       _logSafeFailure('flat-access/profile-read', error);
-      return AccessControlResult.error(
-        message: 'Error checking access. Please try again.',
-        isTransient: true,
-      );
+      return failureResult(error);
     }
   }
 
@@ -136,44 +150,60 @@ class FlatAccessControlService {
     }
     final userId = firebaseUser.uid;
     try {
-      yield* _firestore.collection('users').doc(userId).snapshots().map((
-        snapshot,
-      ) {
-        try {
-          if (!snapshot.exists) {
-            return AccessControlResult.error(
-              message: 'The approved resident profile is no longer available.',
-            );
-          }
+      yield* _firestore
+          .collection('users')
+          .doc(userId)
+          .snapshots(includeMetadataChanges: true)
+          .map((snapshot) {
+            try {
+              if (snapshot.metadata.isFromCache ||
+                  snapshot.metadata.hasPendingWrites) {
+                return AccessControlResult.verifying();
+              }
+              if (!snapshot.exists) {
+                return AccessControlResult.error(
+                  message:
+                      'The approved resident profile is no longer available.',
+                );
+              }
 
-          final userData = snapshot.data();
-          if (userData == null) {
-            return AccessControlResult.error(
-              message: 'The approved resident profile could not be read.',
-            );
-          }
+              final userData = snapshot.data();
+              if (userData == null) {
+                return AccessControlResult.error(
+                  message: 'The approved resident profile could not be read.',
+                );
+              }
 
-          final result = evaluateApprovedProfile(userData);
+              final result = evaluateApprovedProfile(userData);
 
-          // Update cache
-          _cachedResult = result;
-          _cachedUserId = userId;
+              // Update cache
+              _cachedResult = result;
+              _cachedUserId = userId;
 
-          return result;
-        } catch (error) {
-          _logSafeFailure('flat-access/profile-snapshot', error);
-          return AccessControlResult.error(
-            message: 'Error processing user data. Please try again.',
-          );
-        }
-      });
+              return result;
+            } catch (error) {
+              _logSafeFailure('flat-access/profile-snapshot', error);
+              return AccessControlResult.error(
+                message: 'Error processing user data. Please try again.',
+              );
+            }
+          });
     } catch (error) {
       _logSafeFailure('flat-access/profile-stream', error);
-      yield AccessControlResult.error(
-        message: 'Error checking access. Please try again.',
-        isTransient: true,
+      yield failureResult(error);
+    }
+  }
+
+  static AccessControlResult failureResult(Object error) {
+    if (error is FirebaseException && error.code == 'permission-denied') {
+      return AccessControlResult.error(
+        message: 'Resident access is not authorized.',
       );
     }
+    return AccessControlResult.error(
+      message: 'Error checking access. Please try again.',
+      isTransient: true,
+    );
   }
 
   void _logSafeFailure(String operation, Object error) {
@@ -194,6 +224,21 @@ class FlatAccessControlService {
     if (userData['approvalStatus'] != 'approved') {
       return AccessControlResult.denied(
         message: 'Your resident registration is not currently approved.',
+      );
+    }
+    final profile = TenantProfile.fromMap('', userData);
+    if (profile.residentType == null) {
+      return AccessControlResult.denied(
+        message:
+            'Your owner or tenant classification requires Community Admin review.',
+      );
+    }
+    if (profile.residentType == 'tenant' &&
+        !ResidentAccessPolicy.identitySatisfied(profile)) {
+      return AccessControlResult.denied(
+        message:
+            'Tenant identity verification is required before resident access.',
+        identityVerificationRequired: true,
       );
     }
     if (userData['isActive'] != true || userData['status'] != 'active') {

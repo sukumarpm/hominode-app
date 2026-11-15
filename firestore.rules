@@ -1230,11 +1230,24 @@ function securityCanAccessCommunity(communityId) {
       return adminCanAccessCommunity(communityId)
         && request.resource.data.communityId == communityId
         && visitorHostMatches(resource.data)
+        && (visitorLegacyWritesAllowed()
+          || (visitorState(resource.data) == 'inside'
+            && request.resource.data.status == 'completed'))
         && visitorTransitionIsSafe();
     }
 
+    function visitorLegacyWritesAllowed() {
+      let community = get(/databases/$(database)/documents/communities/$(resource.data.communityId)).data;
+      let scheduled = community.get('scheduledVisitorPolicy', null);
+      let active = scheduled != null && scheduled.effectiveAt <= request.time
+        ? scheduled.policy : community.get('visitorPolicy', {});
+      return resource.data.get('authorizationManaged', false) != true
+        && active.get('enabled', false) != true;
+    }
+
     function residentVisitorUpdateIsSafe() {
-      return visitorHostMatches(resource.data)
+      return visitorLegacyWritesAllowed()
+        && visitorHostMatches(resource.data)
         && resource.data.status == 'expected'
         && resource.data.isApproved == false
         && resource.data.actualArrival == null
@@ -1322,7 +1335,7 @@ function securityCanAccessCommunity(communityId) {
     // DELETE
     // ------------------------------------------------------------
 
-    allow delete: if
+    allow delete: if visitorLegacyWritesAllowed() && (
 
       // Admin.
       (
@@ -1347,8 +1360,9 @@ function securityCanAccessCommunity(communityId) {
         && resource.data.isApproved == false
         && resource.data.actualArrival == null
         && resource.data.departure == null
-      );
+      )
 
+    );
     // Security intentionally cannot delete visitors.
   }
 
@@ -1706,6 +1720,12 @@ function securityCanAccessCommunity(communityId) {
     // ============================================================
 
     match /chats/{chatId} {
+      function isAdminSupportChat(data) {
+        return data.get('type', '') == 'admin'
+          || (data.get('adminId', '') is string && data.get('adminId', '').size() > 0
+            && data.get('residentId', '') is string && data.get('residentId', '').size() > 0);
+      }
+
       function chatMember(data) {
         return signedIn()
           && (request.auth.uid in data.get('participantIds', [])
@@ -1722,14 +1742,17 @@ function securityCanAccessCommunity(communityId) {
         && contentIdentityUnchanged()
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'participantIds', 'participants', 'buildingId', 'flatId'
-        ]);
+        ])
+        && (!isAdminSupportChat(resource.data)
+          || (adminCanAccessCommunity(resource.data.communityId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'unreadCount'
+            ])));
 
       // Keep chat deletion admin-only for safety.
-      allow delete: if
-        (
-          ('communityId' in resource.data)
-          && adminCanAccessCommunity(resource.data.communityId)
-        );
+      allow delete: if !isAdminSupportChat(resource.data)
+        && ('communityId' in resource.data)
+        && adminCanAccessCommunity(resource.data.communityId);
 
 
       // ----------------------------------------------------------
@@ -1750,13 +1773,23 @@ function securityCanAccessCommunity(communityId) {
 
         allow read: if isChatParticipant();
 
+        // Admin-support chats must be written only by the verified callable.
+        // Other messaging retains the existing client-write contract.
         allow create: if isChatParticipant()
+          && !isAdminSupportChat(parentChatData())
           && request.resource.data.senderId == request.auth.uid;
 
         allow update: if isChatParticipant()
-          && contentIdentityUnchanged();
+          && contentIdentityUnchanged()
+          && (
+            !isAdminSupportChat(parentChatData())
+            || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'readBy', 'isRead'
+            ])
+          );
 
-        allow delete: if isChatParticipant();
+        allow delete: if isChatParticipant()
+          && !isAdminSupportChat(parentChatData());
       }
     }
     
@@ -1879,9 +1912,12 @@ function securityCanAccessCommunity(communityId) {
       }
 
       function isNotificationRecipient(data) {
-        return residentNotificationRecipient(data)
-          || adminNotificationRecipient(data)
-          || securityNotificationRecipient(data);
+        // Select the audience before evaluating profile authorization. Evaluating
+        // all three roles twice on update can exceed the Rules expression budget.
+        let audience = data.get('audience', '');
+        return (audience == 'resident' && residentNotificationRecipient(data))
+          || (audience == 'admin' && adminNotificationRecipient(data))
+          || (audience == 'security' && securityNotificationRecipient(data));
       }
 
       allow read: if isNotificationRecipient(resource.data);

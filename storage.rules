@@ -195,8 +195,8 @@ function adminMayManageEventImage(communityId, eventId) {
       let ownerProofRequired = 'ownerIdentityVerificationRequired' in community
         && community.ownerIdentityVerificationRequired == true;
       let verified = 'identityVerified' in profile && profile.identityVerified == true
-        && (!('identityVerificationStatus' in profile)
-          || profile.identityVerificationStatus == 'verified');
+        && ('identityVerificationStatus' in profile)
+        && profile.identityVerificationStatus == 'verified';
       return profile.approvalStatus == 'approved'
         && (!('status' in profile) || profile.status == 'active')
         && residentType in ['owner', 'tenant']

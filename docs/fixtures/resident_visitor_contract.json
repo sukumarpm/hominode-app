@@ -1,0 +1,39 @@
+{
+  "create": {
+    "visitorName": "Contract Guest",
+    "purpose": "Visit",
+    "expectedArrival": 1794268800000,
+    "phoneNumber": null,
+    "vehicleNumber": null,
+    "bringingPet": true
+  },
+  "contextRequest": {
+    "expectedArrival": 1794268800000
+  },
+  "context": {
+    "communityId": "community-1",
+    "authorizationState": "pending_admin",
+    "petPermitted": false,
+    "policyRevision": 4,
+    "serverTime": 1794265200000
+  },
+  "pending": {
+    "visitorId": "visitor-1",
+    "authorizationState": "pending_admin",
+    "authorizationRevision": 1,
+    "credentialsAvailable": false
+  },
+  "cancel": {
+    "visitorId": "visitor-1",
+    "action": "cancel",
+    "expectedRevision": 7
+  },
+  "reschedule": {
+    "visitorId": "visitor-1",
+    "action": "reschedule",
+    "expectedRevision": 7,
+    "expectedArrival": 1794268800000,
+    "bringingPet": false
+  },
+  "petMessage": "Pets are not permitted for this visit. You may continue without a pet."
+}

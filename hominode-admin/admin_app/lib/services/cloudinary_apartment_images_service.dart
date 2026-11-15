@@ -36,8 +36,9 @@ class CloudinaryApartmentImagesService {
     ApartmentImageModel? replacing,
   }) async {
     final community = _adminService.requireCurrentCommunityId();
-    if (!{'COMMUNITY', 'BUILDING'}.contains(ownershipScope))
+    if (!{'COMMUNITY', 'BUILDING'}.contains(ownershipScope)) {
       throw ArgumentError('Unsupported management scope.');
+    }
     final resource = ownershipScope == 'COMMUNITY'
         ? community
         : buildingId ?? '';
@@ -45,10 +46,11 @@ class CloudinaryApartmentImagesService {
     if (replacing != null &&
         (replacing.contractVersion != 2 ||
             replacing.ownershipScope != ownershipScope ||
-            replacing.resourceId != resource))
+            replacing.resourceId != resource)) {
       throw StateError(
         'Legacy or differently scoped photos cannot be replaced.',
       );
+    }
     final uid = _adminService.getCurrentAdminId();
     if (uid == null) throw StateError('Sign in to upload an image.');
     final stat = await imageFile.stat();
@@ -226,8 +228,9 @@ class CloudinaryApartmentImagesService {
       'imageId': imageId,
       'expectedRevision': expectedRevision,
     });
-    if (result['imageId'] != imageId || result['deleted'] != true)
+    if (result['imageId'] != imageId || result['deleted'] != true) {
       throw const FormatException('Image deletion could not be confirmed.');
+    }
   }
 }
 

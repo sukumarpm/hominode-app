@@ -103,6 +103,7 @@ function comment(store, overrides = {}, counter = {}, id = "comment") {
     profileImage: "",
     comment: "Hello",
     createdAt: serverTimestamp(),
+    moderationVersion: 1,
     ...overrides,
   });
   batch.update(doc(store, "posts/post"), {
@@ -119,10 +120,8 @@ run(
     const store = db("reader");
     await assertSucceeds(comment(store));
     assert.equal((await getDoc(doc(store, "posts/post"))).data().comments, 1);
-    assert.equal(
-      (await getDocs(collection(store, "posts/post/comments"))).size,
-      1,
-    );
+    assert.equal((await getDoc(doc(store, "posts/post/comments/comment"))).data().comment, "Hello");
+    await assertFails(getDocs(collection(store, "posts/post/comments")));
     await assertSucceeds(comment(store, {}, {}, "second"));
     assert.equal((await getDoc(doc(store, "posts/post"))).data().comments, 2);
   },
@@ -444,7 +443,7 @@ run(
 );
 run("new posts cannot start with forged reactions", async () => {
   const store = db("owner");
-  const base = { communityId: "A", authorId: "owner", content: "New post" };
+  const base = { communityId: "A", authorId: "owner", content: "New post", moderationVersion: 1, createdAt: serverTimestamp() };
   await assertSucceeds(
     setDoc(doc(store, "posts/new"), { ...base, likes: 0, likedBy: [] }),
   );

@@ -1,24 +1,43 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/security_user_model.dart';
+import '../models/attendance_model.dart';
+import '../services/attendance_service.dart';
+import '../services/security_inbox_service.dart';
+import 'security_notifications_screen.dart';
 import '../services/auth_service.dart';
+import '../services/account_deletion_request_service.dart';
+import 'account_deletion_request_screen.dart';
+import 'help_support_screen.dart';
+import '../services/support_request_service.dart';
 import '../utils/app_colors.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({
+    super.key,
+    this.authService,
+    this.deletionRequests,
+    this.supportRequests,
+    this.inbox,
+    this.attendanceStream,
+  });
+  final AuthService? authService;
+  final SecurityDeletionRequests? deletionRequests;
+  final SecuritySupportRequests? supportRequests;
+  final SecurityInbox? inbox;
+  final Stream<AttendanceModel?> Function(SecurityUserModel)? attendanceStream;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final AuthService _authService = AuthService();
+  late final AuthService _authService = widget.authService ?? AuthService();
   SecurityUserModel? _currentUser;
   bool _isLoading = true;
   bool _isLoggingOut = false;
+  Stream<AttendanceModel?>? _attendanceStream;
 
   @override
   void initState() {
@@ -27,54 +46,58 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadCurrentUser() async {
-    final user = _auth.currentUser;
-    if (user != null) {
+    try {
+      if (_authService.currentUser == null) throw StateError('Sign in again.');
       final staffDetails = await _authService.requireSecurityProfile();
       if (mounted) {
         setState(() {
           _currentUser = staffDetails;
+          _attendanceStream =
+              widget.attendanceStream?.call(staffDetails) ??
+              _watchAttendance(staffDetails);
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _currentUser = null;
           _isLoading = false;
         });
       }
     }
   }
 
-  void _showNotifications() {
-    HapticFeedback.mediumImpact();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Notifications feature - Coming soon'),
-        backgroundColor: AppColors.primaryTeal,
-      ),
-    );
+  Stream<AttendanceModel?> _watchAttendance(SecurityUserModel user) async* {
+    yield* AttendanceService().getTodayAttendanceStream(user);
   }
 
-  void _showChangePassword() {
+  void _showNotifications() {
     HapticFeedback.mediumImpact();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Change Password feature - Coming soon'),
-        backgroundColor: AppColors.primaryTeal,
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SecurityNotificationsScreen(inbox: widget.inbox),
       ),
     );
   }
 
   void _showHelpSupport() {
     HapticFeedback.mediumImpact();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Help & Support feature - Coming soon'),
-        backgroundColor: AppColors.primaryTeal,
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HelpSupportScreen(requests: widget.supportRequests),
       ),
     );
   }
 
   void _contactAdmin() {
     HapticFeedback.mediumImpact();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Contact Admin feature - Coming soon'),
-        backgroundColor: AppColors.primaryTeal,
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HelpSupportScreen(
+          requests: widget.supportRequests,
+          initialTopic: 'account_access',
+        ),
       ),
     );
   }
@@ -353,12 +376,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Text(
-                'Current Shift Details',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark,
+              const Expanded(
+                child: Text(
+                  'Current Shift Details',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
                 ),
               ),
             ],
@@ -366,7 +391,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           _buildDetailRow(
             label: 'Shift Timing',
-            value: _currentUser?.shiftTiming ?? 'Not assigned',
+            value: _currentUser?.displayShift ?? 'Not assigned',
             valueColor: AppColors.textDark,
           ),
           const SizedBox(height: 16),
@@ -388,49 +413,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
             valueColor: AppColors.textDark,
           ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Status',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: AppColors.textGray,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.successGreen.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: AppColors.successGreen,
-                        shape: BoxShape.circle,
-                      ),
+          _buildDetailRow(
+            label: 'Account Status',
+            value: _currentUser!.isActive ? 'Active' : 'Inactive',
+            valueColor: AppColors.textDark,
+          ),
+          const SizedBox(height: 16),
+          StreamBuilder<AttendanceModel?>(
+            stream: _attendanceStream,
+            builder: (context, snapshot) {
+              final attendance = snapshot.data;
+              final onDuty =
+                  attendance != null &&
+                  attendance.staffId == _currentUser!.uid &&
+                  attendance.status == 'checked_in' &&
+                  attendance.checkOutTime == null;
+              final label = snapshot.hasError
+                  ? 'Unavailable — retry'
+                  : snapshot.connectionState == ConnectionState.waiting
+                  ? 'Checking attendance…'
+                  : onDuty
+                  ? 'On Duty'
+                  : 'Not Checked In';
+              return Column(
+                children: [
+                  _buildDetailRow(
+                    label: 'Duty Status',
+                    value: label,
+                    valueColor: onDuty && !snapshot.hasError
+                        ? AppColors.successGreen
+                        : AppColors.textGray,
+                  ),
+                  if (snapshot.hasError)
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _attendanceStream =
+                            widget.attendanceStream?.call(_currentUser!) ??
+                            _watchAttendance(_currentUser!);
+                      }),
+                      child: const Text('Retry duty status'),
                     ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'On Duty',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.successGreen,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -591,15 +616,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const Divider(height: 1, indent: 68),
               _buildSettingItem(
-                icon: Icons.lock_outline,
-                title: 'Change Password',
-                onTap: _showChangePassword,
-              ),
-              const Divider(height: 1, indent: 68),
-              _buildSettingItem(
                 icon: Icons.help_outline,
                 title: 'Help & Support',
                 onTap: _showHelpSupport,
+              ),
+              const Divider(height: 1, indent: 68),
+              _buildSettingItem(
+                icon: Icons.person_remove_outlined,
+                title: 'Request Account Deletion',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => SecurityAccountDeletionRequestScreen(
+                      requests: widget.deletionRequests,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),

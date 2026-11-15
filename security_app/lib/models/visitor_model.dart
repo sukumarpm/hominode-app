@@ -9,6 +9,8 @@ class VisitorModel {
   final String flatId;
   final String flatLabel;
   final String purpose;
+  // Null means the server response did not include a pet declaration.
+  final bool? bringingPet;
   final DateTime? expectedTime;
   final String status; // For compatibility
   final DateTime? createdAt;
@@ -36,6 +38,7 @@ class VisitorModel {
     required this.flatId,
     required this.flatLabel,
     required this.purpose,
+    this.bringingPet,
     this.expectedTime,
     required this.status,
     this.createdAt,
@@ -73,6 +76,7 @@ class VisitorModel {
       flatId: data['flatId']?.toString() ?? '',
       flatLabel: data['flatLabel']?.toString() ?? '',
       purpose: data['purpose']?.toString() ?? '',
+      bringingPet: data['bringingPet'] is bool ? data['bringingPet'] : null,
       expectedTime: date('expectedArrival'),
       status: data['status']?.toString() ?? '',
       isApproved: data['adminApproved'] == true,
@@ -125,8 +129,9 @@ class VisitorModel {
       flatId: data['flatId'] ?? '',
       flatLabel: data['flatLabel'] ?? '',
       purpose: data['purpose'] ?? '',
+      bringingPet: data['bringingPet'] is bool ? data['bringingPet'] : null,
       expectedTime:
-          (data['expectedTime'] ?? data['expectedArrival'] as Timestamp?)
+          (data['expectedArrival'] ?? data['expectedTime'] as Timestamp?)
               ?.toDate(),
       status: status,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
@@ -156,6 +161,7 @@ class VisitorModel {
       'flatId': flatId,
       'flatLabel': flatLabel,
       'purpose': purpose,
+      if (bringingPet != null) 'bringingPet': bringingPet,
       'expectedTime': expectedTime != null
           ? Timestamp.fromDate(expectedTime!)
           : null,
@@ -167,6 +173,15 @@ class VisitorModel {
       'departure': departure != null ? Timestamp.fromDate(departure!) : null,
     };
   }
+
+  // Descriptive only; gate authorization always comes from server verification.
+  static String describePetDeclaration(Object? value) => switch (value) {
+    true => 'Yes',
+    false => 'No',
+    _ => 'Not recorded',
+  };
+
+  String get petDeclaration => describePetDeclaration(bringingPet);
 
   String get formattedCreatedAt {
     if (createdAt == null) return '';

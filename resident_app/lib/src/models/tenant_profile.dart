@@ -96,8 +96,6 @@ class TenantProfile {
     }.contains(status)) {
       return status;
     }
-    return data['identityVerified'] == true
-        ? 'verified'
-        : 'verification_required';
+    return 'verification_required';
   }
 }

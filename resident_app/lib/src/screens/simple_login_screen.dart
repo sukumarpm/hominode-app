@@ -9,7 +9,7 @@ import '../services/resident_auth_routing.dart';
 import 'verify_otp_screen_single_field.dart';
 
 typedef ResidentOtpScreenBuilder =
-    Widget Function(String phoneNumber, String verificationId);
+    Widget Function(String phoneNumber, String verificationId, ResidentAuthenticationIntent intent);
 
 class SimpleLoginScreen extends StatefulWidget {
   const SimpleLoginScreen({super.key, this.authGateway, this.otpScreenBuilder});
@@ -134,7 +134,7 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen>
     return '${_selectedCountry.dialCode}$localDigits';
   }
 
-  Future<void> _sendOtp() async {
+  Future<void> _sendOtp({ResidentAuthenticationIntent intent = ResidentAuthenticationIntent.login}) async {
     if (_isLoading) return;
 
     FocusScope.of(context).unfocus();
@@ -197,11 +197,11 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen>
                   transitionDuration: Duration.zero,
                   reverseTransitionDuration: Duration.zero,
                   pageBuilder: (_, __, ___) =>
-                      widget.otpScreenBuilder?.call(phone, verificationId) ??
+                      widget.otpScreenBuilder?.call(phone, verificationId, intent) ??
                       VerifyOTPScreenSingleField(
                         mobileNumber: phone,
                         verificationId: verificationId,
-                        intent: ResidentAuthenticationIntent.login,
+                        intent: intent,
                       ),
                 ),
               )
@@ -984,6 +984,15 @@ class _SimpleLoginScreenState extends State<SimpleLoginScreen>
                                 fontSize: 12.sp.clamp(11.0, 13.0),
                                 fontWeight: FontWeight.w600,
                               ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _isLoading
+                                ? null
+                                : () => _sendOtp(intent: ResidentAuthenticationIntent.accountDeletion),
+                            child: Text(
+                              'Request account deletion',
+                              style: TextStyle(color: const Color(0xFF6CE2FF), fontSize: 12.sp.clamp(11.0, 13.0)),
                             ),
                           ),
                           SizedBox(height: 4.h),

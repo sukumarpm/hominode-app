@@ -60,3 +60,19 @@ String visibleUnitLabel(Map<String, dynamic> data, String documentId) {
   }
   return documentId;
 }
+
+/// Mirrors the existing server vacancy guard; shared links and reservations block allocation.
+bool isUnitAvailableForNewResident(Map<String, dynamic> data) {
+  bool hasValue(Object? value) =>
+      value != null && (value is! String || value.trim().isNotEmpty);
+  final ids = data['residentIds'];
+  return data['status'] == 'vacant' &&
+      data['isActive'] != false &&
+      ![
+        'residentUserId',
+        'residentUid',
+        'residentId',
+        'reservedOnboardingId',
+      ].any((field) => hasValue(data[field])) &&
+      (ids == null || ids is List && ids.isEmpty);
+}

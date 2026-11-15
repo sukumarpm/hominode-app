@@ -2,12 +2,16 @@ import 'package:resident_app/src/services/resident_private_images.dart';
 // lib/comments_screen.dart
 // Comments screen for a post
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'src/models/post.dart';
 import 'src/services/post_firestore_service.dart';
 import 'src/widgets/resident_visitor_page_background.dart';
+import 'src/widgets/wall_report_dialog.dart';
+import 'src/widgets/wall_block_dialogs.dart';
 
 const kPrimaryBlue = Color(0xFF172B4D);
 const kBlackText = Color(0xFF172B4D);
@@ -29,30 +33,61 @@ class _CommentsScreenState extends State<CommentsScreen> {
   List<Map<String, dynamic>> _comments = [];
   bool _isLoading = true;
   bool _isSubmitting = false;
+  bool _unavailable = false;
+  bool _blockingResident = false;
+  StreamSubscription<void>? _moderationSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadComments();
+    _moderationSubscription = _service.moderationChanges().skip(1).listen((_) {
+      if (mounted) _loadComments();
+    }, onError: (_) {});
   }
 
   @override
   void dispose() {
     _commentController.dispose();
+    _moderationSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _blockResident(String userId) async {
+    if (_blockingResident) return;
+    setState(() => _blockingResident = true);
+    try {
+      final blocked = await showBlockResidentDialog(
+        context,
+        () => _service.setUserBlocked(userId, true),
+      );
+      if (!mounted || !blocked) return;
+      _showSnackBar('Resident blocked.', Colors.green);
+      await _loadComments();
+    } finally {
+      if (mounted) setState(() => _blockingResident = false);
+    }
   }
 
   Future<void> _loadComments() async {
     setState(() => _isLoading = true);
     try {
       final comments = await _service.getComments(widget.post.id);
+      if (!mounted) return;
       setState(() {
         _comments = comments;
+        _unavailable = false;
         _isLoading = false;
       });
     } catch (e) {
       print('❌ Error loading comments: $e');
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _comments = [];
+          _unavailable = true;
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -115,37 +150,42 @@ class _CommentsScreenState extends State<CommentsScreen> {
         ),
       ),
       body: ResidentVisitorPageBackground(
-        child: Column(
-          children: [
-            // Post preview
-            _buildPostPreview(),
+        child: _unavailable
+            ? const Center(child: Text('This post is unavailable.'))
+            : Column(
+                children: [
+                  // Post preview
+                  _buildPostPreview(),
 
-            // Comments list
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _comments.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No comments yet.\nBe the first to comment!',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 16.sp, color: kGrayText),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: EdgeInsets.symmetric(vertical: 8.h),
-                      itemCount: _comments.length,
-                      itemBuilder: (context, index) {
-                        final comment = _comments[index];
-                        return _buildCommentItem(comment);
-                      },
-                    ),
-            ),
+                  // Comments list
+                  Expanded(
+                    child: _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : _comments.isEmpty
+                        ? Center(
+                            child: Text(
+                              'No comments yet.\nBe the first to comment!',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16.sp,
+                                color: kGrayText,
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: EdgeInsets.symmetric(vertical: 8.h),
+                            itemCount: _comments.length,
+                            itemBuilder: (context, index) {
+                              final comment = _comments[index];
+                              return _buildCommentItem(comment);
+                            },
+                          ),
+                  ),
 
-            // Comment input
-            _buildCommentInput(),
-          ],
-        ),
+                  // Comment input
+                  _buildCommentInput(),
+                ],
+              ),
       ),
     );
   }
@@ -300,6 +340,36 @@ class _CommentsScreenState extends State<CommentsScreen> {
               ],
             ),
           ),
+          if (comment['authorId'] != null &&
+              comment['authorId'] != FirebaseAuth.instance.currentUser?.uid)
+            PopupMenuButton<String>(
+              enabled: !_blockingResident,
+              onSelected: (action) async {
+                try {
+                  if (action == 'report') {
+                    await showWallReportDialog(
+                      context,
+                      targetLabel: 'Comment',
+                      submit: (reason) => _service.reportWallContent(
+                        widget.post.id,
+                        commentId: comment['id'] as String,
+                        reason: reason,
+                      ),
+                    );
+                  } else {
+                    await _blockResident(comment['authorId'] as String);
+                  }
+                } catch (_) {
+                  if (mounted) {
+                    _showSnackBar('Unable to complete action', Colors.red);
+                  }
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'report', child: Text('Report comment')),
+                PopupMenuItem(value: 'block', child: Text('Block user')),
+              ],
+            ),
         ],
       ),
     );

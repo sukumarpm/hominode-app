@@ -41,8 +41,9 @@ class UserDataService {
     try {
       final user = _auth.currentUser;
       if (user == null) return null;
-      if (!forceRefresh && _cachedUserId == user.uid && _cachedUserData != null)
+      if (!forceRefresh && _cachedUserId == user.uid && _cachedUserData != null) {
         return _cachedUserData;
+      }
       final doc = await _firestore.collection('users').doc(user.uid).get();
       if (_auth.currentUser?.uid != user.uid || !doc.exists) return null;
       final data = doc.data();
@@ -138,8 +139,9 @@ class UserDataService {
       final photo = updates['profileImage'] ?? updates['photoURL'];
       if (_auth.currentUser?.uid == user.uid &&
           photo is String &&
-          {'http', 'https'}.contains(Uri.tryParse(photo)?.scheme))
+          {'http', 'https'}.contains(Uri.tryParse(photo)?.scheme)) {
         await user.updatePhotoURL(photo);
+      }
     } catch (error) {
       logProfileFailure('auth-display-sync', error);
     }

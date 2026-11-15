@@ -9,6 +9,7 @@ import '../models/user_profile_model.dart';
 import '../modals/edit_profile_modal.dart';
 import 'notifications_settings_screen.dart';
 import 'language_settings_screen.dart';
+import 'account_deletion_request_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -263,10 +264,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SettingItem(
             id: 'manage_account',
             title: 'Manage Account',
-            subtitle: 'Delete account and data',
+            subtitle: 'Submit a request to delete your account',
             type: SettingType.destructive,
             icon: Icons.admin_panel_settings_outlined,
-            onTap: () => _showDeleteAccountConfirmation(),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountDeletionRequestScreen())),
           ),
         ],
       ),
@@ -472,40 +473,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showDeleteAccountConfirmation() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text('Delete Account'),
-        content: const Text(
-          'Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // TODO: Perform account deletion
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Account deletion initiated'),
-                  backgroundColor: Color(0xFFEF4444),
-                ),
-              );
-            },
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFEF4444),
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
 
   // Settings persistence methods (stub - replace with SharedPreferences)
   Future<void> _saveBiometricSetting(bool value) async {

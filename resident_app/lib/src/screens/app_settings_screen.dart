@@ -8,13 +8,17 @@ import 'package:hominode_legal/hominode_legal.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/language_provider.dart';
+import '../services/account_deletion_request_service.dart';
 import '../widgets/resident_visitor_page_background.dart';
+import 'account_deletion_request_screen.dart';
 
 // ============================================================================
 // APP SETTINGS SCREEN
 // ============================================================================
 class AppSettingsScreen extends StatefulWidget {
-  const AppSettingsScreen({super.key});
+  const AppSettingsScreen({super.key, this.deletionRequests});
+
+  final AccountDeletionRequests? deletionRequests;
 
   @override
   State<AppSettingsScreen> createState() => _AppSettingsScreenState();
@@ -297,7 +301,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             title: 'delete_account'.tr(),
             subtitle: 'delete_account'.tr(),
             onTap: () {
-              _showDeleteAccountDialog(context);
+              _openAccountDeletionRequest(context);
             },
           ),
         ],
@@ -433,23 +437,11 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
-  void _showDeleteAccountDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('delete_account'.tr()),
-        content: Text('delete_account'.tr()),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('cancel'.tr()),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text('delete'.tr()),
-          ),
-        ],
+  void _openAccountDeletionRequest(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            AccountDeletionRequestScreen(service: widget.deletionRequests),
       ),
     );
   }

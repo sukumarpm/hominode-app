@@ -12,9 +12,11 @@ const {
   reactivateResidentCore,
   reassignResidentCore,
   createResidentOnboardingCore,
+  createAdminResidentCore,
   submitResidentIdentityProofCore,
   moveOutResidentCore,
   reviewResidentIdentityProofCore,
+  getResidentIdentityProofUrlCore,
 } = require("../src/resident_identity");
 const {claimImportedOnboardingCore} = require("../src/register_resident");
 
@@ -114,6 +116,7 @@ function fakeDb(seed, {onUpdate} = {}) {
     where(field, _operator, expected) {
       return query(collection, [...clauses, {field, expected}]);
     },
+    limit() { return this; },
     get: async () => querySnapshot({collection, clauses}),
   });
   const querySnapshot = (value) => ({
@@ -214,6 +217,51 @@ const lifecycleSeed = (residentOverrides = {}, extras = {}) => ({
     ...residentOverrides,
   }),
   ...extras,
+});
+
+test("Tenant ID enforcement: explicit verified status is mandatory", () => {
+  for (const status of [undefined, null, "", "unknown", "pending", "rejected", "not_required"]) {
+    assert.equal(operationalAccessFailure(profile({ residentType: "tenant", ownershipType: "tenant",
+      identityVerified: true, identityVerificationStatus: status }), community()), "identity-verification-required");
+  }
+});
+
+test("Tenant ID enforcement: upload, scoped review, correction and approval reuse the same resident", async () => {
+  const db = fakeDb(lifecycleSeed({ residentType: "tenant", ownershipType: "tenant",
+    identityVerificationStatus: "verification_required", identityVerified: false }, {
+    "admins/admin-b": { uid: "admin-b", role: "admin", isActive: true, authorizedCommunityIds: ["B"] },
+    "communities/B": { isActive: true },
+  }));
+  const resident = () => db.values.get("users/resident-a");
+  assert.equal(operationalAccessFailure(resident(), community()), "identity-verification-required");
+  const paths = [];
+  const bucket = { file: (path) => ({
+    save: async () => paths.push(path), delete: async () => {},
+    getSignedUrl: async ({ action, expires }) => {
+      assert.equal(action, "read");
+      assert.ok(expires > Date.now() && expires <= Date.now() + 600000);
+      return ["https://example.test/short-lived-proof"];
+    },
+  }) };
+  const upload = () => submitResidentIdentityProofCore({ db, bucket, auth: phoneAuth("resident-a"),
+    data: { contentType: "image/png", base64: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]).toString("base64") } });
+  await upload();
+  assert.equal(resident().identityVerificationStatus, "pending");
+  assert.equal(operationalAccessFailure(resident(), community()), "identity-verification-required");
+  const review = { communityId: "A", userId: "resident-a", decision: "verified" };
+  await assert.rejects(reviewResidentIdentityProofCore({ db, auth: phoneAuth("admin-b"), data: review }), { code: "permission-denied" });
+  await assert.rejects(getResidentIdentityProofUrlCore({ db, bucket, auth: phoneAuth("admin-b"), data: { communityId: "B", userId: "resident-a" } }), { code: "permission-denied" });
+  const preview = await getResidentIdentityProofUrlCore({ db, bucket, auth: phoneAuth("admin-a"), data: { communityId: "A", userId: "resident-a" } });
+  assert.equal(preview.url, "https://example.test/short-lived-proof");
+  await reviewResidentIdentityProofCore({ db, auth: phoneAuth("admin-a"), data: { ...review, decision: "rejected", reason: "Upload a legible proof" } });
+  assert.notEqual(operationalAccessFailure(resident(), community()), null);
+  await upload();
+  await reviewResidentIdentityProofCore({ db, auth: phoneAuth("admin-a"), data: review });
+  assert.equal(resident().identityVerified, true);
+  assert.equal(resident().identityVerificationReviewedBy, "admin-a");
+  assert.equal(operationalAccessFailure(resident(), community()), null);
+  assert.equal(paths.length, 2);
+  assert.equal(resident().uid, "resident-a");
 });
 
 test("trusted rejection accepts only an inactive pending resident", async () => {
@@ -359,6 +407,179 @@ test("reactivate requires the exact suspended lifecycle state", async () => {
       }),
       {code: "failed-precondition"},
     );
+  }
+});
+
+function adminCreationFixture() {
+  const db = fakeDb({
+    "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+    "communities/A": {isActive: true, countryCode: "IN"},
+    "buildings/building-a": {communityId: "A", buildingName: "Tower A", isActive: true},
+    "flats/flat-a": {communityId: "A", buildingId: "building-a", flatLabel: "A101", unitId: "A101", status: "vacant"},
+  });
+  let user;
+  const calls = [];
+  const authAdmin = {
+    async getUserByPhoneNumber(phoneNumber) {
+      calls.push(["lookup", phoneNumber]);
+      if (!user) throw Object.assign(Error("No phone account"), {code: "auth/user-not-found"});
+      return user;
+    },
+    async createUser(value) {
+      calls.push(["create", value]);
+      assert.deepEqual(Object.keys(value).sort(), ["disabled", "phoneNumber"]);
+      user = {uid: "new-resident", ...value};
+      return user;
+    },
+  };
+  const data = {communityId: "A", residentName: "Admin Added Owner", phoneNumber: "+639171234567", residentType: "owner", familyMembers: 2, buildingId: "building-a", flatId: "flat-a"};
+  return {db, calls, authAdmin, data, run: (overrides = {}) => createAdminResidentCore({db, authAdmin, auth: phoneAuth("admin-a"), data, ...overrides})};
+}
+
+test("Admin direct creation: creates assigned Resident without a Resident request or OTP/session claim", async () => {
+  const f = adminCreationFixture();
+  const result = await f.run();
+  assert.equal(result.userId, "new-resident");
+  const resident = f.db.values.get("users/new-resident");
+  assert.equal(resident.role, "resident");
+  assert.equal(resident.communityId, "A");
+  assert.equal(resident.flatId, "flat-a");
+  assert.equal(resident.creationSource, "admin_direct");
+  assert.equal(resident.approvalStatus, "approved");
+  assert.equal(resident.phoneVerified, false);
+  assert.equal(resident.identityVerified, false);
+  assert.equal(f.db.values.get("flats/flat-a").residentUserId, result.userId);
+  assert.equal(f.db.values.get("buildings/building-a").occupied, 1);
+  assert.equal([...f.db.values.keys()].some((path) => path.startsWith("residentOnboarding/")), false);
+  assert.equal(result.token, undefined);
+  assert.equal(result.password, undefined);
+  assert.equal((await f.run()).idempotent, true);
+  assert.equal(f.calls.filter(([kind]) => kind === "create").length, 1);
+});
+
+test("Admin test phone: selected PH national input binds the existing OTP UID and retries without duplicates", async () => {
+  const f = adminCreationFixture();
+  f.data.phoneNumber = "9400000000";
+  f.data.phoneCountryCode = "PH";
+  const lookups = [];
+  const authAdmin = {
+    async getUserByPhoneNumber(phoneNumber) {
+      lookups.push(phoneNumber);
+      return {uid: "test-phone-uid", phoneNumber: "+639400000000", disabled: false};
+    },
+    async createUser() { assert.fail("Existing test phone UID must be reused"); },
+  };
+  const result = await f.run({authAdmin});
+  assert.equal(result.userId, "test-phone-uid");
+  const resident = f.db.values.get("users/test-phone-uid");
+  assert.equal(resident.uid, "test-phone-uid");
+  assert.equal(resident.phoneNumber, "+639400000000");
+  assert.equal(resident.communityId, "A");
+  assert.equal(resident.approvalStatus, "approved");
+  assert.equal(resident.phoneVerified, false);
+  assert.equal(resident.identityVerified, false);
+  assert.equal(f.db.values.get("flats/flat-a").residentUserId, "test-phone-uid");
+  assert.equal((await f.run({authAdmin})).idempotent, true);
+  assert.deepEqual(lookups, ["+639400000000", "+639400000000"]);
+  assert.equal([...f.db.values.keys()].filter((key) => key.startsWith("users/")).length, 1);
+});
+
+test("Admin test phone: configured test phone without an Auth user creates exactly one identity", async () => {
+  const f = adminCreationFixture();
+  f.data.phoneNumber = "9400000000";
+  f.data.phoneCountryCode = "PH";
+  await f.run();
+  assert.equal((await f.run()).idempotent, true);
+  assert.equal(f.calls.filter(([kind]) => kind === "create").length, 1);
+  assert.equal(f.db.values.get("users/new-resident").phoneNumber, "+639400000000");
+  assert.equal([...f.db.values.keys()].filter((key) => key.startsWith("users/")).length, 1);
+});
+
+test("Admin direct creation: denies unauthenticated, foreign-community, inactive and non-Admin callers before Auth writes", async () => {
+  for (const kind of ["unauthenticated", "foreign", "inactive", "resident", "superAdmin"]) {
+    const f = adminCreationFixture();
+    if (kind === "foreign") f.db.values.get("admins/admin-a").authorizedCommunityIds = ["B"];
+    if (kind === "inactive") f.db.values.get("admins/admin-a").isActive = false;
+    if (["resident", "superAdmin"].includes(kind)) f.db.values.get("admins/admin-a").role = kind;
+    await assert.rejects(f.run(kind === "unauthenticated" ? {auth: null} : {}));
+    assert.deepEqual(f.calls, [], kind);
+    assert.equal(f.db.values.has("users/new-resident"), false);
+  }
+});
+
+test("Admin direct creation: rejects invalid, occupied, reserved and cross-community units", async () => {
+  for (const kind of ["missing", "foreign", "wrongBuilding", "occupied", "reserved", "inactiveBuilding"]) {
+    const f = adminCreationFixture();
+    const flat = f.db.values.get("flats/flat-a");
+    if (kind === "missing") f.db.values.delete("flats/flat-a");
+    if (kind === "foreign") flat.communityId = "B";
+    if (kind === "wrongBuilding") flat.buildingId = "building-b";
+    if (kind === "occupied") { flat.status = "occupied"; flat.residentUserId = "other"; }
+    if (kind === "reserved") { flat.status = "reserved"; flat.reservedOnboardingId = "pending"; }
+    if (kind === "inactiveBuilding") f.db.values.get("buildings/building-a").isActive = false;
+    await assert.rejects(f.run());
+    assert.deepEqual(f.calls, [], kind);
+  }
+});
+
+test("Admin direct creation: preserves international phones and rejects duplicate profiles and pending requests", async () => {
+  for (const phone of ["+639171234567", "+14155552671", "+919876543210", "+639400000000"]) {
+    const f = adminCreationFixture();
+    f.data.phoneNumber = phone;
+    await f.run();
+    assert.equal(f.db.values.get("users/new-resident").phoneNumber, phone);
+  }
+  for (const collection of ["users", "residentOnboarding"]) {
+    const f = adminCreationFixture();
+    f.db.values.set(`${collection}/existing`, {communityId: "A", phoneNumber: "+63 917 123 4567", status: "pending_registration"});
+    await assert.rejects(f.run(), {code: "already-exists"});
+    assert.deepEqual(f.calls, []);
+    const ph940 = adminCreationFixture();
+    ph940.data.phoneNumber = "+639400000000";
+    ph940.db.values.set(`${collection}/existing`, {communityId: "A", phoneNumber: "+63 9400000000"});
+    await assert.rejects(ph940.run(), {code: "already-exists"});
+    assert.deepEqual(ph940.calls, []);
+  }
+});
+
+test("Admin direct creation: rejects role escalation, malformed phone and missing unit; keeps identity safeguards", async () => {
+  for (const changes of [{role: "admin"}, {uid: "other"}, {phoneVerified: true}, {phoneNumber: "+6394000000000"}, {flatId: ""}]) {
+    const f = adminCreationFixture();
+    await assert.rejects(f.run({data: {...f.data, ...changes}}));
+    assert.deepEqual(f.calls, []);
+  }
+  const f = adminCreationFixture();
+  f.data.residentType = "tenant";
+  await f.run();
+  const resident = f.db.values.get("users/new-resident");
+  assert.equal(resident.identityVerificationStatus, "verification_required");
+  assert.equal(resident.approvalStatus, "pending");
+  assert.equal(resident.isActive, false);
+  assert.equal(operationalAccessFailure(resident, community()), "not-approved");
+});
+
+test("Admin direct creation: does not attach an existing Admin or foreign Resident phone to this community", async () => {
+  for (const collection of ["admins", "securityStaff", "users"]) {
+    const f = adminCreationFixture();
+    f.db.values.set(`${collection}/new-resident`, {uid: "new-resident", role: collection === "users" ? "resident" : "admin", communityId: "B"});
+    await assert.rejects(f.run(), {code: "already-exists"});
+    assert.equal(f.db.values.get("flats/flat-a").status, "vacant");
+  }
+});
+
+test("Admin direct creation: rechecks unit availability and Admin scope inside the profile transaction", async () => {
+  for (const changed of ["unit", "authorization"]) {
+    const f = adminCreationFixture();
+    const provision = f.authAdmin.createUser;
+    f.authAdmin.createUser = async (value) => {
+      const user = await provision(value);
+      if (changed === "unit") f.db.values.get("flats/flat-a").status = "reserved";
+      else f.db.values.get("admins/admin-a").authorizedCommunityIds = ["B"];
+      return user;
+    };
+    await assert.rejects(f.run());
+    assert.equal(f.db.values.has("users/new-resident"), false, changed);
+    assert.equal(f.db.values.get("flats/flat-a").residentUserId, undefined);
   }
 });
 
@@ -632,9 +853,42 @@ test("single onboarding accepts E.164 independent of community and detects legac
   await assert.rejects(() => createResidentOnboardingCore({
     db: legacyDb,
     auth: phoneAuth("admin-a"),
-    data: {communityId: "A", residentName: "Duplicate Resident", phoneNumber: "+919876543210", residentType: "owner"},
+    data: {communityId: "A", residentName: "Duplicate Resident", phoneNumber: "+919876543210", phoneCountryCode: "IN", residentType: "owner"},
   }), {code: "already-exists"});
   assert.equal(legacyDb.values.has("users/legacy"), true);
+});
+
+test("Add Resident phone country is independent of community and preserves international records", async () => {
+  for (const [phone, countryCode, phoneCountryCode, expected] of [
+    ["+63 (917) 123-4567", "IN", null, "+639171234567"],
+    ["+1 (415) 555-2671", "IN", null, "+14155552671"],
+    ["+91 98765 43210", "PH", null, "+919876543210"],
+    ["09171234567", "IN", "PH", "+639171234567"],
+    ["(415) 555-2671", "IN", "US", "+14155552671"],
+    ["09876543210", "PH", "IN", "+919876543210"],
+    ["+44 20 7946 0958", "PH", "IN", "+442079460958"],
+    ["+639400000000", "PH", null, "+639400000000"],
+    ["+6309171234567", "PH", null, null],
+    ["09171234567", "PH", null, null],
+    ["9876543210", "IN", null, null],
+  ]) {
+    const db = fakeDb({
+      "admins/admin-a": {uid: "admin-a", role: "admin", isActive: true, authorizedCommunityIds: ["A"]},
+      "communities/A": {isActive: true, countryCode},
+      "users/existing": {uid: "existing", role: "resident", communityId: "A", phoneNumber: "+14155552672"},
+    });
+    const request = {db, auth: phoneAuth("admin-a"), data: {
+      communityId: "A", residentName: "Phone Test Resident", phoneNumber: phone, phoneCountryCode, residentType: "owner",
+    }};
+    if (expected) {
+      const result = await createResidentOnboardingCore(request);
+      assert.equal(db.values.get(`residentOnboarding/${result.onboardingId}`).phoneNumber, expected);
+    } else {
+      await assert.rejects(createResidentOnboardingCore(request), {code: "invalid-argument", message: "Enter a valid resident phone number."});
+      assert.equal([...db.values.keys()].some((path) => path.startsWith("residentOnboarding/")), false);
+    }
+    assert.equal(db.values.get("users/existing").phoneNumber, "+14155552672");
+  }
 });
 
 test("trusted approval activates optional-proof owner and blocks unverified tenant approval", async () => {
@@ -1325,4 +1579,204 @@ test("identity review cannot reactivate an approved resident assigned to another
   assert.equal(db.values.get("users/tenant-a").identityVerificationStatus, "verified");
   assert.equal(db.values.get("users/tenant-a").isActive, false);
   assert.equal(db.values.get("users/tenant-a").status, "inactive");
+});
+
+
+test("rejection releases a claimed reservation atomically and retries preserve a new occupant", async () => {
+  const {residentOnboardingId} = require("../src/resident_import_ids");
+  const phone = "+639171100000";
+  const id = residentOnboardingId("A", phone);
+  const db = fakeDb(approvalSeed({phoneNumber: phone, flatId: "flat-a", buildingId: "building-a"}, {
+    "flats/flat-a": {communityId: "A", buildingId: "building-a", status: "reserved", reservedOnboardingId: id, reservedForPhone: phone},
+    [`residentOnboarding/${id}`]: {communityId: "A", buildingId: "building-a", flatId: "flat-a", status: "claimed", claimedByUid: "resident-a"},
+    "bills/history": {flatId: "flat-a", residentId: "resident-a", status: "paid"},
+  }));
+  const run = () => rejectResidentRegistrationCore({db, auth: phoneAuth("admin-a"), data: {communityId: "A", userId: "resident-a"}});
+  await run();
+  assert.equal(db.values.get("flats/flat-a").status, "vacant");
+  assert.equal(db.values.get("flats/flat-a").reservedOnboardingId, undefined);
+  assert.equal(db.values.get("buildings/building-a").reserved, 0);
+  assert.equal(db.values.get("buildings/building-a").vacant, 1);
+  assert.equal(db.values.get(`residentOnboarding/${id}`).flatId, undefined);
+  assert.equal(db.values.get("users/resident-a").flatId, undefined);
+  assert.equal(db.values.get("bills/history").flatId, "flat-a");
+  db.values.set("flats/flat-a", {communityId: "A", buildingId: "building-a", status: "occupied", residentUserId: "other"});
+  assert.equal((await run()).idempotent, true);
+  assert.equal(db.values.get("flats/flat-a").residentUserId, "other");
+});
+
+test("rejection preserves a different reservation or reassigned occupant", async () => {
+  for (const allocation of [{status: "reserved", reservedOnboardingId: "other"}, {status: "occupied", residentUserId: "other"}]) {
+    const flat = {communityId: "A", buildingId: "building-a", ...allocation};
+    const db = fakeDb(approvalSeed({phoneNumber: "+639171100000", flatId: "flat-a", buildingId: "building-a"}, {"flats/flat-a": flat}));
+    await rejectResidentRegistrationCore({db, auth: phoneAuth("admin-a"), data: {communityId: "A", userId: "resident-a"}});
+    assert.deepEqual(db.values.get("flats/flat-a"), flat);
+  }
+});
+
+test("rejection clears stale own occupancy and refreshes counters, but refuses foreign legacy links", async () => {
+  for (const foreign of [false, true]) {
+    const db = fakeDb(approvalSeed({flatId: "flat-a", buildingId: "building-a"}, {
+      "flats/flat-a": {communityId: "A", buildingId: "building-a", status: "occupied", residentUserId: "resident-a", residentId: foreign ? "other" : null},
+    }));
+    const run = () => rejectResidentRegistrationCore({db, auth: phoneAuth("admin-a"), data: {communityId: "A", userId: "resident-a"}});
+    if (foreign) await assert.rejects(run(), {code: "failed-precondition"});
+    else {
+      await run();
+      assert.equal(db.values.get("flats/flat-a").status, "vacant");
+      assert.equal(db.values.get("buildings/building-a").occupied, 0);
+    }
+  }
+});
+
+
+test("rejection releases a legacy-only own allocation", async () => {
+  const db = fakeDb(approvalSeed({flatId: "flat-a", buildingId: "building-a", residentId: "legacy"}, {
+    "flats/flat-a": {communityId: "A", buildingId: "building-a", status: "occupied", residentId: "legacy"},
+  }));
+  await rejectResidentRegistrationCore({db, auth: phoneAuth("admin-a"), data: {communityId: "A", userId: "resident-a"}});
+  assert.equal(db.values.get("flats/flat-a").residentId, null);
+  assert.equal(db.values.get("flats/flat-a").status, "vacant");
+});
+
+
+async function adminAwaitingFixture({legacy = false, owner = false} = {}) {
+  const f = adminCreationFixture();
+  f.data.residentType = owner ? "owner" : "tenant";
+  if (owner) f.db.values.get("communities/A").ownerIdentityVerificationRequired = true;
+  await f.run();
+  const user = f.db.values.get("users/new-resident");
+  Object.assign(user, {identityVerificationStatus: "pending", identityProofStoragePath: "residentIdentityProofs/A/new-resident/proof.png"});
+  if (legacy) Object.assign(user, {approvalStatus: "approved", isActive: true, status: "active"});
+  f.reject = (auth = phoneAuth("admin-a")) => rejectResidentRegistrationCore({db: f.db, auth, data: {communityId: "A", userId: "new-resident"}});
+  f.review = (decision) => reviewResidentIdentityProofCore({db: f.db, auth: phoneAuth("admin-a"), data: {communityId: "A", userId: "new-resident", decision}});
+  return f;
+}
+
+test("Admin onboarding rejection: new and legacy identity-pending registrations release only their allocation atomically", async () => {
+  for (const legacy of [false, true]) for (const owner of [false, true]) {
+    const f = await adminAwaitingFixture({legacy, owner});
+    assert.equal(f.db.values.get("users/new-resident").registrationCompletedAt, undefined);
+    const result = await f.reject();
+    assert.equal(result.status, "rejected");
+    assert.equal(f.db.values.get("users/new-resident").approvalStatus, "rejected");
+    assert.equal(f.db.values.get("users/new-resident").isActive, false);
+    assert.equal(f.db.values.get("users/new-resident").flatId, undefined);
+    assert.equal(f.db.values.get("flats/flat-a").status, "vacant");
+    assert.equal(f.db.values.get("flats/flat-a").residentUserId, null);
+    assert.equal(f.db.values.get("buildings/building-a").occupied, 0);
+    assert.equal(f.db.values.get("buildings/building-a").vacant, 1);
+    assert.equal(f.calls.filter(([kind]) => kind === "create").length, 1);
+    f.db.values.set("flats/flat-a", {communityId: "A", buildingId: "building-a", status: "occupied", residentUserId: "other"});
+    assert.equal((await f.reject()).idempotent, true);
+    assert.equal(f.db.values.get("flats/flat-a").residentUserId, "other");
+  }
+});
+
+test("Admin onboarding rejection: proof rejection keeps the unit and permits resubmission; proof approval completes registration", async () => {
+  const f = await adminAwaitingFixture();
+  await f.review("rejected");
+  assert.equal(f.db.values.get("users/new-resident").approvalStatus, "pending");
+  assert.equal(f.db.values.get("flats/flat-a").status, "occupied");
+  const bucket = {file: () => ({save: async () => {}, delete: async () => {}})};
+  const residentAuth = phoneAuth("new-resident");
+  residentAuth.token.phone_number = f.data.phoneNumber;
+  await submitResidentIdentityProofCore({db: f.db, bucket, auth: residentAuth, data: {
+    contentType: "image/png", base64: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]).toString("base64"),
+  }});
+  assert.equal(f.db.values.get("users/new-resident").identityVerificationStatus, "pending");
+  await f.review("verified");
+  const user = f.db.values.get("users/new-resident");
+  assert.equal(user.approvalStatus, "approved");
+  assert.equal(user.isActive, true);
+  assert.ok(user.registrationCompletedAt);
+  await assert.rejects(f.reject(), {code: "failed-precondition"});
+  assert.equal(f.db.values.get("flats/flat-a").status, "occupied");
+});
+
+test("Admin onboarding rejection: financial obligations, pending submissions, and ambiguous records block every write", async () => {
+  for (const kind of ["due", "payment", "unknown", "deletion"]) {
+    const f = await adminAwaitingFixture({legacy: true});
+    if (kind === "due") f.db.values.set("bills/due", {residentId: "new-resident", communityId: "A", amount: 100, month: 10, year: 2026, status: "pending"});
+    if (kind === "payment") f.db.values.set("payments/pending", {userId: "new-resident", communityId: "A", status: "pending"});
+    if (kind === "unknown") f.db.values.set("bills/unknown", {residentId: "new-resident", communityId: "A"});
+    if (kind === "deletion") f.db.values.set("accountDeletionRequests/existing", {uid: "new-resident", status: "pending_review"});
+    await assert.rejects(f.reject(), {code: "failed-precondition"});
+    assert.equal(f.db.values.get("users/new-resident").approvalStatus, "approved", kind);
+    assert.equal(f.db.values.get("flats/flat-a").status, "occupied", kind);
+  }
+});
+
+test("Admin onboarding rejection: shared occupants and reassigned units remain protected", async () => {
+  for (const shared of [false, true]) {
+    const f = await adminAwaitingFixture({legacy: true});
+    const flat = f.db.values.get("flats/flat-a");
+    Object.assign(flat, {residentIds: shared ? ["new-resident", "other"] : ["other"], residentUid: "other"});
+    if (!shared) flat.residentUserId = "other";
+    f.db.values.set("users/other", {role: "resident", communityId: "A", flatId: "flat-a"});
+    await f.reject();
+    assert.equal(flat.status, "occupied"); // original snapshot itself is never mutated by writes
+    assert.equal(f.db.values.get("flats/flat-a").status, "occupied");
+    assert.equal(f.db.values.get("flats/flat-a").residentUid, "other");
+    assert.deepEqual(f.db.values.get("flats/flat-a").residentIds, ["other"]);
+    assert.equal(f.db.values.get("users/other").flatId, "flat-a");
+    assert.equal(f.db.values.get("buildings/building-a").occupied, 1);
+  }
+});
+
+test("Admin onboarding rejection: settled financial history keeps its original unit links and Auth identities are retained", async () => {
+  const f = await adminAwaitingFixture();
+  const bill = {residentId: "new-resident", communityId: "A", flatId: "flat-a", amount: 100, month: 10, year: 2026, status: "paid", paidAt: new Date(1)};
+  const payment = {userId: "new-resident", communityId: "A", flatId: "flat-a", status: "paid"};
+  f.db.values.set("bills/settled", bill); f.db.values.set("payments/settled", payment);
+  await f.reject();
+  assert.deepEqual(f.db.values.get("bills/settled"), bill);
+  assert.deepEqual(f.db.values.get("payments/settled"), payment);
+  assert.ok(f.db.values.has("users/new-resident"));
+  assert.equal(f.db.values.get("buildings/building-a").buildingName, "Tower A");
+});
+
+test("Admin onboarding rejection: community isolation and final-rejection identity guards stay authoritative", async () => {
+  const f = await adminAwaitingFixture();
+  f.db.values.set("admins/foreign", {uid: "foreign", role: "admin", isActive: true, authorizedCommunityIds: ["B"]});
+  await assert.rejects(f.reject(phoneAuth("foreign")), {code: "permission-denied"});
+  assert.equal(f.db.values.get("flats/flat-a").status, "occupied");
+  await f.reject();
+  await assert.rejects(f.review("verified"), {code: "failed-precondition"});
+  assert.equal(f.db.values.get("users/new-resident").approvalStatus, "rejected");
+});
+
+test("Admin onboarding rejection: required, pending, and resubmittable proofs remain cancellable; completed approval does not", async () => {
+  for (const status of ["verification_required", "pending", "rejected"]) {
+    const f = await adminAwaitingFixture({legacy: true});
+    f.db.values.get("users/new-resident").identityVerificationStatus = status;
+    await f.reject();
+    assert.equal(f.db.values.get("flats/flat-a").status, "vacant");
+  }
+  for (const change of [{identityVerified: true}, {identityVerificationStatus: "verified"}, {registrationCompletedAt: new Date(1)}]) {
+    const f = await adminAwaitingFixture({legacy: true});
+    Object.assign(f.db.values.get("users/new-resident"), change);
+    await assert.rejects(f.reject(), {code: "failed-precondition"});
+    assert.equal(f.db.values.get("flats/flat-a").status, "occupied");
+  }
+  const optionalOwner = adminCreationFixture();
+  await optionalOwner.run();
+  await assert.rejects(rejectResidentRegistrationCore({db: optionalOwner.db, auth: phoneAuth("admin-a"),
+    data: {communityId: "A", userId: "new-resident"}}), {code: "failed-precondition"});
+});
+
+test("Admin onboarding rejection: an upload completing after final rejection cannot overwrite the cancelled registration", async () => {
+  const f = await adminAwaitingFixture();
+  const residentAuth = phoneAuth("new-resident");
+  residentAuth.token.phone_number = f.data.phoneNumber;
+  const previousPath = f.db.values.get("users/new-resident").identityProofStoragePath;
+  const bucket = {file: () => ({save: async () => {await f.reject();}, delete: async () => {}})};
+  await assert.rejects(submitResidentIdentityProofCore({db: f.db, bucket, auth: residentAuth, data: {
+    contentType: "image/png", base64: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]).toString("base64"),
+  }}), {code: "failed-precondition"});
+  const user = f.db.values.get("users/new-resident");
+  assert.equal(user.approvalStatus, "rejected");
+  assert.equal(user.isActive, false);
+  assert.equal(user.identityProofStoragePath, previousPath);
+  assert.equal(f.db.values.get("flats/flat-a").status, "vacant");
 });

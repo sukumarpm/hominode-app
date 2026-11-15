@@ -18,11 +18,15 @@ class MarketplaceAccessGate extends StatefulWidget {
     required this.builder,
     this.loader,
     this.invalidations,
+    this.preserveContentOnLifecycleChange = false,
   });
 
   final WidgetBuilder builder;
   final MarketplaceAccessLoader? loader;
   final Stream<void>? invalidations;
+  // Native image pickers pause/resume the app. Keep the form mounted but hidden
+  // during lifecycle verification; identity/subscription changes still dispose it.
+  final bool preserveContentOnLifecycleChange;
 
   @override
   State<MarketplaceAccessGate> createState() => _MarketplaceAccessGateState();
@@ -34,6 +38,7 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
   Timer? _expiry;
   int _generation = 0;
   bool _loading = true, _allowed = false, _failed = false;
+  bool _hasContent = false;
   String? _communityId;
 
   @override
@@ -82,7 +87,7 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
     }, onError: (_) => _deny());
   }
 
-  void _invalidate() {
+  void _invalidate({bool preserveContent = false}) {
     _generation++;
     _expiry?.cancel();
     if (mounted) {
@@ -90,6 +95,7 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
         _allowed = false;
         _loading = true;
         _failed = false;
+        if (!preserveContent) _hasContent = false;
       });
     }
   }
@@ -104,9 +110,9 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
     }
   }
 
-  Future<void> _verify() async {
+  Future<void> _verify({bool preserveContent = false}) async {
     if (!mounted) return;
-    _invalidate();
+    _invalidate(preserveContent: preserveContent);
     final generation = _generation;
     try {
       final entitlement =
@@ -124,6 +130,7 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
       setState(() {
         _loading = false;
         _allowed = allowed;
+        _hasContent = allowed;
       });
       if (allowed && entitlement.endsAtMs != null) {
         final remaining =
@@ -153,8 +160,12 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _verify();
-    if (state == AppLifecycleState.paused) _invalidate();
+    if (state == AppLifecycleState.resumed) {
+      _verify(preserveContent: widget.preserveContentOnLifecycleChange);
+    }
+    if (state == AppLifecycleState.paused) {
+      _invalidate(preserveContent: widget.preserveContentOnLifecycleChange);
+    }
   }
 
   @override
@@ -171,7 +182,25 @@ class _MarketplaceAccessGateState extends State<MarketplaceAccessGate>
 
   @override
   Widget build(BuildContext context) {
-    if (_allowed) return widget.builder(context);
+    if (widget.preserveContentOnLifecycleChange) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Offstage(
+            offstage: !_allowed,
+            child: TickerMode(
+              enabled: _allowed,
+              child: _hasContent ? widget.builder(context) : const SizedBox(),
+            ),
+          ),
+          if (!_allowed) _buildAccessStatus(context),
+        ],
+      );
+    }
+    return _allowed ? widget.builder(context) : _buildAccessStatus(context);
+  }
+
+  Widget _buildAccessStatus(BuildContext context) {
     return Scaffold(
       body: Column(
         children: [

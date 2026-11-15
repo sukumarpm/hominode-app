@@ -70,7 +70,10 @@ class TenantResolutionService extends ChangeNotifier {
 
     if (user == null) return null;
 
-    final snapshot = await _firestore.collection('users').doc(user.uid).get();
+    final snapshot = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .get(const GetOptions(source: Source.server));
 
     final data = snapshot.data();
     return data == null ? null : TenantProfile.fromMap(user.uid, data);
@@ -140,7 +143,10 @@ class TenantResolutionService extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>?> _loadProfile(String uid) async {
-    final user = await _firestore.collection('users').doc(uid).get();
+    final user = await _firestore
+        .collection('users')
+        .doc(uid)
+        .get(const GetOptions(source: Source.server));
     return user.data();
   }
 

@@ -15,22 +15,31 @@ class MarketplaceCreateListingScreen extends StatelessWidget {
     super.key,
     this.listingService,
     this.accessLoader,
+    this.imagePicker,
   });
   final ListingFirestoreService? listingService;
   final MarketplaceAccessLoader? accessLoader;
+  final ImagePicker? imagePicker;
 
   @override
   Widget build(BuildContext context) => MarketplaceAccessGate(
     loader: accessLoader,
-    builder: (_) =>
-        _MarketplaceCreateListingScreenContent(listingService: listingService),
+    preserveContentOnLifecycleChange: true,
+    builder: (_) => _MarketplaceCreateListingScreenContent(
+      listingService: listingService,
+      imagePicker: imagePicker,
+    ),
   );
 }
 
 class _MarketplaceCreateListingScreenContent extends StatefulWidget {
-  const _MarketplaceCreateListingScreenContent({this.listingService});
+  const _MarketplaceCreateListingScreenContent({
+    this.listingService,
+    this.imagePicker,
+  });
 
   final ListingFirestoreService? listingService;
+  final ImagePicker? imagePicker;
 
   @override
   State<_MarketplaceCreateListingScreenContent> createState() =>
@@ -42,7 +51,7 @@ class _MarketplaceCreateListingScreenState
   late final ListingFirestoreService _listingService =
       widget.listingService ?? ListingFirestoreService();
   final _formKey = GlobalKey<FormState>();
-  final ImagePicker _imagePicker = ImagePicker();
+  late final ImagePicker _imagePicker = widget.imagePicker ?? ImagePicker();
 
   final _titleController = TextEditingController();
   final _priceController = TextEditingController();
@@ -51,7 +60,9 @@ class _MarketplaceCreateListingScreenState
   String _selectedCategory = 'Furniture';
   String _selectedCondition = 'Like New';
   bool _isCreating = false;
-  List<File> _selectedImages = [];
+  bool _isPickingImages = false;
+  static const _maxImages = 5;
+  final List<File> _selectedImages = [];
 
   final List<String> _categories = [
     'Furniture',
@@ -75,50 +86,60 @@ class _MarketplaceCreateListingScreenState
     super.dispose();
   }
 
-  Future<void> _pickImages() async {
-    try {
-      final List<XFile> pickedFiles = await _imagePicker.pickMultiImage(
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 85,
+  Future<void> _pickImages({bool camera = false}) async {
+    if (_isPickingImages || _isCreating) return;
+    if (_selectedImages.length >= _maxImages) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You can add up to 5 images.')),
       );
-
+      return;
+    }
+    setState(() => _isPickingImages = true);
+    try {
+      final List<XFile> pickedFiles;
+      if (camera) {
+        final photo = await _imagePicker.pickImage(
+          source: ImageSource.camera,
+          maxWidth: 1024,
+          maxHeight: 1024,
+          imageQuality: 85,
+        );
+        pickedFiles = photo == null ? [] : [photo];
+      } else {
+        pickedFiles = await _imagePicker.pickMultiImage(
+          maxWidth: 1024,
+          maxHeight: 1024,
+          imageQuality: 85,
+        );
+      }
+      if (!mounted) return;
+      final remaining = _maxImages - _selectedImages.length;
       if (pickedFiles.isNotEmpty) {
         setState(() {
-          _selectedImages = pickedFiles.map((file) => File(file.path)).toList();
+          _selectedImages.addAll(
+            pickedFiles.take(remaining).map((file) => File(file.path)),
+          );
         });
       }
-    } catch (e) {
+      if (pickedFiles.length > remaining) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You can add up to 5 images.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error picking images: $e'),
+          content: Text(
+            camera
+                ? 'Unable to take a photo. Check camera permission and try again.'
+                : 'Unable to select images. Check photo permission and try again.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
-    }
-  }
-
-  Future<void> _pickImageFromCamera() async {
-    try {
-      final XFile? pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.camera,
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 85,
-      );
-
-      if (pickedFile != null) {
-        setState(() {
-          _selectedImages.add(File(pickedFile.path));
-        });
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error taking photo: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    } finally {
+      if (mounted) setState(() => _isPickingImages = false);
     }
   }
 
@@ -198,7 +219,9 @@ class _MarketplaceCreateListingScreenState
                                     top: -8,
                                     right: -8,
                                     child: GestureDetector(
-                                      onTap: () => _removeImage(index),
+                                      onTap: _isCreating || _isPickingImages
+                                          ? null
+                                          : () => _removeImage(index),
                                       child: Container(
                                         decoration: BoxDecoration(
                                           color: Colors.red,
@@ -230,7 +253,9 @@ class _MarketplaceCreateListingScreenState
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: _pickImages,
+                        onPressed: _isCreating || _isPickingImages
+                            ? null
+                            : _pickImages,
                         icon: const Icon(Icons.image),
                         label: const Text('Gallery'),
                         style: OutlinedButton.styleFrom(
@@ -242,7 +267,9 @@ class _MarketplaceCreateListingScreenState
                     SizedBox(width: 12.w),
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: _pickImageFromCamera,
+                        onPressed: _isCreating || _isPickingImages
+                            ? null
+                            : () => _pickImages(camera: true),
                         icon: const Icon(Icons.camera_alt),
                         label: const Text('Camera'),
                         style: OutlinedButton.styleFrom(
@@ -429,7 +456,9 @@ class _MarketplaceCreateListingScreenState
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _isCreating ? null : _createListing,
+                    onPressed: _isCreating || _isPickingImages
+                        ? null
+                        : _createListing,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
@@ -468,7 +497,7 @@ class _MarketplaceCreateListingScreenState
   }
 
   Future<void> _createListing() async {
-    if (_isCreating || !_formKey.currentState!.validate()) {
+    if (_isCreating || _isPickingImages || !_formKey.currentState!.validate()) {
       return;
     }
 

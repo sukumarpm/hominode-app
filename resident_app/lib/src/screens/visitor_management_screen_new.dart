@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -11,6 +12,8 @@ import '../components/resident_visitor_page_header.dart';
 import '../models/resident_visitor_lifecycle.dart';
 import '../services/visitor_firestore_service.dart';
 import '../services/visitor_qr_contract.dart';
+import '../services/resident_visitor_policy_service.dart';
+import '../models/resident_visitor_authorization.dart';
 import '../../visitor_qr_screen.dart';
 import '../../add_expected_visitor_modal.dart';
 import '../providers/language_provider.dart';
@@ -20,7 +23,15 @@ import '../widgets/resident_visitor_page_background.dart';
 /// Based on reference design with exact spacing and colors
 /// Now with Firestore integration
 class VisitorManagementScreenNew extends StatefulWidget {
-  const VisitorManagementScreenNew({super.key});
+  const VisitorManagementScreenNew({
+    super.key,
+    this.visitorService,
+    this.policyService,
+    this.visitors,
+  });
+  final VisitorFirestoreService? visitorService;
+  final ResidentVisitorPolicyService? policyService;
+  final Stream<List<Map<String, dynamic>>>? visitors;
 
   @override
   State<VisitorManagementScreenNew> createState() =>
@@ -30,7 +41,62 @@ class VisitorManagementScreenNew extends StatefulWidget {
 class _VisitorManagementScreenNewState
     extends State<VisitorManagementScreenNew> {
   int _selectedTabIndex = 0;
-  final _visitorService = VisitorFirestoreService();
+  late final _visitorService =
+      widget.visitorService ?? VisitorFirestoreService();
+  late final _policyService =
+      widget.policyService ?? ResidentVisitorPolicyService();
+  final _pendingActions = <String>{};
+  final _settledActions = <String>{};
+  int _reload = 0;
+  String? _timeZone;
+  String? _timeZoneError;
+  StreamSubscription<Object?>? _zoneSubscription;
+  int _zoneRequest = 0;
+  String? _zoneCommunity;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTimeZone();
+  }
+
+  Future<void> _loadTimeZone() async {
+    final ticket = ++_zoneRequest;
+    try {
+      final scope = await _policyService.loadScope();
+      if (!mounted || ticket != _zoneRequest) return;
+      if (_zoneCommunity != scope.communityId) {
+        _zoneCommunity = scope.communityId;
+        _zoneSubscription?.cancel();
+        try {
+          _zoneSubscription = _policyService
+              .watchCommunity(scope.communityId)
+              .listen((_) => _loadTimeZone(), onError: (_) => _loadTimeZone());
+        } catch (_) {}
+      }
+      final zone = CommunityTime.canonical(scope.timeZone);
+      if (mounted) {
+        setState(() {
+          _timeZone = zone;
+          _timeZoneError = null;
+        });
+      }
+    } catch (error) {
+      if (mounted && ticket == _zoneRequest) {
+        setState(() {
+          _timeZone = null;
+          _timeZoneError = residentVisitorError(error);
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _zoneRequest++;
+    _zoneSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,8 +116,25 @@ class _VisitorManagementScreenNewState
                   bottom: false,
                   child: Column(
                     children: [
-                      ResidentVisitorPageHeader(
-                        title: 'visitor_management'.tr(),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ResidentVisitorPageHeader(
+                              title: 'visitor_management'.tr(),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Reload visitor list',
+                            onPressed: _pendingActions.isNotEmpty
+                                ? null
+                                : () => setState(() {
+                                    _settledActions.clear();
+                                    _reload++;
+                                    _loadTimeZone();
+                                  }),
+                            icon: const Icon(Icons.refresh),
+                          ),
+                        ],
                       ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 14.h),
@@ -90,7 +173,8 @@ class _VisitorManagementScreenNewState
 
   Widget _buildTabContent(LanguageProvider languageProvider) {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _visitorService.streamMyVisitors(),
+      key: ValueKey('resident-visitors-$_reload'),
+      stream: widget.visitors ?? _visitorService.streamMyVisitors(),
       builder: (context, snapshot) {
         // Loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -182,10 +266,14 @@ class _VisitorManagementScreenNewState
   }
 
   String _formatRejectedAt(DateTime dateTime) {
-    return DateFormat(
-      'd MMM y, h:mm a',
-      context.locale.toString(),
-    ).format(dateTime);
+    return CommunityTime.format(
+      dateTime,
+      _timeZone,
+      dateFormat: DateFormat(
+        'd MMM y, h:mm a',
+        context.locale.toString(),
+      ).format,
+    );
   }
 
   Widget _buildVisitorCard(
@@ -200,38 +288,28 @@ class _VisitorManagementScreenNewState
     final purpose = submittedPurpose?.trim().isNotEmpty == true
         ? submittedPurpose!
         : 'visitor_purpose_not_provided'.tr();
-    final expectedArrival = (visitor['expectedArrival'] as Timestamp?)
-        ?.toDate();
+    final expectedArrival = ResidentVisitorAuthorization.arrival(visitor);
     final phoneNumber = visitor['phoneNumber'] as String?;
     final rejectedAt = (visitor['rejectedAt'] as Timestamp?)?.toDate();
 
-    // Format time
-    String timeText = 'visitor_time_not_set'.tr();
-    if (expectedArrival != null) {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final visitDate = DateTime(
-        expectedArrival.year,
-        expectedArrival.month,
-        expectedArrival.day,
+    String timeText = CommunityTime.format(
+      expectedArrival,
+      _timeZone,
+      dateFormat: DateFormat(
+        'd MMM y, h:mm a',
+        context.locale.toString(),
+      ).format,
+    );
+    if (_timeZone != null && expectedArrival != null) {
+      final day = CommunityTime.dayDifference(
+        expectedArrival,
+        DateTime.now(),
+        _timeZone,
       );
-
-      final hour = expectedArrival.hour > 12
-          ? expectedArrival.hour - 12
-          : expectedArrival.hour == 0
-          ? 12
-          : expectedArrival.hour;
-      final minute = expectedArrival.minute.toString().padLeft(2, '0');
-      final period = expectedArrival.hour >= 12 ? 'PM' : 'AM';
-
-      if (visitDate == today) {
-        timeText = '$hour:$minute $period ${'today'.tr()}';
-      } else if (visitDate == today.add(const Duration(days: 1))) {
-        timeText = '$hour:$minute $period ${'tomorrow'.tr()}';
-      } else {
-        timeText =
-            '$hour:$minute $period ${expectedArrival.day}/${expectedArrival.month}';
-      }
+      if (day == 0) timeText += ' · ${'today'.tr()}';
+      if (day == 1) timeText += ' · ${'tomorrow'.tr()}';
+    } else if (_timeZoneError != null) {
+      timeText = 'Community timezone unavailable: $_timeZoneError';
     }
 
     final statusKey = ResidentVisitorLifecycle.statusKeyFor(visitor);
@@ -276,7 +354,9 @@ class _VisitorManagementScreenNewState
             statusLabel: statusKey.tr(),
             statusColor: statusColor,
             statusBackgroundColor: statusBackgroundColor,
-            secondaryStatusLabel: adminDecisionKey?.tr(),
+            secondaryStatusLabel: ResidentVisitorLifecycle.authorizationLabel(
+              visitor,
+            ),
             rejectedAtLabel:
                 statusKey == 'visitor_status_rejected' && rejectedAt != null
                 ? '${'visitor_rejected_at'.tr()} ${_formatRejectedAt(rejectedAt)}'
@@ -284,13 +364,29 @@ class _VisitorManagementScreenNewState
           ),
 
           // Action Buttons
-          if (isExpected && visitor['isApproved'] != true) ...[
+          if (ResidentVisitorAuthorization.canChange(visitor)) ...[
             SizedBox(height: 16.h),
             // Only show Reject button - Admin approves, not user
-            _buildRejectButton(visitorId, visitorName),
+            _buildRejectButton(visitor),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _pendingActions.contains(visitorId)
+                    ? null
+                    : () => _rescheduleVisitor(visitor),
+                child: const Text('Reschedule visitor'),
+              ),
+            ),
           ],
 
-          if (VisitorQrContract.canDisplay(visitor)) ...[
+          if (visitor['bringingPet'] == true)
+            const Text('Visitor will bring a pet'),
+          if (visitor['authorizationState'] == 'pending_admin')
+            const Text(
+              'Admin approval may be required. Open the pass to check current availability.',
+            ),
+          if (VisitorQrContract.canRequest(visitor)) ...[
             SizedBox(height: 16.h),
             _buildViewQRButton(visitor),
           ],
@@ -299,12 +395,19 @@ class _VisitorManagementScreenNewState
     );
   }
 
-  Widget _buildRejectButton(String visitorId, String visitorName) {
+  Widget _buildRejectButton(Map<String, dynamic> visitor) {
+    final visitorId = visitor['id'] as String;
     return SizedBox(
       width: double.infinity,
       height: 48.h,
       child: OutlinedButton(
-        onPressed: () => _rejectVisitor(visitorId, visitorName),
+        onPressed:
+            _pendingActions.contains(visitorId) ||
+                _settledActions.contains(
+                  '$visitorId:${visitor['authorizationRevision'] ?? 0}',
+                )
+            ? null
+            : () => _cancelVisitor(visitor),
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xFFDC2626),
           side: const BorderSide(color: Color(0xFFDC2626), width: 1.5),
@@ -385,93 +488,67 @@ class _VisitorManagementScreenNewState
     );
   }
 
-  Future<void> _rejectVisitor(String visitorId, String visitorName) async {
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
+  Future<void> _rescheduleVisitor(Map<String, dynamic> visitor) async {
+    await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('cancel_request'.tr()),
-        content: Text(
-          'visitor_cancel_confirmation'.tr(namedArgs: {'name': visitorName}),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('no'.tr()),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFDC2626),
-            ),
-            child: Text('yes_cancel'.tr()),
-          ),
-        ],
+      builder: (context) => AddExpectedVisitorModal(
+        visitor: visitor,
+        visitorService: _visitorService,
+        policyService: _policyService,
       ),
     );
+    if (mounted) setState(() => _reload++);
+  }
 
-    if (confirmed != true || !mounted) return;
-
+  Future<void> _cancelVisitor(Map<String, dynamic> visitor) async {
+    final id = visitor['id'] as String;
+    if (_pendingActions.contains(id)) return;
+    setState(() => _pendingActions.add(id));
     try {
-      // Show loading
-      showDialog(
+      final confirmed = await showDialog<bool>(
         context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
+        builder: (context) => AlertDialog(
+          title: Text('cancel_request'.tr()),
+          content: Text(
+            'visitor_cancel_confirmation'.tr(
+              namedArgs: {
+                'name': visitor['visitorName']?.toString() ?? 'Visitor',
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text('no'.tr()),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text('yes_cancel'.tr()),
+            ),
+          ],
+        ),
       );
-
-      // Delete visitor from Firestore
-      final result = await _visitorService.deleteVisitor(visitorId);
-
-      // Close loading
-      if (mounted) Navigator.pop(context);
-
-      if (result.success) {
-        // Show success message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('visitor_cancelled'.tr()),
-              backgroundColor: const Color(0xFFDC2626),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-            ),
-          );
-        }
-      } else {
-        // Show error message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result.message ?? 'visitor_cancel_error'.tr()),
-              backgroundColor: const Color(0xFFDC2626),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      // Close loading if still open
-      if (mounted) Navigator.pop(context);
-
-      // Show error
+      if (confirmed != true || !mounted) return;
+      await _policyService.mutate(visitor, action: 'cancel');
       if (mounted) {
+        _settledActions.add('$id:${visitor['authorizationRevision'] ?? 0}');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('visitor_cancel_error'.tr()),
-            backgroundColor: const Color(0xFFDC2626),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8.r),
+          const SnackBar(
+            content: Text(
+              'Cancellation confirmed. The invitation remains in History.',
             ),
           ),
         );
       }
+    } catch (error) {
+      if (mounted) {
+        _settledActions.add('$id:${visitor['authorizationRevision'] ?? 0}');
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(residentVisitorError(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _pendingActions.remove(id));
     }
   }
 }

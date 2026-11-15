@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'community_settings_screen.dart';
+import 'account_deletion_requests_screen.dart';
+import 'content_moderation_screen.dart';
+import 'services/account_deletion_review_service.dart';
 import 'desktop/admin_desktop_page_frame.dart';
 import 'services/auth_service.dart';
 import 'widgets/edit_profile_modal.dart';
@@ -9,7 +12,9 @@ import 'widgets/standard_header.dart';
 import 'widgets/storage_usage_modal.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.accountDeletionReviewService});
+
+  final AccountDeletionReviewGateway? accountDeletionReviewService;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -119,7 +124,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0E4778).withOpacity(0.3),
+            color: const Color(0xFF0E4778).withValues(alpha: 0.3),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -131,7 +136,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             width: 60,
             height: 60,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(30),
             ),
             child: const Icon(Icons.person, color: Colors.white, size: 30),
@@ -154,7 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'admin@lyvo.com',
                   style: TextStyle(
                     fontSize: 14,
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -164,7 +169,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
+                    color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Text(
@@ -335,6 +340,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
         ),
         _buildActionTile(
+          'Content moderation',
+          'Review reports and moderation history',
+          Icons.flag_outlined,
+          () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ContentModerationScreen()),
+          ),
+        ),
+        _buildActionTile(
+          'Account Deletion Requests',
+          'Review requests routed to this community',
+          Icons.person_remove_alt_1_outlined,
+          () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => AccountDeletionRequestsScreen(
+                service: widget.accountDeletionReviewService,
+              ),
+            ),
+          ),
+        ),
+        _buildActionTile(
           'Storage Usage',
           'View storage details',
           Icons.pie_chart,
@@ -458,7 +483,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -474,7 +499,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
+                    color: color.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(icon, color: color, size: 20),

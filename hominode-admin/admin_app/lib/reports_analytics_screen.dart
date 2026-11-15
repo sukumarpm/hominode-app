@@ -1,7 +1,15 @@
+import 'dart:io';
+import 'package:excel/excel.dart' as xls;
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
 import 'widgets/standard_header.dart';
 import 'services/reports_service.dart';
+import 'services/admin_tenant_context.dart';
 import 'widgets/reports_charts.dart';
 
 class ReportsAnalyticsScreen extends StatefulWidget {
@@ -34,6 +42,15 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
   String? _complaintsLoadError;
 
   bool _isLoading = true;
+  String _detailMode = 'all';
+  DateTimeRange? _detailRange;
+  List<Map<String, dynamic>> _residentOptions = [];
+  int _residentListRequest = 0;
+  bool _detailLoading = false;
+  Map<String, dynamic>? _detailedReport;
+  String? _detailError;
+  String? _selectedResidentId;
+  final TextEditingController _residentSearch = TextEditingController();
 
   final List<String> tabs = ['Financial', 'Occupancy', 'Complaints'];
 
@@ -41,7 +58,15 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
   void initState() {
     super.initState();
     _reportsService = widget._reportsService ?? ReportsService();
+    _residentSearch.addListener(_onResidentSearchChanged);
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _residentSearch.removeListener(_onResidentSearchChanged);
+    _residentSearch.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -98,6 +123,376 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
       }
       print('ReportsAnalyticsScreen: Financial load error: $error');
     }
+  }
+
+  String _residentLabel(Map<String, dynamic> row) {
+    final identity = Map<String, dynamic>.from(row['identity'] as Map);
+    return '${identity['name'] ?? 'Resident'} · ${identity['phone'] ?? ''} · ${identity['unit'] ?? ''} · ${identity['deleted'] == true ? 'Deleted' : 'Active'}';
+  }
+
+  void _onResidentSearchChanged() {
+    if (_selectedResidentId == null) return;
+    final selected = _residentOptions.where(
+      (row) => row['residentId'] == _selectedResidentId,
+    );
+    if (selected.isEmpty ||
+        _residentSearch.text != _residentLabel(selected.first)) {
+      setState(() {
+        _selectedResidentId = null;
+        _detailedReport = null;
+      });
+    }
+  }
+
+  Future<void> _changeDetailMode(String mode) async {
+    final request = ++_residentListRequest;
+    setState(() {
+      _detailMode = mode;
+      _selectedResidentId = null;
+      _residentSearch.clear();
+      _residentOptions = [];
+      _detailedReport = null;
+      _detailError = null;
+      _detailLoading = mode == 'individual';
+    });
+    if (mode != 'individual') return;
+    try {
+      final residents = await _reportsService.getFinancialReportResidents();
+      if (mounted && request == _residentListRequest) {
+        setState(() {
+          _residentOptions = residents;
+          _detailLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted && request == _residentListRequest) {
+        setState(() {
+          _detailError = 'Resident list is unavailable. Please try again.';
+          _detailLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _generateDetailedReport() async {
+    if (_detailMode == 'individual' && _selectedResidentId == null) return;
+    setState(() {
+      _detailLoading = true;
+      _detailError = null;
+    });
+    try {
+      final result = await _reportsService.getDetailedFinancialReport(
+        from: _detailRange?.start,
+        to: _detailRange?.end,
+        residentId: _detailMode == 'individual' ? _selectedResidentId : null,
+      );
+      if (mounted) {
+        setState(() {
+          _detailedReport = result;
+          _detailLoading = false;
+        });
+      }
+    } on ReportsServiceException catch (error) {
+      if (mounted) {
+        setState(() {
+          _detailError = error.userMessage;
+          _detailLoading = false;
+          _detailedReport = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _detailError = 'Financial report is unavailable. Please try again.';
+          _detailLoading = false;
+          _detailedReport = null;
+        });
+      }
+    }
+  }
+
+  List<Map<String, dynamic>> get _visibleDetailedRows {
+    final rows = (_detailedReport?['rows'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    if (_detailMode == 'all') return rows;
+    return rows
+        .where((row) => row['residentId'] == _selectedResidentId)
+        .toList();
+  }
+
+  Future<void> _exportDetailedPdf() async {
+    final rows = _visibleDetailedRows;
+    if (rows.isEmpty) return;
+    final pdf = pw.Document();
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        build: (_) => [
+          pw.Text(
+            'HOMINODE FINANCIAL REPORT',
+            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.Text(
+            'Community: ${AdminTenantContext.instance.requireCommunityId()}',
+          ),
+          for (final warning
+              in (_detailedReport?['coverageWarnings'] as List? ?? const []))
+            pw.Text('Coverage warning: $warning'),
+          pw.Text(
+            'Period: ${_detailRange == null ? 'All history' : '${_detailRange!.start.toIso8601String().substring(0, 10)} – ${_detailRange!.end.toIso8601String().substring(0, 10)}'}',
+          ),
+          pw.SizedBox(height: 12),
+          pw.TableHelper.fromTextArray(
+            headers: const [
+              'Resident',
+              'Billed',
+              'Paid',
+              'Credit applied',
+              'Available credit',
+              'Outstanding',
+            ],
+            data: rows
+                .map(
+                  (row) => [
+                    '${(row['identity'] as Map)['name'] ?? 'Resident'}${(row['identity'] as Map)['deleted'] == true ? ' (Deleted)' : ''}',
+                    _minor(row['billedMinor']),
+                    _minor(row['paidMinor']),
+                    _minor(row['creditAppliedMinor']),
+                    _minor(row['availableCreditMinor']),
+                    _minor(row['outstandingMinor']),
+                  ],
+                )
+                .toList(),
+          ),
+          pw.SizedBox(height: 12),
+          pw.TableHelper.fromTextArray(
+            headers: const [
+              'Resident',
+              'Phone',
+              'Unit',
+              'Description / Period',
+              'Billed',
+              'Paid',
+              'Outstanding',
+              'Status',
+            ],
+            data: rows.expand((row) {
+              final identity = Map<String, dynamic>.from(
+                row['identity'] as Map? ?? {},
+              );
+              final bills = (row['bills'] as List? ?? const [])
+                  .whereType<Map>();
+              if (bills.isEmpty) {
+                return [
+                  [
+                    identity['name'] ?? 'Resident',
+                    identity['phone'] ?? '',
+                    identity['unit'] ?? '',
+                    '—',
+                    _minor(row['billedMinor']),
+                    _minor(row['paidMinor']),
+                    _minor(row['outstandingMinor']),
+                    row['paymentStatus'] ?? '',
+                  ],
+                ];
+              }
+              return bills.map(
+                (bill) => [
+                  identity['name'] ?? 'Resident',
+                  identity['phone'] ?? '',
+                  identity['unit'] ?? '',
+                  '${bill['description']} / ${bill['billingPeriod']}',
+                  _minor(bill['amountMinor']),
+                  _minor(bill['paidMinor']),
+                  _minor(bill['outstandingMinor']),
+                  bill['status'] ?? '',
+                ],
+              );
+            }).toList(),
+          ),
+          pw.SizedBox(height: 12),
+          pw.Text(
+            'Receipts in reporting period (separate from bill allocations)',
+          ),
+          pw.TableHelper.fromTextArray(
+            headers: const [
+              'Resident',
+              'Transaction',
+              'Received',
+              'Method / Reference',
+              'Received at',
+              'Created at',
+            ],
+            data: rows
+                .expand(
+                  (row) => (row['payments'] as List? ?? const [])
+                      .whereType<Map>()
+                      .map(
+                        (payment) => [
+                          (row['identity'] as Map)['name'] ?? 'Resident',
+                          payment['transactionId'],
+                          _minor(payment['receivedAmountMinor']),
+                          '${payment['method']} / ${payment['reference'] ?? ''}',
+                          _reportTimestamp(payment['receivedAtMs']),
+                          _reportTimestamp(payment['createdAtMs']),
+                        ],
+                      ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) async => pdf.save());
+  }
+
+  static xls.CellValue? _excelValue(Object? value) => switch (value) {
+    null => null,
+    bool value => xls.BoolCellValue(value),
+    int value => xls.IntCellValue(value),
+    num value => xls.DoubleCellValue(value.toDouble()),
+    _ => xls.TextCellValue(value.toString()),
+  };
+
+  Future<void> _exportDetailedExcel() async {
+    final rows = _visibleDetailedRows;
+    if (rows.isEmpty) return;
+    final book = xls.Excel.createExcel();
+    final coverage = book['Coverage'];
+    for (final warning
+        in (_detailedReport?['coverageWarnings'] as List? ?? const [])) {
+      coverage.appendRow(
+        ['Coverage warning', warning].map(_excelValue).toList(),
+      );
+    }
+    final summary = book['Resident totals'];
+    summary.appendRow(
+      [
+        'Resident',
+        'Phone',
+        'Unit',
+        'Deleted',
+        'Billed minor',
+        'Paid minor',
+        'Credit applied minor',
+        'Available credit minor',
+        'Outstanding minor',
+      ].map(_excelValue).toList(),
+    );
+    final receipts = book['Receipts'];
+    receipts.appendRow(
+      [
+        'Resident',
+        'Transaction',
+        'Received amount minor',
+        'Method',
+        'Reference',
+        'Received at',
+        'Created at',
+      ].map(_excelValue).toList(),
+    );
+    final sheet = book['Financial Report'];
+    sheet.appendRow(
+      [
+        'Resident',
+        'Phone',
+        'Unit',
+        'Deleted',
+        'Description',
+        'Billing period',
+        'Bill amount minor',
+        'Paid minor',
+        'Outstanding minor',
+        'Bill status',
+        'Payment amount minor',
+        'Method',
+        'Reference',
+        'Payment timestamp',
+        'Transaction created at',
+      ].map(_excelValue).toList(),
+    );
+    for (final row in rows) {
+      final identity = Map<String, dynamic>.from(row['identity'] as Map? ?? {});
+      summary.appendRow(
+        [
+          identity['name'],
+          identity['phone'],
+          identity['unit'],
+          identity['deleted'],
+          row['billedMinor'],
+          row['paidMinor'],
+          row['creditAppliedMinor'],
+          row['availableCreditMinor'],
+          row['outstandingMinor'],
+        ].map(_excelValue).toList(),
+      );
+      for (final payment
+          in (row['payments'] as List? ?? const []).whereType<Map>()) {
+        receipts.appendRow(
+          [
+            identity['name'],
+            payment['transactionId'],
+            payment['receivedAmountMinor'],
+            payment['method'],
+            payment['reference'],
+            _reportTimestamp(payment['receivedAtMs']),
+            _reportTimestamp(payment['createdAtMs']),
+          ].map(_excelValue).toList(),
+        );
+      }
+      for (final bill in (row['bills'] as List? ?? const []).whereType<Map>()) {
+        final settlements = (bill['settlements'] as List? ?? const [])
+            .whereType<Map>()
+            .toList();
+        if (settlements.isEmpty) {
+          sheet.appendRow(
+            [
+              identity['name'],
+              identity['phone'],
+              identity['unit'],
+              identity['deleted'],
+              bill['description'],
+              bill['billingPeriod'],
+              bill['amountMinor'],
+              bill['paidMinor'],
+              bill['outstandingMinor'],
+              bill['status'],
+            ].map(_excelValue).toList(),
+          );
+        }
+        for (final payment in settlements) {
+          sheet.appendRow(
+            [
+              identity['name'],
+              identity['phone'],
+              identity['unit'],
+              identity['deleted'],
+              bill['description'],
+              bill['billingPeriod'],
+              bill['amountMinor'],
+              bill['paidMinor'],
+              bill['outstandingMinor'],
+              bill['status'],
+              payment['amountMinor'],
+              payment['method'],
+              payment['reference'],
+              _reportTimestamp(payment['receivedAtMs']),
+              _reportTimestamp(payment['createdAtMs']),
+            ].map(_excelValue).toList(),
+          );
+        }
+      }
+    }
+    final bytes = book.encode();
+    if (bytes == null) return;
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/hominode_financial_report.xlsx')
+      ..writeAsBytesSync(bytes, flush: true);
+    await Share.shareXFiles([
+      XFile(file.path),
+    ], subject: 'Hominode Financial Report');
   }
 
   Future<void> _loadOccupancyData() async {
@@ -422,7 +817,11 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
             child: InkWell(
               onTap: () async {
                 if (selectedTabIndex == 0) {
-                  await _showDesktopOnlyReportDialog('Financial report export');
+                  if (_detailedReport == null) {
+                    await _generateDetailedReport();
+                  } else {
+                    await _exportDetailedPdf();
+                  }
                   return;
                 }
 
@@ -469,67 +868,74 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
       padding: EdgeInsets.all(20.w),
       child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: AnalyticsKpiCard(
-                  key: const ValueKey('kpi-collections'),
-                  title: 'Collections Received',
-                  value: _financialSummary?.formattedCollectionsReceived ?? '—',
-                  isUnavailable: _financialSummary == null,
-                  growth: '+0%',
-                  isPositive: true,
-                  showGrowth: false,
-                  color: const Color(0xFF0E4778),
-                  icon: Icons.account_balance_wallet,
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: AnalyticsKpiCard(
+                    key: const ValueKey('kpi-collections'),
+                    title: 'Collections Received',
+                    value:
+                        _financialSummary?.formattedCollectionsReceived ?? '—',
+                    isUnavailable: _financialSummary == null,
+                    growth: '+0%',
+                    isPositive: true,
+                    showGrowth: false,
+                    color: const Color(0xFF0E4778),
+                    icon: Icons.account_balance_wallet,
+                  ),
                 ),
-              ),
-              SizedBox(width: 16.w),
-              Expanded(
-                child: AnalyticsKpiCard(
-                  key: const ValueKey('kpi-occupancy'),
-                  title: 'Occupancy Rate',
-                  value: _occupancySummary?.formattedOccupancyRate ?? '—',
-                  isUnavailable: _occupancySummary == null,
-                  growth: '+0%',
-                  isPositive: true,
-                  color: const Color(0xFF10B981),
-                  icon: Icons.home,
+                SizedBox(width: 16.w),
+                Expanded(
+                  child: AnalyticsKpiCard(
+                    key: const ValueKey('kpi-occupancy'),
+                    title: 'Occupancy Rate',
+                    value: _occupancySummary?.formattedOccupancyRate ?? '—',
+                    isUnavailable: _occupancySummary == null,
+                    growth: '+0%',
+                    isPositive: true,
+                    color: const Color(0xFF10B981),
+                    icon: Icons.home,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           SizedBox(height: 16.h),
-          Row(
-            children: [
-              Expanded(
-                child: AnalyticsKpiCard(
-                  key: const ValueKey('kpi-resolved-issues'),
-                  title: 'Resolved Issues',
-                  value: _complaintsSummary == null
-                      ? '—'
-                      : '${_complaintsSummary!.resolvedComplaints}',
-                  isUnavailable: _complaintsSummary == null,
-                  growth: _complaintsSummary?.formattedResolutionRate ?? '',
-                  isPositive: true,
-                  color: const Color(0xFF8B5CF6),
-                  icon: Icons.check_circle,
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: AnalyticsKpiCard(
+                    key: const ValueKey('kpi-resolved-issues'),
+                    title: 'Resolved Issues',
+                    value: _complaintsSummary == null
+                        ? '—'
+                        : '${_complaintsSummary!.resolvedComplaints}',
+                    isUnavailable: _complaintsSummary == null,
+                    growth: _complaintsSummary?.formattedResolutionRate ?? '',
+                    isPositive: true,
+                    color: const Color(0xFF8B5CF6),
+                    icon: Icons.check_circle,
+                  ),
                 ),
-              ),
-              SizedBox(width: 16.w),
-              Expanded(
-                child: AnalyticsKpiCard(
-                  key: const ValueKey('kpi-deliveries'),
-                  title: 'Deliveries',
-                  value: _deliveriesCount == null ? '—' : '$_deliveriesCount',
-                  isUnavailable: _deliveriesCount == null,
-                  growth: _deliveriesCount == null ? '' : '+0%',
-                  isPositive: true,
-                  color: const Color(0xFFF59E0B),
-                  icon: Icons.local_shipping,
+                SizedBox(width: 16.w),
+                Expanded(
+                  child: AnalyticsKpiCard(
+                    key: const ValueKey('kpi-deliveries'),
+                    title: 'Deliveries',
+                    value: _deliveriesCount == null ? '—' : '$_deliveriesCount',
+                    isUnavailable: _deliveriesCount == null,
+                    growth: _deliveriesCount == null ? '' : '+0%',
+                    isPositive: true,
+                    color: const Color(0xFFF59E0B),
+                    icon: Icons.local_shipping,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -793,13 +1199,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
   }
 
   Widget _buildDesktopOnlyFinancialReportsCard() {
-    final items = <String>[
-      'Detailed collections report',
-      'Outstanding / overdue report',
-      'Payment-method report',
-      'Resident credit report',
-      'Resident statement',
-    ];
+    final visible = _visibleDetailedRows;
 
     return Container(
       width: double.infinity,
@@ -812,49 +1212,227 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Desktop-only financial reports',
+            'Resident financial report',
             style: TextStyle(
               fontSize: 16.sp,
               fontWeight: FontWeight.w700,
               color: const Color(0xFF111827),
             ),
           ),
-          SizedBox(height: 8.h),
-          for (final item in items)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: Text(
-                item,
-                style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600),
+          SizedBox(height: 12.h),
+          const Text('Report Type'),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'all', label: Text('All Residents')),
+              ButtonSegment(
+                value: 'individual',
+                label: Text('Individual Resident'),
               ),
-              subtitle: const Text('Open in Hominode Admin Web/Desktop'),
-              trailing: const Icon(Icons.open_in_new),
-              onTap: () => _showDesktopOnlyReportDialog(item),
+            ],
+            selected: {_detailMode},
+            onSelectionChanged: (value) => _changeDetailMode(value.first),
+          ),
+          SizedBox(height: 12.h),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.date_range),
+                label: Text(
+                  _detailRange == null
+                      ? 'All history (optional dates)'
+                      : '${_detailRange!.start.toIso8601String().substring(0, 10)} – ${_detailRange!.end.toIso8601String().substring(0, 10)}',
+                ),
+                onPressed: () async {
+                  final picked = await showDateRangePicker(
+                    context: context,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime.now(),
+                    initialDateRange:
+                        _detailRange ??
+                        DateTimeRange(
+                          start: DateTime(
+                            DateTime.now().year,
+                            DateTime.now().month,
+                            1,
+                          ),
+                          end: DateTime.now(),
+                        ),
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      _detailRange = picked;
+                      _detailedReport = null;
+                      _selectedResidentId = null;
+                      _residentSearch.clear();
+                    });
+                  }
+                },
+              ),
+              if (_detailRange != null)
+                TextButton(
+                  onPressed: () => setState(() {
+                    _detailRange = null;
+                    _detailedReport = null;
+                  }),
+                  child: const Text('Clear dates'),
+                ),
+              if (_detailMode == 'all' || _selectedResidentId != null)
+                FilledButton.icon(
+                  onPressed: _detailLoading ? null : _generateDetailedReport,
+                  icon: _detailLoading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.assessment),
+                  label: Text(
+                    _detailLoading ? 'Generating…' : 'Generate Report',
+                  ),
+                ),
+            ],
+          ),
+          if (_detailMode == 'individual') ...[
+            SizedBox(height: 12.h),
+            DropdownMenu<String>(
+              controller: _residentSearch,
+              enableFilter: true,
+              requestFocusOnTap: true,
+              expandedInsets: EdgeInsets.zero,
+              label: const Text('Search Resident by name, phone or unit'),
+              onSelected: (value) => setState(() {
+                _selectedResidentId = value;
+                _detailedReport = null;
+              }),
+              dropdownMenuEntries: _residentOptions.map((row) {
+                final label = _residentLabel(row);
+                return DropdownMenuEntry(
+                  value: row['residentId'] as String,
+                  label: label,
+                );
+              }).toList(),
             ),
+          ],
+          if (_detailError != null)
+            Padding(
+              padding: EdgeInsets.only(top: 10.h),
+              child: Text(
+                _detailError!,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+          if (_detailedReport != null) ...[
+            for (final warning
+                in (_detailedReport!['coverageWarnings'] as List? ?? const []))
+              Text(
+                warning.toString(),
+                style: const TextStyle(color: Colors.red),
+              ),
+            SizedBox(height: 14.h),
+            Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: visible.isEmpty ? null : _exportDetailedPdf,
+                  icon: const Icon(Icons.picture_as_pdf),
+                  label: const Text('Export PDF'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: visible.isEmpty ? null : _exportDetailedExcel,
+                  icon: const Icon(Icons.table_view),
+                  label: const Text('Export Excel'),
+                ),
+              ],
+            ),
+            if (_detailMode == 'all') ...[
+              SizedBox(height: 12.h),
+              Builder(
+                builder: (_) {
+                  final totals = Map<String, dynamic>.from(
+                    _detailedReport!['totals'] as Map,
+                  );
+                  return Text(
+                    'Residents: ${totals['residentsCount']}   Billed: ${_minor(totals['billedMinor'])}   Paid: ${_minor(totals['paidMinor'])}   Credit applied: ${_minor(totals['creditAppliedMinor'])}   Available credit: ${_minor(totals['availableCreditMinor'])}   Outstanding: ${_minor(totals['outstandingMinor'])}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14.sp,
+                    ),
+                  );
+                },
+              ),
+            ],
+            for (final row in visible) ...[
+              const Divider(height: 20),
+              Builder(
+                builder: (_) {
+                  final identity = Map<String, dynamic>.from(
+                    row['identity'] as Map? ?? {},
+                  );
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      '${identity['name'] ?? 'Resident'}${identity['deleted'] == true ? ' · Deleted' : ' · Active'}',
+                    ),
+                    subtitle: Text(
+                      '${identity['phone'] ?? 'Phone unavailable'} · Unit ${identity['unit'] ?? 'unavailable'} · ${identity['residentType'] ?? 'Resident'}\nBilled ${_minor(row['billedMinor'])}  Paid ${_minor(row['paidMinor'])}  Credit applied ${_minor(row['creditAppliedMinor'])}  Available credit ${_minor(row['availableCreditMinor'])}  Outstanding ${_minor(row['outstandingMinor'])}',
+                    ),
+                  );
+                },
+              ),
+              for (final payment
+                  in (row['payments'] as List? ?? const []).whereType<Map>())
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    'Received ${_minor(payment['receivedAmountMinor'])} · ${payment['method']}',
+                  ),
+                  subtitle: Text(
+                    'Transaction: ${payment['transactionId']} · Reference: ${payment['reference'] ?? '—'}\nReceived: ${_reportTimestamp(payment['receivedAtMs'])} · Created: ${_reportTimestamp(payment['createdAtMs'])}',
+                  ),
+                ),
+              for (final bill
+                  in (row['bills'] as List? ?? const []).whereType<Map>())
+                ExpansionTile(
+                  title: Text(
+                    '${bill['description']} · ${bill['billingPeriod']} · ${bill['status']}',
+                  ),
+                  subtitle: Text(
+                    'Billed ${_minor(bill['amountMinor'])}, paid ${_minor(bill['paidMinor'])}, outstanding ${_minor(bill['outstandingMinor'])}',
+                  ),
+                  children: [
+                    for (final payment
+                        in (bill['settlements'] as List? ?? const [])
+                            .whereType<Map>())
+                      ListTile(
+                        dense: true,
+                        title: Text(
+                          '${_minor(payment['amountMinor'])} · ${payment['method']}',
+                        ),
+                        subtitle: Text(
+                          'Reference: ${payment['reference'] ?? '—'} · Received: ${DateTime.fromMillisecondsSinceEpoch(payment['receivedAtMs'] as int).toLocal()}',
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ],
         ],
       ),
     );
   }
 
-  Future<void> _showDesktopOnlyReportDialog(String reportName) async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(reportName),
-        content: const Text(
-          'This detailed financial report is currently available in Hominode Admin Web/Desktop. '
-          'Please open Admin Web/Desktop to view or export this report.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
+  static String _minor(Object? value) =>
+      value is int ? formatInrMinorUnitsForReports(value) : '—';
+
+  static String _reportTimestamp(Object? value) => value is int
+      ? DateTime.fromMillisecondsSinceEpoch(
+          value,
+          isUtc: true,
+        ).toIso8601String()
+      : '—';
 }
 
 // Reusable KPI Card Widget
@@ -883,7 +1461,7 @@ class AnalyticsKpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 168.h,
+      constraints: BoxConstraints(minHeight: 168.h),
       padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -897,6 +1475,7 @@ class AnalyticsKpiCard extends StatelessWidget {
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
@@ -980,14 +1559,12 @@ class AnalyticsKpiCard extends StatelessWidget {
             ),
           ),
           SizedBox(height: 4.h),
-          SizedBox(
-            height: 34.h,
+          ConstrainedBox(
+            constraints: BoxConstraints(minHeight: 34.h),
             child: Align(
               alignment: Alignment.topLeft,
               child: Text(
                 title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13.sp,
                   fontWeight: FontWeight.w500,
@@ -998,8 +1575,8 @@ class AnalyticsKpiCard extends StatelessWidget {
             ),
           ),
           SizedBox(height: 2.h),
-          SizedBox(
-            height: 14.h,
+          ConstrainedBox(
+            constraints: BoxConstraints(minHeight: 14.h),
             child: isUnavailable
                 ? Text(
                     'Unavailable',

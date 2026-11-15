@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const {initializeApp, deleteApp} = require('firebase-admin/app');
 const {getFirestore} = require('firebase-admin/firestore');
 const {getStorage} = require('firebase-admin/storage');
-const {billingV2ReportCases} = require('./helpers/billing_v2_reports_cases');
-const {getBillingV2FinancialReportCore} = require('../src/billing_v2_reports');
+const {billingV2ReportCases, detailedReportCases} = require('./helpers/billing_v2_reports_cases');
+const {getBillingV2FinancialReportCore, getBillingV2DetailedReportCore} = require('../src/billing_v2_reports');
 
 const enabled = !!process.env.FIRESTORE_EMULATOR_HOST && !!process.env.STORAGE_EMULATOR_HOST;
 const projectId = 'demo-hominode-billing-v2-reports';
@@ -40,3 +40,5 @@ billingV2ReportCases((name, fn) => test(name, {skip: !enabled}, fn), async () =>
     metadata: {contentType: 'image/jpeg', metadata},
   }),
 }), getBillingV2FinancialReportCore);
+
+detailedReportCases((name, fn) => test(name, {skip: !enabled}, fn), async () => ({db, bucket}), getBillingV2DetailedReportCore);

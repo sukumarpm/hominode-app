@@ -20,8 +20,9 @@ void main() {
         },
         verifyAppCheckToken: () async {
           tokenCalls++;
-          if (tokenCalls == 1)
+          if (tokenCalls == 1) {
             throw StateError('temporary attestation failure');
+          }
         },
         retryDelays: const [Duration.zero, Duration.zero],
       );
@@ -40,8 +41,9 @@ void main() {
     final initializer = SecurityStartupInitializer(
       initializeFirebase: () async {
         firebaseCalls++;
-        if (firebaseCalls == 1)
+        if (firebaseCalls == 1) {
           throw StateError('temporary initialization failure');
+        }
       },
       activateAppCheck: () async {
         activationCalls++;

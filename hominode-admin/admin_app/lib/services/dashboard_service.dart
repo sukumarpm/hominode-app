@@ -1,9 +1,62 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'billing_service.dart';
+import 'visitor_lifecycle.dart';
 
 class DashboardService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final BillingService _billingService = BillingService();
+  DashboardService({
+    FirebaseFirestore? firestore,
+    BillingService? billingService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _billingService = billingService ?? BillingService();
+  final FirebaseFirestore _firestore;
+  final BillingService _billingService;
+
+  // Visitor decisions and gate transitions must refresh Home counts even when
+  // the resident roster has not changed. Retain the existing financial reads.
+  Stream<QuerySnapshot<Map<String, dynamic>>> _dashboardChanges(
+    String communityId,
+  ) {
+    late StreamController<QuerySnapshot<Map<String, dynamic>>> controller;
+    final subscriptions = <StreamSubscription<dynamic>>[];
+    QuerySnapshot<Map<String, dynamic>>? users;
+    var visitorsReady = false;
+    void refresh() {
+      if (users != null && visitorsReady) controller.add(users!);
+    }
+
+    controller = StreamController<QuerySnapshot<Map<String, dynamic>>>(
+      onListen: () {
+        subscriptions.add(
+          _firestore
+              .collection('users')
+              .where('role', isEqualTo: 'resident')
+              .where('communityId', isEqualTo: communityId)
+              .snapshots()
+              .listen((snapshot) {
+                users = snapshot;
+                refresh();
+              }, onError: controller.addError),
+        );
+        subscriptions.add(
+          _firestore
+              .collection('visitors')
+              .where('communityId', isEqualTo: communityId)
+              .snapshots()
+              .listen((_) {
+                visitorsReady = true;
+                refresh();
+              }, onError: controller.addError),
+        );
+      },
+      onCancel: () async {
+        for (final subscription in subscriptions) {
+          await subscription.cancel();
+        }
+      },
+    );
+    return controller.stream;
+  }
 
   // Get total residents count filtered by adminId
   Stream<int> getTotalResidentsCount(String communityId) {
@@ -29,9 +82,13 @@ class DashboardService {
     return _firestore
         .collection('visitors')
         .where('communityId', isEqualTo: communityId)
-        .where('status', isEqualTo: 'pending')
         .snapshots()
-        .map((snapshot) => snapshot.docs.length);
+        .map(
+          (snapshot) => pendingVisitorCount(
+            snapshot.docs.map((doc) => doc.data()),
+            communityId,
+          ),
+        );
   }
 
   // Get pending complaints count filtered by adminId
@@ -51,81 +108,76 @@ class DashboardService {
 
   // Get dashboard statistics (combined) filtered by adminId
   Stream<DashboardStats> getDashboardStats(String communityId) {
-    return _firestore
-        .collection('users')
-        .where('role', isEqualTo: 'resident')
-        .where('communityId', isEqualTo: communityId)
-        .snapshots()
-        .asyncMap((usersSnapshot) async {
-          // Filter by adminId in memory
-          final totalResidents = usersSnapshot.docs.length;
+    return _dashboardChanges(communityId).asyncMap((usersSnapshot) async {
+      // Filter by adminId in memory
+      final totalResidents = usersSnapshot.docs.length;
 
-          // Get total flats
-          final flatsSnapshot = await _firestore
-              .collection('flats')
-              .where('communityId', isEqualTo: communityId)
-              .get();
-          // Filter by adminId in memory
-          final totalFlats = flatsSnapshot.docs.length;
+      // Get total flats
+      final flatsSnapshot = await _firestore
+          .collection('flats')
+          .where('communityId', isEqualTo: communityId)
+          .get();
+      // Filter by adminId in memory
+      final totalFlats = flatsSnapshot.docs.length;
 
-          // Get pending visitors
-          final visitorsSnapshot = await _firestore
-              .collection('visitors')
-              .where('communityId', isEqualTo: communityId)
-              .get();
-          // Filter by adminId and status in memory
-          final pendingVisitors = visitorsSnapshot.docs.where((doc) {
-            final data = doc.data();
-            return data['status'] == 'pending';
-          }).length;
+      // Get pending visitors
+      final visitorsSnapshot = await _firestore
+          .collection('visitors')
+          .where('communityId', isEqualTo: communityId)
+          .get();
+      // Filter by adminId and status in memory
+      final pendingVisitors = pendingVisitorCount(
+        visitorsSnapshot.docs.map((doc) => doc.data()),
+        communityId,
+      );
 
-          // Get pending complaints
-          final complaintsSnapshot = await _firestore
-              .collection('complaints')
-              .where('communityId', isEqualTo: communityId)
-              .get();
-          // Filter by adminId and status in memory
-          final pendingComplaints = complaintsSnapshot.docs.where((doc) {
-            final data = doc.data();
-            final status = data['status'] as String?;
-            return status == 'pending' || status == 'in-progress';
-          }).length;
+      // Get pending complaints
+      final complaintsSnapshot = await _firestore
+          .collection('complaints')
+          .where('communityId', isEqualTo: communityId)
+          .get();
+      // Filter by adminId and status in memory
+      final pendingComplaints = complaintsSnapshot.docs.where((doc) {
+        final data = doc.data();
+        final status = data['status'] as String?;
+        return status == 'pending' || status == 'in-progress';
+      }).length;
 
-          // Get this month's collection
-          final now = DateTime.now();
-          final startOfMonth = DateTime(now.year, now.month, 1);
-          final endOfMonth = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+      // Get this month's collection
+      final now = DateTime.now();
+      final startOfMonth = DateTime(now.year, now.month, 1);
+      final endOfMonth = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
 
-          final billsSnapshot = await _firestore
-              .collection('bills')
-              .where('communityId', isEqualTo: communityId)
-              .get();
+      final billsSnapshot = await _firestore
+          .collection('bills')
+          .where('communityId', isEqualTo: communityId)
+          .get();
 
-          double monthlyCollection = 0;
-          for (var doc in billsSnapshot.docs) {
-            final data = doc.data();
+      double monthlyCollection = 0;
+      for (var doc in billsSnapshot.docs) {
+        final data = doc.data();
 
-            // Filter by adminId, status, and date in memory
-            if (data['status'] != 'paid') continue;
+        // Filter by adminId, status, and date in memory
+        if (data['status'] != 'paid') continue;
 
-            final paidAt = data['paidAt'] as Timestamp?;
-            if (paidAt == null) continue;
+        final paidAt = data['paidAt'] as Timestamp?;
+        if (paidAt == null) continue;
 
-            final paidDate = paidAt.toDate();
-            if (paidDate.isBefore(startOfMonth) || paidDate.isAfter(endOfMonth)) {
-              continue;
-            }
-            monthlyCollection += (data['amount'] as num?)?.toDouble() ?? 0;
-          }
+        final paidDate = paidAt.toDate();
+        if (paidDate.isBefore(startOfMonth) || paidDate.isAfter(endOfMonth)) {
+          continue;
+        }
+        monthlyCollection += (data['amount'] as num?)?.toDouble() ?? 0;
+      }
 
-          return DashboardStats(
-            totalResidents: totalResidents,
-            totalFlats: totalFlats,
-            pendingVisitors: pendingVisitors,
-            pendingComplaints: pendingComplaints,
-            monthlyCollection: monthlyCollection,
-          );
-        });
+      return DashboardStats(
+        totalResidents: totalResidents,
+        totalFlats: totalFlats,
+        pendingVisitors: pendingVisitors,
+        pendingComplaints: pendingComplaints,
+        monthlyCollection: monthlyCollection,
+      );
+    });
   }
 }
 

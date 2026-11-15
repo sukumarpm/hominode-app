@@ -59,8 +59,9 @@ class ApartmentImagesService {
               data['ownershipScope'],
               data['resourceId'],
               buildingId: data['buildingId'],
-            )))
+            ))) {
       throw const FormatException('Invalid scoped photo.');
+    }
     if (data['imageAsset'] != null) {
       final asset = StorageImageAsset.fromMap(
         Map<String, dynamic>.from(data['imageAsset'] as Map),
@@ -108,11 +109,13 @@ class ApartmentImagesService {
     for (final data in sorted) {
       try {
         if (data['imageAsset'] is Map &&
-            (data['imageAsset'] as Map)['communityId'] != communityId)
+            (data['imageAsset'] as Map)['communityId'] != communityId) {
           continue;
+        }
         final reference = imageReference(data);
-        if (reference != null && reference.isNotEmpty)
+        if (reference != null && reference.isNotEmpty) {
           references.add(reference);
+        }
       } catch (_) {
         continue;
       }
@@ -194,8 +197,9 @@ class ApartmentImagesService {
                     final data = profile.data();
                     if (controller.isClosed ||
                         request != epoch ||
-                        _auth.currentUser?.uid != user.uid)
+                        _auth.currentUser?.uid != user.uid) {
                       return;
+                    }
                     if (data?['communityId'] != communityId ||
                         data?['isActive'] != true ||
                         data?['approvalStatus'] != 'approved') {

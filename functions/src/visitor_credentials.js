@@ -158,7 +158,7 @@ async function createVisitorInvitationCore({db, auth, data, hmacKey, now = Date.
     "rejectionReason", "actualArrival", "departure", "checkedInBy", "checkedOutBy",
     "checkedInAt", "checkedOutAt", "gateAccessStatus", "gateEntryDeniedAt",
     "gateEntryDeniedBy", "gateEntryDenialReason", "verificationMethod", "qrToken",
-    "visitorPassCode", "authorizationState", "authorizationManaged", "authorizationRevision",
+    "visitorPassCode", "authorizationState", "authorizationManaged", "authorizationRevision", "authorizationPolicyRevision",
     "visitorPolicySnapshot", "credentialValidFrom", "credentialExpiresAt", "credentialVersion",
   ];
   if (serverOwnedFields.some((field) => Object.prototype.hasOwnProperty.call(data || {}, field))) {
@@ -241,7 +241,6 @@ async function getVisitorCredentialsCore({ db, auth, data, hmacKey, now = Date.n
     if (!visitorSnapshot.exists)
       fail("not-found", "Visitor pass is unavailable.");
     const visitor = visitorSnapshot.data();
-    const nowMs = now();
     if (
       visitor.hostUserId !== host.uid ||
       visitor.communityId !== host.communityId
@@ -251,24 +250,29 @@ async function getVisitorCredentialsCore({ db, auth, data, hmacKey, now = Date.n
         "This visitor pass is not available to this Resident.",
       );
     }
-    const arrival = millis(visitor.expectedArrival ?? visitor.expectedTime);
-    const deadlines = [visitorPolicyRevalidationAt(host.community, nowMs),
-      arrival == null ? null : arrival - WINDOW_MS,
-      arrival == null ? null : arrival + WINDOW_MS + 1]
-      .filter((value) => value != null && value > nowMs);
-    const timing = {serverTime: nowMs,
-      revalidateAt: deadlines.length ? Math.min(...deadlines) : null};
-    try {
-      if (!visitorEligible(visitor, nowMs)) {
-        fail("permission-denied", "This visitor pass is not available to this Resident.");
+    function currentAuthorization() {
+      const nowMs = now();
+      const arrival = millis(visitor.expectedArrival ?? visitor.expectedTime);
+      const deadlines = [visitorPolicyRevalidationAt(host.community, nowMs),
+        arrival == null ? null : arrival - WINDOW_MS,
+        arrival == null ? null : arrival + WINDOW_MS + 1]
+        .filter((value) => value != null && value > nowMs);
+      const timing = {serverTime: nowMs,
+        revalidateAt: deadlines.length ? Math.min(...deadlines) : null};
+      try {
+        if (!visitorEligible(visitor, nowMs)) {
+          fail("permission-denied", "This visitor pass is not available to this Resident.");
+        }
+        assertVisitorAuthorized(visitor, host.community, { now: nowMs, profile: host.profile });
+      } catch (error) {
+        // Only after host/community ownership has been checked. These details
+        // contain no credential or authorization grant, including on denial.
+        if (error instanceof RegistrationError) error.details = timing;
+        throw error;
       }
-      assertVisitorAuthorized(visitor, host.community, { now: nowMs, profile: host.profile });
-    } catch (error) {
-      // Only after host/community ownership has been checked. These details
-      // contain no credential or authorization grant, including on denial.
-      if (error instanceof RegistrationError) error.details = timing;
-      throw error;
+      return timing;
     }
+    currentAuthorization();
     if (credentialSnapshot.exists) {
       const credentials = credentialSnapshot.data();
       if (
@@ -309,7 +313,7 @@ async function getVisitorCredentialsCore({ db, auth, data, hmacKey, now = Date.n
         );
       }
       return {
-        ...timing,
+        ...currentAuthorization(),
         qrToken: credentials.qrToken,
         visitorPassCode: credentials.manualCode,
       };
@@ -332,6 +336,7 @@ async function getVisitorCredentialsCore({ db, auth, data, hmacKey, now = Date.n
         : null;
     if (!qrToken && !visitorPassCode)
       fail("not-found", "Visitor credentials are unavailable.");
+    currentAuthorization();
     return { qrToken, visitorPassCode, legacy: true };
   });
 }

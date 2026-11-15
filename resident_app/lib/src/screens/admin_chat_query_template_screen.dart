@@ -305,7 +305,16 @@ class _AdminChatQueryTemplateScreenState
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(
+            e.toString().contains('Please revise your message')
+                ? 'Message not sent. This message may not follow our community chat guidelines. Please edit it and try again.'
+                : 'Unable to send your question. Please try again.',
+          ),
+          backgroundColor: Colors.deepOrange.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
       );
     }
   }

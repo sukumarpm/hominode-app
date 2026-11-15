@@ -32,6 +32,8 @@ function makeDb({visitor = seededVisitor(), communityId = "community-a", securit
       role: "security", isActive: true, communityId, ...security,
     }},
     communities: {[communityId]: {isActive: true}},
+    users: {'resident-1': {uid: 'resident-1', role: 'resident', approvalStatus: 'approved', isActive: true, communityId, flatId: 'flat-1', residentType: 'owner'}},
+    flats: {'flat-1': {communityId, status: 'occupied', residentUserId: 'resident-1'}},
     visitors: {"visitor-1": visitor},
     visitorHostCredentials: {"visitor-1": {
       hostUserId: visitor.hostUserId, communityId: visitor.communityId,
@@ -127,6 +129,29 @@ test("valid normalized manual code checks in through the same path", async () =>
   assert.equal(result.verificationMethod, "manual");
   assert.equal(db.store.visitors["visitor-1"].verificationMethod, "manual");
 });
+
+for (const credential of [{qrToken}, {manualCode}]) {
+  test(`historical ${credential.qrToken ? "QR" : "manual"} receipt reports current checkout and original processing time`, async () => {
+    const db = makeDb();
+    const data = {...credential, operationId: "operation-historical-001"};
+    const original = await request(data, db);
+    assert.equal(original.idempotent, false);
+    assert.equal(original.processedAt, now);
+    assert.equal(original.actualArrival, now);
+    Object.assign(db.store.visitors["visitor-1"], {status: "completed",
+      actualArrival: new Date(now), departure: new Date(now + 1000)});
+    const replay = await request(data, db, {now: () => now + 2000});
+    assert.equal(replay.idempotent, true);
+    assert.equal(replay.currentStatus, "completed");
+    assert.equal(replay.processedAt, now);
+    assert.equal(replay.actualArrival, now);
+    assert.equal(replay.departure, now + 1000);
+    assert.equal(replay.serverTime, now + 2000);
+    assert.equal(Object.keys(db.store.visitorGateEvents).length, 1);
+    assert.equal(db.store.visitors["visitor-1"].status, "completed");
+    await assert.rejects(request({...credential, operationId: "operation-no-reentry-001"}, db));
+  });
+}
 
 test("Admin-approved visits remain eligible and approval metadata is preserved", async () => {
   const approvedAt = new Date(now - 1000);
@@ -257,4 +282,19 @@ test("callable export enforces App Check in the existing Functions region and us
   assert.match(callable[1], /enforceAppCheck:\s*true/);
   assert.match(callable[1], /VISITOR_CREDENTIAL_HMAC_KEY/);
   assert.match(source, /const REGION = "asia-southeast1"/);
+});
+
+test('a schedule becoming active during host reads blocks fresh QR entry', async () => {
+  const db = makeDb();
+  db.store.communities['community-a'] = {isActive: true, timeZone: 'Asia/Manila',
+    scheduledVisitorPolicy: {effectiveAt: now, revision: 1, policy: {
+      schemaVersion: 1, enabled: true, timeZone: 'Asia/Manila', approvalMode: 'all_approval_required',
+      emergency: null, pets: {mode: 'allowed', normalMode: 'allowed', restriction: null},
+    }}};
+  let clockReads = 0;
+  await assert.rejects(verifyVisitorCredentialCore({db, auth: securityAuth, hmacKey,
+    now: () => clockReads++ === 0 ? now - 1 : now,
+    data: {qrToken, operationId: 'clock-boundary-operation-123'}}), {code: 'failed-precondition'});
+  assert.equal(db.store.visitors['visitor-1'].actualArrival, null);
+  assert.equal(Object.keys(db.store.visitorGateOperations).length, 0);
 });

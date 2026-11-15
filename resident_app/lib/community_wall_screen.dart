@@ -1,6 +1,7 @@
 // lib/community_wall_screen.dart
 // Community Wall main screen
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -11,38 +12,62 @@ import 'src/modals/post_menu_bottomsheet.dart';
 import 'src/models/post.dart';
 import 'src/services/post_firestore_service.dart';
 import 'src/widgets/resident_visitor_page_background.dart';
+import 'src/widgets/wall_report_dialog.dart';
+import 'src/widgets/wall_block_dialogs.dart';
 
 const kPrimaryBlue = Color(0xFF172B4D);
 
 class CommunityWallScreen extends StatefulWidget {
-  const CommunityWallScreen({super.key});
+  const CommunityWallScreen({super.key, this.service});
+  final PostFirestoreService? service;
 
   @override
   State<CommunityWallScreen> createState() => _CommunityWallScreenState();
 }
 
 class _CommunityWallScreenState extends State<CommunityWallScreen> {
-  final PostFirestoreService _service = PostFirestoreService();
+  late final PostFirestoreService _service =
+      widget.service ?? PostFirestoreService();
+  bool _blockDialogOpen = false, _blockedDialogOpen = false;
+  int _loadGeneration = 0;
   List<Post> _posts = [];
   bool _isLoading = true;
+  StreamSubscription<void>? _moderationSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadPosts();
+    _moderationSubscription = _service.moderationChanges().skip(1).listen((_) {
+      if (mounted) _loadPosts();
+    }, onError: (_) {});
+  }
+
+  @override
+  void dispose() {
+    _moderationSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadPosts() async {
+    if (!mounted) return;
+    final generation = ++_loadGeneration;
     setState(() => _isLoading = true);
     try {
       final posts = await _service.getAllPosts();
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _posts = posts;
         _isLoading = false;
       });
     } catch (e) {
       print('❌ Error loading posts: $e');
-      setState(() => _isLoading = false);
+      if (mounted && generation == _loadGeneration) {
+        setState(() {
+          _posts = [];
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -142,13 +167,46 @@ class _CommunityWallScreenState extends State<CommunityWallScreen> {
   }
 
   void _handleMenu(Post post) {
+    if (_blockDialogOpen || _blockedDialogOpen) return;
     showPostMenu(
       context,
       post,
       onEdit: () => _handleEdit(post),
       onDelete: () => _handleDelete(post),
       onReport: () => _handleReport(post),
+      onBlock: () => _blockUser(post.authorId),
     );
+  }
+
+  Future<void> _blockUser(String userId) async {
+    if (_blockDialogOpen) return;
+    setState(() => _blockDialogOpen = true);
+    try {
+      final blocked = await showBlockResidentDialog(
+        context,
+        () => _service.setUserBlocked(userId, true),
+      );
+      if (!mounted || !blocked) return;
+      _showSnackBar('Resident blocked.', Colors.green);
+      await _loadPosts();
+    } finally {
+      if (mounted) setState(() => _blockDialogOpen = false);
+    }
+  }
+
+  Future<void> _showBlockedUsers() async {
+    if (_blockedDialogOpen || _blockDialogOpen) return;
+    setState(() => _blockedDialogOpen = true);
+    try {
+      await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => BlockedResidentsDialog(service: _service),
+      );
+      if (mounted) await _loadPosts();
+    } finally {
+      if (mounted) setState(() => _blockedDialogOpen = false);
+    }
   }
 
   void _handleEdit(Post post) {
@@ -194,43 +252,11 @@ class _CommunityWallScreenState extends State<CommunityWallScreen> {
     }
   }
 
-  Future<void> _handleReport(Post post) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Report Post'),
-        content: const Text('Are you sure you want to report this post?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Report'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        final result = await _service.reportPost(
-          post.id,
-          'Inappropriate content',
-        );
-
-        if (result.success) {
-          _showSnackBar('Post reported', Colors.green);
-        } else {
-          _showSnackBar(result.message ?? 'Failed to report post', Colors.red);
-        }
-      } catch (e) {
-        _showSnackBar('Failed to report post', Colors.red);
-      }
-    }
-  }
+  Future<void> _handleReport(Post post) => showWallReportDialog(
+    context,
+    targetLabel: 'Post',
+    submit: (reason) => _service.reportPost(post.id, reason),
+  );
 
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -247,6 +273,15 @@ class _CommunityWallScreenState extends State<CommunityWallScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
       appBar: AppBar(
+        actions: [
+          IconButton(
+            tooltip: 'Blocked users',
+            onPressed: _blockDialogOpen || _blockedDialogOpen
+                ? null
+                : _showBlockedUsers,
+            icon: const Icon(Icons.block),
+          ),
+        ],
         backgroundColor: Colors.white.withValues(alpha: .82),
         foregroundColor: const Color(0xFF172B4D),
         elevation: 0,
@@ -281,7 +316,7 @@ class _CommunityWallScreenState extends State<CommunityWallScreen> {
                     ],
                   ),
                   child: Text(
-                    'No posts yet. Be the first to post!',
+                    'No posts to show right now.',
                     style: TextStyle(
                       fontSize: 14.sp,
                       color: const Color(0xFF52627A),

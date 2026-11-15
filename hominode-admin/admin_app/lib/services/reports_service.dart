@@ -4,6 +4,8 @@ import 'admin_service.dart';
 
 typedef BillingV2FinancialReportCallable =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> payload);
+typedef BillingV2DetailedReportCallable =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> payload);
 
 class ReportsServiceException implements Exception {
   final String userMessage;
@@ -46,12 +48,14 @@ class ReportsService {
     AdminService? adminService,
     FirebaseFunctions? functions,
     BillingV2FinancialReportCallable? financialReportCallable,
+    BillingV2DetailedReportCallable? detailedReportCallable,
     String? Function()? currentAdminIdProvider,
     String Function()? currentCommunityIdProvider,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _adminService = adminService,
        _functions = functions,
        _financialReportCallable = financialReportCallable,
+       _detailedReportCallable = detailedReportCallable,
        _currentAdminIdProvider = currentAdminIdProvider,
        _currentCommunityIdProvider = currentCommunityIdProvider;
 
@@ -59,6 +63,7 @@ class ReportsService {
   final AdminService? _adminService;
   final FirebaseFunctions? _functions;
   final BillingV2FinancialReportCallable? _financialReportCallable;
+  final BillingV2DetailedReportCallable? _detailedReportCallable;
   final String? Function()? _currentAdminIdProvider;
   final String Function()? _currentCommunityIdProvider;
 
@@ -118,6 +123,132 @@ class ReportsService {
       throw const FormatException('Financial report response is invalid.');
     }
     return Map<String, dynamic>.from(data);
+  }
+
+  Future<Map<String, dynamic>> getDetailedFinancialReport({
+    DateTime? from,
+    DateTime? to,
+    String? residentId,
+  }) async {
+    final communityId = _requireCurrentCommunityId();
+    final fromMs = from == null
+        ? 0
+        : DateTime(from.year, from.month, from.day).millisecondsSinceEpoch;
+    final toMs = to == null
+        ? 253402300799999
+        : DateTime(
+            to.year,
+            to.month,
+            to.day,
+            23,
+            59,
+            59,
+            999,
+          ).millisecondsSinceEpoch;
+    if (toMs < fromMs) {
+      throw ReportsServiceException(
+        'Choose a valid date range.',
+        'invalid_date_range',
+      );
+    }
+    if (_currentAdminId() == null) {
+      throw ReportsServiceException('Admin not logged in.', 'admin_required');
+    }
+    try {
+      final payload = {
+        'communityId': communityId,
+        'fromMs': fromMs,
+        'toMs': toMs,
+        if (residentId != null) 'residentId': residentId,
+      };
+      final callable = _detailedReportCallable;
+      final response = callable != null
+          ? await callable(payload)
+          : Map<String, dynamic>.from(
+              (await _regionalFunctions
+                          .httpsCallable('getAdminBillingV2DetailedReport')
+                          .call(payload))
+                      .data
+                  as Map,
+            );
+      if (response['success'] != true ||
+          response['communityId'] != communityId ||
+          response['schemaVersion'] != 1 ||
+          response['reportType'] !=
+              (residentId == null ? 'all' : 'individual') ||
+          response['reportingPeriod'] is! Map ||
+          (response['reportingPeriod'] as Map)['fromMs'] != fromMs ||
+          (response['reportingPeriod'] as Map)['toMs'] != toMs ||
+          response['rows'] is! List ||
+          response['totals'] is! Map) {
+        throw const FormatException('Detailed financial report is invalid.');
+      }
+      return response;
+    } on FirebaseFunctionsException catch (error) {
+      throw ReportsServiceException(
+        'Financial report is unavailable right now. Please try again shortly.',
+        'functions_error:${error.code}',
+      );
+    } on ReportsServiceException {
+      rethrow;
+    } catch (error) {
+      throw ReportsServiceException(
+        'Financial report data is temporarily unavailable. Please try again.',
+        'detailed_report_error:$error',
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getFinancialReportResidents() async {
+    final communityId = _requireCurrentCommunityId();
+    if (_currentAdminId() == null) {
+      throw ReportsServiceException('Admin not logged in.', 'admin_required');
+    }
+    try {
+      final payload = {
+        'communityId': communityId,
+        'fromMs': 0,
+        'toMs': 253402300799999,
+        'listResidents': true,
+      };
+      final callable = _detailedReportCallable;
+      final response = callable != null
+          ? await callable(payload)
+          : Map<String, dynamic>.from(
+              (await _regionalFunctions
+                          .httpsCallable('getAdminBillingV2DetailedReport')
+                          .call(payload))
+                      .data
+                  as Map,
+            );
+      if (response['success'] != true ||
+          response['communityId'] != communityId ||
+          response['schemaVersion'] != 1 ||
+          response['residents'] is! List) {
+        throw const FormatException('Resident list is invalid.');
+      }
+      final residents = (response['residents'] as List)
+          .map((value) => Map<String, dynamic>.from(value as Map))
+          .toList();
+      for (final resident in residents) {
+        final identity = resident['identity'];
+        if (resident['residentId'] is! String ||
+            (resident['residentId'] as String).isEmpty ||
+            identity is! Map ||
+            identity['name'] is! String ||
+            identity['phone'] is! String ||
+            identity['unit'] is! String ||
+            identity['deleted'] is! bool) {
+          throw const FormatException('Resident list is invalid.');
+        }
+      }
+      return residents;
+    } catch (_) {
+      throw ReportsServiceException(
+        'Resident list is unavailable. Please try again.',
+        'resident_list_error',
+      );
+    }
   }
 
   // ============================================================================

@@ -2,11 +2,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hominode_notifications/hominode_notifications.dart';
 import 'package:resident_app/src/services/resident_registration_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/tenant_profile.dart';
 import 'flat_access_control_service.dart';
 import 'resident_access_policy.dart';
 import 'tenant_resolution_service.dart';
+import 'auth_service.dart';
+import 'resident_private_images.dart';
 
 enum ResidentAuthState {
   approved,
@@ -79,9 +82,20 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
 
   factory FirebaseAuthService() => instance;
 
-  FirebaseAuthService._internal();
+  FirebaseAuthService._internal()
+    : _auth = FirebaseAuth.instance,
+      _deactivateNotifications = (() =>
+          HominodePushNotifications.instance.deactivateForLogout());
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  @visibleForTesting
+  FirebaseAuthService.forTesting({
+    required FirebaseAuth auth,
+    required Future<void> Function() deactivateNotifications,
+  }) : _auth = auth,
+       _deactivateNotifications = deactivateNotifications;
+
+  final FirebaseAuth _auth;
+  final Future<void> Function() _deactivateNotifications;
 
   String? _verificationId;
   int? _resendToken;
@@ -198,15 +212,66 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
     if (user == null) {
       return AuthResult.failure(message: 'No authenticated session.');
     }
-    if (!await _isVerifiedPhoneSession(user)) {
-      await _rejectSession(tenantResolver);
+
+    // Firebase persists Auth users locally. A cached user may refer to an
+    // account that was deleted on the server, so do not route it until the
+    // Auth server has confirmed the account still exists.
+    try {
+      await user.reload();
+      final refreshedUser = _auth.currentUser;
+      if (refreshedUser == null) {
+        await signOut(tenantResolver);
+        return AuthResult.failure(
+          message: 'Please sign in again.',
+          errorCode: 'invalid-session',
+        );
+      }
+      final tokenResult = await refreshedUser.getIdTokenResult();
+      if (!hasVerifiedPhoneAuth(
+        phoneNumber: refreshedUser.phoneNumber,
+        signInProvider: tokenResult.signInProvider,
+      )) {
+        await signOut(tenantResolver);
+        return AuthResult.failure(
+          message: 'Please sign in with a verified phone number.',
+          errorCode: 'phone-auth-required',
+        );
+      }
+      return _resolveResident(
+        refreshedUser,
+        tenantResolver,
+        sessionAlreadyValidated: true,
+      );
+    } on FirebaseAuthException catch (error) {
+      if (_isConfirmedInvalidSessionCode(error.code)) {
+        await signOut(tenantResolver);
+        return AuthResult.failure(
+          message: 'Please sign in again.',
+          errorCode: error.code,
+        );
+      }
+      // A connectivity or service failure is not evidence that the account
+      // was deleted. Keep the cached session and let the user retry login.
       return AuthResult.failure(
-        message: 'Please sign in with a verified phone number.',
-        errorCode: 'phone-auth-required',
+        message: _messageForCode(error.code),
+        errorCode: error.code,
+      );
+    } catch (_) {
+      return AuthResult.failure(
+        message:
+            'Unable to verify your session. Check your connection and try again.',
+        errorCode: 'session-validation-failed',
       );
     }
-    return _resolveResident(user, tenantResolver);
   }
+
+  static bool _isConfirmedInvalidSessionCode(String code) => const {
+    'user-not-found',
+    'user-disabled',
+    'invalid-user-token',
+    'user-token-expired',
+    'user-mismatch',
+  }.contains(code.replaceFirst('auth/', ''));
 
   Future<AuthResult> _completePhoneSignIn(
     PhoneAuthCredential credential,
@@ -235,10 +300,11 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
 
   Future<AuthResult> _resolveResident(
     User user,
-    TenantResolutionService tenantResolver,
-  ) async {
+    TenantResolutionService tenantResolver, {
+    bool sessionAlreadyValidated = false,
+  }) async {
     try {
-      if (!await _isVerifiedPhoneSession(user)) {
+      if (!sessionAlreadyValidated && !await _isVerifiedPhoneSession(user)) {
         await _rejectSession(tenantResolver);
         return AuthResult.failure(
           message: 'Please sign in with a verified phone number.',
@@ -331,14 +397,6 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
             state: ResidentAuthState.blocked,
           );
       }
-      if (!profile.isActive) {
-        return AuthResult.success(
-          message:
-              'Your Resident account is not active. Please contact your Community Admin.',
-          user: user,
-          state: ResidentAuthState.inactive,
-        );
-      }
       // Tenants always require verified identity before operational
       // community access. Route them to the verification workflow before
       // attempting protected community reads.
@@ -352,6 +410,15 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
               : 'Identity verification is required before resident access is enabled.',
           user: user,
           state: ResidentAuthState.identityVerificationRequired,
+        );
+      }
+
+      if (!profile.isActive) {
+        return AuthResult.success(
+          message:
+              'Your Resident account is not active. Please contact your Community Admin.',
+          user: user,
+          state: ResidentAuthState.inactive,
         );
       }
 
@@ -484,11 +551,42 @@ class FirebaseAuthService implements ResidentPhoneAuthGateway {
       signInProvider == PhoneAuthProvider.PROVIDER_ID;
 
   Future<AuthResult> signOut([TenantResolutionService? tenantResolver]) async {
+    // Invalidate local authorization before any asynchronous logout work.
+    tenantResolver?.clear();
+    ResidentPrivateImages.selectCommunity(null);
     try {
-      await HominodePushNotifications.instance.deactivateForLogout();
-      await _auth.signOut();
-      tenantResolver?.clear();
       FlatAccessControlService.instance.clearCache();
+    } catch (_) {
+      // Firebase may not be initialized in isolated auth tests; the actual
+      // local Auth sign-out below must still proceed.
+    }
+    _verificationId = null;
+    _resendToken = null;
+    _pendingAutoCredential = null;
+    try {
+      // Device cleanup may be unauthorized after Auth-last account deletion.
+      // It must never prevent local Firebase sign-out or cache clearing.
+      final notifications = Future<void>.sync(
+        _deactivateNotifications,
+      ).timeout(const Duration(seconds: 5)).catchError((Object _) {});
+      await Future.wait([
+        _auth.signOut(),
+        () async {
+          await AuthService.instance.clearLoginState();
+          final preferences = await SharedPreferences.getInstance();
+          for (final key in [
+            'user_id',
+            'user_email',
+            'building_id',
+            'flat_id',
+          ]) {
+            await preferences.remove(key);
+          }
+        }(),
+      ]);
+      // Give existing notification cleanup a bounded chance to finish before
+      // login can register a new session. Its failure cannot undo sign-out.
+      await notifications;
 
       return AuthResult.success(message: 'Signed out successfully.');
     } catch (_) {

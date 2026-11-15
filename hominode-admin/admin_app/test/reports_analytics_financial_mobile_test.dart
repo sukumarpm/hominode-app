@@ -6,17 +6,39 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeReportsService extends ReportsService {
-  _FakeReportsService({
-    this.financialSummary,
-    this.financialError,
-  }) : super(
-         firestore: FakeFirebaseFirestore(),
-         currentAdminIdProvider: () => 'admin-1',
-         currentCommunityIdProvider: () => 'community-1',
-       );
+  _FakeReportsService({this.financialSummary, this.financialError})
+    : super(
+        firestore: FakeFirebaseFirestore(),
+        currentAdminIdProvider: () => 'admin-1',
+        currentCommunityIdProvider: () => 'community-1',
+      );
 
   final FinancialSummary? financialSummary;
   final Object? financialError;
+  int detailedReportCalls = 0;
+  String? lastResidentId;
+
+  @override
+  Future<List<Map<String, dynamic>>> getFinancialReportResidents() async => [
+    {
+      'residentId': 'active-1',
+      'identity': {
+        'name': 'test acct 6',
+        'phone': '+919500000000',
+        'unit': 'P016',
+        'deleted': false,
+      },
+    },
+    {
+      'residentId': 'deleted-1',
+      'identity': {
+        'name': 'test acct 6',
+        'phone': '+16505553436',
+        'unit': 'V015',
+        'deleted': true,
+      },
+    },
+  ];
 
   @override
   Future<FinancialSummary> getFinancialSummary({
@@ -59,8 +81,91 @@ class _FakeReportsService extends ReportsService {
   }
 
   @override
-  Future<int> getDeliveriesCount({required int year, required int month}) async {
+  Future<int> getDeliveriesCount({
+    required int year,
+    required int month,
+  }) async {
     return 0;
+  }
+
+  @override
+  Future<Map<String, dynamic>> getDetailedFinancialReport({
+    DateTime? from,
+    DateTime? to,
+    String? residentId,
+  }) async {
+    detailedReportCalls++;
+    lastResidentId = residentId;
+    return {
+      'success': true,
+      'schemaVersion': 1,
+      'communityId': 'community-1',
+      'reportType': 'all',
+      'generatedAtMs': 1760000000000,
+      'reportingPeriod': {
+        'fromMs': from?.millisecondsSinceEpoch ?? 0,
+        'toMs': to?.millisecondsSinceEpoch ?? 253402300799999,
+      },
+      'totals': {
+        'residentsCount': 2,
+        'billedMinor': 30000,
+        'paidMinor': 20000,
+        'outstandingMinor': 10000,
+      },
+      'rows': [
+        {
+          'residentId': 'active-1',
+          'identity': {
+            'name': 'test acct 6',
+            'phone': '+919500000000',
+            'unit': 'P016',
+            'residentType': 'owner',
+            'deleted': false,
+          },
+          'bills': [
+            {
+              'billId': 'bill-1',
+              'description': 'Maintenance',
+              'billingPeriod': '2030-01',
+              'amountMinor': 10000,
+              'paidMinor': 5000,
+              'outstandingMinor': 5000,
+              'status': 'partially_paid',
+              'settlements': [
+                {
+                  'transactionId': 'tx-1',
+                  'amountMinor': 5000,
+                  'method': 'cash',
+                  'reference': 'R-1',
+                  'receivedAtMs': 1760000000000,
+                },
+              ],
+            },
+          ],
+          'payments': [],
+          'billedMinor': 10000,
+          'paidMinor': 5000,
+          'outstandingMinor': 5000,
+          'paymentStatus': 'partially_paid',
+        },
+        {
+          'residentId': 'deleted-1',
+          'identity': {
+            'name': 'test acct 6',
+            'phone': '+16505553436',
+            'unit': 'V015',
+            'residentType': 'tenant',
+            'deleted': true,
+          },
+          'bills': [],
+          'payments': [],
+          'billedMinor': 20000,
+          'paidMinor': 15000,
+          'outstandingMinor': 5000,
+          'paymentStatus': 'partially_paid',
+        },
+      ],
+    };
   }
 }
 
@@ -104,9 +209,8 @@ Widget _testApp(ReportsService service) {
     designSize: const Size(390, 844),
     minTextAdapt: true,
     splitScreenMode: true,
-    builder: (_, __) => MaterialApp(
-      home: ReportsAnalyticsScreen(reportsService: service),
-    ),
+    builder: (_, __) =>
+        MaterialApp(home: ReportsAnalyticsScreen(reportsService: service)),
   );
 }
 
@@ -166,72 +270,30 @@ Future<void> _pickDifferentYear(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('desktop-only financial report entries are listed', (tester) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'financial report offers all-resident and individual modes with date filters',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(_testApp(_FakeReportsService(financialSummary: _summary())));
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.text('Desktop-only financial reports'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-
-    expect(find.text('Desktop-only financial reports'), findsOneWidget);
-    expect(find.text('Detailed collections report'), findsOneWidget);
-
-    for (final label in [
-      'Outstanding / overdue report',
-      'Payment-method report',
-      'Resident credit report',
-      'Resident statement',
-    ]) {
-      await tester.scrollUntilVisible(
-        find.text(label),
-        120,
-        scrollable: find.byType(Scrollable).first,
+      await tester.pumpWidget(
+        _testApp(_FakeReportsService(financialSummary: _summary())),
       );
-      expect(find.text(label), findsOneWidget);
-    }
-  });
+      await tester.pumpAndSettle();
 
-  testWidgets('tapping desktop-only report shows web-desktop guidance', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    await tester.pumpWidget(_testApp(_FakeReportsService(financialSummary: _summary())));
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.text('Detailed collections report'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    final tileFinder = find.ancestor(
-      of: find.text('Detailed collections report'),
-      matching: find.byType(ListTile),
-    );
-    await tester.ensureVisible(tileFinder);
-    final tile = tester.widget<ListTile>(tileFinder.first);
-    tile.onTap!.call();
-    await tester.pumpAndSettle();
-
-    expect(
-      find.textContaining(
-        'Please open Admin Web/Desktop to view or export this report.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.widgetWithText(TextButton, 'OK'), findsOneWidget);
-  });
+      await tester.scrollUntilVisible(
+        find.text('Resident financial report'),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(find.text('All Residents'), findsOneWidget);
+      expect(find.text('Individual Resident'), findsOneWidget);
+      expect(find.text('Generate Report'), findsOneWidget);
+      expect(find.byIcon(Icons.date_range), findsOneWidget);
+    },
+  );
 
   testWidgets('financial backend error is shown safely and not zeroed silently', (
     tester,
@@ -254,7 +316,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Financial report is unavailable right now. Please try again shortly.'),
+      find.text(
+        'Financial report is unavailable right now. Please try again shortly.',
+      ),
       findsOneWidget,
     );
     expect(find.text('Unavailable'), findsWidgets);
@@ -279,7 +343,9 @@ void main() {
       await _pickDifferentYear(tester);
 
       expect(
-        find.text('Financial report is unavailable right now. Please try again shortly.'),
+        find.text(
+          'Financial report is unavailable right now. Please try again shortly.',
+        ),
         findsOneWidget,
       );
       expect(find.textContaining('4,500'), findsNothing);
@@ -288,26 +354,75 @@ void main() {
   );
 
   testWidgets(
-    'financial export shows desktop guidance and skips generating PDF path',
+    'individual report searches retained deleted residents and provides PDF and Excel exports',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(
-        _testApp(_FakeReportsService(financialSummary: _summary())),
+      final service = _FakeReportsService(financialSummary: _summary());
+      await tester.pumpWidget(_testApp(service));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Resident financial report'),
+        300,
+        scrollable: find.byType(Scrollable).last,
       );
+      await tester.ensureVisible(find.text('Individual Resident'));
       await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Export'));
+      expect(find.text('Individual Resident').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('Individual Resident'));
       await tester.pumpAndSettle();
-
+      expect(find.text('Generate Report'), findsNothing);
+      expect(find.text('Export PDF'), findsNothing);
       expect(
-        find.textContaining('currently available in Hominode Admin Web/Desktop'),
-        findsOneWidget,
+        tester
+            .widget<DropdownMenu<String>>(find.byType(DropdownMenu<String>))
+            .dropdownMenuEntries
+            .length,
+        2,
       );
-      expect(find.textContaining('Generating PDF report for'), findsNothing);
+      final search = find.byType(DropdownMenu<String>);
+      await tester.ensureVisible(search);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(of: search, matching: find.byType(TextField)),
+        '16505553436',
+      );
+      await tester.pumpAndSettle();
+      final former = find
+          .text('test acct 6 · +16505553436 · V015 · Deleted')
+          .last;
+      await tester.tap(former);
+      await tester.pumpAndSettle();
+      expect(find.text('Generate Report'), findsOneWidget);
+      await tester.ensureVisible(find.text('Generate Report'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Generate Report'));
+      await tester.pumpAndSettle();
+      expect(service.lastResidentId, 'deleted-1');
+      expect(find.text('test acct 6 · Deleted'), findsOneWidget);
+      expect(find.text('test acct 6 · Active'), findsNothing);
+      expect(find.text('Export PDF'), findsOneWidget);
+      expect(find.text('Export Excel'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Export PDF'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Export Excel'),
+            )
+            .onPressed,
+        isNotNull,
+      );
     },
   );
 

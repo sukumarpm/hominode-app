@@ -6,6 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'resident_visitor_policy_service.dart';
+import '../models/resident_visitor_authorization.dart';
 
 /// Result class for visitor operations
 class VisitorResult {
@@ -13,19 +15,26 @@ class VisitorResult {
   final String? message;
   final String? visitorId;
   final String? errorCode;
+  final String? authorizationState;
 
   VisitorResult({
     required this.success,
     this.message,
     this.visitorId,
     this.errorCode,
+    this.authorizationState,
   });
 
-  factory VisitorResult.success({String? message, String? visitorId}) {
+  factory VisitorResult.success({
+    String? message,
+    String? visitorId,
+    String? authorizationState,
+  }) {
     return VisitorResult(
       success: true,
       message: message ?? 'Operation successful',
       visitorId: visitorId,
+      authorizationState: authorizationState,
     );
   }
 
@@ -86,114 +95,31 @@ class VisitorFirestoreService {
     required DateTime expectedTime,
     String? phoneNumber,
     String? vehicleNumber,
+    bool bringingPet = false,
+    String? timeZone,
   }) async {
+    if (_auth.currentUser == null) {
+      return VisitorResult.failure(
+        message: 'Sign in again to invite a visitor.',
+        errorCode: 'unauthenticated',
+      );
+    }
     try {
-      print('🔵 Adding expected visitor...');
-      print('👤 Visitor Name: $visitorName');
-      print('📝 Purpose: $purpose');
-      print('📅 Expected Date: $expectedDate');
-      print('⏰ Expected Time: $expectedTime');
-
-      // Get user ID using the same logic as UserDataService
-      String? userId;
-
-      // First try Firebase Auth
-      final firebaseUser = _auth.currentUser;
-      if (firebaseUser != null) {
-        print('🆔 Firebase Auth User: ${firebaseUser.uid}');
-
-        // Try to find user document by Firebase Auth UID
-        final doc = await _firestore
-            .collection('users')
-            .doc(firebaseUser.uid)
-            .get();
-
-        if (doc.exists) {
-          userId = doc.id;
-          print('✅ Found user document by Firebase Auth UID');
-        } else {
-          // Try to find by authUid field
-          print('🔍 Searching by authUid field...');
-          final querySnapshot = await _firestore
-              .collection('users')
-              .where('authUid', isEqualTo: firebaseUser.uid)
-              .limit(1)
-              .get();
-
-          if (querySnapshot.docs.isNotEmpty) {
-            userId = querySnapshot.docs.first.id;
-            print('✅ Found user document by authUid field');
-          }
-        }
-      }
-
-      // Fallback to SharedPreferences
-      if (userId == null) {
-        print('⚠️  No Firebase Auth user, checking SharedPreferences...');
-        final prefs = await SharedPreferences.getInstance();
-        userId = prefs.getString('user_id');
-
-        if (userId == null) {
-          print('❌ No user ID found');
-          return VisitorResult.failure(
-            message: 'Please log in to add visitors',
-            errorCode: 'not-authenticated',
-          );
-        }
-
-        print('🆔 Using stored User ID: $userId');
-      }
-
-      // Fetch user data from Firestore
-      print('📥 Fetching user data from Firestore...');
-      final userDoc = await _firestore.collection('users').doc(userId).get();
-
-      if (!userDoc.exists) {
-        print('❌ User document not found in Firestore');
-        print('   User ID: $userId');
-        print('   Please ensure user document exists in Firestore');
-        return VisitorResult.failure(
-          message: 'User profile not found. Please contact support.',
-          errorCode: 'user-not-found',
-        );
-      }
-
-      final userData = userDoc.data();
-      final userName =
-          userData?['name'] ?? firebaseUser?.displayName ?? 'Unknown User';
-      final userEmail = userData?['email'] ?? firebaseUser?.email ?? '';
-      final flatId = userData?['flatId'] ?? '';
-      final flatLabel = userData?['flatLabel'] ?? userData?['flatId'] ?? '';
-      final adminId = userData?['adminId'];
-      final communityId = userData?['communityId']?.toString().trim() ?? '';
-      if (communityId.isEmpty) {
-        return VisitorResult.failure(
-          message: 'Your resident account is not assigned to a community.',
-          errorCode: 'community-not-assigned',
-        );
-      }
-
-      print('✅ User data fetched: $userName ($userEmail)');
-      print('🏢 Flat ID: $flatId');
-      print('🏢 Flat Label: $flatLabel');
-      print('👤 Admin ID: $adminId');
-
-      // Combine date and time
-      // Combine date and time
-      final expectedArrival = DateTime(
+      final wall = DateTime.utc(
         expectedDate.year,
         expectedDate.month,
         expectedDate.day,
         expectedTime.hour,
         expectedTime.minute,
-      );
-
-      final request = {
-        'visitorName': visitorName,
-        'purpose': purpose,
+      ).toIso8601String().substring(0, 16);
+      final expectedArrival = ResidentVisitTime.instant(wall, timeZone);
+      final request = <String, dynamic>{
+        'visitorName': visitorName.trim(),
+        'purpose': purpose.trim(),
         'expectedArrival': expectedArrival.millisecondsSinceEpoch,
         'phoneNumber': phoneNumber,
         'vehicleNumber': vehicleNumber,
+        'bringingPet': bringingPet,
       };
       final response = _createInvitationOverride != null
           ? await _createInvitationOverride(request)
@@ -201,32 +127,32 @@ class VisitorFirestoreService {
                     .httpsCallable('createVisitorInvitation')
                     .call<Map<String, dynamic>>(request))
                 .data;
-      final visitorId = response['visitorId'] as String?;
-      if (visitorId == null || visitorId.isEmpty) {
-        throw StateError('Visitor invitation response was incomplete.');
+      final visitorId = response['visitorId'];
+      if (visitorId is! String || visitorId.isEmpty) {
+        throw StateError(
+          'The invitation could not be confirmed. Check your visitor list before retrying.',
+        );
       }
-
+      final state = response['authorizationState'] as String?;
       return VisitorResult.success(
-        message: 'Visitor added successfully',
         visitorId: visitorId,
+        authorizationState: state,
+        message: state == 'pending_admin'
+            ? 'Invitation submitted. Waiting for your Community Admin; the pass is unavailable until authorized.'
+            : 'Invitation created. Open your visitor list to check its status and pass.',
       );
-    } on FirebaseException catch (e) {
-      print('❌ Firebase Error: ${e.code}');
-      print('❌ Message: ${e.message}');
+    } on FirebaseException catch (error) {
       return VisitorResult.failure(
-        message: _getErrorMessage(e.code),
-        errorCode: e.code,
+        message: residentVisitorError(error),
+        errorCode: error.code,
       );
-    } catch (e) {
-      print('❌ Unexpected Error: $e');
-      return VisitorResult.failure(
-        message: 'Failed to add visitor. Please try again.',
-      );
+    } catch (error) {
+      return VisitorResult.failure(message: residentVisitorError(error));
     }
   }
 
   Future<String> _requireResidentCommunityId() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = _auth.currentUser;
 
     if (user == null) {
       throw StateError('Resident is not authenticated.');
@@ -298,8 +224,8 @@ class VisitorFirestoreService {
 
       // Sort in memory
       visitors.sort((a, b) {
-        final aTime = (a['expectedArrival'] as Timestamp?)?.toDate();
-        final bTime = (b['expectedArrival'] as Timestamp?)?.toDate();
+        final aTime = ResidentVisitorAuthorization.arrival(a);
+        final bTime = ResidentVisitorAuthorization.arrival(b);
         if (aTime == null && bTime == null) return 0;
         if (aTime == null) return 1;
         if (bTime == null) return -1;
@@ -368,8 +294,8 @@ class VisitorFirestoreService {
 
       // Sort in memory
       visitors.sort((a, b) {
-        final aTime = (a['expectedArrival'] as Timestamp?)?.toDate();
-        final bTime = (b['expectedArrival'] as Timestamp?)?.toDate();
+        final aTime = ResidentVisitorAuthorization.arrival(a);
+        final bTime = ResidentVisitorAuthorization.arrival(b);
         if (aTime == null && bTime == null) return 0;
         if (aTime == null) return 1;
         if (bTime == null) return -1;
@@ -404,8 +330,8 @@ class VisitorFirestoreService {
 
       // Sort in memory
       visitors.sort((a, b) {
-        final aTime = (a['expectedArrival'] as Timestamp?)?.toDate();
-        final bTime = (b['expectedArrival'] as Timestamp?)?.toDate();
+        final aTime = ResidentVisitorAuthorization.arrival(a);
+        final bTime = ResidentVisitorAuthorization.arrival(b);
         if (aTime == null && bTime == null) return 0;
         if (aTime == null) return 1;
         if (bTime == null) return -1;
@@ -504,8 +430,8 @@ class VisitorFirestoreService {
 
       // Sort in memory
       visitors.sort((a, b) {
-        final aTime = (a['expectedArrival'] as Timestamp?)?.toDate();
-        final bTime = (b['expectedArrival'] as Timestamp?)?.toDate();
+        final aTime = ResidentVisitorAuthorization.arrival(a);
+        final bTime = ResidentVisitorAuthorization.arrival(b);
         if (aTime == null && bTime == null) return 0;
         if (aTime == null) return 1;
         if (bTime == null) return -1;
@@ -521,25 +447,8 @@ class VisitorFirestoreService {
 
   /// Stream visitors (real-time updates)
   Stream<List<Map<String, dynamic>>> streamMyVisitors() async* {
-    String? userId;
-
-    final firebaseUser = _auth.currentUser;
-
-    if (firebaseUser != null) {
-      userId = firebaseUser.uid;
-      print('🆔 Firebase Auth User for stream: $userId');
-    } else {
-      final prefs = await SharedPreferences.getInstance();
-      userId = prefs.getString('user_id');
-
-      if (userId == null) {
-        print('❌ No user ID found for stream');
-        yield [];
-        return;
-      }
-    }
-
-    print('📡 Streaming visitors for user: $userId');
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) throw StateError('Sign in again to view visitors.');
     final communityId = await _requireResidentCommunityId();
 
     yield* _firestore
@@ -555,8 +464,8 @@ class VisitorFirestoreService {
           }).toList();
 
           visitors.sort((a, b) {
-            final aTime = (a['expectedArrival'] as Timestamp?)?.toDate();
-            final bTime = (b['expectedArrival'] as Timestamp?)?.toDate();
+            final aTime = ResidentVisitorAuthorization.arrival(a);
+            final bTime = ResidentVisitorAuthorization.arrival(b);
 
             if (aTime == null && bTime == null) return 0;
             if (aTime == null) return 1;
@@ -655,8 +564,8 @@ class VisitorFirestoreService {
 
           // Sort in memory
           visitors.sort((a, b) {
-            final aTime = (a['expectedArrival'] as Timestamp?)?.toDate();
-            final bTime = (b['expectedArrival'] as Timestamp?)?.toDate();
+            final aTime = ResidentVisitorAuthorization.arrival(a);
+            final bTime = ResidentVisitorAuthorization.arrival(b);
             if (aTime == null && bTime == null) return 0;
             if (aTime == null) return 1;
             if (bTime == null) return -1;
@@ -801,31 +710,22 @@ class VisitorFirestoreService {
 
   /// Delete/Cancel visitor
   Future<VisitorResult> deleteVisitor(String visitorId) async {
+    // Compatibility entry point: retain the invitation and its audit history.
     try {
-      await _firestore.collection(visitorsCollection).doc(visitorId).delete();
-
-      return VisitorResult.success(message: 'Visitor deleted');
-    } catch (e) {
-      return VisitorResult.failure(message: 'Failed to delete visitor');
-    }
-  }
-
-  // ============================================================================
-  // ERROR MESSAGES
-  // ============================================================================
-
-  String _getErrorMessage(String errorCode) {
-    switch (errorCode) {
-      case 'permission-denied':
-        return 'Permission denied. Please check your access rights.';
-      case 'unavailable':
-        return 'Service temporarily unavailable. Please try again.';
-      case 'not-found':
-        return 'Visitor not found.';
-      case 'already-exists':
-        return 'Visitor already exists.';
-      default:
-        return 'An error occurred. Please try again.';
+      final row =
+          (await _firestore
+                  .collection(visitorsCollection)
+                  .doc(visitorId)
+                  .get(const GetOptions(source: Source.server)))
+              .data();
+      if (row == null) throw StateError('This invitation is unavailable.');
+      await ResidentVisitorPolicyService(
+        firestore: _firestore,
+        auth: _auth,
+      ).mutate({...row, 'id': visitorId}, action: 'cancel');
+      return VisitorResult.success(message: 'Visitor cancelled');
+    } catch (error) {
+      return VisitorResult.failure(message: residentVisitorError(error));
     }
   }
 }

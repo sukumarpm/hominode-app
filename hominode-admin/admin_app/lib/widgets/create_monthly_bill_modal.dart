@@ -32,7 +32,13 @@ import '../services/admin_tenant_context.dart';
 class CreateMonthlyBillModal extends StatefulWidget {
   final void Function(MonthlyBillConfig config) onGenerate;
 
-  const CreateMonthlyBillModal({super.key, required this.onGenerate});
+  const CreateMonthlyBillModal({
+    super.key,
+    required this.onGenerate,
+    this.firestore,
+  });
+
+  final FirebaseFirestore? firestore;
 
   /// Show the modal with fade and scale animation
   static Future<void> show(
@@ -78,7 +84,8 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   final _securityController = TextEditingController();
   final _otherController = TextEditingController();
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
 
   String? _selectedMonth;
   int? _selectedYear;
@@ -94,6 +101,9 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   List<Map<String, dynamic>> _flats = [];
   bool _loadingBuildings = false;
   bool _loadingFlats = false;
+  String? _flatsError;
+  int _flatLoadVersion = 0;
+  final _flatChanges = ValueNotifier<int>(0);
 
   final List<String> _scopeOptions = ['All Residents', 'Specific Units'];
 
@@ -105,6 +115,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
 
   @override
   void dispose() {
+    _flatChanges.dispose();
     _maintenanceController.dispose();
     _waterController.dispose();
     _parkingController.dispose();
@@ -188,20 +199,25 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
 
   // Load flats for selected building from Firestore
   Future<void> _loadFlatsForBuilding(String buildingId) async {
+    final version = ++_flatLoadVersion;
     setState(() {
       _loadingFlats = true;
+      _flatsError = null;
       _flats = [];
       _selectedFlatIds = [];
     });
 
+    _flatChanges.value++;
+    final communityId = AdminTenantContext.instance.communityId;
     try {
-      final communityId = AdminTenantContext.instance.requireCommunityId();
+      AdminTenantContext.instance.requireCommunityId();
 
       final flatsSnapshot = await _firestore
           .collection('flats')
           .where('communityId', isEqualTo: communityId)
           .where('buildingId', isEqualTo: buildingId)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 20));
 
       final flats = <Map<String, dynamic>>[];
 
@@ -214,7 +230,8 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
             .where('communityId', isEqualTo: communityId)
             .where('flatId', isEqualTo: flatId)
             .where('role', isEqualTo: 'resident')
-            .get();
+            .get()
+            .timeout(const Duration(seconds: 20));
 
         final residentNames = usersSnapshot.docs
             .map((doc) => doc.data()['name']?.toString() ?? '')
@@ -245,26 +262,29 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
         return a['flatNumber'].toString().compareTo(b['flatNumber'].toString());
       });
 
-      if (!mounted) return;
+      if (!mounted || version != _flatLoadVersion) return;
 
+      if (_selectedBuildingId != buildingId ||
+          AdminTenantContext.instance.communityId != communityId) {
+        throw StateError(
+          'Community or building changed. Select the building again.',
+        );
+      }
       setState(() {
         _flats = flats;
         _loadingFlats = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || version != _flatLoadVersion) return;
 
       setState(() {
         _loadingFlats = false;
         _flats = [];
+        _flatsError =
+            'Unable to load units. Check your connection and community access, then retry.';
       });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to load flats: $e'),
-          backgroundColor: const Color(0xFFEF4444),
-        ),
-      );
+    } finally {
+      if (mounted && version == _flatLoadVersion) _flatChanges.value++;
     }
   }
 
@@ -695,8 +715,9 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20.r)),
       ),
       builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
+        return ValueListenableBuilder<int>(
+          valueListenable: _flatChanges,
+          builder: (context, value, child) {
             return SafeArea(
               child: Container(
                 constraints: BoxConstraints(
@@ -737,6 +758,23 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                         padding: EdgeInsets.all(32.w),
                         child: CircularProgressIndicator(),
                       )
+                    else if (_flatsError != null)
+                      Padding(
+                        padding: EdgeInsets.all(24.w),
+                        child: Column(
+                          children: [
+                            Text(
+                              _flatsError!,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  _loadFlatsForBuilding(_selectedBuildingId!),
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ),
+                      )
                     else if (_flats.isEmpty)
                       Padding(
                         padding: EdgeInsets.all(32.w),
@@ -767,14 +805,14 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
 
                             return InkWell(
                               onTap: () {
-                                setModalState(() {
+                                setState(() {
                                   if (isSelected) {
                                     _selectedFlatIds.remove(flatId);
                                   } else {
                                     _selectedFlatIds.add(flatId);
                                   }
                                 });
-                                setState(() {});
+                                _flatChanges.value++;
                               },
                               child: Container(
                                 padding: EdgeInsets.symmetric(

@@ -1,3 +1,5 @@
+import 'package:hominode_time/community_time.dart';
+import 'services/admin_tenant_context.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -1568,12 +1570,8 @@ class _QrGateScannerScreenState extends State<QrGateScannerScreen>
   }
 
   // Time formatting helper
-  String _formatTime(DateTime time) {
-    final hour = time.hour > 12
-        ? time.hour - 12
-        : (time.hour == 0 ? 12 : time.hour);
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $period';
-  }
+  String _formatTime(DateTime time) => CommunityTime.format(
+    time,
+    AdminTenantContext.instance.activeTenant?.timeZone,
+  );
 }

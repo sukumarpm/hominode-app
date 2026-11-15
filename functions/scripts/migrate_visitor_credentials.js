@@ -24,8 +24,9 @@ function sameTime(left, right) {
   return leftMs != null && leftMs === millis(right);
 }
 
-function indexMatches(index, {visitorId, communityId, type, validFrom, expiresAt}) {
+function indexMatches(index, {visitorId, hostUserId, communityId, type, validFrom, expiresAt}) {
   return index?.visitorId === visitorId && index.communityId === communityId &&
+    (index.hostUserId == null || index.hostUserId === hostUserId) &&
     index.credentialType === type && index.credentialVersion === 1 &&
     sameTime(index.validFrom, validFrom) && sameTime(index.expiresAt, expiresAt);
 }
@@ -82,7 +83,7 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
     missingHosts: 0, invalidHosts: 0, duplicateManualCodes: 0,
     invalidManualCodes: 0,
     invalidQrTokens: 0, missingQrTokens: 0, missingManualCodes: 0,
-    terminalRecords: 0, conflictingIndexes: 0,
+    terminalRecords: 0, conflictingIndexes: 0, ownershipBackfilled: 0,
   };
   const discrepancies = [];
   const plannedHashes = new Map();
@@ -175,11 +176,11 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
         .doc(credentialHash(hmacKey, "manual", credentials.manualCode)).get();
       const [qrSnapshot, manualSnapshot] = await Promise.all([qrIndex, manualIndex]);
       const qrOk = indexMatches(qrSnapshot.data(), {
-        visitorId: doc.id, communityId: visitor.communityId, type: "qr",
+        visitorId: doc.id, hostUserId, communityId: visitor.communityId, type: "qr",
         validFrom: credentials.validFrom, expiresAt: credentials.expiresAt,
       });
       const manualOk = indexMatches(manualSnapshot.data(), {
-        visitorId: doc.id, communityId: visitor.communityId, type: "manual",
+        visitorId: doc.id, hostUserId, communityId: visitor.communityId, type: "manual",
         validFrom: credentials.validFrom, expiresAt: credentials.expiresAt,
       });
       if (!qrOk || !manualOk) {
@@ -190,6 +191,37 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
       }
       if (visitor.credentialVersion === 1) {
         counts.alreadyMigrated++;
+        if (credentials.hostUserId === hostUserId &&
+            (qrSnapshot.data()?.hostUserId !== hostUserId || manualSnapshot.data()?.hostUserId !== hostUserId || visitor.hostUserId !== hostUserId)) {
+          if (apply) {
+            const qrRef = db.collection("visitorGateCredentialIndex").doc(credentialHash(hmacKey, "qr", credentials.qrToken));
+            const manualRef = db.collection("visitorGateCredentialIndex").doc(credentialHash(hmacKey, "manual", credentials.manualCode));
+            const visitorRef = db.collection("visitors").doc(doc.id);
+            await db.runTransaction(async (tx) => {
+              const [currentVisitor, currentCredentials, currentQr, currentManual, currentHost, currentCommunity, currentFlat] = await Promise.all([
+                tx.get(visitorRef), tx.get(credentialRef), tx.get(qrRef), tx.get(manualRef),
+                tx.get(db.collection("users").doc(hostUserId)), tx.get(db.collection("communities").doc(visitor.communityId)),
+                tx.get(db.collection("flats").doc(host.flatId)),
+              ]);
+              const current = currentVisitor.data();
+              if (!currentVisitor.exists || !currentCredentials.exists ||
+                  !privateSetMatches(currentCredentials.data(), current, hostUserId) ||
+                  !indexMatches(currentQr.data(), {visitorId: doc.id, hostUserId, communityId: visitor.communityId,
+                    type: "qr", validFrom: credentials.validFrom, expiresAt: credentials.expiresAt}) ||
+                  !indexMatches(currentManual.data(), {visitorId: doc.id, hostUserId, communityId: visitor.communityId,
+                    type: "manual", validFrom: credentials.validFrom, expiresAt: credentials.expiresAt}) ||
+                  (current.hostUserId || current.residentId) !== hostUserId || current.communityId !== visitor.communityId ||
+                  !currentHost.exists || !currentCommunity.exists || !currentFlat.exists ||
+                  !hostEligible(currentHost.data(), hostUserId, visitor.communityId, currentCommunity.data(), currentFlat.data())) {
+                throw Error("ownership_backfill_race_or_mismatch");
+              }
+              if (current.hostUserId !== hostUserId) tx.update(visitorRef, {hostUserId});
+              if (currentQr.data()?.hostUserId !== hostUserId) tx.update(qrRef, {hostUserId});
+              if (currentManual.data()?.hostUserId !== hostUserId) tx.update(manualRef, {hostUserId});
+            });
+            counts.ownershipBackfilled++;
+          }
+        }
         continue;
       }
       counts.ready++;
@@ -197,19 +229,20 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
       if (!apply) continue;
       try {
         await db.runTransaction(async (tx) => {
+          const qrIndexRef = db.collection("visitorGateCredentialIndex").doc(credentialHash(hmacKey, "qr", credentials.qrToken));
+          const manualIndexRef = db.collection("visitorGateCredentialIndex").doc(credentialHash(hmacKey, "manual", credentials.manualCode));
           const [current, currentCredentials, currentQr, currentManual, currentHost, currentCommunity, currentFlat] = await Promise.all([
             tx.get(db.collection("visitors").doc(doc.id)), tx.get(credentialRef),
-            tx.get(db.collection("visitorGateCredentialIndex").doc(credentialHash(hmacKey, "qr", credentials.qrToken))),
-            tx.get(db.collection("visitorGateCredentialIndex").doc(credentialHash(hmacKey, "manual", credentials.manualCode))),
+            tx.get(qrIndexRef), tx.get(manualIndexRef),
             tx.get(db.collection("users").doc(hostUserId)),
             tx.get(db.collection("communities").doc(visitor.communityId)),
             tx.get(db.collection("flats").doc(host.flatId)),
           ]);
           if (!current.exists || !currentCredentials.exists ||
               !privateSetMatches(currentCredentials.data(), current.data(), hostUserId) ||
-              !indexMatches(currentQr.data(), {visitorId: doc.id, communityId: visitor.communityId,
+              !indexMatches(currentQr.data(), {visitorId: doc.id, hostUserId, communityId: visitor.communityId,
                 type: "qr", validFrom: credentials.validFrom, expiresAt: credentials.expiresAt}) ||
-              !indexMatches(currentManual.data(), {visitorId: doc.id, communityId: visitor.communityId,
+              !indexMatches(currentManual.data(), {visitorId: doc.id, hostUserId, communityId: visitor.communityId,
                 type: "manual", validFrom: credentials.validFrom, expiresAt: credentials.expiresAt}) ||
               !currentHost.exists || !hostEligible(currentHost.data(), hostUserId, visitor.communityId,
                 currentCommunity.data(), currentFlat.data())) {
@@ -223,6 +256,8 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
             credentialMigratedAt: FieldValue.serverTimestamp(),
             legacyCredentialSunsetAt: FieldValue.serverTimestamp(),
           });
+          tx.update(qrIndexRef, {hostUserId});
+          tx.update(manualIndexRef, {hostUserId});
         });
       } catch (_) {
         counts.ready--;
@@ -245,11 +280,11 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
     const manualRef = db.collection("visitorGateCredentialIndex").doc(plan.manualHash);
     const [qrIndex, manualIndex] = await Promise.all([qrRef.get(), manualRef.get()]);
     const qrCollision = qrIndex.exists && !indexMatches(qrIndex.data(), {
-      visitorId: doc.id, communityId: plan.communityId, type: "qr",
+      visitorId: doc.id, hostUserId, communityId: plan.communityId, type: "qr",
       validFrom: plan.validFrom, expiresAt: plan.expiresAt,
     });
     const manualCollision = manualIndex.exists && !indexMatches(manualIndex.data(), {
-      visitorId: doc.id, communityId: plan.communityId, type: "manual",
+      visitorId: doc.id, hostUserId, communityId: plan.communityId, type: "manual",
       validFrom: plan.validFrom, expiresAt: plan.expiresAt,
     });
     const duplicatePlannedManual = plannedHashes.get(plan.manualHash);
@@ -299,9 +334,9 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
               currentCommunity.data(), currentFlat.data())) {
           throw Error("migration_race");
         }
-        if ((currentQr.exists && !indexMatches(currentQr.data(), {visitorId: doc.id,
+        if ((currentQr.exists && !indexMatches(currentQr.data(), {visitorId: doc.id, hostUserId,
           communityId: plan.communityId, type: "qr", validFrom: plan.validFrom, expiresAt: plan.expiresAt})) ||
-            (currentManual.exists && !indexMatches(currentManual.data(), {visitorId: doc.id,
+            (currentManual.exists && !indexMatches(currentManual.data(), {visitorId: doc.id, hostUserId,
               communityId: plan.communityId, type: "manual", validFrom: plan.validFrom, expiresAt: plan.expiresAt}))) {
           throw Error("credential_index_conflict");
         }
@@ -312,12 +347,12 @@ async function run({db, hmacKey, apply = false, now = Date.now}) {
           createdAt: FieldValue.serverTimestamp(), migratedAt: FieldValue.serverTimestamp(),
         });
         if (!currentQr.exists) tx.create(currentQrRef, {
-          visitorId: doc.id, communityId: plan.communityId, credentialType: "qr",
+          visitorId: doc.id, hostUserId, communityId: plan.communityId, credentialType: "qr",
           credentialVersion: 1, validFrom: plan.validFrom, expiresAt: plan.expiresAt,
           createdAt: FieldValue.serverTimestamp(),
         });
         if (!currentManual.exists) tx.create(currentManualRef, {
-          visitorId: doc.id, communityId: plan.communityId, credentialType: "manual",
+          visitorId: doc.id, hostUserId, communityId: plan.communityId, credentialType: "manual",
           credentialVersion: 1, validFrom: plan.validFrom, expiresAt: plan.expiresAt,
           createdAt: FieldValue.serverTimestamp(),
         });

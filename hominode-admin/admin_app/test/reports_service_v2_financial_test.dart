@@ -94,6 +94,54 @@ void main() {
       expect(formatInrMinorUnitsForReports(-1), 'Unavailable');
     });
 
+    test(
+      'detailed report uses community-scoped callable and selected date range',
+      () async {
+        Map<String, dynamic>? captured;
+        final service = ReportsService(
+          firestore: FakeFirebaseFirestore(),
+          currentAdminIdProvider: () => 'admin-1',
+          currentCommunityIdProvider: () => 'community-1',
+          detailedReportCallable: (payload) async {
+            captured = payload;
+            return {
+              'success': true,
+              'schemaVersion': 1,
+              'communityId': 'community-1',
+              'reportType': 'all',
+              'reportingPeriod': {
+                'fromMs': payload['fromMs'],
+                'toMs': payload['toMs'],
+              },
+              'rows': <Map<String, dynamic>>[],
+              'totals': {
+                'residentsCount': 0,
+                'billedMinor': 0,
+                'paidMinor': 0,
+                'outstandingMinor': 0,
+              },
+            };
+          },
+        );
+        final from = DateTime(2030, 1, 2);
+        final to = DateTime(2030, 1, 3);
+        final report = await service.getDetailedFinancialReport(
+          from: from,
+          to: to,
+        );
+        expect(captured!['communityId'], 'community-1');
+        expect(
+          captured!['fromMs'],
+          DateTime(2030, 1, 2).millisecondsSinceEpoch,
+        );
+        expect(
+          captured!['toMs'],
+          DateTime(2030, 1, 3, 23, 59, 59, 999).millisecondsSinceEpoch,
+        );
+        expect(report['totals']['residentsCount'], 0);
+      },
+    );
+
     test('surfaces backend errors safely without silent fallback', () async {
       final service = ReportsService(
         firestore: FakeFirebaseFirestore(),
@@ -119,16 +167,26 @@ void main() {
       );
     });
 
-    test('uses callable V2 authority and does not retain legacy paid-status path', () {
-      final source = File('lib/services/reports_service.dart').readAsStringSync();
-      final start = source.indexOf('Future<FinancialSummary> getFinancialSummary');
-      final end = source.indexOf('Future<List<MonthlyRevenue>> getMonthlyRevenueTrends', start);
-      final method = source.substring(start, end);
+    test(
+      'uses callable V2 authority and does not retain legacy paid-status path',
+      () {
+        final source = File(
+          'lib/services/reports_service.dart',
+        ).readAsStringSync();
+        final start = source.indexOf(
+          'Future<FinancialSummary> getFinancialSummary',
+        );
+        final end = source.indexOf(
+          'Future<List<MonthlyRevenue>> getMonthlyRevenueTrends',
+          start,
+        );
+        final method = source.substring(start, end);
 
-      expect(method, contains('_callBillingV2FinancialReport({'));
-      expect(method, isNot(contains("collection('bills')")));
-      expect(method, isNot(contains("status == 'paid'")));
-      expect(method, isNot(contains('totalAmount')));
-    });
+        expect(method, contains('_callBillingV2FinancialReport({'));
+        expect(method, isNot(contains("collection('bills')")));
+        expect(method, isNot(contains("status == 'paid'")));
+        expect(method, isNot(contains('totalAmount')));
+      },
+    );
   });
 }

@@ -76,6 +76,13 @@ class ListingFirestoreService {
         return ServiceResult(success: false, message: 'User not authenticated');
       }
 
+      if (paths.length + references.length > 5) {
+        return ServiceResult(
+          success: false,
+          message: 'You can add up to 5 images.',
+        );
+      }
+
       stage = 'draft';
       final draft = imageDraftId ?? await _images.createDraft('marketplace');
       stage = 'image-upload';
@@ -120,6 +127,8 @@ class ListingFirestoreService {
             ? "This community's subscription is not configured. Please contact your community administrator, then retry."
             : code == 'permission-denied'
             ? 'Marketplace requires an active Plus or Pro subscription and authorized resident access. Please contact your community administrator.'
+            : stage == 'image-upload' && e is ArgumentError
+            ? 'Choose JPEG, PNG or WebP images no larger than 10 MB each.'
             : 'Unable to save your listing. Please retry in this form.',
       );
     } finally {

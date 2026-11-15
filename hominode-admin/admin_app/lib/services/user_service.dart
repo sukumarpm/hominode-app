@@ -393,6 +393,7 @@ class UserService {
   Future<String> createUser({
     required String name,
     required String phone,
+    String? phoneCountryCode,
     String? password,
     String? email,
     String residentType = 'owner',
@@ -403,6 +404,7 @@ class UserService {
   }) => _residentService.createResidentOnboarding(
     name: name,
     phone: phone,
+    phoneCountryCode: phoneCountryCode,
     email: email,
     residentType: residentType,
     familyMembers: familyMembers,

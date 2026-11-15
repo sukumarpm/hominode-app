@@ -4,6 +4,66 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:resident_app/src/components/resident_visitor_card_header.dart';
 
 void main() {
+  for (final status in ['Rejected', 'Cancelled', 'Revoked', 'مرفوض']) {
+    testWidgets(
+      'duplicate $status authorization is hidden; badge and timestamp remain',
+      (tester) async {
+        await tester.pumpWidget(
+          ScreenUtilInit(
+            designSize: const Size(390, 844),
+            builder: (_, _) => MaterialApp(
+              home: Scaffold(
+                body: ResidentVisitorCardHeader(
+                  visitorName: 'Guest',
+                  purpose: 'Visit',
+                  timeText: 'Today',
+                  statusLabel: status,
+                  secondaryStatusLabel: status,
+                  statusColor: const Color(0xFFDC2626),
+                  statusBackgroundColor: const Color(0xFFFFE6EB),
+                  rejectedAtLabel: 'Rejected at 10:30 AM',
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(find.text(status), findsOneWidget);
+        expect(
+          tester.widget<Text>(find.text(status)).style?.color,
+          const Color(0xFFDC2626),
+        );
+        expect(find.text('Rejected at 10:30 AM'), findsOneWidget);
+      },
+    );
+  }
+  for (final labels in [
+    ['Expected', 'Admin authorized'],
+    ['Expected', 'Awaiting Admin approval'],
+    ['Checked In', 'Admin authorized'],
+  ]) {
+    testWidgets('${labels.join(' + ')} retains distinct authorization', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(390, 844),
+          builder: (_, _) => MaterialApp(
+            home: Scaffold(
+              body: ResidentVisitorCardHeader(
+                visitorName: 'Guest',
+                purpose: 'Visit',
+                timeText: 'Today',
+                statusLabel: labels[0],
+                secondaryStatusLabel: labels[1],
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.text(labels[0]), findsOneWidget);
+      expect(find.text(labels[1]), findsOneWidget);
+    });
+  }
   testWidgets('visitor card details wrap at narrow width with large text', (
     tester,
   ) async {

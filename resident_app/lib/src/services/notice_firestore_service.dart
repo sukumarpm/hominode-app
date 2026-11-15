@@ -555,8 +555,9 @@ class NoticeFirestoreService {
       final count = await getUnreadCount();
       if (!controller.isClosed &&
           request == epoch &&
-          uid == _auth.currentUser?.uid)
+          uid == _auth.currentUser?.uid) {
         controller.add(count);
+      }
     }
 
     Future<void> bindInbox() async {

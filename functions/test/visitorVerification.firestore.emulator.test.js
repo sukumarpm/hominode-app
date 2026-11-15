@@ -45,13 +45,16 @@ async function seedGateVisitor({approved = false} = {}) {
 
   await Promise.all([
     db.collection("communities").doc(communityId).set({isActive: true}),
+    db.collection('users').doc(`resident-${suffix}`).set({uid: `resident-${suffix}`, role: 'resident',
+      communityId, flatId: `flat-${suffix}`, approvalStatus: 'approved', isActive: true, residentType: 'owner'}),
+    db.collection('flats').doc(`flat-${suffix}`).set({communityId, status: 'occupied', residentUserId: `resident-${suffix}`}),
     db.collection("securityStaff").doc(securityUid).set({
       uid: securityUid, role: "security", isActive: true,
       communityId, phoneNumber,
     }),
     db.collection("visitors").doc(visitorId).set({
       communityId, hostUserId: `resident-${suffix}`, hostName: "Synthetic Host",
-      visitorName: "Synthetic Guest", flatId: "flat-test", flatLabel: "A-101",
+      visitorName: "Synthetic Guest", flatId: `flat-${suffix}`, flatLabel: "A-101",
       purpose: "Emulator integration test", expectedArrival: Timestamp.fromMillis(now),
       status: approved ? "approved" : "expected", isApproved: approved,
       approvedBy: approved ? "admin-test" : null,

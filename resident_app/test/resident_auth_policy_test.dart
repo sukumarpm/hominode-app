@@ -117,6 +117,7 @@ void main() {
   group('approved resident flat assignment', () {
     test('only a missing flat is a flat-assignment denial', () {
       final result = FlatAccessControlService.evaluateApprovedProfile({
+        'residentType': 'owner',
         'role': 'resident',
         'approvalStatus': 'approved',
         'isActive': true,
@@ -130,6 +131,7 @@ void main() {
 
     test('a non-empty flat grants access', () {
       final result = FlatAccessControlService.evaluateApprovedProfile({
+        'residentType': 'owner',
         'role': 'resident',
         'approvalStatus': 'approved',
         'isActive': true,

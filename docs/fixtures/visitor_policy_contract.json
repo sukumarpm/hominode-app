@@ -1,0 +1,55 @@
+{
+  "loaded": {
+    "communityId": "community-1",
+    "policy": {
+      "schemaVersion": 1,
+      "enabled": false,
+      "timeZone": "Asia/Manila",
+      "approvalMode": "tenant_approval_required",
+      "emergency": {
+        "startAt": 1794182400000,
+        "endAt": 1794186000000
+      },
+      "pets": {
+        "mode": "temporarily_restricted",
+        "normalMode": "allowed",
+        "restriction": {
+          "startAt": 1794268800000,
+          "endAt": 1794355200000
+        }
+      },
+      "revision": 4,
+      "updatedBy": "admin-1"
+    },
+    "serverTime": 1794184200000,
+    "rolloutReady": false
+  },
+  "save": {
+    "communityId": "community-1",
+    "policy": {
+      "schemaVersion": 1,
+      "enabled": false,
+      "timeZone": "Asia/Manila",
+      "approvalMode": "tenant_approval_required",
+      "emergency": {
+        "startAt": 1794182400000,
+        "endAt": 1794186000000
+      },
+      "pets": {
+        "mode": "temporarily_restricted",
+        "normalMode": "allowed",
+        "restriction": {
+          "startAt": 1794268800000,
+          "endAt": 1794355200000
+        }
+      }
+    },
+    "expectedRevision": 4
+  },
+  "decision": {
+    "communityId": "community-1",
+    "visitorId": "visitor-1",
+    "action": "approve",
+    "expectedRevision": 7
+  }
+}

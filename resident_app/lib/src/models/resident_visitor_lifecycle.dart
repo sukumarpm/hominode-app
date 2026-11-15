@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../services/visitor_qr_contract.dart';
+import 'resident_visitor_authorization.dart';
 
 enum ResidentVisitorTab { expected, checkedIn, history }
 
@@ -78,6 +79,9 @@ class ResidentVisitorLifecycle {
     if (_hasArrival(visitor) || _checkedInStates.contains(status)) {
       return ResidentVisitorTab.checkedIn;
     }
+    if (const {'rejected', 'revoked'}.contains(visitor['authorizationState'])) {
+      return ResidentVisitorTab.history;
+    }
     if (_expectedStates.contains(status)) {
       return _isExpired(visitor, now: now)
           ? ResidentVisitorTab.history
@@ -99,6 +103,12 @@ class ResidentVisitorLifecycle {
     if (_hasArrival(visitor) || _checkedInStates.contains(status)) {
       return 'visitor_status_checked_in';
     }
+    if (visitor['authorizationState'] == 'rejected') {
+      return 'visitor_status_rejected';
+    }
+    if (visitor['authorizationState'] == 'revoked') {
+      return 'visitor_status_cancelled';
+    }
     if (_expectedStates.contains(status)) {
       return _isExpired(visitor, now: now)
           ? 'visitor_status_expired'
@@ -111,12 +121,15 @@ class ResidentVisitorLifecycle {
   static String? adminDecisionKeyFor(Map<String, dynamic> visitor) {
     final status = visitor['status']?.toString().toLowerCase();
     if (status == 'rejected') return 'visitor_admin_rejected';
-    if (visitor['isApproved'] == true &&
+    if (visitor['authorizationState'] == 'admin_authorized' &&
         tabFor(visitor) != ResidentVisitorTab.history) {
       return 'visitor_admin_approved';
     }
     return null;
   }
+
+  static String authorizationLabel(Map<String, dynamic> visitor) =>
+      ResidentVisitorAuthorization.label(visitor);
 
   static bool isExpected(Map<String, dynamic> visitor, {DateTime? now}) =>
       tabFor(visitor, now: now) == ResidentVisitorTab.expected;

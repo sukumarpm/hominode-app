@@ -81,7 +81,16 @@ class NotificationService extends ChangeNotifier {
                       DateTime.now(),
                   isRead: data['isRead'] ?? false,
                   actionUrl: data['actionUrl'],
-                  metadata: data['metadata'],
+                  metadata: {
+                    ...?((data['metadata'] is Map)
+                        ? Map<String, dynamic>.from(data['metadata'] as Map)
+                        : null),
+                    ...?((data['data'] is Map)
+                        ? Map<String, dynamic>.from(data['data'] as Map)
+                        : null),
+                    'communityId': data['communityId'],
+                    'eventType': data['eventType'],
+                  },
                 );
               }).toList();
               print('✅ STEP 3 PASSED: Data transformed');

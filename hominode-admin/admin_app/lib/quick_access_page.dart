@@ -15,12 +15,19 @@ import 'events_announcements_screen.dart';
 import 'security_management_screen.dart';
 import 'apartment_images_management_screen.dart';
 import 'community_settings_screen.dart';
+import 'content_moderation_screen.dart';
+import 'services/admin_tenant_context.dart';
 import 'widgets/standard_header.dart';
 
 class QuickAccessPage extends StatelessWidget {
-  const QuickAccessPage({super.key, this.communityPhotosBuilder});
+  const QuickAccessPage({
+    super.key,
+    this.communityPhotosBuilder,
+    this.moderationBuilder,
+  });
 
   final WidgetBuilder? communityPhotosBuilder;
+  final WidgetBuilder? moderationBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -241,6 +248,24 @@ class QuickAccessPage extends StatelessWidget {
       ),
 
       // Analytics & Settings
+      if (AdminTenantContext.instance.authorizedCommunityIds.contains(
+        AdminTenantContext.instance.communityId,
+      ))
+        ModernQuickAccessTile(
+          icon: Icons.policy_outlined,
+          label: 'Content Moderation',
+          color: const Color(0xFF0E4778),
+          bgColor: const Color(0xFFEEF2FF),
+          onTap: (context) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    moderationBuilder ?? (_) => const ContentModerationScreen(),
+              ),
+            );
+          },
+        ),
       ModernQuickAccessTile(
         icon: Icons.group_work_rounded,
         label: 'Community & Invites',

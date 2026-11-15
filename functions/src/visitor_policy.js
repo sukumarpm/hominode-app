@@ -114,13 +114,15 @@ function communityPolicy(community) {
   const { revision, updatedAt, updatedBy, enforcementStartedAt, ...input } =
     community.visitorPolicy;
   // Corrupt server configuration fails closed, rather than silently weakening it.
-  return {
+  // Historical configurations may lack optional audit metadata. Omit absent
+  // keys so their next policy save can atomically audit the previous value.
+  return Object.fromEntries(Object.entries({
     ...validatePolicy(input),
-    revision,
+    revision: revision ?? 0,
     updatedAt,
     updatedBy,
     enforcementStartedAt,
-  };
+  }).filter(([, value]) => value !== undefined));
 }
 function residentIdentity(profile, community) {
   const role = trustedResidentType(profile);
@@ -195,46 +197,34 @@ function assertVisitorAuthorized(visitor, community, { now = Date.now(), profile
   const arrival = millis(visitor.expectedArrival ?? visitor.expectedTime);
   if (arrival == null) fail("failed-precondition", "This invitation has no valid arrival time.");
   assertPets(policy, pet, arrival);
-  // Unmanaged legacy invitations issued after enforcement began
-  // must not bypass server-managed authorization.
-  if (policy.enabled && visitor.authorizationManaged !== true) {
-    const created = millis(visitor.createdAt);
-    const cutover = millis(policy.enforcementStartedAt);
-    const compatibilityIssued =
-      visitor.visitorPolicySnapshot?.schemaVersion === 1 &&
-      visitor.visitorPolicySnapshot?.enforced === false;
-
-    if (!compatibilityIssued &&
-        (created == null || cutover == null || created >= cutover)) {
-      fail(
-        "failed-precondition",
-        "This invitation requires authorization review.",
-      );
-    }
-  }
-
-  if (!policy.enabled) return;
-  // An old automatic authorization is not evidence of Admin approval.
+  // Creation snapshots, cutover dates and legacy approval flags are audit
+  // history, never permission. Always evaluate the current host and policy.
   if (!profile) fail("permission-denied", "Trusted visitor host identity is required.");
   const identity = residentIdentity(profile, community);
-  const needsApproval = activeAt(policy.emergency, now) ||
+  const needsApproval = policy.enabled && (activeAt(policy.emergency, now) ||
     policy.approvalMode === "all_approval_required" ||
-    (policy.approvalMode === "tenant_approval_required" && identity.residentType === "tenant");
-  if (needsApproval && !(visitor.authorizationState === "admin_authorized" &&
-      typeof visitor.authorizationActorUid === "string" &&
-      visitor.authorizationActorUid.length > 0 &&
-      visitor.approvedBy === visitor.authorizationActorUid)) {
+    (policy.approvalMode === "tenant_approval_required" && identity.residentType === "tenant"));
+  if (needsApproval && !approvalMatchesPolicy(visitor, policy, now)) {
     fail("failed-precondition", "This invitation requires Admin approval under the current policy.");
   }
 }
 
+function approvalMatchesPolicy(visitor, policy, now) {
+  const approvedAt = millis(visitor.approvedAt);
+  const revision = policy.revision;
+  return visitor.authorizationManaged === true &&
+    visitor.authorizationState === "admin_authorized" &&
+    visitor.isApproved === true &&
+    typeof visitor.authorizationActorUid === "string" &&
+    visitor.authorizationActorUid.length > 0 &&
+    visitor.approvedBy === visitor.authorizationActorUid &&
+    Number.isSafeInteger(revision) && revision > 0 &&
+    visitor.authorizationPolicyRevision === revision &&
+    approvedAt != null && approvedAt <= now &&
+    (!activeAt(policy.emergency, now) || approvedAt >= policy.emergency.startAt);
+}
+
 async function assertVisitorHost({ db, read, visitor, community, now = Date.now() }) {
-  if (
-    visitor.authorizationManaged !== true &&
-    !require("./visitor_policy_resolver")
-      .resolveEffectiveVisitorPolicy(community, now).enabled
-  )
-    return;
   const uid = visitor.hostUserId;
   if (
     typeof uid !== "string" ||
@@ -297,5 +287,6 @@ module.exports = {
   assertPets,
   invitationDecision,
   assertVisitorAuthorized,
+  approvalMatchesPolicy,
   assertVisitorHost,
 };

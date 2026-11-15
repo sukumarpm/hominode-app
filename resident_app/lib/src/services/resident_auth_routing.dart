@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'firebase_auth_service.dart';
 
-enum ResidentAuthenticationIntent { login, register }
+enum ResidentAuthenticationIntent { login, register, accountDeletion }
 
 class ResidentAuthRouting {
   const ResidentAuthRouting._();
@@ -56,6 +56,11 @@ class ResidentAuthRouting {
     }
     return result;
   }
+
+  static bool shouldOpenDeletionRequest(AuthResult result, ResidentAuthenticationIntent intent) =>
+      intent == ResidentAuthenticationIntent.accountDeletion &&
+      result.success &&
+      result.user != null;
 
   /// Executes safe root navigation, clearing the stack and passing AuthResult data.
   static void navigateToResult(BuildContext context, AuthResult result) {

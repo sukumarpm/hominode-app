@@ -3,6 +3,7 @@
 
 class Post {
   final String id;
+  final String authorId;
   final String authorName;
   final String profileImage;
   final String flat;
@@ -17,6 +18,7 @@ class Post {
 
   Post({
     required this.id,
+    this.authorId = '',
     required this.authorName,
     required this.profileImage,
     required this.flat,
@@ -33,6 +35,7 @@ class Post {
   factory Post.fromJson(Map<String, dynamic> json) {
     return Post(
       id: json['id'] as String,
+      authorId: json['authorId'] as String? ?? '',
       authorName: json['authorName'] as String,
       profileImage: json['profileImage'] as String,
       flat: json['flat'] as String,
@@ -52,6 +55,7 @@ class Post {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'authorId': authorId,
       'authorName': authorName,
       'profileImage': profileImage,
       'flat': flat,
@@ -82,6 +86,7 @@ class Post {
   }) {
     return Post(
       id: id ?? this.id,
+      authorId: authorId,
       authorName: authorName ?? this.authorName,
       profileImage: profileImage ?? this.profileImage,
       flat: flat ?? this.flat,

@@ -250,7 +250,7 @@ function content(data, feature) {
     feature === "community_wall"
       ? (data.content ?? "")
       : `${data.title ?? ""} ${data.description ?? ""}`;
-  if (bannedKeywords.some((word) => text.toLowerCase().includes(word)))
+  if (bannedKeywords.some((word) => new RegExp(`(?<![\\p{L}\\p{N}_])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'iu').test(text)))
     fail(
       "invalid-argument",
       "Your post contains banned keywords or inappropriate language.",
@@ -470,6 +470,7 @@ async function commitResidentImagesCore({
         data.feature === "community_wall"
           ? {
               ...common,
+              moderationVersion: 1,
               authorId: auth.uid,
               authorName: profile.name ?? "Unknown User",
               profileImage: profile.profileImage ?? "",
@@ -611,6 +612,8 @@ async function authorizedResidentRead({
       fail("permission-denied", "Private image access is unavailable.");
   } else {
     const profile = await resident({ db, auth, transaction });
+    if (asset.feature === 'community_wall' && image.moderationState === 'hidden')
+      fail('permission-denied', 'This private image is unavailable.');
     if (
       profile.communityId !== communityId ||
       (["marketplace"].includes(asset.feature) &&

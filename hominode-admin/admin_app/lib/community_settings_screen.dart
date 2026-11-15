@@ -2,14 +2,12 @@ import 'package:admin_app/widgets/community_location_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:intl/intl.dart';
-import 'package:share_plus/share_plus.dart';
 
-import 'models/community_invite.dart';
 import 'models/tenant_config.dart';
 import 'services/admin_tenant_context.dart';
 import 'services/community_invite_service.dart';
 import 'widgets/community_payment_settings_card.dart';
+import 'widgets/visitor_policy_settings_card.dart';
 import 'widgets/standard_header.dart';
 
 class CommunitySettingsScreen extends StatefulWidget {
@@ -154,50 +152,8 @@ class _CommunitySettingsScreenState extends State<CommunitySettingsScreen> {
               ),
               SizedBox(height: 12.h),
               const CommunityPaymentSettingsCard(),
-              SizedBox(height: 20.h),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Resident registration invites',
-                      style: TextStyle(
-                        fontSize: 12.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 8.w),
-                  FilledButton.icon(
-                    onPressed: _createInvite,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Create'),
-                  ),
-                ],
-              ),
-              SizedBox(height: 12.h),
-              StreamBuilder<List<CommunityInvite>>(
-                stream: _service.watchInvites(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (snapshot.hasError) {
-                    return Text('Unable to load invites: ${snapshot.error}');
-                  }
-                  final invites = snapshot.data ?? const [];
-                  if (invites.isEmpty) {
-                    return Card(
-                      child: Padding(
-                        padding: EdgeInsets.all(12.w),
-                        child: Center(
-                          child: Text('No resident invites created'),
-                        ),
-                      ),
-                    );
-                  }
-                  return Column(children: invites.map(_inviteCard).toList());
-                },
-              ),
+              const SizedBox(height: 12),
+              const VisitorPolicySettingsCard(),
             ],
           ),
         ),
@@ -238,204 +194,6 @@ class _CommunitySettingsScreenState extends State<CommunitySettingsScreen> {
       );
     } finally {
       _openingLocationDialog = false;
-    }
-  }
-
-  Widget _inviteCard(CommunityInvite invite) {
-    final usable = invite.isActive && !invite.isExpired && !invite.isExhausted;
-    return Card(
-      margin: EdgeInsets.only(bottom: 10.h),
-      child: ListTile(
-        title: SelectableText(
-          invite.code,
-          style: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 1),
-        ),
-        subtitle: Text(
-          [
-            usable
-                ? 'Active'
-                : invite.isActive
-                ? (invite.isExpired ? 'Expired' : 'Usage limit reached')
-                : 'Revoked',
-            if (invite.expiresAt != null)
-              'Expires ${DateFormat.yMMMd().format(invite.expiresAt!)}',
-            if (invite.maxUses != null)
-              '${invite.useCount}/${invite.maxUses} uses',
-          ].join(' • '),
-        ),
-        trailing: Wrap(
-          spacing: 2,
-          children: [
-            IconButton(
-              tooltip: 'Copy',
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: invite.code));
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Invite code copied')),
-                  );
-                }
-              },
-              icon: const Icon(Icons.copy_outlined),
-            ),
-            IconButton(
-              tooltip: 'Share',
-              onPressed: () => Share.share(
-                'Hominode resident registration code: ${invite.code}',
-              ),
-              icon: const Icon(Icons.share_outlined),
-            ),
-            if (invite.isActive)
-              IconButton(
-                tooltip: 'Revoke',
-                onPressed: () => _revoke(invite),
-                icon: const Icon(Icons.block, color: Colors.red),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _createInvite() async {
-    DateTime? expiry;
-    final uses = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create resident invite'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: uses,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Maximum uses (optional)',
-                ),
-              ),
-              SizedBox(height: 12.h),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  expiry == null
-                      ? 'No expiry'
-                      : 'Expires ${DateFormat.yMMMd().format(expiry!)}',
-                ),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final selected = await showDatePicker(
-                    context: context,
-                    firstDate: DateTime.now().add(const Duration(days: 1)),
-                    lastDate: DateTime.now().add(const Duration(days: 3650)),
-                  );
-                  if (selected != null) {
-                    setDialogState(
-                      () => expiry = DateTime(
-                        selected.year,
-                        selected.month,
-                        selected.day,
-                        23,
-                        59,
-                        59,
-                      ),
-                    );
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Create'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true || !mounted) {
-      uses.dispose();
-      return;
-    }
-    try {
-      final maxUses = uses.text.trim().isEmpty
-          ? null
-          : int.tryParse(uses.text.trim());
-      if (uses.text.trim().isNotEmpty && maxUses == null) {
-        throw const FormatException('Usage limit must be a whole number.');
-      }
-      final code = await _service.createInvite(
-        expiresAt: expiry,
-        maxUses: maxUses,
-      );
-      if (mounted) {
-        await showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Invite created'),
-            content: SelectableText(code),
-            actions: [
-              TextButton(
-                onPressed: () => Clipboard.setData(ClipboardData(text: code)),
-                child: const Text('Copy'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Done'),
-              ),
-            ],
-          ),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.toString()),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-    uses.dispose();
-  }
-
-  Future<void> _revoke(CommunityInvite invite) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Revoke invite?'),
-        content: Text(invite.code),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Revoke'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    try {
-      await _service.revokeInvite(invite.code);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.toString()),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
     }
   }
 }

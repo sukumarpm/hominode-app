@@ -1,88 +1,227 @@
-import 'dart:convert';
-
+import 'src/models/resident_visitor_authorization.dart';
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'src/widgets/resident_visitor_page_background.dart';
+import 'src/services/resident_visitor_pass_service.dart';
+import 'src/models/resident_visitor_lifecycle.dart';
+import 'src/services/visitor_qr_contract.dart';
+import 'src/services/resident_visitor_policy_service.dart';
+import 'src/models/resident_visitor_timing.dart';
 
 /// Visitor QR Pass Screen
-/// Displays the QR code for an approved visitor
-/// Fetches visitor data from Firestore
+/// Displays authenticated, server-issued QR and manual visitor credentials.
 class VisitorQRScreen extends StatefulWidget {
   final String visitorId;
 
-  const VisitorQRScreen({super.key, required this.visitorId});
+  const VisitorQRScreen({
+    super.key,
+    required this.visitorId,
+    this.loadPass,
+    this.watchVisitor,
+    this.watchCommunity,
+    this.loadTimeZone,
+  });
+  final Future<String?> Function()? loadTimeZone;
+  final Future<ResidentVisitorPass> Function(String)? loadPass;
+  final Stream<Map<String, dynamic>?> Function(String)? watchVisitor;
+  final Stream<Object?> Function(String)? watchCommunity;
 
   @override
   State<VisitorQRScreen> createState() => _VisitorQRScreenState();
 }
 
-class _VisitorQRScreenState extends State<VisitorQRScreen> {
-  final _firestore = FirebaseFirestore.instance;
+class _VisitorQRScreenState extends State<VisitorQRScreen>
+    with WidgetsBindingObserver {
+  ResidentVisitorPass? _pass;
   Map<String, dynamic>? _visitorData;
   bool _isLoading = true;
   String? _error;
+  bool _isAwaitingApproval = false;
+  bool _canRetry = false;
+  final _service = ResidentVisitorPassService();
+  StreamSubscription<Map<String, dynamic>?>? _visitorSubscription;
+  StreamSubscription<Object?>? _communitySubscription;
+  Timer? _windowTimer;
+  String? _community;
+  int _request = 0;
+  String? _timeZone;
+  int _zoneRequest = 0;
+  Future<void> _loadTimeZone() async {
+    final ticket = ++_zoneRequest;
+    try {
+      final zone = widget.loadTimeZone != null
+          ? await widget.loadTimeZone!()
+          : (await ResidentVisitorPolicyService().loadScope()).timeZone;
+      final canonical = CommunityTime.canonical(zone);
+      if (mounted && ticket == _zoneRequest) {
+        setState(() => _timeZone = canonical);
+      }
+    } catch (_) {
+      if (mounted && ticket == _zoneRequest) setState(() => _timeZone = null);
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadVisitorData();
+    WidgetsBinding.instance.addObserver(this);
+    _loadTimeZone();
+    _start();
   }
 
-  Future<void> _loadVisitorData() async {
-    print('🔵 QR Screen: Loading visitor data for ID: ${widget.visitorId}');
+  void _start() {
+    if (widget.watchVisitor == null && widget.loadPass != null) {
+      _loadVisitorData();
+      return;
+    }
+    _visitorSubscription?.cancel();
+    _visitorSubscription =
+        (widget.watchVisitor ?? _service.watchVisitor)(widget.visitorId).listen(
+          (row) {
+            final community = row?['communityId'] as String?;
+            if (community != null && community != _community) {
+              _community = community;
+              _communitySubscription?.cancel();
+              _communitySubscription =
+                  (widget.watchCommunity ?? _service.watchCommunity)(
+                    community,
+                  ).listen((_) {
+                    _loadTimeZone();
+                    _loadVisitorData();
+                  }, onError: (Object error) => _watchError(error));
+            }
+            _loadVisitorData();
+          },
+          onError: (Object error) => _watchError(error),
+        );
+  }
 
-    try {
-      final doc = await _firestore
-          .collection('visitors')
-          .doc(widget.visitorId)
-          .get();
-
-      if (doc.exists && mounted) {
-        final data = doc.data()!;
-        print('✅ QR Screen: Visitor data loaded: $data');
-
-        setState(() {
-          _visitorData = data;
-          _isLoading = false;
-        });
-      } else {
-        print('❌ QR Screen: Visitor document not found');
-        setState(() {
-          _error = 'visitor_not_found'.tr();
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      print('❌ QR Screen: Error loading visitor: $e');
+  void _watchError(Object error) {
+    _request++;
+    _windowTimer?.cancel();
+    if (mounted) {
       setState(() {
-        _error = 'visitor_load_error'.tr();
+        _pass = null;
         _isLoading = false;
+        _setError(error);
       });
     }
   }
 
-  String _generateQRData() {
-    if (_visitorData == null) {
-      return '';
+  // Presentation only: a pending local record never grants or blocks credentials.
+  void _setError(Object error) {
+    final code = error is FirebaseException
+        ? error.code
+        : error is ResidentVisitorPassUnavailable
+        ? error.code
+        : null;
+    final message = error is ResidentVisitorPassUnavailable
+        ? error.message
+        : error is StateError
+        ? error.message.toString()
+        : error is FirebaseException
+        ? residentVisitorError(error)
+        : 'visitor_load_error'.tr();
+    _isAwaitingApproval =
+        code == 'failed-precondition' &&
+        const {
+          'This invitation requires Admin approval under the current policy.',
+          'Admin approval required',
+        }.contains(message);
+    _canRetry =
+        !_isAwaitingApproval &&
+        (error is TimeoutException ||
+            const {
+              'unavailable',
+              'deadline-exceeded',
+              'network-request-failed',
+              'aborted',
+            }.contains(code));
+    _error = _isAwaitingApproval
+        ? 'Your QR pass will be available once your Community Admin approves this invitation.'
+        : message;
+  }
+
+  void _armRevalidation(ResidentVisitorTiming timing) {
+    _windowTimer?.cancel();
+    final remaining = timing.remaining;
+    if (remaining != null) _windowTimer = Timer(remaining, _loadVisitorData);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadTimeZone();
+      _loadVisitorData();
     }
+  }
 
-    final qrToken = _visitorData!['qrToken']?.toString().trim() ?? '';
-
-    if (qrToken.isEmpty) {
-      // Temporary compatibility for visitors created
-      // before qrToken was introduced.
-      return jsonEncode({'visitorId': widget.visitorId, 'legacy': true});
+  @override
+  void didUpdateWidget(covariant VisitorQRScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.visitorId != widget.visitorId) {
+      _request++;
+      _community = null;
+      _timeZone = null;
+      _loadTimeZone();
+      _communitySubscription?.cancel();
+      _start();
     }
+  }
 
-    return jsonEncode({
-      'type': 'hominode_visitor',
-      'version': 1,
-      'token': qrToken,
+  @override
+  void dispose() {
+    _request++;
+    _windowTimer?.cancel();
+    _visitorSubscription?.cancel();
+    _communitySubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  Future<void> _loadVisitorData() async {
+    if (!mounted) return;
+    final request = ++_request;
+    _windowTimer?.cancel();
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _isAwaitingApproval = false;
+      _canRetry = false;
+      _pass = null;
+      _visitorData = null;
     });
+    try {
+      final pass = await (widget.loadPass ?? _service.load)(widget.visitorId);
+      if (!mounted || request != _request) return;
+      if (pass.timing.remaining == Duration.zero) {
+        throw ResidentVisitorPassUnavailable(
+          'Policy availability is being rechecked.',
+          pass.timing,
+        );
+      }
+      _armRevalidation(pass.timing);
+      setState(() {
+        _pass = pass;
+        _visitorData = pass.visitor;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted || request != _request) return;
+      if (error is ResidentVisitorPassUnavailable) {
+        _armRevalidation(error.timing);
+      }
+      setState(() {
+        _setError(error);
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -119,6 +258,12 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
                                 SizedBox(height: 20.h),
                                 _buildQRCard(),
                                 SizedBox(height: 24.h),
+                                Text(
+                                  _visitorData!['authorizationState'] ==
+                                          'pending_admin'
+                                      ? 'Pass availability confirmed under the current community policy'
+                                      : 'Authorization: ${ResidentVisitorLifecycle.authorizationLabel(_visitorData!)}',
+                                ),
                                 _buildVisitorDetails(),
                                 SizedBox(height: 32.h),
                                 _buildInstructions(),
@@ -174,23 +319,52 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
 
   Widget _buildError() {
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: EdgeInsets.all(32.w),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64.w, color: Color(0xFFDC2626)),
+            Icon(
+              _isAwaitingApproval
+                  ? Icons.schedule_outlined
+                  : Icons.error_outline,
+              size: 64.w,
+              color: _isAwaitingApproval
+                  ? const Color(0xFF64748B)
+                  : const Color(0xFFDC2626),
+            ),
             SizedBox(height: 16.h),
+            if (_isAwaitingApproval) ...[
+              Text(
+                'Awaiting Admin approval',
+                style: TextStyle(
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1E293B),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 12.h),
+            ],
             Text(
               _error ?? 'An error occurred',
               style: TextStyle(
-                fontSize: 18.sp,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1E293B),
+                fontSize: _isAwaitingApproval ? 14.sp : 18.sp,
+                fontWeight: _isAwaitingApproval
+                    ? FontWeight.w400
+                    : FontWeight.w600,
+                color: _isAwaitingApproval
+                    ? const Color(0xFF64748B)
+                    : const Color(0xFF1E293B),
               ),
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 24.h),
+            if (_canRetry)
+              TextButton(
+                onPressed: _loadVisitorData,
+                child: const Text('Retry'),
+              ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context),
               style: ElevatedButton.styleFrom(
@@ -235,7 +409,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
             ),
             child: LayoutBuilder(
               builder: (context, constraints) => QrImageView(
-                data: _generateQRData(),
+                data: _pass!.qrPayload,
                 version: QrVersions.auto,
                 size: constraints.maxWidth.clamp(0, 240),
                 backgroundColor: Colors.white,
@@ -253,8 +427,8 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
               color: const Color(0xFFEAF1FF),
               borderRadius: BorderRadius.circular(8.r),
             ),
-            child: Text(
-              'Pass ID: ${_visitorData!['visitorPassCode'] ?? 'QR ONLY'}',
+            child: SelectableText(
+              'Pass code: ${_pass!.manualCode}',
               style: TextStyle(
                 color: const Color(0xFF0E4778),
                 fontSize: 14.sp,
@@ -273,10 +447,15 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
 
     final visitorName = _visitorData!['visitorName'] ?? 'N/A';
     final purpose = _visitorData!['purpose'] ?? 'N/A';
-    final expectedArrival = _visitorData!['expectedArrival'] as Timestamp?;
-    final timeString = expectedArrival != null
-        ? '${expectedArrival.toDate().day}/${expectedArrival.toDate().month}/${expectedArrival.toDate().year} ${expectedArrival.toDate().hour}:${expectedArrival.toDate().minute.toString().padLeft(2, '0')}'
-        : 'N/A';
+    final expectedArrival = ResidentVisitorAuthorization.arrival(_visitorData!);
+    final timeString = CommunityTime.format(
+      expectedArrival,
+      _timeZone,
+      dateFormat: DateFormat(
+        'd MMM y, h:mm a',
+        context.locale.toString(),
+      ).format,
+    );
     final flatLabel =
         _visitorData!['flatLabel'] ?? _visitorData!['flatId'] ?? 'N/A';
     final vehicleNumber = _visitorData!['vehicleNumber'] ?? 'N/A';
@@ -342,7 +521,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
           _buildDetailRow(
             icon: Icons.check_circle_outline,
             label: 'status'.tr(),
-            value: 'approved'.tr(),
+            value: ResidentVisitorLifecycle.statusKeyFor(_visitorData!).tr(),
             valueColor: const Color(0xFF10B981),
           ),
         ],
@@ -389,7 +568,7 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
         color: const Color(0xFFEAF1FF),
         borderRadius: BorderRadius.circular(16.r),
         border: Border.all(
-          color: const Color(0xFF0E4778).withOpacity(0.2),
+          color: const Color(0xFF0E4778).withValues(alpha: 0.2),
           width: 1,
         ),
       ),
@@ -495,132 +674,40 @@ class _VisitorQRScreenState extends State<VisitorQRScreen> {
     );
   }
 
-  void _handleSharePass(BuildContext context) {
-    final visitorName = _visitorData?['visitorName'] ?? 'Visitor';
-    final flatLabel =
-        _visitorData?['flatLabel'] ?? _visitorData?['flatId'] ?? '';
-
-    final shareText =
-        '''
-Visitor Pass - Approved
-
-Name: $visitorName
-Visiting: Flat $flatLabel
-Pass ID: ${widget.visitorId.substring(0, 12).toUpperCase()}
-
-Please show this QR code at the security gate.
-''';
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16.r),
+  Future<void> _handleSharePass(BuildContext context) async {
+    if (_pass == null) return;
+    final request = _request;
+    try {
+      final pass = await (widget.loadPass ?? _service.load)(widget.visitorId);
+      if (!mounted || !context.mounted || request != _request) return;
+      if (!VisitorQrContract.canRequest(pass.visitor)) {
+        throw StateError('This pass is no longer available.');
+      }
+      final box = context.findRenderObject() as RenderBox?;
+      final text =
+          'Visitor Pass - ${ResidentVisitorLifecycle.statusKeyFor(pass.visitor).tr()}\n\n'
+          'Name: ${pass.visitor['visitorName'] ?? 'Visitor'}\n'
+          'Visiting: ${pass.visitor['flatLabel'] ?? pass.visitor['flatId'] ?? ''}\n'
+          'Pass code: ${pass.manualCode}\n\n'
+          'Show the QR code or give this pass code to Security at the gate.';
+      await SharePlus.instance.share(
+        ShareParams(
+          text: text,
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
         ),
-        title: Text(
-          'visitor_qr_pass'.tr(),
-          style: TextStyle(fontSize: 20.sp, fontWeight: FontWeight.w600),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildShareOption(
-              context,
-              icon: Icons.message_outlined,
-              label: 'share_via_sms'.tr(),
-              onTap: () {
-                Navigator.pop(context);
-                _showShareSuccess(context, 'SMS');
-              },
-            ),
-            SizedBox(height: 12.h),
-            _buildShareOption(
-              context,
-              icon: Icons.email_outlined,
-              label: 'share_via_email'.tr(),
-              onTap: () {
-                Navigator.pop(context);
-                _showShareSuccess(context, 'Email');
-              },
-            ),
-            SizedBox(height: 12.h),
-            _buildShareOption(
-              context,
-              icon: Icons.chat_bubble_outline,
-              label: 'share_via_whatsapp'.tr(),
-              onTap: () {
-                Navigator.pop(context);
-                _showShareSuccess(context, 'WhatsApp');
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'cancel'.tr(),
-              style: TextStyle(
-                color: Color(0xFF64748B),
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildShareOption(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12.r),
-      child: Container(
-        padding: EdgeInsets.all(16.w),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8F9FA),
-          borderRadius: BorderRadius.circular(12.r),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: EdgeInsets.all(8.w),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEAF1FF),
-                borderRadius: BorderRadius.circular(8.r),
-              ),
-              child: Icon(icon, color: const Color(0xFF0E4778), size: 24.w),
-            ),
-            SizedBox(width: 12.w),
-            Text(
-              label,
-              style: TextStyle(
-                color: Color(0xFF1E293B),
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showShareSuccess(BuildContext context, String method) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('pass_shared'.tr(namedArgs: {'method': method})),
-        backgroundColor: const Color(0xFF10B981),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.r)),
-      ),
-    );
+      );
+    } catch (error) {
+      if (mounted) {
+        if (error is ResidentVisitorPassUnavailable) {
+          _armRevalidation(error.timing);
+        }
+        setState(() {
+          _pass = null;
+          _setError(error);
+        });
+      }
+    }
   }
 }

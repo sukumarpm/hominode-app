@@ -41,6 +41,7 @@ function sanitizedVisitor(visitorId, data, category) {
   const denied = data.gateAccessStatus === "denied" || data.gateEntryDeniedAt != null;
   return {
     visitorId,
+    bringingPet: data.bringingPet === true,
     visitorName: String(data.visitorName || "Visitor").slice(0, 120),
     phoneNumber: String(data.phoneNumber || data.phone || "").slice(0, 40),
     hostName: String(data.hostName || data.residentName || "Resident").slice(0, 120),

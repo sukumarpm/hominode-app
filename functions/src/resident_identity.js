@@ -2,7 +2,7 @@ const { normalizeLabel, unitLabel, assertSafelyVacant } = require('./unit_schema
 const { randomUUID } = require("node:crypto");
 const { FieldValue } = require("firebase-admin/firestore");
 const { RegistrationError, verifiedPhoneAuth } = require("./register_resident");
-const { normalizePhone } = require("./resident_bulk_import");
+const { normalizePhone, normalizeResidentOnboardingPhone } = require("./resident_bulk_import");
 const { residentOnboardingId } = require("./resident_import_ids");
 const { AUDIT_ACTIONS, writeAuditLogBestEffort } = require("./audit_log");
 
@@ -71,7 +71,7 @@ function trustedResidentType(profile) {
 function verificationStatus(profile) {
   const status = clean(profile?.identityVerificationStatus).toLowerCase();
   if (VERIFICATION_STATUSES.has(status)) return status;
-  return profile?.identityVerified === true ? "verified" : "verification_required";
+  return "verification_required";
 }
 
 function ownerVerificationRequired(community) {
@@ -253,11 +253,12 @@ function validateReassignmentInput(data) {
   return result;
 }
 
-function validateSingleOnboardingInput(data, community) {
+function validateSingleOnboardingInput(data) {
   const allowed = new Set([
     "communityId",
     "residentName",
     "phoneNumber",
+    "phoneCountryCode",
     "email",
     "residentType",
     "familyMembers",
@@ -289,11 +290,11 @@ function validateSingleOnboardingInput(data, community) {
   if ((buildingReference?.length ?? 0) > 120 || (unitReference?.length ?? 0) > 120) {
     throw new RegistrationError("invalid-argument", "Building or unit reference is too long.");
   }
-  const rawCountryCode = clean(community?.phoneCountryCode || community?.countryCode).toUpperCase();
+  const rawCountryCode = clean(data.phoneCountryCode).toUpperCase();
   const countryCode = /^[A-Z]{2}$/.test(rawCountryCode) ? rawCountryCode : null;
   let phoneNumber;
   try {
-    phoneNumber = normalizePhone(data.phoneNumber, countryCode);
+    phoneNumber = normalizeResidentOnboardingPhone(data.phoneNumber, countryCode);
   } catch (_) {
     throw new RegistrationError("invalid-argument", "Enter a valid resident phone number.");
   }
@@ -519,23 +520,85 @@ function buildingOccupancyUpdate(
   };
 }
 
+// Admin creation may have provisioned the unit before mandatory identity approval.
+// Legacy admin_direct profiles used approvalStatus=approved at creation time.
+function adminRegistrationAwaitingIdentity(resident, community) {
+  const type = trustedResidentType(resident);
+  return resident?.creationSource === "admin_direct" &&
+    ["pending", "approved"].includes(resident.approvalStatus) &&
+    typeof resident.isActive === "boolean" && resident.identityVerified === false &&
+    ["verification_required", "pending", "rejected"].includes(resident.identityVerificationStatus) &&
+    resident.registrationCompletedAt == null &&
+    !["deleted", "completed", "rejected"].includes(resident.status) &&
+    !["moved_out", "suspended", "rejected"].includes(resident.occupancyStatus) &&
+    type != null && identityVerificationRequired(type, community);
+}
+
+function rejectingRegistrationAllowed(resident, community) {
+  if (!resident || resident.identityVerified === true || resident.identityVerificationStatus === "verified" ||
+      resident.registrationCompletedAt != null || ["deleted", "completed"].includes(resident.status)) return false;
+  return adminRegistrationAwaitingIdentity(resident, community) ||
+    (resident.creationSource !== "admin_direct" && resident.approvalStatus === "pending" && resident.isActive === false);
+}
+
+// New eligibility is broader than the old inactive-pending-only contract, so
+// apply the existing financial review checks before releasing an allocated unit.
+async function assertAdminRegistrationCanBeCancelled(db, transaction, uid, communityId) {
+  // Lazy import avoids the account-deletion module's identity-helper dependency.
+  const { financialHandoverEvidence } = require("./account_deletion_requests");
+  const evidence = await financialHandoverEvidence({db, tx: transaction, uid, communityId, requestId: `registration:${uid}`});
+  if (evidence.outstandingMinor !== 0) throw new RegistrationError("failed-precondition", "Outstanding dues must be settled before registration rejection.");
+  const deletions = await transaction.get(db.collection("accountDeletionRequests").where("uid", "==", uid).limit(1));
+  if (deletions.docs.length) throw new RegistrationError("failed-precondition", "An account-deletion request already exists; use that workflow instead.");
+  await assertNoActiveSos(db, transaction, uid, communityId, "rejecting registration");
+}
+
+function releaseAdminRegistrationAssignment({transaction, flat, flatRef, resident, userId, sameFlatSnapshot, buildingRef, buildingFlatsSnapshot}) {
+  const pointers = ["residentUserId", "residentUid", "residentId"];
+  const owns = (field, value) => value === userId || field === "residentId" && clean(resident.residentId) && value === resident.residentId;
+  if (pointers.some((field) => flat[field] != null && typeof flat[field] !== "string") ||
+      flat.residentIds != null && (!Array.isArray(flat.residentIds) || flat.residentIds.some((id) => typeof id !== "string" || !id))) {
+    throw new RegistrationError("failed-precondition", "Unit assignment references are malformed.");
+  }
+  const mine = pointers.filter((field) => owns(field, flat[field]));
+  const inList = flat.residentIds?.includes(userId);
+  if (!mine.length && !inList) return false; // Already released or reassigned; never vacate a new occupant.
+  if (!["occupied", "vacant"].includes(flat.status) || clean(flat.reservedOnboardingId)) {
+    throw new RegistrationError("failed-precondition", "Conflicting unit status or reservation must be resolved first.");
+  }
+  const others = pointers.some((field) => clean(flat[field]) && !owns(field, flat[field])) ||
+    flat.residentIds?.some((id) => id !== userId) || sameFlatSnapshot.docs.some((doc) => doc.id !== userId);
+  if (others && flat.status !== "occupied") throw new RegistrationError("failed-precondition", "Shared assignment status is inconsistent.");
+  const timestamp = FieldValue.serverTimestamp();
+  const patch = {updatedAt: timestamp};
+  for (const field of mine) patch[field] = null;
+  if (inList) patch.residentIds = flat.residentIds.filter((id) => id !== userId);
+  if (!others) Object.assign(patch, {status: "vacant", residentName: null, ownershipType: null});
+  transaction.update(flatRef, patch);
+  transaction.update(buildingRef, buildingOccupancyUpdate(buildingFlatsSnapshot, {targetFlatId: flatRef.id, targetStatus: patch.status || flat.status, timestamp}));
+  return true;
+}
+
 async function rejectResidentRegistrationCore({ db, auth, data }) {
   const input = validateLifecycleInput(data, { allowReason: true });
   const actor = await requireOperationalAdmin(db, auth, input.communityId);
   const userRef = db.collection("users").doc(input.userId);
   const result = await db.runTransaction(async (transaction) => {
+    const currentActor = await requireOperationalAdmin(db, auth, input.communityId, transaction);
     const userSnapshot = await transaction.get(userRef);
     const resident = userSnapshot.data();
     if (!userSnapshot.exists || resident?.role !== "resident" ||
       resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
-    if (resident.approvalStatus !== "pending" || resident.isActive !== false) {
-      throw new RegistrationError(
-        "failed-precondition",
-        "Only an inactive pending resident registration can be rejected.",
-      );
+    if (resident.approvalStatus === "rejected" && resident.isActive === false) {
+      return { status: "rejected", staleOccupantCleared: false, idempotent: true };
     }
+    if (!rejectingRegistrationAllowed(resident, currentActor.community)) {
+      throw new RegistrationError("failed-precondition", "Only a registration awaiting approval can be finally rejected; verified Residents must use their normal account lifecycle.");
+    }
+    const adminAwaiting = adminRegistrationAwaitingIdentity(resident, currentActor.community);
+    if (adminAwaiting) await assertAdminRegistrationCanBeCancelled(db, transaction, input.userId, input.communityId);
 
     let staleOccupantCleared = false;
     const flatId = clean(resident.flatId);
@@ -548,10 +611,11 @@ async function rejectResidentRegistrationCore({ db, auth, data }) {
       const sameFlatQuery = db.collection("users")
         .where("communityId", "==", input.communityId)
         .where("flatId", "==", flatId);
-      const [flatSnapshot, buildingSnapshot, sameFlatSnapshot] = await Promise.all([
+      const [flatSnapshot, buildingSnapshot, sameFlatSnapshot, buildingFlatsSnapshot] = await Promise.all([
         transaction.get(flatRef),
         transaction.get(db.collection("buildings").doc(buildingId)),
         transaction.get(sameFlatQuery),
+        transaction.get(db.collection("flats").where("communityId", "==", input.communityId).where("buildingId", "==", buildingId)),
       ]);
       validateBuildingAndFlat({
         buildingSnapshot,
@@ -560,19 +624,54 @@ async function rejectResidentRegistrationCore({ db, auth, data }) {
         buildingId,
       });
       const flat = flatSnapshot.data();
-      const occupant = resolveFlatOccupant(flat);
-      if (occupant.uid === input.userId) {
-        if (!["vacant", "occupied"].includes(flat.status)) {
-          throw new RegistrationError("failed-precondition", "Stale unit occupancy cannot be reconciled safely.");
+      if (adminAwaiting && flat.status !== "reserved") {
+        staleOccupantCleared = releaseAdminRegistrationAssignment({transaction, flat, flatRef, resident, userId: input.userId,
+          sameFlatSnapshot, buildingRef: db.collection("buildings").doc(buildingId), buildingFlatsSnapshot});
+      } else {
+        const occupant = resolveFlatOccupant(flat);
+        const phone = clean(resident.phoneNumber) || clean(resident.phone);
+        const onboardingId = phone ? residentOnboardingId(input.communityId, phone) : "";
+        const matchingReservation = flat.status === "reserved" && occupant.uid == null &&
+          onboardingId && clean(flat.reservedOnboardingId) === onboardingId;
+        const matchingLegacyOccupant = occupant.uid == null && clean(flat.residentId) &&
+          (flat.residentId === input.userId || flat.residentId === resident.residentId);
+        if (occupant.uid === input.userId || matchingLegacyOccupant || matchingReservation) {
+          if (clean(flat.residentId) && flat.residentId !== input.userId && flat.residentId !== resident.residentId) {
+            throw new RegistrationError("failed-precondition", "Unit residentId belongs to another resident.");
+          }
+          if (!matchingReservation && (!["vacant", "occupied"].includes(flat.status) || clean(flat.reservedOnboardingId))) {
+            throw new RegistrationError("failed-precondition", "Stale unit occupancy cannot be reconciled safely.");
+          }
+          if (sameFlatSnapshot.docs.some((doc) => doc.id !== input.userId)) {
+            throw new RegistrationError("failed-precondition", "Stale unit occupancy conflicts with another resident assignment.");
+          }
+          const timestamp = FieldValue.serverTimestamp();
+          if (matchingReservation) {
+            const onboardingRef = db.collection("residentOnboarding").doc(onboardingId);
+            const onboardingSnapshot = await transaction.get(onboardingRef);
+            if (onboardingSnapshot.exists) {
+              const onboarding = onboardingSnapshot.data();
+              if (onboarding.communityId !== input.communityId || onboarding.flatId !== flatId ||
+                  onboarding.buildingId !== buildingId || onboarding.claimedByUid !== input.userId) {
+                throw new RegistrationError("failed-precondition", "Reservation ownership changed before rejection.");
+              }
+              transaction.update(onboardingRef, {
+                status: "rejected", approvalStatus: "rejected", flatId: FieldValue.delete(),
+                buildingId: FieldValue.delete(), unitId: FieldValue.delete(), flatLabel: FieldValue.delete(),
+                buildingReference: FieldValue.delete(), unitReference: FieldValue.delete(), updatedAt: timestamp,
+              });
+            }
+          }
+          transaction.update(flatRef, {
+            ...vacantFlatUpdate(timestamp),
+            ...Object.fromEntries(["reservedOnboardingId", "reservedForName", "reservedForPhone",
+              "reservedResidentType", "reservedBy", "reservedAt"].map((field) => [field, FieldValue.delete()])),
+          });
+          transaction.update(db.collection("buildings").doc(buildingId), buildingOccupancyUpdate(
+            buildingFlatsSnapshot, { targetFlatId: flatId, targetStatus: "vacant", timestamp },
+          ));
+          staleOccupantCleared = true;
         }
-        if (sameFlatSnapshot.docs.some((doc) => doc.id !== input.userId)) {
-          throw new RegistrationError(
-            "failed-precondition",
-            "Stale unit occupancy conflicts with another resident assignment.",
-          );
-        }
-        transaction.update(flatRef, vacantFlatUpdate(FieldValue.serverTimestamp()));
-        staleOccupantCleared = true;
       }
     }
 
@@ -581,12 +680,17 @@ async function rejectResidentRegistrationCore({ db, auth, data }) {
       approvalStatus: "rejected",
       isActive: false,
       status: "rejected",
+      occupancyStatus: "rejected",
+      flatId: FieldValue.delete(),
+      buildingId: FieldValue.delete(),
+      unitId: FieldValue.delete(),
+      flatLabel: FieldValue.delete(),
       rejectedAt: timestamp,
       rejectedBy: actor.uid,
       rejectedReason: input.reason || null,
       updatedAt: timestamp,
     });
-    return { status: "rejected", staleOccupantCleared };
+    return { status: "rejected", staleOccupantCleared, previousStatus: resident.approvalStatus };
   });
   await auditResidentAction({
     db,
@@ -596,7 +700,7 @@ async function rejectResidentRegistrationCore({ db, auth, data }) {
     targetId: input.userId,
     summary: "Resident registration rejected.",
     metadata: {
-      previousStatus: "pending",
+      previousStatus: result.previousStatus || "rejected",
       newStatus: "rejected",
       reasonProvided: Boolean(input.reason),
       staleOccupantCleared: result.staleOccupantCleared,
@@ -1425,23 +1529,112 @@ async function cancelResidentOnboardingReservationCore({ db, auth, data }) {
     };
   });
 }
+// Admin provisioning assigns the unit; required identity approval completes onboarding.
+// Bind the profile to its Firebase phone UID, but issue no token or OTP claim.
+async function createAdminResidentCore({ db, authAdmin, auth, data }) {
+  const {buildingId, flatId, ...contact} = data ?? {};
+  const input = validateSingleOnboardingInput(contact);
+  if (typeof buildingId !== "string" || !buildingId.trim() || typeof flatId !== "string" || !flatId.trim()) {
+    throw new RegistrationError("invalid-argument", "Select a building and unit for this resident.");
+  }
+  await requireOperationalAdmin(db, auth, input.communityId);
+  const buildingRef = db.collection("buildings").doc(buildingId.trim());
+  const flatRef = db.collection("flats").doc(flatId.trim());
+  const scoped = (name) => db.collection(name).where("communityId", "==", input.communityId);
+  async function preflight(tx, uid = null) {
+    const read = (ref) => tx ? tx.get(ref) : ref.get();
+    const [actor, building, flat, users, pending, flats, ...profiles] = await Promise.all([
+      requireOperationalAdmin(db, auth, input.communityId, tx), read(buildingRef), read(flatRef),
+      read(scoped("users")), read(scoped("residentOnboarding")),
+      read(scoped("flats").where("buildingId", "==", buildingId.trim())),
+      ...(uid ? ["users", "admins", "securityStaff"].map((name) => read(db.collection(name).doc(uid))) : []),
+    ]);
+    validateBuildingAndFlat({buildingSnapshot: building, flatSnapshot: flat, communityId: input.communityId, buildingId: buildingId.trim()});
+    if (building.data()?.isActive === false) throw new RegistrationError("failed-precondition", "This building is inactive.");
+    const matches = (record) => [record.phoneNumber, record.phone].some((number) => {
+      try { return normalizeResidentOnboardingPhone(number, clean(record.phoneCountryCode || data.phoneCountryCode).toUpperCase() || null) === input.phoneNumber; }
+      catch (_) { return false; }
+    });
+    const candidate = !uid ? users.docs.find((doc) => matches(doc.data()) && doc.data()?.creationSource === "admin_direct") : null;
+    const targetUid = uid || candidate?.id;
+    const existing = profiles[0]?.data() ?? candidate?.data();
+    const retry = existing?.creationSource === "admin_direct" && existing.uid === targetUid && existing.role === "resident" &&
+      existing.communityId === input.communityId && existing.phoneNumber === input.phoneNumber &&
+      existing.buildingId === buildingId.trim() && existing.flatId === flatId.trim() &&
+      existing.name === input.residentName && existing.residentType === input.residentType &&
+      (existing.email ?? null) === input.email && existing.familyMembers === input.familyMembers;
+    if (profiles.slice(1).some((profile) => profile.exists)) throw new RegistrationError("already-exists", "This phone belongs to another account role.");
+    if (profiles[0]?.exists && !retry || users.docs.some((doc) => !(retry && doc.id === targetUid) && matches(doc.data())) ||
+        pending.docs.some((doc) => matches(doc.data()))) {
+      throw new RegistrationError("already-exists", "This resident phone already has a profile or registration. Use the existing resident workflow.");
+    }
+    if (retry && flat.data()?.status === "occupied" && resolveFlatOccupant(flat.data()).uid === targetUid) return {retry: true, actor};
+    if (users.docs.some((doc) => clean(doc.data()?.flatId) === flatId.trim()) ||
+        pending.docs.some((doc) => clean(doc.data()?.flatId) === flatId.trim())) {
+      throw new RegistrationError("failed-precondition", "This unit already has a resident or reservation.");
+    }
+    assertSafelyVacant(flat.data());
+    if (flat.data()?.status !== "vacant") throw new RegistrationError("failed-precondition", "This unit is not vacant.");
+    return {actor, building: building.data(), flat: flat.data(), flats};
+  }
+  // Follow the existing Admin phone provisioning pattern: resolve or create the
+  // Auth UID only after authorization, phone, duplication and unit preflight.
+  await preflight(null);
+  let user;
+  try { user = await authAdmin.getUserByPhoneNumber(input.phoneNumber); }
+  catch (error) {
+    if (error?.code !== "auth/user-not-found") throw error;
+    try { user = await authAdmin.createUser({phoneNumber: input.phoneNumber, disabled: false}); }
+    catch (creationError) {
+      if (creationError?.code !== "auth/phone-number-already-exists") throw creationError;
+      user = await authAdmin.getUserByPhoneNumber(input.phoneNumber);
+    }
+  }
+  if (!user?.uid || user.phoneNumber !== input.phoneNumber || user.disabled === true) {
+    throw new RegistrationError("failed-precondition", "The resident phone account is unavailable.");
+  }
+  return db.runTransaction(async (tx) => {
+    const current = await preflight(tx, user.uid);
+    if (current.retry) return {userId: user.uid, status: "created", idempotent: true};
+    const timestamp = FieldValue.serverTimestamp();
+    const required = identityVerificationRequired(input.residentType, current.actor.community);
+    tx.create(db.collection("users").doc(user.uid), {
+      uid: user.uid, name: input.residentName, fullName: input.residentName,
+      phoneNumber: input.phoneNumber, email: input.email, familyMembers: input.familyMembers,
+      communityId: input.communityId, role: "resident", residentType: input.residentType, ownershipType: input.residentType,
+      approvalStatus: required ? "pending" : "approved", isActive: !required, status: required ? "pending" : "active", occupancyStatus: "current",
+      identityVerified: false, phoneVerified: false, identityVerificationStatus: required ? "verification_required" : "not_required",
+      buildingId: buildingId.trim(), buildingName: clean(current.building.buildingName || current.building.name),
+      flatId: flatId.trim(), unitId: clean(current.flat.unitId || current.flat.flatId) || flatId.trim(),
+      flatLabel: clean(current.flat.flatLabel || current.flat.flatId) || flatId.trim(),
+      creationSource: "admin_direct", createdBy: current.actor.uid,
+      ...(!required ? {approvedBy: current.actor.uid, approvedAt: timestamp, registrationCompletedAt: timestamp} : {}),
+      createdAt: timestamp, updatedAt: timestamp,
+    });
+    tx.update(flatRef, {status: "occupied", residentUserId: user.uid, residentId: null,
+      residentName: input.residentName, ownershipType: input.residentType, updatedAt: timestamp});
+    tx.update(buildingRef, buildingOccupancyUpdate(current.flats, {targetFlatId: flatId.trim(), targetStatus: "occupied", timestamp}));
+    return {userId: user.uid, status: "created", idempotent: false};
+  });
+}
+
 async function createResidentOnboardingCore({ db, auth, data }) {
   const requestedCommunityId = clean(data?.communityId);
   if (!requestedCommunityId) {
     throw new RegistrationError("invalid-argument", "Community is required.");
   }
   const actor = await requireOperationalAdmin(db, auth, requestedCommunityId);
-  const input = validateSingleOnboardingInput(data, actor.community);
+  const input = validateSingleOnboardingInput(data);
   const onboardingId = residentOnboardingId(input.communityId, input.phoneNumber);
   const onboardingRef = db.collection("residentOnboarding").doc(onboardingId);
   const usersQuery = db.collection("users")
     .where("communityId", "==", input.communityId);
   const onboardingQuery = db.collection("residentOnboarding")
     .where("communityId", "==", input.communityId);
-  const countryCode = clean(actor.community?.phoneCountryCode || actor.community?.countryCode).toUpperCase();
   const matchesPhone = (record) => [record?.phoneNumber, record?.phone].some((value) => {
     if (!clean(value)) return false;
     try {
+      const countryCode = clean(record?.phoneCountryCode || data.phoneCountryCode).toUpperCase();
       return normalizePhone(value, /^[A-Z]{2}$/.test(countryCode) ? countryCode : null) === input.phoneNumber;
     } catch (_) {
       return false;
@@ -1569,6 +1762,9 @@ async function submitResidentIdentityProofCore({ db, bucket, auth, data }) {
       current?.communityId !== resident.communityId) {
       throw new RegistrationError("permission-denied", "A matching resident profile is required.");
     }
+    if (!["pending", "approved"].includes(current.approvalStatus) || ["deleted", "rejected"].includes(current.status)) {
+      throw new RegistrationError("failed-precondition", "Identity proof cannot be submitted after registration rejection.");
+    }
     if (verificationStatus(current) === "verified") {
       throw new RegistrationError(
         "failed-precondition",
@@ -1641,6 +1837,9 @@ async function reviewResidentIdentityProofCore({ db, auth, data }) {
     if (!snapshot.exists || resident?.role !== "resident" || resident?.communityId !== input.communityId) {
       throw new RegistrationError("permission-denied", "Resident is outside the authorized community.");
     }
+    if (!["pending", "approved"].includes(resident.approvalStatus) || ["rejected", "deleted", "completed"].includes(resident.status)) {
+      throw new RegistrationError("failed-precondition", "Registration is no longer open for identity review.");
+    }
     if (verificationStatus(resident) !== "pending" || !clean(resident.identityProofStoragePath)) {
       throw new RegistrationError("failed-precondition", "Only a pending uploaded identity proof can be reviewed.");
     }
@@ -1650,7 +1849,8 @@ async function reviewResidentIdentityProofCore({ db, auth, data }) {
     const verified = input.decision === "verified";
     const required = identityVerificationRequired(type, actor.community);
     let canRemainActive = false;
-    if (resident.approvalStatus === "approved" && canonicalType != null &&
+    const completesAdminRegistration = resident.creationSource === "admin_direct" && resident.approvalStatus === "pending" && verified;
+    if ((resident.approvalStatus === "approved" || completesAdminRegistration) && canonicalType != null &&
       resident.occupancyStatus !== "suspended" &&
       (verified || !required)) {
       const flatId = clean(resident.flatId);
@@ -1667,6 +1867,9 @@ async function reviewResidentIdentityProofCore({ db, auth, data }) {
         canRemainActive = resolveFlatOccupant(flatSnapshot.data()).uid === input.userId;
       }
     }
+    if (completesAdminRegistration && !canRemainActive) {
+      throw new RegistrationError("failed-precondition", "The registration's unit assignment changed; resolve it before identity approval.");
+    }
     if (resident.approvalStatus === "approved" && resident.isActive === true) {
       await assertNoActiveSos(
         db,
@@ -1678,6 +1881,8 @@ async function reviewResidentIdentityProofCore({ db, auth, data }) {
     }
     const timestamp = FieldValue.serverTimestamp();
     transaction.update(userRef, {
+      ...(resident.creationSource === "admin_direct" && verified && canRemainActive
+        ? {approvalStatus: "approved", approvedAt: timestamp, approvedBy: actor.uid, registrationCompletedAt: timestamp} : {}),
       identityVerificationStatus: input.decision,
       identityVerified: verified,
       isActive: canRemainActive,
@@ -1835,6 +2040,7 @@ module.exports = {
   reactivateResidentCore,
   reassignResidentCore,
   createResidentOnboardingCore,
+  createAdminResidentCore,
   submitResidentIdentityProofCore,
   getResidentIdentityProofUrlCore,
   reviewResidentIdentityProofCore,

@@ -230,12 +230,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               .streamCommunityImages(community!)
               .listen(
                 (images) {
-                  if (mounted && _imageScope == scope)
+                  if (mounted && _imageScope == scope) {
                     setState(() => _bannerImages = images);
+                  }
                 },
                 onError: (Object _) {
-                  if (mounted && _imageScope == scope)
+                  if (mounted && _imageScope == scope) {
                     setState(() => _bannerImages = []);
+                  }
                 },
               );
   }
@@ -397,7 +399,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 context,
                 listen: false,
               ).communityId;
-              if (community != null)
+              if (community != null) {
                 showModalBottomSheet<void>(
                   context: context,
                   isScrollControlled: true,
@@ -406,6 +408,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: ResidentPhotoGalleries(communityId: community),
                   ),
                 );
+              }
             },
           ),
         ],
@@ -1093,13 +1096,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _localizedRelativeTime(DateTime date) {
     final difference = DateTime.now().difference(date);
     if (difference.inMinutes < 1) return 'just_now'.tr();
-    if (difference.inMinutes < 60)
+    if (difference.inMinutes < 60) {
       return 'minutes_ago'.tr(namedArgs: {'count': '${difference.inMinutes}'});
-    if (difference.inHours < 24)
+    }
+    if (difference.inHours < 24) {
       return 'hours_ago'.tr(namedArgs: {'count': '${difference.inHours}'});
+    }
     if (difference.inDays == 1) return 'yesterday'.tr();
-    if (difference.inDays < 7)
+    if (difference.inDays < 7) {
       return 'days_ago'.tr(namedArgs: {'count': '${difference.inDays}'});
+    }
     return '${date.day}/${date.month}/${date.year}';
   }
 

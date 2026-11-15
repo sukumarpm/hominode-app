@@ -7,7 +7,11 @@ void main() {
       'expected visitors remain Expected with or without Admin approval',
       () {
         for (final approved in [false, true]) {
-          final visitor = {'status': 'expected', 'isApproved': approved};
+          final visitor = {
+            'status': 'expected',
+            'isApproved': approved,
+            'expectedArrival': DateTime.now(),
+          };
           expect(
             ResidentVisitorLifecycle.tabFor(visitor),
             ResidentVisitorTab.expected,
@@ -16,10 +20,7 @@ void main() {
             ResidentVisitorLifecycle.statusKeyFor(visitor),
             'visitor_status_expected',
           );
-          expect(
-            ResidentVisitorLifecycle.adminDecisionKeyFor(visitor),
-            approved ? 'visitor_admin_approved' : isNull,
-          );
+          expect(ResidentVisitorLifecycle.adminDecisionKeyFor(visitor), isNull);
         }
       },
     );
@@ -37,10 +38,7 @@ void main() {
             ResidentVisitorLifecycle.statusKeyFor(visitor),
             'visitor_status_checked_in',
           );
-          expect(
-            ResidentVisitorLifecycle.adminDecisionKeyFor(visitor),
-            approved ? 'visitor_admin_approved' : isNull,
-          );
+          expect(ResidentVisitorLifecycle.adminDecisionKeyFor(visitor), isNull);
         }
       },
     );

@@ -33,7 +33,7 @@
       ],
       "rewrites": [
         {
-          "regex": "^/(?:admin|about|api|app|assets|auth|c|cdn|contact|docs|features|firebase|help|home|legal|login|mail|pricing|privacy|resident|static|status|support|super-admin|terms|www)(?:/.*)?$",
+          "regex": "^/(?:account-deletion|admin|about|api|app|assets|auth|c|cdn|contact|docs|features|firebase|help|home|legal|login|mail|policy|pricing|privacy|resident|static|status|support|super-admin|terms|www)(?:/.*)?$",
           "destination": "/index.html"
         },
         {

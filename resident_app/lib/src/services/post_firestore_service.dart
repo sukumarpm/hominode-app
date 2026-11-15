@@ -1,13 +1,17 @@
 import 'resident_image_operations.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/post.dart';
 import 'content_moderation_service.dart';
 
 class PostFirestoreService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  PostFirestoreService({this.moderationCall});
+  final Future<Map<String, dynamic>> Function(String, Map<String, dynamic>)?
+  moderationCall;
+  late final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = FirebaseAuth.instance;
   final _images = ResidentImageOperations();
 
   // Cache for user document ID
@@ -122,48 +126,154 @@ class PostFirestoreService {
   // ============================================
   // GET ALL POSTS (FILTERED BY USER'S BUILDING)
   // ============================================
+  Future<Map<String, dynamic>> _moderationCall(
+    String name,
+    Map<String, dynamic> data,
+  ) async {
+    if (moderationCall != null) return moderationCall!(name, data);
+    final result = await FirebaseFunctions.instanceFor(
+      region: 'asia-southeast1',
+    ).httpsCallable(name).call(data);
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  Stream<void> moderationChanges() async* {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    final profile = await _usersCollection.doc(uid).get();
+    final communityId =
+        (profile.data() as Map<String, dynamic>?)?['communityId'];
+    if (communityId is! String || communityId.isEmpty) return;
+    yield* _firestore
+        .collection('moderationChanges')
+        .doc(communityId)
+        .snapshots()
+        .map((_) {});
+  }
+
   Future<List<Post>> getAllPosts() async {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) throw StateError('Sign in to view posts.');
+    final result = await _moderationCall('readVisibleWall', {});
+    final rows = (result['posts'] as List)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    rows.sort(
+      (a, b) => ((b['createdAtMs'] as num?) ?? 0).compareTo(
+        (a['createdAtMs'] as num?) ?? 0,
+      ),
+    );
+    return rows.map((data) {
+      final created = data['createdAtMs'] is int
+          ? DateTime.fromMillisecondsSinceEpoch(data['createdAtMs'] as int)
+          : null;
+      return Post(
+        id: data['id'] as String,
+        authorId: data['authorId'] as String? ?? '',
+        authorName: data['authorName'] as String? ?? 'Unknown',
+        profileImage: data['profileImage'] as String? ?? '',
+        flat: data['flat'] as String? ?? '',
+        timeAgo: _formatTimeAgo(created),
+        content: data['content'] as String? ?? '',
+        imageUrl: data['imageUrl'] as String?,
+        imageUrls: (data['imageUrls'] as List?)?.cast<String>(),
+        likes: data['likes'] as int? ?? 0,
+        comments: data['comments'] as int? ?? 0,
+        isLiked: (data['likedBy'] as List? ?? []).contains(currentUserId),
+        isMine: data['authorId'] == currentUserId,
+      );
+    }).toList();
+  }
+
+  Future<ServiceResult> reportWallContent(
+    String postId, {
+    String? commentId,
+    required String reason,
+  }) async {
     try {
-      final currentUserId = await _getCurrentUserId();
-
-      if (currentUserId == null || currentUserId.isEmpty) {
-        print('❌ User not authenticated');
-        return [];
-      }
-
-      // Get current user's building ID
-      final userDoc = await _usersCollection.doc(currentUserId).get();
-      final userData = userDoc.data() as Map<String, dynamic>?;
-      final userBuildingId = userData?['buildingId'];
-
-      if (userBuildingId == null || userBuildingId.toString().isEmpty) {
-        print('❌ User has no building assigned - cannot access posts');
-        return [];
-      }
-
-      print('📥 Fetching posts for building: $userBuildingId');
-
-      // Query posts for user's building (all members in same building)
-      final querySnapshot = await _postsCollection
-          .where('buildingId', isEqualTo: userBuildingId)
-          .get();
-
-      final posts = querySnapshot.docs.map((doc) {
-        return _postFromFirestore(doc, currentUserId);
-      }).toList();
-
-      // Sort by createdAt in memory (newest first)
-      posts.sort((a, b) {
-        // Parse timeAgo to compare (simplified)
-        return _compareTimeAgo(a.timeAgo, b.timeAgo);
+      final response = await _moderationCall('reportWallContent', {
+        'postId': postId,
+        if (commentId != null) 'commentId': commentId,
+        'reason': reason.trim(),
       });
-
-      print('✅ Fetched ${posts.length} posts for building $userBuildingId');
-      return posts;
-    } catch (e) {
-      print('❌ Error fetching posts: $e');
-      return [];
+      if (response['success'] != true ||
+          response['reportId'] is! String ||
+          (response['reportId'] as String).isEmpty) {
+        throw StateError('Report submission was not confirmed.');
+      }
+      return ServiceResult(
+        success: true,
+        message: response['duplicate'] == true
+            ? 'Already reported'
+            : '${commentId == null ? 'Post' : 'Comment'} reported',
+      );
+    } catch (error) {
+      return ServiceResult(success: false, message: reportErrorMessage(error));
     }
+  }
+
+  static String reportErrorMessage(Object error) {
+    if (error is FirebaseFunctionsException) {
+      if (['unavailable', 'deadline-exceeded'].contains(error.code)) {
+        return 'Unable to reach the reporting service. Check your connection and retry.';
+      }
+      if (error.code == 'unauthenticated') {
+        return 'Sign in again to report content.';
+      }
+      if (error.code == 'failed-precondition' &&
+          error.message == 'Only new content can be reported.') {
+        return 'This content predates reporting support and cannot be reported. Contact your community admin.';
+      }
+      if ([
+            'permission-denied',
+            'not-found',
+            'failed-precondition',
+            'invalid-argument',
+            'resource-exhausted',
+          ].contains(error.code) &&
+          error.message?.trim().isNotEmpty == true) {
+        return error.message!;
+      }
+    }
+    return 'Unable to submit this report. Please retry.';
+  }
+
+  Future<void> setUserBlocked(String userId, bool blocked) async {
+    final result = await _moderationCall('setWallUserBlock', {
+      'userId': userId,
+      'blocked': blocked,
+    });
+    if (result['success'] != true) {
+      throw StateError('The block change was not confirmed.');
+    }
+  }
+
+  static String blockErrorMessage(Object error, String fallback) {
+    if (error is FirebaseFunctionsException) {
+      if (['unavailable', 'deadline-exceeded'].contains(error.code)) {
+        return '$fallback Check your connection and retry.';
+      }
+      if (error.code == 'unauthenticated') {
+        return '$fallback Sign in again to continue.';
+      }
+      if ([
+            'permission-denied',
+            'not-found',
+            'failed-precondition',
+            'resource-exhausted',
+          ].contains(error.code) &&
+          error.message?.trim().isNotEmpty == true) {
+        return '$fallback ${error.message}';
+      }
+    }
+    return '$fallback Please retry.';
+  }
+
+  Future<List<Map<String, dynamic>>> blockedUsers() async {
+    final result = await _moderationCall('listWallUserBlocks', {});
+    return (result['users'] as List)
+        .map((v) => Map<String, dynamic>.from(v as Map))
+        .toList();
   }
 
   // ============================================
@@ -544,31 +654,16 @@ class PostFirestoreService {
   // GET COMMENTS FOR POST
   // ============================================
   Future<List<Map<String, dynamic>>> getComments(String postId) async {
-    try {
-      print('📥 Fetching comments for post: $postId');
-
-      final querySnapshot = await _postsCollection
-          .doc(postId)
-          .collection('comments')
-          .get();
-
-      final comments = querySnapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          'authorName': data['authorName'] ?? 'Unknown',
-          'profileImage': data['profileImage'] ?? '',
-          'comment': data['comment'] ?? '',
-          'createdAt': data['createdAt'],
-        };
-      }).toList();
-
-      print('✅ Fetched ${comments.length} comments');
-      return comments;
-    } catch (e) {
-      print('❌ Error fetching comments: $e');
-      return [];
-    }
+    final result = await _moderationCall('readVisibleWall', {'postId': postId});
+    return (result['comments'] as List).map((item) {
+      final data = Map<String, dynamic>.from(item as Map);
+      if (data['createdAtMs'] is int) {
+        data['createdAt'] = Timestamp.fromMillisecondsSinceEpoch(
+          data['createdAtMs'] as int,
+        );
+      }
+      return data;
+    }).toList();
   }
 
   // ============================================
@@ -642,34 +737,7 @@ class PostFirestoreService {
   // REPORT POST
   // ============================================
   Future<ServiceResult> reportPost(String postId, String reason) async {
-    try {
-      final currentUserId = await _getCurrentUserId();
-
-      if (currentUserId == null || currentUserId.isEmpty) {
-        return ServiceResult(success: false, message: 'User not authenticated');
-      }
-
-      print('🚩 Reporting post: $postId');
-
-      final reportData = {
-        'postId': postId,
-        'reportedBy': currentUserId,
-        'reason': reason,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
-
-      await _firestore.collection('reports').add(reportData);
-
-      print('✅ Post reported');
-
-      return ServiceResult(success: true, message: 'Post reported');
-    } catch (e) {
-      print('❌ Error reporting post: $e');
-      return ServiceResult(
-        success: false,
-        message: 'Failed to report post: ${e.toString()}',
-      );
-    }
+    return reportWallContent(postId, reason: reason);
   }
 
   // ============================================
@@ -693,6 +761,7 @@ class PostFirestoreService {
 
     return Post(
       id: doc.id,
+      authorId: data['authorId'] as String? ?? '',
       authorName: data['authorName'] as String? ?? 'Unknown',
       profileImage: data['profileImage'] as String? ?? '',
       flat: data['flat'] as String? ?? 'N/A',
@@ -810,6 +879,7 @@ Map<String, dynamic> buildCommunityWallComment({
     'authorName': profile['name'] ?? 'Unknown User',
     'profileImage': profile['profileImage'] ?? '',
     'comment': comment.trim(),
+    'moderationVersion': 1,
     'createdAt': FieldValue.serverTimestamp(),
   };
 }

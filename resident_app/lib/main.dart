@@ -1,3 +1,4 @@
+import 'src/widgets/resident_legal_session_gate.dart';
 import 'src/services/notification_preferences_service.dart';
 // import 'package:flutter/material.dart';
 // import 'package:flutter/services.dart';
@@ -192,6 +193,7 @@ import 'src/providers/language_provider.dart';
 import 'src/providers/localization_provider.dart';
 import 'src/providers/theme_provider.dart';
 import 'src/screens/access_blocked_screen.dart';
+import 'src/screens/account_deletion_request_screen.dart';
 import 'src/screens/awaiting_approval_screen.dart';
 import 'src/screens/resident_identity_verification_screen.dart';
 import 'src/screens/resident_registration_screen.dart';
@@ -392,15 +394,22 @@ class MyApp extends StatelessWidget {
                   builder: (context) => const SimpleLoginScreen(),
                 );
 
+              case '/account-deletion-request':
+                return MaterialPageRoute(
+                  builder: (context) => const AccountDeletionRequestScreen(),
+                );
+
               case '/home':
                 return PageRouteBuilder(
                   transitionDuration: Duration.zero,
                   reverseTransitionDuration: Duration.zero,
                   pageBuilder: (context, animation, secondaryAnimation) =>
-                      const HominodeLegalAcceptanceGate(
-                        profileCollection: 'users',
-                        loadingWidget: _ResidentLegalLoadingScreen(),
-                        child: MainNavigation(),
+                      const ResidentLegalSessionGate(
+                        child: HominodeLegalAcceptanceGate(
+                          profileCollection: 'users',
+                          loadingWidget: _ResidentLegalLoadingScreen(),
+                          child: MainNavigation(),
+                        ),
                       ),
                 );
 

@@ -122,8 +122,15 @@ Future<void> _verifyAppCheckToken() async {
       throw StateError('App Check did not provide an attestation token.');
     }
   } catch (error, stackTrace) {
-    debugPrint('App Check token acquisition failed (${error.runtimeType}).');
     if (kDebugMode) {
+      if (error is FirebaseException) {
+        debugPrint('App Check error code: ${error.code}');
+        debugPrint('App Check error plugin: ${error.plugin}');
+        debugPrint('App Check error message: ${error.message}');
+      } else {
+        debugPrint('App Check error type: ${error.runtimeType}');
+        debugPrint('App Check error: $error');
+      }
       debugPrintStack(stackTrace: stackTrace);
     }
     // An invalid/missing token must never be accepted in debug OR release.

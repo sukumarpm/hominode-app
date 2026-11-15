@@ -1,3 +1,4 @@
+import 'package:hominode_time/community_time.dart';
 import 'package:flutter/material.dart';
 
 import '../services/resident_visitor_service.dart';
@@ -69,7 +70,10 @@ class _ResidentVisitorsPageState extends State<ResidentVisitorsPage> {
           return Column(
             children: [
               for (var index = 0; index < visitors.length; index++) ...[
-                _VisitorRow(visitor: visitors[index]),
+                _VisitorRow(
+                  visitor: visitors[index],
+                  timeZone: widget.session.activeTenant?.timeZone,
+                ),
                 if (index != visitors.length - 1)
                   const Divider(height: 24, color: WebDesign.border),
               ],
@@ -82,7 +86,8 @@ class _ResidentVisitorsPageState extends State<ResidentVisitorsPage> {
 }
 
 class _VisitorRow extends StatelessWidget {
-  const _VisitorRow({required this.visitor});
+  const _VisitorRow({required this.visitor, this.timeZone});
+  final String? timeZone;
 
   final ResidentVisitor visitor;
 
@@ -124,7 +129,7 @@ class _VisitorRow extends StatelessWidget {
                   [
                     visitor.purpose,
                     if (visitor.expectedArrival != null)
-                      _dateTime(visitor.expectedArrival!),
+                      CommunityTime.format(visitor.expectedArrival, timeZone),
                   ].join(' · '),
                   style: const TextStyle(color: WebDesign.muted, fontSize: 11),
                 ),
@@ -243,11 +248,29 @@ class _AddVisitorDialogState extends State<_AddVisitorDialog> {
     super.dispose();
   }
 
+  String get _communityTimeLabel {
+    try {
+      return CommunityTime.label(widget.session.activeTenant?.timeZone);
+    } on FormatException catch (error) {
+      return error.message;
+    }
+  }
+
   Future<void> _pickDate() async {
-    final now = DateTime.now();
+    DateTime now;
+    try {
+      now = CommunityTime.inZone(
+        DateTime.now(),
+        widget.session.activeTenant?.timeZone,
+      );
+    } on FormatException catch (error) {
+      setState(() => _error = error.message);
+      return;
+    }
     final selected = await showDatePicker(
       context: context,
       initialDate: _date ?? now,
+      currentDate: DateTime(now.year, now.month, now.day),
       firstDate: DateTime(now.year, now.month, now.day),
       lastDate: now.add(const Duration(days: 365)),
     );
@@ -255,9 +278,19 @@ class _AddVisitorDialogState extends State<_AddVisitorDialog> {
   }
 
   Future<void> _pickTime() async {
+    DateTime now;
+    try {
+      now = CommunityTime.inZone(
+        DateTime.now(),
+        widget.session.activeTenant?.timeZone,
+      );
+    } on FormatException catch (error) {
+      setState(() => _error = error.message);
+      return;
+    }
     final selected = await showTimePicker(
       context: context,
-      initialTime: _time ?? TimeOfDay.now(),
+      initialTime: _time ?? TimeOfDay.fromDateTime(now),
     );
     if (selected != null && mounted) setState(() => _time = selected);
   }
@@ -273,12 +306,16 @@ class _AddVisitorDialogState extends State<_AddVisitorDialog> {
       _error = null;
     });
     try {
-      final arrival = DateTime(
+      final wall = DateTime.utc(
         _date!.year,
         _date!.month,
         _date!.day,
         _time!.hour,
         _time!.minute,
+      );
+      final arrival = CommunityTime.instant(
+        wall.toIso8601String().substring(0, 16),
+        widget.session.activeTenant?.timeZone,
       );
       await widget.service.addExpectedVisitor(
         session: widget.session,
@@ -394,6 +431,7 @@ class _AddVisitorDialogState extends State<_AddVisitorDialog> {
                   );
                 },
               ),
+              Text(_communityTimeLabel),
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(
@@ -447,10 +485,6 @@ class _RequiredTextField extends StatelessWidget {
         value == null || value.trim().isEmpty ? '$label is required.' : null,
   );
 }
-
-String _dateTime(DateTime value) =>
-    '${_dateOnly(value)} · '
-    '${_twoDigits(value.hour)}:${_twoDigits(value.minute)}';
 
 String _dateOnly(DateTime value) =>
     '${_twoDigits(value.day)}/${_twoDigits(value.month)}/${value.year}';

@@ -286,4 +286,109 @@ function billingV2ReportCases(test, environment, reportCore) {
   });
 }
 
-module.exports = {billingV2ReportCases};
+function detailedReportCases(test, environment, reportCore) {
+  const range = {communityId: 'C', fromMs: Date.parse('2030-01-01T00:00:00Z'), toMs: Date.parse('2030-01-31T23:59:59.999Z')};
+  const report = (db, data = {}, actor = auth) => reportCore({db, auth: actor, now, data: {...range, ...data}});
+
+  test('same-name residents keep V1 verified UPI history and V2 ledger separate', async () => {
+    const f = await fixture(environment);
+    await f.patch('users/r', {name: 'test acct 6', phoneNumber: '+919500000000', flatLabel: 'P016'});
+    await f.pay({amountMinor: 500});
+    const old = Timestamp.fromMillis(Date.parse('2022-03-10T10:20:30Z'));
+    await f.ref('accountDeletionRequests/deleted').set({uid: 'former', sourceApp: 'resident', status: 'completed',
+      communityId: 'C', communityScopeVerified: true, retainedResidentIdentity: {name: 'test acct 6', phoneNumber: '+16505553436', unit: 'V015', residentType: 'owner'}});
+    await f.ref('bills/legacy').set({communityId: 'C', residentId: 'former', flatId: 'v015', flatLabel: 'V015',
+      residentName: 'test acct 6', amount: 100, status: 'paid', paymentId: 'upi1', paidAt: old, createdAt: old, billingPeriod: '2022-03'});
+    await f.ref('payments/upi1').set({id: 'upi1', communityId: 'C', userId: 'former', billId: 'legacy',
+      amount: 100, status: 'completed', method: 'upi', transactionId: 'UPI-REFERENCE', paymentDate: old, createdAt: old});
+    await f.ref('payments/pending').set({id: 'pending', communityId: 'C', userId: 'former', billId: 'legacy', amount: 100, status: 'pending'});
+    await f.ref('payments/other').set({id: 'other', communityId: 'D', userId: 'former', amount: 999, status: 'completed'});
+    const all = await report(f.db, {fromMs: 0, toMs: 253402300799999});
+    assert.deepEqual(all.totals, {residentsCount: 2, billedMinor: 11000, paidMinor: 10500, creditAppliedMinor: 0, availableCreditMinor: 0, outstandingMinor: 500});
+    const former = all.rows.find(row => row.residentId === 'former');
+    assert.deepEqual([former.identity.name, former.identity.phone, former.identity.unit, former.identity.deleted], ['test acct 6', '+16505553436', 'V015', true]);
+    assert.equal(former.payments.length, 1);
+    assert.equal(former.payments[0].reference, 'UPI-REFERENCE');
+    assert.equal(former.payments[0].receivedAtMs, old.toMillis());
+    assert.equal(former.bills[0].settlements[0].transactionId, 'upi1');
+    const single = await report(f.db, {residentId: 'former', fromMs: 0, toMs: 253402300799999});
+    assert.deepEqual(single.rows, [former]);
+    assert.equal(single.totals.paidMinor, 10000);
+    const options = await report(f.db, {listResidents: true, fromMs: 0, toMs: 253402300799999});
+    assert.equal(options.residents.length, 2);
+    assert.equal(new Set(options.residents.map(row => row.residentId)).size, 2);
+    assert.equal((await report(f.db, {residentId: 'former'})).totals.paidMinor, 0);
+  });
+
+  test('ambiguous legacy records produce a history coverage warning', async () => {
+    const f = await fixture(environment);
+    await f.ref('bills/ambiguous').set({communityId: 'C', amount: 100, status: 'paid'});
+    const result = await report(f.db);
+    assert(result.coverageWarnings.some(item => item.includes('no reliable resident identity')));
+  });
+
+  test('detailed report enforces active community-admin authority and resident scope', async () => {
+    const f = await fixture(environment);
+    assert.equal((await report(f.db)).totals.billedMinor, 1000);
+    await assert.rejects(report(f.db, {}, {uid: 'r', token: auth.token}), {code: 'permission-denied'});
+    await assert.rejects(report(f.db, {communityId: 'D'}), {code: 'permission-denied'});
+    await f.ref('users/foreign').set({uid: 'foreign', role: 'resident', communityId: 'D'});
+    await assert.rejects(report(f.db, {residentId: 'foreign'}), {code: 'not-found'});
+    await f.patch('admins/a', {isActive: false});
+    await assert.rejects(report(f.db), {code: 'permission-denied'});
+  });
+
+  test('detailed report reconciles reversals and credit without counting receipts twice', async () => {
+    const f = await fixture(environment);
+    await f.pay({amountMinor: 1300});
+    await f.revision(800);
+    const result = await report(f.db);
+    assert.deepEqual(result.totals, {residentsCount: 1, billedMinor: 800, paidMinor: 800,
+      creditAppliedMinor: 0, outstandingMinor: 0, availableCreditMinor: 500});
+    assert.equal(result.rows[0].bills[0].settlements[0].amountMinor, 800);
+    assert.equal(result.rows[0].payments.length, 1);
+    assert.equal(result.rows[0].payments[0].receivedAmountMinor, 1300);
+    const individual = await report(f.db, {residentId: 'r'});
+    assert.deepEqual(individual.totals, result.totals);
+    assert.deepEqual(individual.rows, result.rows);
+  });
+
+  test('detailed report includes credit-only partial settlement and net totals across residents', async () => {
+    const f = await fixture(environment);
+    await f.pay({amountMinor: 1100});
+    await createSecondResidentMarchBills(f);
+    const result = await report(f.db, {fromMs: Date.parse('2030-03-01T00:00:00Z'), toMs: Date.parse('2030-03-31T23:59:59.999Z')});
+    assert.deepEqual(result.totals, {residentsCount: 2, billedMinor: 1000, paidMinor: 0,
+      creditAppliedMinor: 100, outstandingMinor: 900, availableCreditMinor: 0});
+    const resident = result.rows.find(row => row.residentId === 'r');
+    assert.equal(resident.paymentStatus, 'partially_paid');
+    assert.equal(resident.bills[0].creditAppliedMinor, 100);
+    assert.equal(resident.payments.length, 0);
+  });
+
+  test('detailed date boundaries preserve receipt activity even without selected bills', async () => {
+    const f = await fixture(environment);
+    await f.pay({amountMinor: 1300});
+    await f.patch(`bills/${f.bills[0]}`, {createdAt: Timestamp.fromMillis(now() - 1)});
+    const result = await report(f.db, {fromMs: now(), toMs: now()});
+    assert.equal(result.rows[0].bills.length, 0);
+    assert.equal(result.rows[0].payments[0].receivedAtMs, now());
+    assert.equal(result.rows[0].payments[0].createdAtMs, now());
+    assert.equal(result.rows[0].payments[0].receivedAmountMinor, 1300);
+    assert.equal(result.totals.paidMinor, 0);
+    assert.equal((await report(f.db, {fromMs: now() + 1})).rows[0].payments.length, 0);
+  });
+
+  test('detailed report fails closed on divergent financial projections', async () => {
+    const f = await fixture(environment);
+    await f.pay({amountMinor: 1300});
+    const [[id]] = await f.rows('residentFinancialAccounts');
+    await f.patch(`residentFinancialAccounts/${id}`, {availableCreditMinor: 301});
+    await assert.rejects(report(f.db), /account_projection_mismatch/);
+    await f.patch(`residentFinancialAccounts/${id}`, {availableCreditMinor: 300});
+    await f.patch(`bills/${f.bills[0]}`, {paidAmountMinor: 900});
+    await assert.rejects(report(f.db), /ledger_projection_mismatch/);
+  });
+}
+
+module.exports = {billingV2ReportCases, detailedReportCases};

@@ -290,6 +290,130 @@ class _OfflinePaymentInput {
   });
 }
 
+class PaymentSubmissionActions extends StatefulWidget {
+  const PaymentSubmissionActions({
+    super.key,
+    required this.label,
+    required this.onSubmit,
+    required this.onCancel,
+    this.onSavingChanged,
+  });
+
+  final String label;
+  final Future<void> Function() onSubmit;
+  final VoidCallback onCancel;
+  final ValueChanged<bool>? onSavingChanged;
+
+  @override
+  State<PaymentSubmissionActions> createState() =>
+      _PaymentSubmissionActionsState();
+}
+
+class _PaymentSubmissionActionsState extends State<PaymentSubmissionActions> {
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _submit() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    widget.onSavingChanged?.call(true);
+    try {
+      await widget.onSubmit();
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = 'Payment could not be recorded. Check the bill status and retry.';
+        });
+        widget.onSavingChanged?.call(false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(24.w, 0, 24.w, 24.h),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_error != null) ...[
+          Container(
+            key: const ValueKey('cash-payment-save-error'),
+            margin: EdgeInsets.only(bottom: 12.h),
+            padding: EdgeInsets.all(12.w),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(10.r),
+              border: Border.all(color: const Color(0xFFFECACA)),
+            ),
+            child: Text(
+              _error!,
+              style: const TextStyle(color: Color(0xFFB91C1C)),
+            ),
+          ),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _saving ? null : widget.onCancel,
+                child: const Text('Cancel'),
+              ),
+            ),
+            SizedBox(width: 12.w),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _saving ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                ),
+                child: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(widget.label),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+Stream<T> withInitialLoadTimeout<T>(
+  Stream<T> source, {
+  Duration timeout = const Duration(seconds: 15),
+}) {
+  var receivedFirstEvent = false;
+  return source
+      .timeout(
+        timeout,
+        onTimeout: (sink) {
+          if (!receivedFirstEvent) {
+            sink.addError(TimeoutException('Billing status is taking too long.'));
+          }
+        },
+      )
+      .map((event) {
+        receivedFirstEvent = true;
+        return event;
+      });
+}
+
 // ============================================================================
 // MAIN BILLING SCREEN
 // ============================================================================
@@ -343,7 +467,9 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   bool _showAdvancedSearch = false;
-  late final Stream<List<BillModel>> _billsStream;
+  late Stream<List<BillModel>> _billsStream;
+  late String _billsCommunityId;
+  int _billsStreamRevision = 0;
 
   // Get current admin ID
   String get _adminId => FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -362,25 +488,44 @@ class _BillingScreenState extends State<BillingScreen> {
 
     return _paymentProofStreams.putIfAbsent(
       key,
-      () => bill.isV2
-          ? _billingService.streamPendingV2PaymentProofForBill(
-              communityId: bill.communityId,
-              billId: bill.id,
-            )
-          : _billingService.streamPendingPaymentForBill(
-              communityId: bill.communityId,
-              billId: bill.id,
-            ),
+      () => withInitialLoadTimeout(
+        bill.isV2
+            ? _billingService.streamPendingV2PaymentProofForBill(
+                communityId: bill.communityId,
+                billId: bill.id,
+              )
+            : _billingService.streamPendingPaymentForBill(
+                communityId: bill.communityId,
+                billId: bill.id,
+              ),
+      ),
     );
+  }
+
+  void _retryPaymentProofLookup(BillModel bill) {
+    final version = bill.isV2 ? 'v2' : 'v1';
+    final key = '$version:${bill.communityId}:${bill.id}';
+    setState(() => _paymentProofStreams.remove(key));
   }
 
   @override
   void initState() {
     super.initState();
 
-    final communityId = AdminTenantContext.instance.requireCommunityId();
+    _billsCommunityId = AdminTenantContext.instance.requireCommunityId();
+    _billsStream = withInitialLoadTimeout(
+      _billingService.getBills(_billsCommunityId),
+    );
+  }
 
-    _billsStream = _billingService.getBills(communityId);
+  Future<void> _refreshBills() async {
+    setState(() {
+      _billsStream = withInitialLoadTimeout(
+        _billingService.getBills(_billsCommunityId),
+      );
+      _billsStreamRevision++;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 300));
   }
 
   @override
@@ -2330,24 +2475,15 @@ class _BillingScreenState extends State<BillingScreen> {
     }
 
     _paymentReferenceController.clear();
-    final selection = await showDialog<Map<String, String>>(
+    final recorded = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => _buildConfirmPaymentDialog(bill),
     );
     _paymentReferenceController.clear();
 
-    if (selection == null) return;
-
-    try {
-      await _billingService.recordPayment(
-        bill.id,
-        paymentMethod: selection['paymentMethod']!,
-        paymentReference: selection['paymentReference'],
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+    if (recorded == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
@@ -2355,7 +2491,7 @@ class _BillingScreenState extends State<BillingScreen> {
                 SizedBox(width: 12.w),
                 Expanded(
                   child: Text(
-                    '${selection['paymentMethod'] == 'cash' ? 'Cash payment' : 'Payment'} recorded for ${bill.residentName}',
+                    'Payment recorded for ${bill.residentName}.',
                   ),
                 ),
               ],
@@ -2368,22 +2504,12 @@ class _BillingScreenState extends State<BillingScreen> {
             ),
           ),
         );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to record payment: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
     }
   }
 
   Widget _buildConfirmPaymentDialog(BillModel bill) {
     String selectedPaymentMethod = 'Cash';
+    bool saving = false;
     const paymentMethods = offlinePaymentMethodOptions;
 
     return StatefulBuilder(
@@ -2504,6 +2630,7 @@ class _BillingScreenState extends State<BillingScreen> {
 
                         TextField(
                           controller: _paymentReferenceController,
+                          enabled: !saving,
                           maxLength: 200,
                           decoration: const InputDecoration(
                             labelText: 'Reference / receipt number (optional)',
@@ -2558,13 +2685,15 @@ class _BillingScreenState extends State<BillingScreen> {
                                   ),
                                 );
                               }).toList(),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    selectedPaymentMethod = value;
-                                  });
-                                }
-                              },
+                              onChanged: saving
+                                  ? null
+                                  : (value) {
+                                      if (value != null) {
+                                        setState(() {
+                                          selectedPaymentMethod = value;
+                                        });
+                                      }
+                                    },
                             ),
                           ),
                         ),
@@ -2603,66 +2732,20 @@ class _BillingScreenState extends State<BillingScreen> {
                     ),
                   ),
 
-                  // Buttons
-                  Container(
-                    padding: EdgeInsets.fromLTRB(24.w, 0, 24.w, 24.h),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            style: OutlinedButton.styleFrom(
-                              padding: EdgeInsets.symmetric(vertical: 14.h),
-                              side: const BorderSide(
-                                color: Color(0xFFE5E7EB),
-                                width: 1.5,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.r),
-                              ),
-                            ),
-                            child: Text(
-                              'Cancel',
-                              style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF6B7280),
-                              ),
-                            ),
-                          ),
-                        ),
-                        SizedBox(width: 12.w),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => Navigator.of(context).pop({
-                              'paymentMethod': offlinePaymentMethodValue(
-                                selectedPaymentMethod,
-                              ),
-                              'paymentReference': _paymentReferenceController
-                                  .text
-                                  .trim(),
-                            }),
-                            style: ElevatedButton.styleFrom(
-                              padding: EdgeInsets.symmetric(vertical: 14.h),
-                              backgroundColor: const Color(0xFF10B981),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.r),
-                              ),
-                            ),
-                            child: Text(
-                              selectedPaymentMethod == 'Cash'
-                                  ? 'Confirm Cash Received'
-                                  : 'Confirm $selectedPaymentMethod Received',
-                              style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                  PaymentSubmissionActions(
+                    label: selectedPaymentMethod == 'Cash'
+                        ? 'Confirm Cash Received'
+                        : 'Confirm $selectedPaymentMethod Received',
+                    onSavingChanged: (isSaving) => setState(() {
+                      saving = isSaving;
+                    }),
+                    onCancel: () => Navigator.of(context).pop(),
+                    onSubmit: () => _billingService.recordPayment(
+                      bill.id,
+                      paymentMethod: offlinePaymentMethodValue(
+                        selectedPaymentMethod,
+                      ),
+                      paymentReference: _paymentReferenceController.text.trim(),
                     ),
                   ),
                 ],
@@ -3783,6 +3866,11 @@ class _BillingScreenState extends State<BillingScreen> {
         subtitle: 'Review bills, payment history, and collection performance.',
         actions: [
           AdminDesktopPrimaryAction(
+            label: 'Refresh',
+            icon: Icons.refresh,
+            onPressed: _refreshBills,
+          ),
+          AdminDesktopPrimaryAction(
             label: 'Recurring Billing',
             icon: Icons.repeat,
             onPressed: _onCreateRecurringScheduleV2,
@@ -3794,13 +3882,26 @@ class _BillingScreenState extends State<BillingScreen> {
           ),
         ],
         child: StreamBuilder<List<BillModel>>(
+          key: ValueKey(_billsStreamRevision),
           stream: _billsStream,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {
-              return const Center(child: Text('Unable to load billing data.'));
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Unable to load billing data.'),
+                    TextButton.icon(
+                      onPressed: _refreshBills,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              );
             }
             final bills = snapshot.data ?? [];
             final kpiData = _billingService.calculateKPIs(
@@ -3834,6 +3935,7 @@ class _BillingScreenState extends State<BillingScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: StreamBuilder<List<BillModel>>(
+        key: ValueKey(_billsStreamRevision),
         stream: _billsStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -3852,9 +3954,14 @@ class _BillingScreenState extends State<BillingScreen> {
                   ),
                   SizedBox(height: 16.h),
                   Text(
-                    'Error loading bills: ${snapshot.error}',
+                    'Unable to load bills.',
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Color(0xFF6B7280)),
+                  ),
+                  TextButton.icon(
+                    onPressed: _refreshBills,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
                   ),
                 ],
               ),
@@ -3866,8 +3973,12 @@ class _BillingScreenState extends State<BillingScreen> {
             bills.where((bill) => !bill.isV2).toList(),
           );
 
-          return CustomScrollView(
-            physics: const BouncingScrollPhysics(),
+          return RefreshIndicator(
+            onRefresh: _refreshBills,
+            child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
             slivers: [
               const StandardHeader(title: 'Billing & Payments'),
               SliverToBoxAdapter(
@@ -3898,6 +4009,7 @@ class _BillingScreenState extends State<BillingScreen> {
                 ),
               ),
             ],
+          ),
           );
         },
       ),
@@ -3913,6 +4025,16 @@ class _BillingScreenState extends State<BillingScreen> {
   }) {
     final bills = _filterBills(allBills, paymentHistory: paymentHistory);
     if (bills.isEmpty) {
+      if (allBills.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.all(32),
+          child: Center(
+            child: Text(
+              paymentHistory ? 'No payment history yet.' : 'No bills yet.',
+            ),
+          ),
+        );
+      }
       return const Padding(
         padding: EdgeInsets.all(32),
         child: Center(child: Text('No matching billing records')),
@@ -4321,6 +4443,20 @@ class _BillingScreenState extends State<BillingScreen> {
   }) {
     final bills = _filterBills(allBills, paymentHistory: paymentHistory);
     if (bills.isEmpty) {
+      if (allBills.isEmpty) {
+        return SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.all(32.w),
+            child: Center(
+              child: Text(
+                paymentHistory ? 'No payment history yet.' : 'No bills yet.',
+                key: const ValueKey('bills-empty-state'),
+                style: TextStyle(fontSize: 15.sp, color: Colors.grey[600]),
+              ),
+            ),
+          ),
+        );
+      }
       return SliverToBoxAdapter(
         child: paymentHistory
             ? _buildPaymentHistory(allBills)
@@ -4692,14 +4828,32 @@ class _BillingScreenState extends State<BillingScreen> {
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             print('❌ ADMIN PAYMENT PROOF STREAM ERROR: ${snapshot.error}');
-
-            return _buildNormalPendingBillActions(bill);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Payment status could not be checked.'),
+                TextButton.icon(
+                  onPressed: () => _retryPaymentProofLookup(bill),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry check'),
+                ),
+              ],
+            );
           }
 
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Padding(
               padding: EdgeInsets.symmetric(vertical: 12.h),
-              child: const Center(child: CircularProgressIndicator()),
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 8),
+                    Text('Checking payment status…'),
+                  ],
+                ),
+              ),
             );
           }
 

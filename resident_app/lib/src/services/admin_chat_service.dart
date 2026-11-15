@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:math';
 import '../models/admin_chat_model.dart';
 import 'user_data_service.dart';
 
@@ -70,12 +71,16 @@ class AdminChatService {
       }
       return result;
     } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'failed-precondition') {
+        throw StateError(error.message ?? 'Please revise your message.');
+      }
       print('Admin chat setup failed: ${error.code}: ${error.message}');
       return null;
     } on FirebaseException catch (error) {
       print('Admin chat Firestore failure: ${error.code}: ${error.message}');
       return null;
     } catch (error) {
+      if (error is StateError) rethrow;
       print('Admin chat setup failure: $error');
       return null;
     }
@@ -125,37 +130,22 @@ class AdminChatService {
     try {
       final uid = _auth.currentUser?.uid;
       if (uid == null || text.trim().isEmpty) return null;
-      final user = await _userDataService.getCurrentUserData();
-      if (user == null) return null;
-      final role = user['role'] == 'admin' ? 'admin' : 'resident';
-      final chatRef = _firestore.collection(adminChatsCollection).doc(chatId);
-      final messageRef = chatRef.collection(messagesSubcollection).doc();
-      final batch = _firestore.batch();
-      batch.set(messageRef, {
-        'senderId': uid,
-        'senderName': user['name'] ?? 'Resident',
-        'senderRole': role,
+      final rand = Random.secure();
+      final submissionId = List.generate(
+        20, (_) => rand.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
+      final response = await _functions.httpsCallable('sendModeratedAdminChatMessage').call({
+        'chatId': chatId,
         'message': text.trim(),
-        'imageUrl': null,
+        'submissionId': submissionId,
         'isQuery': isQuery,
         'queryType': queryType?.name,
-        'timestamp': FieldValue.serverTimestamp(),
-        'isRead': false,
-        'readBy': [uid],
       });
-      batch.update(chatRef, {
-        'lastMessage': text.trim(),
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageSenderId': uid,
-        'lastMessageBy': role,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      await batch.commit();
-      return messageRef.id;
-    } catch (error) {
-      print('Admin chat message failed: $error');
-      return null;
+      return (response.data as Map)['messageId'] as String?;
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(error.message ?? 'Unable to send message.');
     }
+
   }
 
   Future<bool> updateStatus(String chatId, AdminChatStatus status) async {

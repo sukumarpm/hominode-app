@@ -54,24 +54,27 @@ class _PhotoSectionState extends State<_PhotoSection> {
       StreamBuilder<List<String>>(
         stream: images,
         builder: (context, snapshot) {
-          if (snapshot.hasError)
+          if (snapshot.hasError) {
             return const Padding(
               padding: EdgeInsets.all(12),
               child: Text(
                 'Photo access could not be verified. Please try again.',
               ),
             );
-          if (!snapshot.hasData)
+          }
+          if (!snapshot.hasData) {
             return const Padding(
               padding: EdgeInsets.all(12),
               child: CircularProgressIndicator(),
             );
+          }
           final photos = snapshot.data!;
-          if (photos.isEmpty)
+          if (photos.isEmpty) {
             return const Padding(
               padding: EdgeInsets.all(12),
               child: Text('No photos available.'),
             );
+          }
           return SizedBox(
             height: 220,
             child: PageView.builder(

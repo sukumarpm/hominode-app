@@ -11,6 +11,7 @@ void showPostMenu(
   required VoidCallback onEdit,
   required VoidCallback onDelete,
   required VoidCallback onReport,
+  required VoidCallback onBlock,
 }) {
   showModalBottomSheet(
     context: context,
@@ -20,6 +21,7 @@ void showPostMenu(
       onEdit: onEdit,
       onDelete: onDelete,
       onReport: onReport,
+      onBlock: onBlock,
     ),
   );
 }
@@ -29,6 +31,7 @@ class PostMenuBottomSheet extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onReport;
+  final VoidCallback onBlock;
 
   const PostMenuBottomSheet({
     super.key,
@@ -36,6 +39,7 @@ class PostMenuBottomSheet extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onReport,
+    required this.onBlock,
   });
 
   @override
@@ -94,6 +98,14 @@ class PostMenuBottomSheet extends StatelessWidget {
                 onTap: () {
                   Navigator.pop(context);
                   onReport();
+                },
+              ),
+              _buildMenuItem(
+                icon: Icons.block,
+                label: 'Block User',
+                onTap: () {
+                  Navigator.pop(context);
+                  onBlock();
                 },
               ),
             ],

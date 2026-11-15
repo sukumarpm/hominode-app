@@ -30,7 +30,7 @@ Widget _app(_FakePhoneAuthGateway gateway) => ScreenUtilInit(
   builder: (_, __) => MaterialApp(
     home: SimpleLoginScreen(
       authGateway: gateway,
-      otpScreenBuilder: (_, __) => const Scaffold(body: Text('OTP started')),
+      otpScreenBuilder: (_, __, intent) => Scaffold(body: Text('OTP started: $intent')),
     ),
   ),
 );
@@ -55,7 +55,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gateway.sendCount, 1);
-    expect(find.text('OTP started'), findsOneWidget);
+    expect(find.textContaining('OTP started:'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 65));
+  });
+
+  testWidgets('deletion entry sends the deletion intent through OTP route', (tester) async {
+    final gateway = _FakePhoneAuthGateway();
+    await tester.pumpWidget(_app(gateway));
+    await tester.enterText(find.byType(TextField), '+639171234567');
+    await tester.ensureVisible(find.text('Request account deletion'));
+    await tester.tap(find.text('Request account deletion'));
+    await tester.pumpAndSettle();
+    expect(gateway.sendCount, 1);
+    expect(find.textContaining('accountDeletion'), findsOneWidget);
     await tester.pump(const Duration(seconds: 65));
   });
 }

@@ -13,7 +13,7 @@ const profile = {uid: auth.uid, role: "resident", phoneNumber: auth.token.phone_
   approvalStatus: "approved", isActive: true, communityId: "community-1", flatId: "flat-1",
   flatLabel: "N-014", name: "Resident One", residentType: "owner"};
 
-function dbFixture({community = {isActive: true}, flat = {communityId: "community-1", flatLabel: "N-014", status: "occupied", residentUserId: auth.uid}, visitor} = {}) {
+function dbFixture({community = {isActive: true, timeZone: "Asia/Manila"}, flat = {communityId: "community-1", flatLabel: "N-014", status: "occupied", residentUserId: auth.uid}, visitor} = {}) {
   const docs = {users: {[auth.uid]: {...profile}}, communities: {"community-1": community}, flats: {"flat-1": flat},
     visitors: visitor ? {"visitor-1": visitor} : {}, visitorHostCredentials: {}, visitorGateCredentialIndex: {}};
   let nextId = 0;
@@ -45,6 +45,10 @@ test("resident invitation stores credentials privately and ignores forged host s
   assert.equal(secret.manualCode, result.visitorPassCode.replaceAll("-", ""));
   assert.equal(Object.keys(db.docs.visitorGateCredentialIndex).length, 2);
   assert.equal(db.docs.visitorGateCredentialIndex[credentialHash(key, "qr", result.qrToken)].visitorId, result.visitorId);
+  for (const index of Object.values(db.docs.visitorGateCredentialIndex)) {
+    assert.equal(index.hostUserId, auth.uid);
+    assert.equal(index.communityId, profile.communityId);
+  }
   await assert.rejects(createVisitorInvitationCore({db, auth, hmacKey: key, now: () => now,
     data: {...input, status: "approved", isApproved: true, approvedBy: "attacker",
       actualArrival: now, checkedInBy: "attacker", qrToken: "forged"}}), {code: "invalid-argument"});
@@ -81,9 +85,10 @@ test("host retrieval returns persisted credentials only to the matching host", a
       visitorId: "visitor-1", communityId: "community-1", credentialType: type, credentialVersion: 1,
     };
   }
-  const result = await getVisitorCredentialsCore({db, auth, data: {visitorId: "visitor-1"}, hmacKey: key});
-  assert.deepEqual(result, {qrToken, visitorPassCode: "ABCDEFGHJKLM"});
-  const reopened = await getVisitorCredentialsCore({db, auth, data: {visitorId: "visitor-1"}, hmacKey: key});
+  const result = await getVisitorCredentialsCore({db, auth, data: {visitorId: "visitor-1"}, hmacKey: key, now: () => now});
+  assert.deepEqual(result, {qrToken, visitorPassCode: "ABCDEFGHJKLM", serverTime: now,
+    revalidateAt: now + 60_000 + 24 * 3600_000 + 1});
+  const reopened = await getVisitorCredentialsCore({db, auth, data: {visitorId: "visitor-1"}, hmacKey: key, now: () => now});
   assert.deepEqual(reopened, result);
   await assert.rejects(getVisitorCredentialsCore({db, auth: {...auth, uid: "other"}, data: {visitorId: "visitor-1"}, hmacKey: key}));
   await assert.rejects(getVisitorCredentialsCore({db, auth, data: {visitorId: "missing"}, hmacKey: key}));
@@ -186,8 +191,46 @@ test("migration dry-run is read-only and apply is idempotent without deleting le
   assert.equal(documents.visitors.legacy.visitorPassCode, "ABCD-EFGH");
   assert.equal(documents.visitors.legacy.credentialVersion, 1);
   assert.ok(documents.visitors.legacy.legacyCredentialSunsetAt);
+  assert.ok(Object.values(documents.visitorGateCredentialIndex).every((index) => index.hostUserId === auth.uid));
   const secondApply = await runCredentialMigration({db, hmacKey: key, apply: true});
   assert.equal(secondApply.counts.alreadyMigrated, 1);
+});
+
+test("migration backfills index ownership only from verified private credential and Resident links", async () => {
+  const validFrom = new Date(now - 60_000);
+  const expiresAt = new Date(now + 60 * 60_000);
+  const qrToken = "Q".repeat(43);
+  const manualCode = "ABCDEFGHJKLM";
+  const qrHash = credentialHash(key, "qr", qrToken);
+  const manualHash = credentialHash(key, "manual", manualCode);
+  const documents = {
+    visitors: {v1: {hostUserId: auth.uid, residentId: auth.uid, communityId: "community-1", credentialVersion: 1,
+      status: "expected", isApproved: false, expectedArrival: new Date(now + 60_000), credentialValidFrom: validFrom,
+      credentialExpiresAt: expiresAt}},
+    visitorHostCredentials: {v1: {hostUserId: auth.uid, communityId: "community-1", credentialVersion: 1,
+      qrToken, manualCode, validFrom, expiresAt}},
+    visitorGateCredentialIndex: {
+      [qrHash]: {visitorId: "v1", communityId: "community-1", credentialType: "qr", credentialVersion: 1, validFrom, expiresAt},
+      [manualHash]: {visitorId: "v1", communityId: "community-1", credentialType: "manual", credentialVersion: 1, validFrom, expiresAt},
+    },
+    users: {[auth.uid]: {...profile, status: "active"}},
+    communities: {"community-1": {isActive: true}},
+    flats: {"flat-1": {communityId: "community-1", status: "occupied", residentUserId: auth.uid}},
+  };
+  const makeRef = (name, id) => ({name, id, get: async () => ({exists: documents[name]?.[id] != null, data: () => documents[name]?.[id]})});
+  const db = {
+    collection(name) { return {doc: (id) => makeRef(name, id), get: async () => ({docs: Object.entries(documents[name] || {}).map(([id, data]) => ({id, data: () => data}))})}; },
+    async runTransaction(fn) { return fn({
+      get: async (ref) => ({exists: documents[ref.name]?.[ref.id] != null, data: () => documents[ref.name]?.[ref.id]}),
+      update: (ref, value) => Object.assign(documents[ref.name][ref.id], value),
+    }); },
+  };
+  const result = await runCredentialMigration({db, hmacKey: key, apply: true, now: () => now});
+  assert.equal(result.counts.alreadyMigrated, 1);
+  assert.equal(result.counts.ownershipBackfilled, 1);
+  assert.equal(documents.visitors.v1.hostUserId, auth.uid);
+  assert.equal(documents.visitorGateCredentialIndex[qrHash].hostUserId, auth.uid);
+  assert.equal(documents.visitorGateCredentialIndex[manualHash].hostUserId, auth.uid);
 });
 
 test("migration reports missing hosts, terminal records, and duplicate manual credentials without secrets", async () => {
@@ -272,4 +315,57 @@ test("migration reports conflicting existing credential indexes without exposing
   assert.equal(result.counts.conflictingIndexes, 1);
   assert.doesNotMatch(JSON.stringify(result), new RegExp(qrToken));
   assert.doesNotMatch(JSON.stringify(result), new RegExp(qrHash));
+});
+
+
+test("invitation calendar uses the community day, preserving UTC instants and credential windows", async () => {
+  for (const [zone, clock, arrival, allowed] of [
+    ["Asia/Kolkata", "2026-11-14T17:02Z", "2026-11-13T18:30Z", true],
+    ["Asia/Manila", "2026-11-14T17:02Z", "2026-11-14T16:00Z", true],
+    ["America/New_York", "2026-11-15T03:32Z", "2026-11-14T05:00Z", true],
+    ["Europe/London", "2026-03-29T12:00Z", "2026-03-29T00:00Z", true],
+    ["Europe/London", "2026-10-25T12:00Z", "2026-10-24T23:00Z", true],
+    ["Asia/Manila", "2026-11-14T17:02Z", "2026-11-14T15:59Z", false],
+  ]) {
+    const db = dbFixture({community: {isActive: true, timeZone: zone}});
+    const ms = Date.parse(arrival);
+    const create = () => createVisitorInvitationCore({db, auth, hmacKey: key,
+      now: () => Date.parse(clock), data: {visitorName: "Guest", purpose: "Visit", expectedArrival: ms}});
+    if (!allowed) { await assert.rejects(create, {code: "invalid-argument"}); continue; }
+    const result = await create();
+    const stored = db.docs.visitors[result.visitorId];
+    assert.equal(stored.expectedArrival.toMillis(), ms);
+    assert.equal(stored.credentialValidFrom.toMillis(), ms - 24 * 3600000);
+    assert.equal(stored.credentialExpiresAt.toMillis(), ms + 24 * 3600000);
+    assert.equal(stored.isApproved, false);
+    assert.equal(stored.actualArrival, null);
+  }
+});
+test("creation reports missing or invalid community timezone without inferring the server timezone", async () => {
+  for (const zone of [undefined, "", "Invalid/Zone", "+05:30"]) {
+    const db = dbFixture({community: {isActive: true, timeZone: zone}});
+    await assert.rejects(createVisitorInvitationCore({db, auth, hmacKey: key,
+      data: {visitorName: "Guest", purpose: "Visit", expectedArrival: now + 60000}}),
+    {code: "failed-precondition"});
+    assert.equal(Object.keys(db.docs.visitors).length, 0);
+  }
+});
+
+test('credential lookups crossing scheduled activation never return a stale authorization', async () => {
+  const visitor = {hostUserId: auth.uid, communityId: 'community-1', status: 'expected',
+    isApproved: false, expectedArrival: new Date(now), actualArrival: null, departure: null};
+  const db = dbFixture({visitor});
+  db.docs.communities['community-1'].scheduledVisitorPolicy = {effectiveAt: now, revision: 1,
+    policy: {schemaVersion: 1, enabled: true, timeZone: 'Asia/Manila', approvalMode: 'all_approval_required',
+      emergency: null, pets: {mode: 'allowed', normalMode: 'allowed', restriction: null}}};
+  db.docs.visitorHostCredentials['visitor-1'] = {hostUserId: auth.uid, communityId: 'community-1',
+    qrToken: 'synthetic-qr', manualCode: 'ABCDEFGHJKLM'};
+  for (const [type, value] of [['qr', 'synthetic-qr'], ['manual', 'ABCDEFGHJKLM']]) {
+    db.docs.visitorGateCredentialIndex[credentialHash(key, type, value)] = {
+      visitorId: 'visitor-1', communityId: 'community-1', credentialType: type, credentialVersion: 1};
+  }
+  let clockReads = 0;
+  await assert.rejects(getVisitorCredentialsCore({db, auth, hmacKey: key,
+    now: () => clockReads++ === 0 ? now - 1 : now, data: {visitorId: 'visitor-1'}}),
+  {code: 'failed-precondition'});
 });

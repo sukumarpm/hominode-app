@@ -10,6 +10,7 @@ class CommunityModel {
   final String slug;
   final String websitePath;
   final String databaseId;
+  final String? timeZone;
   final String? logoUrl;
   final String brandName;
   final String? primaryColor;
@@ -30,6 +31,7 @@ class CommunityModel {
     required this.slug,
     required this.websitePath,
     this.databaseId = defaultDatabaseId,
+    this.timeZone,
     this.logoUrl,
     required this.brandName,
     this.primaryColor,
@@ -70,6 +72,7 @@ class CommunityModel {
       slug: slug,
       websitePath: websitePath.isEmpty ? slug : websitePath,
       databaseId: databaseId.isEmpty ? defaultDatabaseId : databaseId,
+      timeZone: _nullableString(data['timeZone']),
       logoUrl: _nullableString(data['logoUrl']),
       brandName: brandName.isEmpty ? name : brandName,
       primaryColor: _nullableString(data['primaryColor']),

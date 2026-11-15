@@ -114,6 +114,17 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
 
       if (!mounted) return;
 
+      if (ResidentAuthRouting.shouldOpenDeletionRequest(
+        result,
+        widget.intent,
+      )) {
+        Navigator.of(context).pushNamedAndRemoveUntil(
+          '/account-deletion-request',
+          (route) => false,
+        );
+        return;
+      }
+
       final routedResult = ResidentAuthRouting.resultForIntent(
         result,
         widget.intent,
@@ -521,38 +532,51 @@ class _VerifyOTPScreenSingleFieldState extends State<VerifyOTPScreenSingleField>
         ),
         child: Stack(
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: List.generate(6, (index) {
-                final hasDigit = index < _otp.length;
-                final digit = hasDigit ? _otp[index] : '';
-
-                return Container(
-                  width: 34.w,
-                  height: 44.h,
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(
-                        color: hasDigit
-                            ? const Color(0xFF33D6FF)
-                            : const Color(0xFF2B547F),
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      digit,
-                      style: TextStyle(
-                        fontSize: 22.sp,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // The card is capped on tablets, while .w scales with the full
+                // screen. Fit all six underlines and their seven equal gaps
+                // within the actual input width, keeping phone sizes unchanged.
+                final gap = 8.w.clamp(0.0, constraints.maxWidth / 12);
+                final digitWidth = ((constraints.maxWidth - 7 * gap) / 6).clamp(
+                  0.0,
+                  34.w,
                 );
-              }),
+
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: List.generate(6, (index) {
+                    final hasDigit = index < _otp.length;
+                    final digit = hasDigit ? _otp[index] : '';
+
+                    return Container(
+                      width: digitWidth,
+                      height: 44.h,
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: hasDigit
+                                ? const Color(0xFF33D6FF)
+                                : const Color(0xFF2B547F),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          digit,
+                          style: TextStyle(
+                            fontSize: 22.sp,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                );
+              },
             ),
 
             Positioned.fill(

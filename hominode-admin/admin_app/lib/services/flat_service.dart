@@ -274,6 +274,7 @@ class FlatService {
 
       return FlatModel(
         id: doc.id,
+        isAvailableForNewResident: isUnitAvailableForNewResident(data),
         unitType: HousingUnitType.fromValue(data['unitType']),
         unitIndex: (data['unitIndex'] as num?)?.toInt(),
         flatId: visibleUnitLabel(data, doc.id),
@@ -619,6 +620,7 @@ void validateFlatMutationScope({
 
 // Flat Model
 class FlatModel {
+  final bool isAvailableForNewResident;
   final HousingUnitType unitType;
   final int? unitIndex;
   bool get usesFloors => unitIndex == null;
@@ -644,6 +646,7 @@ class FlatModel {
   final DateTime? updatedAt;
 
   FlatModel({
+    this.isAvailableForNewResident = false,
     this.unitType = HousingUnitType.apartment,
     this.unitIndex,
     required this.id,

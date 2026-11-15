@@ -1,6 +1,7 @@
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { RegistrationError } = require("./register_resident");
 const {credentialHash} = require("./visitor_credentials");
+const {assertVisitorAuthorized, assertVisitorHost} = require("./visitor_policy");
 
 const QR_VALIDITY_MS = 24 * 60 * 60 * 1000;
 
@@ -50,7 +51,7 @@ async function requireSecurity(db, auth) {
   if (!communitySnapshot.exists || communitySnapshot.data()?.isActive !== true) {
     throw new RegistrationError("permission-denied", "The assigned community is unavailable.");
   }
-  return {uid: auth.uid, communityId: profile.communityId.trim()};
+  return {uid: auth.uid, communityId: profile.communityId.trim(), community: communitySnapshot.data()};
 }
 
 function isVisitValid(visitor, nowMs) {
@@ -112,10 +113,15 @@ async function resolveVisitorQrCore({db, auth, data, hmacKey, legacyCredentialCu
     doc = {id: legacyVisitorId, data: () => snapshot.data()};
   }
   const visitor = doc.data();
+  const nowMs = now();
   if (visitor.communityId !== security.communityId || visitor.gateAccessStatus === "denied" ||
       visitor.gateEntryDeniedAt != null ||
       (!pendingVisitor(visitor) && !previouslyApprovedVisitor(visitor)) ||
-      !isVisitValid(visitor, now())) invalid();
+      !isVisitValid(visitor, nowMs)) invalid();
+  const profile = await assertVisitorHost({db, read: (ref) => ref.get(), visitor, community: security.community, now: nowMs});
+  const decisionTime = now();
+  if (!isVisitValid(visitor, decisionTime)) invalid();
+  assertVisitorAuthorized(visitor, security.community, {now: decisionTime, profile});
   return {
     visitorId: doc.id,
     visitorName: String(visitor.visitorName || "").slice(0, 160),
@@ -126,6 +132,7 @@ async function resolveVisitorQrCore({db, auth, data, hmacKey, legacyCredentialCu
     purpose: String(visitor.purpose || "").slice(0, 300),
     expectedArrival: visitor.expectedArrival?.toMillis?.() ?? null,
     canReject: pendingVisitor(visitor),
+    bringingPet: visitor.bringingPet === true,
   };
 }
 
@@ -168,6 +175,7 @@ async function transitionVisitorFromQrCore({db, auth, data, hmacKey, legacyCrede
     }
     if (!snapshot.exists) invalid();
     const visitor = snapshot.data();
+    const nowMs = now();
     const privateIndex = indexSnapshot?.data();
     const privateCredential = credentialSnapshot?.data();
     const legacyTokenMatch = Boolean(token) && legacyCredentialEligible(visitor) && visitor.qrToken === token;
@@ -183,7 +191,11 @@ async function transitionVisitorFromQrCore({db, auth, data, hmacKey, legacyCrede
       : legacyIdMatch;
     if (visitor.communityId !== security.communityId || visitor.gateAccessStatus === "denied" ||
         visitor.gateEntryDeniedAt != null || !credentialMatches ||
-        !isVisitValid(visitor, now())) invalid();
+        !isVisitValid(visitor, nowMs)) invalid();
+    const profile = await assertVisitorHost({db, read: (ref) => transaction.get(ref), visitor, community: communitySnapshot.data(), now: nowMs});
+    const decisionTime = now();
+    if (!isVisitValid(visitor, decisionTime)) invalid();
+    assertVisitorAuthorized(visitor, communitySnapshot.data(), {now: decisionTime, profile});
     const allowedPending = pendingVisitor(visitor);
     const allowedPreviouslyApproved = action === 'approve' && previouslyApprovedVisitor(visitor);
     if (!allowedPending && !allowedPreviouslyApproved) {
@@ -192,15 +204,20 @@ async function transitionVisitorFromQrCore({db, auth, data, hmacKey, legacyCrede
     if (action === 'reject' && !allowedPending) invalid();
     if (action === 'reject') {
       transaction.update(ref, {
-        status: 'rejected', isApproved: false, rejectedBy: security.uid,
-        rejectedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+        ...(visitor.authorizationManaged === true ? {
+          gateAccessStatus: 'denied', gateEntryDeniedBy: security.uid,
+          gateEntryDeniedAt: FieldValue.serverTimestamp(),
+        } : {status: 'rejected', isApproved: false, rejectedBy: security.uid,
+          rejectedAt: FieldValue.serverTimestamp()}),
+        updatedAt: FieldValue.serverTimestamp(),
       });
       return {visitorId, status: 'rejected', visitorName: visitor.visitorName || 'Visitor'};
     }
     transaction.update(ref, {
-      status: 'inside', isApproved: true, actualArrival: FieldValue.serverTimestamp(),
+      status: 'inside', actualArrival: FieldValue.serverTimestamp(),
       checkedInBy: security.uid,
-      ...(allowedPending ? {approvedBy: security.uid, approvedAt: FieldValue.serverTimestamp()} : {}),
+      ...(visitor.authorizationManaged === true ? {} : {isApproved: true,
+        ...(allowedPending ? {approvedBy: security.uid, approvedAt: FieldValue.serverTimestamp()} : {})}),
       updatedAt: FieldValue.serverTimestamp(),
     });
     return {visitorId, status: 'inside', visitorName: visitor.visitorName || 'Visitor'};

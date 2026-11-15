@@ -9,7 +9,15 @@ import '../services/resident_identity_service.dart';
 import '../services/tenant_resolution_service.dart';
 
 class ResidentIdentityVerificationScreen extends StatefulWidget {
-  const ResidentIdentityVerificationScreen({super.key});
+  const ResidentIdentityVerificationScreen({
+    super.key,
+    this.service,
+    this.pickProof,
+    this.onCheckAccess,
+  });
+  final ResidentIdentityService? service;
+  final Future<XFile?> Function()? pickProof;
+  final Future<void> Function()? onCheckAccess;
 
   @override
   State<ResidentIdentityVerificationScreen> createState() =>
@@ -18,16 +26,19 @@ class ResidentIdentityVerificationScreen extends StatefulWidget {
 
 class _ResidentIdentityVerificationScreenState
     extends State<ResidentIdentityVerificationScreen> {
-  final _service = ResidentIdentityService();
+  late final _service = widget.service ?? ResidentIdentityService();
+  late final _profileStream = _service.watchProfile();
   final _picker = ImagePicker();
   bool _uploading = false;
 
   Future<void> _upload() async {
-    final proof = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 90,
-      maxWidth: 2400,
-    );
+    final proof =
+        await (widget.pickProof?.call() ??
+            _picker.pickImage(
+              source: ImageSource.gallery,
+              imageQuality: 90,
+              maxWidth: 2400,
+            ));
     if (proof == null || !mounted) return;
     setState(() => _uploading = true);
     try {
@@ -52,6 +63,10 @@ class _ResidentIdentityVerificationScreenState
   }
 
   Future<void> _checkAccess() async {
+    if (widget.onCheckAccess != null) {
+      await widget.onCheckAccess!();
+      return;
+    }
     final result = await FirebaseAuthService().restoreResidentSession(
       context.read<TenantResolutionService>(),
     );
@@ -71,7 +86,7 @@ class _ResidentIdentityVerificationScreenState
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Identity Verification')),
     body: StreamBuilder<Map<String, dynamic>>(
-      stream: _service.watchProfile(),
+      stream: _profileStream,
       builder: (context, snapshot) {
         final profile = snapshot.data ?? const <String, dynamic>{};
         final status =

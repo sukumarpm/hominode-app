@@ -1,4 +1,5 @@
 import '../widgets/marketplace_access_gate.dart';
+import 'dart:async';
 // lib/src/screens/marketplace_your_products_screen.dart
 // Your Products management screen
 
@@ -8,21 +9,29 @@ import '../models/listing_model.dart';
 import '../services/listing_firestore_service.dart';
 import '../constants/app_sizes.dart';
 import '../widgets/skeleton_loader.dart';
+import '../widgets/marketplace_delete_listing_dialog.dart';
 import '../components/marketplace_listing_card.dart';
 
 class MarketplaceYourProductsScreen extends StatelessWidget {
-  const MarketplaceYourProductsScreen({super.key, this.accessLoader});
+  const MarketplaceYourProductsScreen({
+    super.key,
+    this.accessLoader,
+    this.listingService,
+  });
   final MarketplaceAccessLoader? accessLoader;
+  final ListingFirestoreService? listingService;
 
   @override
   Widget build(BuildContext context) => MarketplaceAccessGate(
     loader: accessLoader,
-    builder: (_) => _MarketplaceYourProductsScreenContent(),
+    builder: (_) =>
+        _MarketplaceYourProductsScreenContent(listingService: listingService),
   );
 }
 
 class _MarketplaceYourProductsScreenContent extends StatefulWidget {
-  const _MarketplaceYourProductsScreenContent();
+  const _MarketplaceYourProductsScreenContent({this.listingService});
+  final ListingFirestoreService? listingService;
 
   @override
   State<_MarketplaceYourProductsScreenContent> createState() =>
@@ -31,12 +40,16 @@ class _MarketplaceYourProductsScreenContent extends StatefulWidget {
 
 class _MarketplaceYourProductsScreenState
     extends State<_MarketplaceYourProductsScreenContent> {
-  final ListingFirestoreService _listingService = ListingFirestoreService();
+  late final ListingFirestoreService _listingService =
+      widget.listingService ?? ListingFirestoreService();
+  late final Stream<List<ListingModel>> _myListings = _buildMyListingsStream();
+  final _deletingIds = <String>{};
+  final _deletedIds = <String>{};
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<ListingModel>>(
-      stream: _buildMyListingsStream(),
+      stream: _myListings,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return SkeletonListLoader(itemCount: 5, itemHeight: 120);
@@ -59,7 +72,9 @@ class _MarketplaceYourProductsScreenState
           );
         }
 
-        final listings = snapshot.data ?? [];
+        final listings = (snapshot.data ?? [])
+            .where((listing) => !_deletedIds.contains(listing.id))
+            .toList();
 
         if (listings.isEmpty) {
           return Center(
@@ -100,8 +115,8 @@ class _MarketplaceYourProductsScreenState
               listing: listing,
               onOpen: () => _navigateToDetail(context, listing),
               onEdit: () => _editProduct(context, listing),
-              onMarkSold: () => _markAsSold(context, listing),
-              onDelete: () => _deleteProduct(context, listing),
+              onMarkSold: () => _markAsSold(listing),
+              onDelete: () => _deleteProduct(listing),
             );
           },
         );
@@ -109,27 +124,35 @@ class _MarketplaceYourProductsScreenState
     );
   }
 
-  Stream<List<ListingModel>> _buildMyListingsStream() async* {
-    try {
-      final listings = await _listingService.getMyListings();
-      // Filter to show only active products
-      final activeListings = listings
-          .where((listing) => listing.status == 'active')
-          .toList();
-      yield activeListings;
-
-      // Also listen for real-time updates
-      await for (final _ in Stream.periodic(const Duration(seconds: 5))) {
-        final updatedListings = await _listingService.getMyListings();
-        final activeUpdated = updatedListings
-            .where((listing) => listing.status == 'active')
-            .toList();
-        yield activeUpdated;
+  Stream<List<ListingModel>> _buildMyListingsStream() {
+    late final StreamController<List<ListingModel>> controller;
+    Timer? polling;
+    var loading = false;
+    Future<void> refresh() async {
+      if (loading || !controller.hasListener) return;
+      loading = true;
+      try {
+        final listings = await _listingService.getMyListings();
+        if (controller.hasListener) {
+          controller.add(
+            listings.where((listing) => listing.status == 'active').toList(),
+          );
+        }
+      } catch (_) {
+        if (controller.hasListener) controller.add([]);
+      } finally {
+        loading = false;
       }
-    } catch (e) {
-      print('❌ Error streaming my listings: $e');
-      yield [];
     }
+
+    controller = StreamController<List<ListingModel>>(
+      onListen: () {
+        refresh();
+        polling = Timer.periodic(const Duration(seconds: 5), (_) => refresh());
+      },
+      onCancel: () => polling?.cancel(),
+    );
+    return controller.stream;
   }
 
   void _editProduct(BuildContext context, ListingModel listing) {
@@ -140,15 +163,21 @@ class _MarketplaceYourProductsScreenState
     );
   }
 
-  void _navigateToDetail(BuildContext context, ListingModel listing) {
-    Navigator.pushNamed(
+  Future<void> _navigateToDetail(
+    BuildContext context,
+    ListingModel listing,
+  ) async {
+    final deleted = await Navigator.pushNamed(
       context,
       '/marketplace_your_product_detail',
       arguments: listing,
     );
+    if (mounted && deleted == true) {
+      setState(() => _deletedIds.add(listing.id!));
+    }
   }
 
-  Future<void> _markAsSold(BuildContext context, ListingModel listing) async {
+  Future<void> _markAsSold(ListingModel listing) async {
     if (listing.status == 'sold') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Product already marked as sold')),
@@ -171,39 +200,29 @@ class _MarketplaceYourProductsScreenState
     }
   }
 
-  Future<void> _deleteProduct(
-    BuildContext context,
-    ListingModel listing,
-  ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Product'),
-        content: const Text('Are you sure you want to delete this product?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      final result = await _listingService.deleteListing(listing.id!);
-
-      if (mounted) {
+  Future<void> _deleteProduct(ListingModel listing) async {
+    final id = listing.id!;
+    if (!_deletingIds.add(id)) return;
+    try {
+      final deleted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => MarketplaceDeleteListingDialog(
+          onDelete: () => _listingService.deleteListing(id),
+        ),
+      );
+      if (!mounted) return;
+      if (deleted == true) {
+        setState(() => _deletedIds.add(id));
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message ?? 'Product deleted'),
-            backgroundColor: result.success ? Colors.green : Colors.red,
+          const SnackBar(
+            content: Text('Listing deleted successfully'),
+            backgroundColor: Colors.green,
           ),
         );
       }
+    } finally {
+      _deletingIds.remove(id);
     }
   }
 }

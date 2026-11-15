@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'models/notification_models.dart';
 import 'services/notification_service.dart';
+import 'services/admin_chat_notification_navigation.dart';
 import 'widgets/standard_header.dart';
 import 'widgets/notification_card.dart';
 
@@ -429,7 +430,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return grouped;
   }
 
-  void _handleNotificationTap(NotificationModel notification) {
+  Future<void> _handleNotificationTap(NotificationModel notification) async {
+    final metadata = notification.metadata;
+    if (metadata?['eventType'] == 'admin_chat_message') {
+      final chatId = metadata?['chatId'];
+      final communityId = metadata?['communityId'];
+      if (chatId is String && communityId is String) {
+        try {
+          final opened = await AdminChatNotificationNavigation.open(
+            context, chatId: chatId, communityId: communityId,
+          );
+          if (!mounted) return;
+          if (opened) {
+            if (!notification.isRead) {
+              await _notificationService.markAsRead(notification.id);
+            }
+            return;
+          }
+        } catch (_) {
+          if (!mounted) return;
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This conversation is unavailable for your account.')),
+        );
+      }
+      return;
+    }
     // Mark as read when tapped
     if (!notification.isRead) {
       _notificationService.markAsRead(notification.id);

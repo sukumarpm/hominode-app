@@ -1,3 +1,4 @@
+import 'package:hominode_time/community_time.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -91,7 +92,12 @@ class ResidentVisitorService {
 
     final profile = await _loadValidatedProfile(session);
     final now = DateTime.now();
-    if (expectedArrival.isBefore(DateTime(now.year, now.month, now.day))) {
+    if (CommunityTime.dayDifference(
+          expectedArrival,
+          now,
+          session.activeTenant?.timeZone,
+        ) <
+        0) {
       throw const ResidentVisitorException(
         'Expected arrival cannot be in the past.',
       );

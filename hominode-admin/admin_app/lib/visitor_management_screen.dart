@@ -1,3 +1,5 @@
+import 'package:hominode_time/community_time.dart';
+import 'dart:async';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,7 +8,10 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'desktop/admin_desktop_page_frame.dart';
 import 'qr_gate_scanner_screen.dart';
 import 'services/visitor_service.dart';
+import 'services/admin_tenant_context.dart';
+import 'services/visitor_policy_service.dart';
 import 'widgets/standard_header.dart';
+import 'widgets/standard_bottom_nav.dart';
 
 /// Visitor Management Screen - Exact Flow UI Compliance with Firestore Integration
 ///
@@ -20,11 +25,13 @@ import 'widgets/standard_header.dart';
 class VisitorManagementScreen extends StatefulWidget {
   final int initialTab;
   final VisitorWorkflowService? visitorService;
+  final VisitorPolicyService? policyService;
 
   const VisitorManagementScreen({
     super.key,
     this.initialTab = 0,
     this.visitorService,
+    this.policyService,
   });
 
   @override
@@ -33,7 +40,7 @@ class VisitorManagementScreen extends StatefulWidget {
 }
 
 class _VisitorManagementScreenState extends State<VisitorManagementScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // Tab management
   int _currentTab = 0;
   late PageController _pageController;
@@ -53,12 +60,113 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   int _pendingCount = 0;
   int _activeCount = 0;
   int _historyCount = 0;
+  int _approvalCount = 0;
+  final Set<String> _deciding = {};
+  int _requestEpoch = 0;
+  String? _community;
+  late Stream<List<VisitorModel>> _expectedStream,
+      _insideStream,
+      _historyStream;
+
+  late final VisitorPolicyService _policyService =
+      widget.policyService ?? VisitorPolicyService();
+  VisitorPolicyConfig? _actionPolicy;
+  StreamSubscription<int>? _policySubscription;
+  Timer? _policyBoundary;
+  int _policyRequest = 0;
+  final Map<String, String?> _residentTypes = {};
+  final Map<String, StreamSubscription<String?>> _hostSubscriptions = {};
+
+  void _clearHostSubscriptions() {
+    for (final subscription in _hostSubscriptions.values) {
+      subscription.cancel();
+    }
+    _hostSubscriptions.clear();
+    _residentTypes.clear();
+  }
+
+  void _watchPolicy() {
+    _policySubscription?.cancel();
+    try {
+      _policySubscription = _policyService.watch().listen(
+        (_) => _loadPolicy(),
+        onError: (_) => _loadPolicy(),
+      );
+    } catch (_) {
+      /* Loading below reports unavailable policy context. */
+    }
+    _loadPolicy();
+  }
+
+  Future<void> _loadPolicy() async {
+    final ticket = ++_policyRequest;
+    _policyBoundary?.cancel();
+    try {
+      final config = await _policyService.load();
+      if (!mounted || ticket != _policyRequest) return;
+      setState(() {
+        _actionPolicy = config;
+        _clearHostSubscriptions();
+      });
+      final now = config.currentServerTime;
+      final emergency = config.policy['emergency'] as Map?;
+      final boundaries = [
+        config.pendingSchedule?.effectiveAt,
+        (emergency?['startAt'] as num?)?.toInt(),
+        (emergency?['endAt'] as num?)?.toInt(),
+      ].whereType<int>().where((time) => time > now).toList()..sort();
+      if (boundaries.isNotEmpty) {
+        _policyBoundary = Timer(
+          Duration(milliseconds: boundaries.first - now + 1),
+          _loadPolicy,
+        );
+      }
+    } catch (_) {
+      if (mounted && ticket == _policyRequest)
+        setState(() => _actionPolicy = null);
+    }
+  }
+
+  void _watchHostType(VisitorModel visitor) {
+    if (_actionPolicy?.policy['enabled'] != true ||
+        _actionPolicy?.policy['approvalMode'] != 'tenant_approval_required' ||
+        !visitorBelongsInExpectedQueue(visitor.lifecycleData) ||
+        _hostSubscriptions.containsKey(visitor.residentId))
+      return;
+    final ticket = _policyRequest;
+    try {
+      _hostSubscriptions[visitor.residentId] = _visitorService
+          .watchVisitorHostResidentType(visitor)
+          .listen(
+            (type) {
+              if (mounted && ticket == _policyRequest)
+                setState(() => _residentTypes[visitor.residentId] = type);
+            },
+            onError: (_) {
+              if (mounted && ticket == _policyRequest)
+                setState(() => _residentTypes.remove(visitor.residentId));
+            },
+          );
+    } catch (_) {
+      /* The server still checks the host before any mutation. */
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadPolicy();
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _currentTab = widget.initialTab;
     _visitorService = widget.visitorService ?? VisitorService();
+    _community = AdminTenantContext.instance.communityId;
+    _setStreams();
+    _watchPolicy();
+    AdminTenantContext.instance.addListener(_communityChanged);
     _pageController = PageController(initialPage: _currentTab);
 
     // Initialize animation controller
@@ -78,9 +186,15 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   @override
   void dispose() {
+    AdminTenantContext.instance.removeListener(_communityChanged);
     _pageController.dispose();
     _fadeController.dispose();
     _searchController.dispose();
+    _policyRequest++;
+    _policyBoundary?.cancel();
+    _policySubscription?.cancel();
+    _clearHostSubscriptions();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
@@ -99,55 +213,117 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     setState(() => _currentTab = index);
   }
 
-  // Visitor action handlers
-  void _onApproveVisitor(String visitorId, String visitorName) async {
-    HapticFeedback.mediumImpact();
+  void _setStreams() {
+    Stream<List<VisitorModel>> relisten(
+      Stream<List<VisitorModel>> Function() source,
+    ) => Stream.multi((controller) {
+      try {
+        final subscription = source().listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+        controller.onCancel = subscription.cancel;
+      } catch (error, stack) {
+        controller.addError(error, stack);
+        controller.close();
+      }
+    }, isBroadcast: true);
+    _expectedStream = relisten(_visitorService.getPendingVisitors);
+    _insideStream = relisten(_visitorService.getActiveVisitors);
+    _historyStream = relisten(_visitorService.getHistoryVisitors);
+  }
 
+  void _communityChanged() {
+    final next = AdminTenantContext.instance.communityId;
+    if (next == _community) {
+      setState(() {});
+      return;
+    }
+    _requestEpoch++;
+    _policyRequest++;
+    _actionPolicy = null;
+    _clearHostSubscriptions();
+    _watchPolicy();
+    setState(() {
+      _community = next;
+      _deciding.clear();
+      _searchQuery = '';
+      _searchController.clear();
+      _pendingCount = 0;
+      _activeCount = 0;
+      _historyCount = 0;
+      _approvalCount = 0;
+      _setStreams();
+    });
+  }
+
+  Future<void> _decision(
+    VisitorModel visitor,
+    AdminVisitorAction action,
+  ) async {
+    if (_deciding.contains(visitor.id)) return;
+    final epoch = _requestEpoch;
+    final verb = action.name;
+    setState(() => _deciding.add(visitor.id));
     try {
-      // Admin approval records the request decision. Security records entry
-      // only after the visitor QR is verified at the gate.
-      await _visitorService.approveVisitor(visitorId);
-
-      if (mounted) {
-        _showSnackBar(
-          'visitor_approved_checkin_message'.tr(
-            namedArgs: {'name': visitorName},
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('${verb[0].toUpperCase()}${verb.substring(1)} visitor?'),
+          content: Text(
+            '${visitor.visitorName} · ${visitor.flatLabel}\nThis records authorization only. Security still verifies entry.',
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel decision'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text('Confirm $verb'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted || epoch != _requestEpoch) return;
+      if (action == AdminVisitorAction.approve ||
+          action == AdminVisitorAction.reapprove) {
+        await _visitorService.approveVisitor(
+          visitor.id,
+          expectedRevision: visitor.authorizationRevision,
+        );
+      } else if (action == AdminVisitorAction.revoke) {
+        await _visitorService.revokeVisitor(
+          visitor.id,
+          expectedRevision: visitor.authorizationRevision,
+        );
+      } else {
+        await _visitorService.rejectVisitor(
+          visitor.id,
+          expectedRevision: visitor.authorizationRevision,
+        );
+      }
+      if (mounted && epoch == _requestEpoch) {
+        _showSnackBar(
+          'Decision confirmed by the server. Security still verifies entry.',
           const Color(0xFF16A34A),
           Icons.check_circle,
         );
+        setState(_setStreams);
       }
-    } catch (e) {
-      if (mounted) {
+    } catch (error) {
+      if (mounted && epoch == _requestEpoch) {
         _showSnackBar(
-          'visitor_approve_failed'.tr(namedArgs: {'error': '$e'}),
+          visitorPolicyError(error),
           const Color(0xFFEF4444),
           Icons.error,
         );
+        setState(_setStreams);
       }
-    }
-  }
-
-  void _onRejectVisitor(String visitorId, String visitorName) async {
-    HapticFeedback.mediumImpact();
-
-    try {
-      await _visitorService.rejectVisitor(visitorId);
-
-      if (mounted) {
-        _showSnackBar(
-          'visitor_rejected_message'.tr(namedArgs: {'name': visitorName}),
-          const Color(0xFFEF4444),
-          Icons.cancel,
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          'visitor_reject_failed'.tr(namedArgs: {'error': '$e'}),
-          const Color(0xFFEF4444),
-          Icons.error,
-        );
+    } finally {
+      if (mounted && epoch == _requestEpoch) {
+        setState(() => _deciding.remove(visitor.id));
       }
     }
   }
@@ -233,6 +409,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                   _buildPendingTab(),
                   _buildActiveTab(),
                   _buildHistoryTab(),
+                  _buildPendingTab(approvalOnly: true),
                 ],
               ),
             ),
@@ -243,71 +420,73 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
-      body: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
-        slivers: [
-          StandardHeader(title: 'visitor_management_title'.tr()),
-          SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(height: 16.h),
+      bottomNavigationBar: const StandardBottomNav(selectedIndex: 5),
+      body: LayoutBuilder(
+        builder: (context, viewport) => CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            StandardHeader(title: 'visitor_management_title'.tr()),
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(height: 16.h),
 
-                // Page Header - matching other screens
-                _buildPageHeader(),
+                  // Page Header - matching other screens
+                  _buildPageHeader(),
 
-                SizedBox(height: 16.h),
+                  SizedBox(height: 16),
 
-                // Summary Metrics - exact spacing from other screens
-                _buildSummaryMetrics(),
+                  // Summary Metrics - exact spacing from other screens
+                  _buildSummaryMetrics(),
 
-                SizedBox(height: 20.h),
+                  SizedBox(height: 20),
 
-                // Search Bar - matching parcel screen
-                _buildSearchBar(),
+                  // Search Bar - matching parcel screen
+                  _buildSearchBar(),
 
-                SizedBox(height: 20.h),
+                  SizedBox(height: 20),
 
-                // Tab Switcher - matching complaint screen
-                _buildTabSwitcher(),
+                  // Tab Switcher - matching complaint screen
+                  _buildTabSwitcher(),
 
-                SizedBox(height: 16.h),
-
-                // Content Area
-                SizedBox(
-                  height: MediaQuery.of(context).size.height * 0.55,
-                  child: PageView(
-                    controller: _pageController,
-                    physics: const BouncingScrollPhysics(),
-                    onPageChanged: (index) {
-                      setState(() => _currentTab = index);
-                      HapticFeedback.lightImpact();
-                    },
-                    children: [
-                      _buildPendingTab(),
-                      _buildActiveTab(),
-                      _buildHistoryTab(),
-                    ],
-                  ),
-                ),
-
-                SizedBox(height: 100.h), // Bottom padding for FAB
-              ],
+                  SizedBox(height: 16),
+                ],
+              ),
             ),
-          ),
-        ],
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: viewport.maxHeight * 0.45,
+                child: PageView(
+                  controller: _pageController,
+                  physics: const BouncingScrollPhysics(),
+                  onPageChanged: (index) {
+                    setState(() => _currentTab = index);
+                    HapticFeedback.lightImpact();
+                  },
+                  children: [
+                    _buildPendingTab(),
+                    _buildActiveTab(),
+                    _buildHistoryTab(),
+                    _buildPendingTab(approvalOnly: true),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _onQRScannerTap,
         backgroundColor: const Color(0xFF0E4778),
         elevation: 4,
-        icon: Icon(Icons.qr_code_scanner, color: Colors.white, size: 20.w),
+        icon: Icon(Icons.qr_code_scanner, color: Colors.white, size: 20),
         label: Text(
           'visitor_scan_qr'.tr(),
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w600,
-            fontSize: 14.sp,
+            fontSize: 14,
           ),
         ),
       ),
@@ -317,19 +496,19 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Page Header - matching reports screen pattern exactly
   Widget _buildPageHeader() {
     return Padding(
-      padding: EdgeInsets.fromLTRB(20.w, 0, 20.w, 0),
+      padding: EdgeInsets.fromLTRB(20, 0, 20, 0),
       child: Row(
         children: [
           Container(
-            width: 44.w,
-            height: 44.h,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               color: const Color(0xFF0E4778).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12.r),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(Icons.people, color: Color(0xFF0E4778), size: 24.w),
+            child: Icon(Icons.people, color: Color(0xFF0E4778), size: 24),
           ),
-          SizedBox(width: 12.w),
+          SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -337,17 +516,17 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                 Text(
                   'visitor_management_title'.tr(),
                   style: TextStyle(
-                    fontSize: 20.sp,
+                    fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF111827),
                     height: 1.2,
                   ),
                 ),
-                SizedBox(height: 2.h),
+                SizedBox(height: 2),
                 Text(
                   _getSubtitleForTab(),
                   style: TextStyle(
-                    fontSize: 14.sp,
+                    fontSize: 14,
                     fontWeight: FontWeight.w400,
                     color: Color(0xFF6B7280),
                     height: 1.2,
@@ -359,16 +538,16 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           GestureDetector(
             onTap: _onQRScannerTap,
             child: Container(
-              width: 44.w,
-              height: 44.h,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: const Color(0xFF0E4778).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12.r),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 Icons.qr_code_scanner,
                 color: Color(0xFF0E4778),
-                size: 20.w,
+                size: 20,
               ),
             ),
           ),
@@ -379,12 +558,14 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   String _getSubtitleForTab() {
     switch (_currentTab) {
+      case 3:
+        return 'Invitations awaiting a Community Admin decision';
       case 0:
-        return 'visitor_pending_subtitle'.tr();
+        return 'visitor_expected_subtitle'.tr();
       case 1:
         return 'visitor_active_subtitle'.tr();
       case 2:
-        return 'visitor_history_subtitle'.tr();
+        return 'visitor_history_all_subtitle'.tr();
       default:
         return 'visitor_default_subtitle'.tr();
     }
@@ -393,7 +574,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Summary Metrics - matching complaint screen pattern exactly
   Widget _buildSummaryMetrics() {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.w),
+      padding: EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
           Expanded(
@@ -407,7 +588,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
               subtitleColor: _getStatColor(0),
             ),
           ),
-          SizedBox(width: 12.w),
+          SizedBox(width: 12),
           Expanded(
             child: _buildStatCard(
               icon: _getStatIcon(1),
@@ -419,7 +600,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
               subtitleColor: _getStatColor(1),
             ),
           ),
-          SizedBox(width: 12.w),
+          SizedBox(width: 12),
           Expanded(
             child: _buildStatCard(
               icon: _getStatIcon(2),
@@ -447,10 +628,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     required Color subtitleColor,
   }) {
     return Container(
-      padding: EdgeInsets.all(10.w),
+      padding: EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12.r),
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.06),
@@ -462,35 +643,35 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
       child: Column(
         children: [
           Container(
-            width: 40.w,
-            height: 40.h,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
-            child: Icon(icon, color: iconColor, size: 20.w),
+            child: Icon(icon, color: iconColor, size: 20),
           ),
-          SizedBox(height: 8.h),
+          SizedBox(height: 8),
           Text(
             value,
             style: TextStyle(
-              fontSize: 18.sp,
+              fontSize: 18,
               fontWeight: FontWeight.w700,
               color: iconColor,
             ),
           ),
-          SizedBox(height: 2.h),
+          SizedBox(height: 2),
           Text(
             label,
             style: TextStyle(
-              fontSize: 11.sp,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               color: Color(0xFF374151),
             ),
             textAlign: TextAlign.center,
           ),
-          SizedBox(height: 2.h),
+          SizedBox(height: 2),
           Text(
             subtitle,
             style: TextStyle(
-              fontSize: 9.sp,
+              fontSize: 9,
               fontWeight: FontWeight.w500,
               color: subtitleColor,
             ),
@@ -504,9 +685,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Dynamic stat data based on current tab
   String _getStatTitle(int index) {
     switch (_currentTab) {
+      case 3:
       case 0: // Pending
         return [
-          'visitor_status_pending'.tr(),
+          _currentTab == 3 ? 'Pending approval' : 'visitor_tab_expected'.tr(),
           'visitor_today_total'.tr(),
           'visitor_average_response'.tr(),
         ][index];
@@ -518,7 +700,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         ][index];
       case 2: // History
         return [
-          'visitor_today_visits'.tr(),
+          'visitor_tab_history'.tr(),
           'visitor_weekly_total'.tr(),
           'visitor_average_duration'.tr(),
         ][index];
@@ -529,6 +711,12 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   String _getStatValue(int index) {
     switch (_currentTab) {
+      case 3:
+        return [
+          _approvalCount.toString(),
+          _approvalCount.toString(),
+          '-',
+        ][index];
       case 0: // Pending
         return [_pendingCount.toString(), _pendingCount.toString(), '-'][index];
       case 1: // Active
@@ -542,9 +730,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   String _getStatSubtitle(int index) {
     switch (_currentTab) {
+      case 3:
       case 0: // Pending
         return [
-          'visitor_awaiting_approval'.tr(),
+          'visitor_waiting_arrival'.tr(),
           'visitor_requests_received'.tr(),
           'visitor_response_time'.tr(),
         ][index];
@@ -556,7 +745,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         ][index];
       case 2: // History
         return [
-          'visitor_completed_visits'.tr(),
+          'visitor_records'.tr(),
           'visitor_this_week'.tr(),
           'visitor_visit_duration'.tr(),
         ][index];
@@ -567,6 +756,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   IconData _getStatIcon(int index) {
     switch (_currentTab) {
+      case 3:
       case 0: // Pending
         return [Icons.pending_actions, Icons.today, Icons.timer][index];
       case 1: // Active
@@ -580,6 +770,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   Color _getStatColor(int index) {
     switch (_currentTab) {
+      case 3:
       case 0: // Pending
         return [
           const Color(0xFFF59E0B),
@@ -606,12 +797,12 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Search Bar - matching parcel screen pattern exactly
   Widget _buildSearchBar() {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.w),
+      padding: EdgeInsets.symmetric(horizontal: 16),
       child: Container(
-        height: 48.h,
+        height: 48,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12.r),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFFE5E7EB)),
           boxShadow: [
             BoxShadow(
@@ -625,19 +816,11 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           controller: _searchController,
           decoration: InputDecoration(
             hintText: 'visitor_search_hint'.tr(),
-            hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14.sp),
-            prefixIcon: Icon(
-              Icons.search,
-              color: Color(0xFF9CA3AF),
-              size: 20.w,
-            ),
+            hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+            prefixIcon: Icon(Icons.search, color: Color(0xFF9CA3AF), size: 20),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
-                    icon: Icon(
-                      Icons.clear,
-                      size: 20.w,
-                      color: Color(0xFF9CA3AF),
-                    ),
+                    icon: Icon(Icons.clear, size: 20, color: Color(0xFF9CA3AF)),
                     onPressed: () {
                       _searchController.clear();
                       setState(() {
@@ -645,12 +828,13 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                       });
                     },
                   )
-                : null,
+                : IconButton(
+                    tooltip: 'Refresh visitors',
+                    onPressed: () => setState(_setStreams),
+                    icon: const Icon(Icons.refresh),
+                  ),
             border: InputBorder.none,
-            contentPadding: EdgeInsets.symmetric(
-              horizontal: 16.w,
-              vertical: 12.h,
-            ),
+            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           ),
           onChanged: (value) {
             setState(() {
@@ -665,18 +849,18 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Tab Switcher - matching complaint screen pattern exactly
   Widget _buildTabSwitcher() {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.w),
+      padding: EdgeInsets.symmetric(horizontal: 16),
       child: Container(
-        height: 48.h,
         decoration: BoxDecoration(
           color: const Color(0xFFF3F4F6),
-          borderRadius: BorderRadius.circular(12.r),
+          borderRadius: BorderRadius.circular(12),
         ),
-        child: Row(
+        child: Wrap(
           children: [
-            Expanded(child: _buildTabButton('visitor_tab_pending'.tr(), 0)),
-            Expanded(child: _buildTabButton('visitor_tab_active'.tr(), 1)),
-            Expanded(child: _buildTabButton('visitor_tab_history'.tr(), 2)),
+            _buildTabButton('visitor_tab_expected'.tr(), 0),
+            _buildTabButton('visitor_status_inside'.tr(), 1),
+            _buildTabButton('visitor_tab_history'.tr(), 2),
+            _buildTabButton('Pending approval', 3),
           ],
         ),
       ),
@@ -688,10 +872,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     return GestureDetector(
       onTap: () => _onTabChanged(index),
       child: Container(
-        margin: EdgeInsets.all(4.w),
+        margin: EdgeInsets.all(4),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8.r),
+          borderRadius: BorderRadius.circular(8),
           boxShadow: isSelected
               ? [
                   BoxShadow(
@@ -702,11 +886,12 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                 ]
               : null,
         ),
-        child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 14.sp,
+              fontSize: 14,
               fontWeight: FontWeight.w600,
               color: isSelected
                   ? const Color(0xFF111827)
@@ -719,9 +904,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   }
 
   // Tab content builders
-  Widget _buildPendingTab() {
+  Widget _buildPendingTab({bool approvalOnly = false}) {
     return StreamBuilder<List<VisitorModel>>(
-      stream: _visitorService.getPendingVisitors(),
+      stream: _expectedStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -753,13 +938,25 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           );
         }
 
-        final visitors = snapshot.data ?? [];
+        final visitors = (snapshot.data ?? <VisitorModel>[])
+            .where(
+              (row) =>
+                  visitorRequiresAdminApproval(row.lifecycleData) ==
+                  approvalOnly,
+            )
+            .toList();
 
         // Update count
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _pendingCount != visitors.length) {
+          if (mounted &&
+              (approvalOnly ? _approvalCount : _pendingCount) !=
+                  visitors.length) {
             setState(() {
-              _pendingCount = visitors.length;
+              if (approvalOnly) {
+                _approvalCount = visitors.length;
+              } else {
+                _pendingCount = visitors.length;
+              }
             });
           }
         });
@@ -771,7 +968,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
             icon: Icons.pending_actions,
             title: _searchQuery.isNotEmpty
                 ? 'visitor_no_search_results'.tr()
-                : 'visitor_no_pending_requests'.tr(),
+                : approvalOnly
+                ? 'No invitations awaiting Admin approval'
+                : 'visitor_no_expected_visitors'.tr(),
             subtitle: _searchQuery.isNotEmpty
                 ? 'visitor_adjust_search'.tr()
                 : 'visitor_all_requests_processed'.tr(),
@@ -780,7 +979,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
         return ListView.builder(
           physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.symmetric(horizontal: 16.w),
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 90.h),
           itemCount: filteredVisitors.length,
           itemBuilder: (context, index) {
             return Padding(
@@ -795,7 +994,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   Widget _buildActiveTab() {
     return StreamBuilder<List<VisitorModel>>(
-      stream: _visitorService.getActiveVisitors(),
+      stream: _insideStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -854,7 +1053,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
         return ListView.builder(
           physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.symmetric(horizontal: 16.w),
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 90.h),
           itemCount: filteredVisitors.length,
           itemBuilder: (context, index) {
             return Padding(
@@ -869,7 +1068,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   Widget _buildHistoryTab() {
     return StreamBuilder<List<VisitorModel>>(
-      stream: _visitorService.getHistoryVisitors(),
+      stream: _historyStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -922,13 +1121,13 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                 : 'visitor_no_history_records'.tr(),
             subtitle: _searchQuery.isNotEmpty
                 ? 'visitor_adjust_search'.tr()
-                : 'visitor_history_empty_hint'.tr(),
+                : 'visitor_history_all_subtitle'.tr(),
           );
         }
 
         return ListView.builder(
           physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.symmetric(horizontal: 16.w),
+          padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 90.h),
           itemCount: filteredVisitors.length,
           itemBuilder: (context, index) {
             return Padding(
@@ -960,28 +1159,31 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     required String subtitle,
   }) {
     return Center(
-      child: Padding(
-        padding: EdgeInsets.all(32.w),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 64.w, color: const Color(0xFFE5E7EB)),
-            SizedBox(height: 16.h),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF6B7280),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: EdgeInsets.all(32.w),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 64.w, color: const Color(0xFFE5E7EB)),
+              SizedBox(height: 16.h),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF6B7280),
+                ),
               ),
-            ),
-            SizedBox(height: 8.h),
-            Text(
-              subtitle,
-              style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
-              textAlign: TextAlign.center,
-            ),
-          ],
+              SizedBox(height: 8.h),
+              Text(
+                subtitle,
+                style: TextStyle(fontSize: 14.sp, color: Color(0xFF9CA3AF)),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -989,7 +1191,22 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   // Pending visitor card - matching exact Flow UI patterns
   Widget _buildPendingVisitorCard(VisitorModel visitor) {
+    _watchHostType(visitor);
+    final policy = _actionPolicy;
+    final actions = visitorDecisionActions(
+      visitor.lifecycleData,
+      policy: policy?.policy,
+      now: policy == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(
+              policy.currentServerTime,
+              isUtc: true,
+            ),
+      residentType: _residentTypes[visitor.residentId],
+    );
+
     return Container(
+      key: ValueKey('visitor-${visitor.id}'),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12.r),
@@ -1061,7 +1278,10 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                     borderRadius: BorderRadius.circular(6.r),
                   ),
                   child: Text(
-                    'visitor_status_pending'.tr(),
+                    (visitor.isApproved
+                            ? 'visitor_status_approved'
+                            : 'visitor_status_pending')
+                        .tr(),
                     style: TextStyle(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w600,
@@ -1118,60 +1338,75 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
             SizedBox(height: 16.h),
 
-            // Action Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () =>
-                        _onRejectVisitor(visitor.id, visitor.visitorName),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(vertical: 12.h),
-                      side: const BorderSide(
-                        color: Color(0xFFEF4444),
-                        width: 1,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                    ),
-                    child: Text(
-                      'visitor_reject_action'.tr(),
-                      style: TextStyle(
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFEF4444),
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12.w),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () =>
-                        _onApproveVisitor(visitor.id, visitor.visitorName),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(vertical: 12.h),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: Text(
-                      'visitor_approve_action'.tr(),
-                      style: TextStyle(
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            Text(
+              'Authorization: ${visitorAuthorizationLabel(visitor.lifecycleData)}',
             ),
+            const Text('Physical visit: Expected — not checked in'),
+            if (visitor.expectedTime != null)
+              Text('Expected: ${_formatDateTime(visitor.expectedTime!)}'),
+            if (visitor.bringingPet) const Text('Bringing a pet'),
+            // Action visibility is advisory; every callback is server/revision checked.
+            if (actions.isNotEmpty)
+              Row(
+                children: [
+                  for (int i = 0; i < actions.length; i++) ...[
+                    if (i > 0) SizedBox(width: 12.w),
+                    Expanded(child: _authorizationButton(visitor, actions[i])),
+                  ],
+                ],
+              ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _authorizationButton(VisitorModel visitor, AdminVisitorAction action) {
+    final label = switch (action) {
+      AdminVisitorAction.approve => 'visitor_approve_action'.tr(),
+      AdminVisitorAction.reject => 'visitor_reject_action'.tr(),
+      AdminVisitorAction.reapprove => 'Reapprove',
+      AdminVisitorAction.revoke => 'Revoke',
+    };
+    final onPressed = _deciding.contains(visitor.id)
+        ? null
+        : () => _decision(visitor, action);
+    if (action == AdminVisitorAction.reject ||
+        action == AdminVisitorAction.revoke) {
+      return OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          padding: EdgeInsets.symmetric(vertical: 12.h),
+          side: const BorderSide(color: Color(0xFFEF4444)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8.r),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 14.sp,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFFEF4444),
+          ),
+        ),
+      );
+    }
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF16A34A),
+        foregroundColor: Colors.white,
+        padding: EdgeInsets.symmetric(vertical: 12.h),
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.r)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 14.sp,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
         ),
       ),
     );
@@ -1180,6 +1415,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // Active visitor card - matching exact Flow UI patterns
   Widget _buildActiveVisitorCard(VisitorModel visitor) {
     return Container(
+      key: ValueKey('visitor-${visitor.id}'),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12.r),
@@ -1196,6 +1432,14 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              visitor.authorizationState != null || visitor.compatibilityIssued
+                  ? 'Authorization: ${visitorAuthorizationLabel(visitor.lifecycleData)}'
+                  : visitor.isApproved
+                  ? 'Legacy approval recorded'
+                  : 'visitor_admin_not_recorded'.tr(),
+            ),
+            SizedBox(height: 8.h),
             // Header Row
             Row(
               children: [
@@ -1339,12 +1583,13 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
 
   // History visitor card - matching exact Flow UI patterns
   Widget _buildHistoryVisitorCard(VisitorModel visitor) {
-    final entryTime =
-        visitor.checkInTime ?? visitor.createdAt ?? DateTime.now();
-    final exitTime = visitor.checkOutTime ?? DateTime.now();
-    final duration = exitTime.difference(entryTime);
-    final durationText = _formatDuration(duration);
-    final spansMultipleDays = !_isSameCalendarDay(entryTime, exitTime);
+    final entryTime = visitor.checkInTime;
+    final exitTime = visitor.checkOutTime;
+    final spansMultipleDays =
+        entryTime != null &&
+        exitTime != null &&
+        !_isSameCalendarDay(entryTime, exitTime);
+    final historyLabel = 'visitor_status_${visitor.status}'.tr();
 
     return Container(
       decoration: BoxDecoration(
@@ -1418,7 +1663,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                     borderRadius: BorderRadius.circular(6.r),
                   ),
                   child: Text(
-                    durationText,
+                    historyLabel,
                     style: TextStyle(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w600,
@@ -1455,7 +1700,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                         ),
                         SizedBox(height: 4.h),
                         Text(
-                          spansMultipleDays
+                          entryTime == null
+                              ? '—'
+                              : spansMultipleDays
                               ? _formatDateTime(entryTime)
                               : _formatTime(entryTime),
                           style: TextStyle(
@@ -1490,7 +1737,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                         ),
                         SizedBox(height: 4.h),
                         Text(
-                          spansMultipleDays
+                          exitTime == null
+                              ? '—'
+                              : spansMultipleDays
                               ? _formatDateTime(exitTime)
                               : _formatTime(exitTime),
                           style: TextStyle(
@@ -1505,6 +1754,16 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                 ],
               ),
             ),
+            if (entryTime != null && exitTime != null)
+              Padding(
+                padding: EdgeInsets.only(top: 8.h),
+                child: Text(_formatDuration(exitTime.difference(entryTime))),
+              ),
+            if (visitor.gateEntryDenialReason?.isNotEmpty == true)
+              Padding(
+                padding: EdgeInsets.only(top: 8.h),
+                child: Text(visitor.gateEntryDenialReason!),
+              ),
           ],
         ),
       ),
@@ -1545,48 +1804,27 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
     );
   }
 
-  // Time formatting helper
-  String _formatTime(DateTime time) {
-    final hour = time.hour > 12
-        ? time.hour - 12
-        : (time.hour == 0 ? 12 : time.hour);
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.hour >= 12
-        ? 'visitor_time_pm'.tr()
-        : 'visitor_time_am'.tr();
-    return '$hour:$minute $period';
-  }
+  String? get _timeZone => AdminTenantContext.instance.activeTenant?.timeZone;
+
+  String _formatTime(DateTime time) => CommunityTime.format(
+    time,
+    _timeZone,
+    dateFormat: DateFormat('d MMM y, h:mm a', context.locale.toString()).format,
+  );
 
   bool _isSameCalendarDay(DateTime first, DateTime second) {
-    return first.year == second.year &&
-        first.month == second.month &&
-        first.day == second.day;
+    try {
+      return CommunityTime.dayDifference(first, second, _timeZone) == 0;
+    } on FormatException {
+      return false;
+    }
   }
 
-  String _formatDateTime(DateTime time) {
-    final months = [
-      'visitor_month_jan'.tr(),
-      'visitor_month_feb'.tr(),
-      'visitor_month_mar'.tr(),
-      'visitor_month_apr'.tr(),
-      'visitor_month_may'.tr(),
-      'visitor_month_jun'.tr(),
-      'visitor_month_jul'.tr(),
-      'visitor_month_aug'.tr(),
-      'visitor_month_sep'.tr(),
-      'visitor_month_oct'.tr(),
-      'visitor_month_nov'.tr(),
-      'visitor_month_dec'.tr(),
-    ];
-
-    return 'visitor_date_format'.tr(
-      namedArgs: {
-        'month': months[time.month - 1],
-        'day': '${time.day}',
-        'time': _formatTime(time),
-      },
-    );
-  }
+  String _formatDateTime(DateTime time) => CommunityTime.format(
+    time,
+    _timeZone,
+    dateFormat: DateFormat('d MMM y, h:mm a', context.locale.toString()).format,
+  );
 
   // Duration formatting helper
   String _formatDuration(Duration duration) {

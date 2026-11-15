@@ -1,6 +1,6 @@
 const {unitLabel, unitMatchesLabel, hasResidentLink, hasValue, occupancyStats} = require('./unit_schema');
 const {FieldValue} = require("firebase-admin/firestore");
-const {parsePhoneNumberFromString} = require("libphonenumber-js/max");
+const {parsePhoneNumberFromString, isSupportedCountry} = require("libphonenumber-js/max");
 const {RegistrationError, verifiedPhoneAuth} = require("./register_resident");
 const {importRowId, residentOnboardingId} = require("./resident_import_ids");
 
@@ -123,6 +123,27 @@ function normalizePhone(value, countryCode) {
     throw Object.assign(new Error("Enter a valid phone number."), {rowCode: "invalid_phone_number"});
   }
   return parsed.number;
+}
+
+// Add Resident uses explicit E.164 input, or an explicitly supplied country for
+// national input. The country must be the Resident's explicit selection, never
+// the community's location. The library validates all supported numbering plans.
+function normalizeResidentOnboardingPhone(value, countryCode) {
+  const raw = clean(value).replace(/[\s().-]/g, "");
+  const invalid = () => Object.assign(new Error("Enter a valid phone number."), {rowCode: "invalid_phone_number"});
+  if (!/^\+?[0-9]+$/.test(raw)) throw invalid();
+  if (!raw.startsWith("+") && countryCode && !isSupportedCountry(countryCode)) throw invalid();
+  const parsed = parsePhoneNumberFromString(raw, raw.startsWith("+") ? undefined : countryCode);
+  // 0940 is documented in PreFIX PH's published prefix directory, but omitted
+  // by the installed metadata. Accept only that exact Philippine mobile shape;
+  // this establishes neither assignment nor ownership (OTP is still required).
+  // https://www.prefix.ph/app/uploads/2018/06/prefixtable-2018a-latest.pdf
+  const documentedPh940 = parsed?.country === "PH" && parsed.isPossible() && /^940\d{7}$/.test(parsed.nationalNumber);
+  const normalized = documentedPh940 ? parsed.number : normalizePhone(raw, countryCode);
+  // An explicit international number must already have the right national
+  // length: do not silently repair a trunk zero embedded after a calling code.
+  if (raw.startsWith("+") && raw !== normalized) throw invalid();
+  return normalized;
 }
 
 function normalizeRow(row, index, communityCountryCode) {
@@ -472,6 +493,7 @@ module.exports = {
   MAX_ROWS,
   ALLOWED_ROW_KEYS,
   normalizePhone,
+  normalizeResidentOnboardingPhone,
   normalizeRow,
   validatePayload,
   requireImportAdmin,

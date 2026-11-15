@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const {FieldValue} = require("firebase-admin/firestore");
 const {RegistrationError} = require("./register_resident");
+const {assertVisitorAuthorized, assertVisitorHost} = require("./visitor_policy");
 const {credentialHash, normalizeManualCode} = require("./visitor_credentials");
 const {requireSecurity, pendingVisitor, previouslyApprovedVisitor, isVisitValid} = require("./visitor_gate");
 
@@ -148,7 +149,7 @@ async function verifyVisitorCredentialCore({db, auth, data, hmacKey, now = Date.
         privateCredential.hostUserId !== visitor.hostUserId ||
         timestampMillis(index.validFrom) == null || timestampMillis(index.expiresAt) == null) denied();
 
-    const nowMs = now();
+    let nowMs = now();
     const validFrom = timestampMillis(index.validFrom);
     const expiresAt = timestampMillis(index.expiresAt);
     const privateValidFrom = timestampMillis(privateCredential.validFrom);
@@ -159,11 +160,24 @@ async function verifyVisitorCredentialCore({db, auth, data, hmacKey, now = Date.
       if (operation.securityUid !== security.uid || operation.communityId !== security.communityId ||
           operation.visitorId !== index.visitorId || operation.verificationMethod !== credential.type ||
           operation.status !== "inside") denied();
-      return {...operation.response, idempotent: true};
+      // This is a receipt for an earlier operation, never fresh admission.
+      // Keep its historical response for older clients, and separately expose
+      // the lifecycle read by this transaction for current clients.
+      return {...operation.response, idempotent: true,
+        currentStatus: String(visitor.status || "unknown"),
+        actualArrival: timestampMillis(visitor.actualArrival),
+        departure: timestampMillis(visitor.departure),
+        processedAt: timestampMillis(operation.response?.processedAt) ?? timestampMillis(operation.createdAt),
+        serverTime: nowMs};
     }
     if (visitor.gateAccessStatus === "denied" || visitor.gateEntryDeniedAt != null ||
         nowMs < validFrom || nowMs > expiresAt || !isVisitValid(visitor, nowMs) ||
         (!pendingVisitor(visitor) && !previouslyApprovedVisitor(visitor))) denied();
+    const profile = await assertVisitorHost({db, read: (ref) => transaction.get(ref), visitor, community: communitySnapshot.data(), now: nowMs});
+    // Host reads can cross a scheduled activation or credential expiry.
+    nowMs = now();
+    if (nowMs < validFrom || nowMs > expiresAt || !isVisitValid(visitor, nowMs)) denied();
+    assertVisitorAuthorized(visitor, communitySnapshot.data(), {now: nowMs, profile});
 
     const flatLabel = String(visitor.flatLabel || visitor.flatId || "").slice(0, 80);
     const response = {
@@ -176,6 +190,12 @@ async function verifyVisitorCredentialCore({db, auth, data, hmacKey, now = Date.
       purpose: String(visitor.purpose || "").slice(0, 300),
       status: "inside",
       verificationMethod: credential.type,
+      bringingPet: visitor.bringingPet === true,
+      currentStatus: "inside",
+      actualArrival: nowMs,
+      departure: null,
+      processedAt: nowMs,
+      serverTime: nowMs,
     };
     transaction.update(visitorRef, {
       status: "inside",

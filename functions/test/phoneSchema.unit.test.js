@@ -78,3 +78,19 @@ test("legacy phone remains display-only and cannot override canonical identity",
   delete db.values.get(`users/${identity.uid}`).phoneNumber;
   assert.equal(await hasCanonicalPhoneProfile(db, auth), false);
 });
+
+test("international Resident phone numbers match Firebase phone token claims across community countries", async () => {
+  for (const [countryCode, phoneNumber] of [
+    ["IN", "+639171234567"],
+    ["IN", "+14155552671"],
+    ["PH", "+919876543210"],
+    ["IN", "+442079460958"],
+  ]) {
+    const db = sosStore();
+    db.values.set("communities/A", {isActive: true, countryCode});
+    db.values.set(`users/${identity.uid}`, {uid: identity.uid, role: "resident", communityId: "A", phoneNumber});
+    const verified = {uid: identity.uid, token: {phone_number: phoneNumber, firebase: {sign_in_provider: "phone"}}};
+    assert.equal(await hasCanonicalPhoneProfile(db, verified), true, `${countryCode}: ${phoneNumber}`);
+    assert.equal(await hasCanonicalPhoneProfile(db, {...verified, token: {...verified.token, phone_number: "+14155552672"}}), false);
+  }
+});

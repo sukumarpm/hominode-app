@@ -111,24 +111,39 @@ class ResidentService {
     });
   }
 
-  Stream<List<PendingResident>> watchPendingResidents() {
+  Stream<List<PendingResident>> watchPendingResidents() async* {
     final communityId = _adminService.getCurrentCommunityId();
-    if (communityId == null) return Stream.value(const []);
-    return _firestore
+    if (communityId == null) {
+      yield const [];
+      return;
+    }
+    final community = await _firestore
+        .collection('communities')
+        .doc(communityId)
+        .get(const GetOptions(source: Source.server));
+    final ownerIdentityRequired =
+        community.data()?['ownerIdentityVerificationRequired'] == true;
+    yield* _firestore
         .collection(_collection)
         .where('communityId', isEqualTo: communityId)
         .where('role', isEqualTo: 'resident')
-        .where('isActive', isEqualTo: false)
         .snapshots()
         .map((snapshot) {
           final residents = snapshot.docs
               .where(
-                (doc) => ResidentApprovalPolicy.isPendingForCommunity(
+                (doc) => ResidentApprovalPolicy.needsReviewForCommunity(
                   doc.data(),
                   communityId,
+                  ownerIdentityVerificationRequired: ownerIdentityRequired,
                 ),
               )
-              .map((doc) => PendingResident.fromMap(doc.id, doc.data()))
+              .map(
+                (doc) => PendingResident.fromMap(
+                  doc.id,
+                  doc.data(),
+                  ownerIdentityVerificationRequired: ownerIdentityRequired,
+                ),
+              )
               .toList();
           residents.sort(
             (a, b) => (a.registeredAt ?? DateTime.fromMillisecondsSinceEpoch(0))
@@ -231,6 +246,7 @@ class ResidentService {
   Future<String> createResidentOnboarding({
     required String name,
     required String phone,
+    String? phoneCountryCode,
     required String residentType,
     String? email,
     int? familyMembers,
@@ -243,6 +259,7 @@ class ResidentService {
           'communityId': _adminService.requireCurrentCommunityId(),
           'residentName': name.trim(),
           'phoneNumber': phone.trim(),
+          if (phoneCountryCode != null) 'phoneCountryCode': phoneCountryCode,
           'residentType': residentType.trim().toLowerCase(),
           'email': email?.trim(),
           'familyMembers': familyMembers,
@@ -257,11 +274,49 @@ class ResidentService {
   }
 
   static String errorMessage(Object error) {
+    if (error is FirebaseFunctionsException && error.code == 'not-found') {
+      final message = error.message?.trim() ?? '';
+      final bareCode = message.toLowerCase().replaceAll('_', '-');
+      if (message.isEmpty || bareCode == 'not-found') {
+        return 'The requested Resident service or record could not be found. '
+            'Refresh and try again. If this continues, contact support.';
+      }
+    }
     if (error is FirebaseFunctionsException &&
         error.message?.trim().isNotEmpty == true) {
       return error.message!.trim();
     }
     return error.toString().replaceFirst('Exception: ', '');
+  }
+
+  Future<String> createAdminResident({
+    required String name,
+    required String phone,
+    String? phoneCountryCode,
+    String? email,
+    required String residentType,
+    required String buildingId,
+    required String flatId,
+    int familyMembers = 1,
+  }) async {
+    final response = await _functions
+        .httpsCallable('createAdminResident')
+        .call({
+          'communityId': _adminService.requireCurrentCommunityId(),
+          'residentName': name.trim(),
+          'phoneNumber': phone.trim(),
+          if (phoneCountryCode != null) 'phoneCountryCode': phoneCountryCode,
+          'email': email?.trim(),
+          'residentType': residentType,
+          'familyMembers': familyMembers,
+          'buildingId': buildingId,
+          'flatId': flatId,
+        });
+    final data = response.data;
+    if (data is! Map || data['userId'] is! String) {
+      throw StateError('Resident ID was not returned.');
+    }
+    return data['userId'] as String;
   }
 
   Future<String> createResident({

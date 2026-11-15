@@ -15,17 +15,158 @@ import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'desktop/admin_desktop_page_frame.dart';
+import 'account_deletion_requests_screen.dart';
 
 import 'edit_resident_screen.dart';
 import 'pending_residents_screen.dart';
 import 'resident_bulk_import_screen.dart';
 import 'services/billing_service.dart';
 import 'services/building_service.dart';
+import 'services/flat_service.dart';
 import 'services/resident_service.dart';
 import 'services/user_service.dart';
 import 'widgets/add_resident_modal_clean.dart';
 import 'widgets/standard_bottom_nav.dart';
 import 'widgets/standard_header.dart';
+
+class AccountDeletionRequestsAction extends StatelessWidget {
+  const AccountDeletionRequestsAction({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+    key: const ValueKey('account-deletion-requests-entry'),
+    onPressed: onPressed,
+    icon: const Icon(Icons.person_remove_alt_1_outlined),
+    label: const Text('Account Deletion Requests'),
+  );
+}
+
+class ResidentManagementActions extends StatelessWidget {
+  const ResidentManagementActions({
+    super.key,
+    required this.bulkImportTooltip,
+    required this.pendingResidentsTooltip,
+    required this.addLabel,
+    required this.onBulkImport,
+    required this.onPendingResidents,
+    required this.onDeletionRequests,
+    required this.onAddResident,
+  });
+
+  final String bulkImportTooltip;
+  final String pendingResidentsTooltip;
+  final String addLabel;
+  final VoidCallback onBulkImport;
+  final VoidCallback onPendingResidents;
+  final VoidCallback onDeletionRequests;
+  final VoidCallback onAddResident;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact = constraints.maxWidth < 340;
+      final gap = compact ? 8.0 : 12.0;
+      final buttonHeight = compact ? 60.0 : 56.0;
+
+      Widget action({
+        required String label,
+        required IconData icon,
+        required VoidCallback onPressed,
+        bool primary = false,
+        Key? key,
+      }) {
+        return SizedBox(
+          height: buttonHeight,
+          width: double.infinity,
+          child: OutlinedButton(
+            key: key,
+            onPressed: onPressed,
+            style: OutlinedButton.styleFrom(
+              backgroundColor: primary
+                  ? const Color(0xFF0E4778)
+                  : const Color(0xFFF8FAFC),
+              foregroundColor: primary ? Colors.white : const Color(0xFF0E4778),
+              side: BorderSide(
+                color: primary
+                    ? const Color(0xFF0E4778)
+                    : const Color(0xFFD4DCE5),
+              ),
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 6 : 10,
+                vertical: 6,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: compact ? 16 : 18),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 11 : 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      Widget actionRow(Widget left, Widget right) => Row(
+        children: [
+          Expanded(child: left),
+          SizedBox(width: gap),
+          Expanded(child: right),
+        ],
+      );
+
+      return Column(
+        children: [
+          actionRow(
+            action(
+              label: 'Pending Registrations',
+              icon: Icons.how_to_reg_outlined,
+              onPressed: onPendingResidents,
+            ),
+            action(
+              label: 'Deletion Requests',
+              icon: Icons.person_remove_alt_1_outlined,
+              onPressed: onDeletionRequests,
+            ),
+          ),
+          SizedBox(height: gap),
+          actionRow(
+            action(
+              label: 'Add Resident',
+              icon: Icons.add,
+              onPressed: onAddResident,
+              primary: true,
+              key: const ValueKey('add-resident-entry'),
+            ),
+            action(
+              label: 'Bulk Import',
+              icon: Icons.upload_file_outlined,
+              onPressed: onBulkImport,
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
 
 class AdminResidentsPageFirestore extends StatefulWidget {
   const AdminResidentsPageFirestore({super.key});
@@ -92,8 +233,21 @@ class _AdminResidentsPageFirestoreState
         title: 'resident_list_title'.tr(),
         subtitle: 'resident_list_subtitle'.tr(),
         actions: [
-          IconButton.outlined(
-            tooltip: 'bulk_resident_import_title'.tr(),
+          OutlinedButton.icon(
+            onPressed: _openAccountDeletionRequests,
+            icon: const Icon(Icons.person_remove_alt_1_outlined),
+            label: const Text('Account Deletion Requests'),
+          ),
+
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
+            ),
+            icon: const Icon(Icons.how_to_reg_outlined),
+            label: const Text('Pending Registrations'),
+          ),
+          OutlinedButton.icon(
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -101,14 +255,7 @@ class _AdminResidentsPageFirestoreState
               ),
             ),
             icon: const Icon(Icons.upload_file_outlined),
-          ),
-          IconButton.outlined(
-            tooltip: 'resident_pending_title'.tr(),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
-            ),
-            icon: const Icon(Icons.how_to_reg_outlined),
+            label: const Text('Bulk Import'),
           ),
           AdminDesktopPrimaryAction(
             label: 'add_resident'.tr(),
@@ -174,54 +321,32 @@ class _AdminResidentsPageFirestoreState
             ),
           ),
           SizedBox(height: 10.h),
-          Row(
-            children: [
-              IconButton(
-                tooltip: 'bulk_resident_import_title'.tr(),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const ResidentBulkImportScreen(),
-                  ),
-                ),
-                icon: const Icon(
-                  Icons.upload_file_outlined,
-                  color: Color(0xFF0E4778),
-                ),
+
+          ResidentManagementActions(
+            bulkImportTooltip: 'bulk_resident_import_title'.tr(),
+            pendingResidentsTooltip: 'resident_pending_title'.tr(),
+            addLabel: 'add'.tr(),
+            onBulkImport: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ResidentBulkImportScreen(),
               ),
-              IconButton(
-                tooltip: 'resident_pending_title'.tr(),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
-                ),
-                icon: const Icon(
-                  Icons.how_to_reg_outlined,
-                  color: Color(0xFF0E4778),
-                ),
-              ),
-              const Spacer(),
-              ElevatedButton.icon(
-                onPressed: _showAddResidentDialog,
-                icon: Icon(Icons.add, size: 18.w),
-                label: Text('add'.tr()),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0E4778),
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 14.w,
-                    vertical: 8.h,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18.r),
-                  ),
-                ),
-              ),
-            ],
+            ),
+            onPendingResidents: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => PendingResidentsScreen()),
+            ),
+            onDeletionRequests: _openAccountDeletionRequests,
+            onAddResident: _showAddResidentDialog,
           ),
         ],
       ),
+    );
+  }
+
+  void _openAccountDeletionRequests() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AccountDeletionRequestsScreen()),
     );
   }
 
@@ -645,205 +770,187 @@ class _AdminResidentsPageFirestoreState
 
   // Action handlers
   void _showAddResidentDialog() async {
-    await AddResidentModal.show(
+    String displayBuildingName(BuildingModel building) {
+      final name = building.buildingName?.trim();
+      return name != null && name.isNotEmpty
+          ? name
+          : building.name.isNotEmpty
+          ? building.name
+          : building.id;
+    }
+
+    final buildingsFuture = _buildingService.getBuildings().first;
+    final residentData = await AddResidentModal.show(
       context,
-      onSubmit: (residentData) async {
-        try {
-          // Show loading indicator
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    SizedBox(
-                      width: 20.w,
-                      height: 20.h,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    ),
-                    SizedBox(width: 12.w),
-                    Text('resident_creating'.tr()),
-                  ],
-                ),
-                backgroundColor: Color(0xFF0E4778),
-                duration: Duration(seconds: 30),
-              ),
+      loadBuildings: () async => (await buildingsFuture)
+          .map(
+            (building) => ResidentBuildingOption(
+              id: building.id,
+              name: displayBuildingName(building),
+            ),
+          )
+          .toList(),
+      loadUnits: () async {
+        final buildings = await buildingsFuture;
+        final groups = await Future.wait(
+          buildings.map((building) async {
+            final flats = await FlatService().getFlatsForBuildingFromServer(
+              building.id,
             );
-          }
-
-          await _userService.createUser(
-            name: residentData.fullName,
-            phone: residentData.phone,
-            email: residentData.email.isNotEmpty ? residentData.email : null,
-            residentType: residentData.residentType,
-            familyMembers: residentData.membersCount,
-          );
-
-          // Close loading snackbar
-          if (mounted) {
-            ScaffoldMessenger.of(context).clearSnackBars();
-
-            await showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (context) => AlertDialog(
-                title: Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(8.w),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD1FAE5),
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                      child: Icon(
-                        Icons.check_circle,
-                        color: Color(0xFF059669),
-                        size: 24.w,
-                      ),
-                    ),
-                    SizedBox(width: 12.w),
-                    Expanded(
-                      child: Text(
-                        'resident_onboarding_created'.tr(),
-                        style: TextStyle(
-                          fontSize: 18.sp,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'resident_onboarding_phone_message'.tr(
-                        namedArgs: {'name': residentData.fullName},
-                      ),
-                      style: TextStyle(fontSize: 15.sp),
-                    ),
-                    SizedBox(height: 20.h),
-                    Container(
-                      padding: EdgeInsets.all(16.w),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEFF6FF),
-                        borderRadius: BorderRadius.circular(12.r),
-                        border: Border.all(color: const Color(0xFF0E4778)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.phone_android,
-                                color: Color(0xFF0E4778),
-                                size: 20.w,
-                              ),
-                              SizedBox(width: 8.w),
-                              Text(
-                                'resident_otp_registration'.tr(),
-                                style: TextStyle(
-                                  fontSize: 15.sp,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF0E4778),
-                                ),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: 12.h),
-                          _buildCredentialRow('phone'.tr(), residentData.phone),
-                          SizedBox(height: 12.h),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.info_outline,
-                                size: 16.w,
-                                color: Color(0xFF0E4778),
-                              ),
-                              SizedBox(width: 6.w),
-                              Expanded(
-                                child: Text(
-                                  'resident_onboarding_instructions'.tr(),
-                                  style: TextStyle(
-                                    fontSize: 12.sp,
-                                    color: Color(0xFF0E4778),
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton.icon(
-                    onPressed: () {
-                      Clipboard.setData(
-                        ClipboardData(
-                          text: 'resident_register_with_phone'.tr(
-                            namedArgs: {'phone': residentData.phone},
-                          ),
-                        ),
-                      );
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('resident_instructions_copied'.tr()),
-                          backgroundColor: Color(0xFF10B981),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    icon: Icon(Icons.copy, size: 18.w),
-                    label: Text('copy'.tr()),
+            return flats
+                .where((flat) => flat.isAvailableForNewResident)
+                .map(
+                  (flat) => ResidentUnitOption(
+                    buildingId: building.id,
+                    flatId: flat.id,
+                    label: flat.flatId,
+                    buildingName: displayBuildingName(building),
                   ),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0E4778),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 24.w,
-                        vertical: 12.h,
+                )
+                .toList();
+          }),
+        );
+        return groups.expand((units) => units).toList();
+      },
+      onSubmit: (residentData) async {
+        await _residentService.createAdminResident(
+          name: residentData.fullName,
+          phone: residentData.phone,
+          phoneCountryCode: residentData.phoneCountryCode,
+          email: residentData.email.isNotEmpty ? residentData.email : null,
+          residentType: residentData.residentType,
+          familyMembers: residentData.membersCount,
+          buildingId: residentData.buildingId,
+          flatId: residentData.flatId,
+        );
+      },
+    );
+    if (residentData == null || !mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(8.w),
+              decoration: BoxDecoration(
+                color: const Color(0xFFD1FAE5),
+                borderRadius: BorderRadius.circular(8.r),
+              ),
+              child: Icon(
+                Icons.check_circle,
+                color: Color(0xFF059669),
+                size: 24.w,
+              ),
+            ),
+            SizedBox(width: 12.w),
+            Expanded(
+              child: Text(
+                'Resident added',
+                style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${residentData.fullName} is assigned to the selected unit. They must sign in using their own phone OTP.',
+              style: TextStyle(fontSize: 15.sp),
+            ),
+            SizedBox(height: 20.h),
+            Container(
+              padding: EdgeInsets.all(16.w),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(12.r),
+                border: Border.all(color: const Color(0xFF0E4778)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.phone_android,
+                        color: Color(0xFF0E4778),
+                        size: 20.w,
                       ),
-                    ),
-                    child: Text('done'.tr()),
+                      SizedBox(width: 8.w),
+                      Text(
+                        'resident_otp_registration'.tr(),
+                        style: TextStyle(
+                          fontSize: 15.sp,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF0E4778),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 12.h),
+                  _buildCredentialRow('phone'.tr(), residentData.phone),
+                  SizedBox(height: 12.h),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: 16.w,
+                        color: Color(0xFF0E4778),
+                      ),
+                      SizedBox(width: 6.w),
+                      Expanded(
+                        child: Text(
+                          'Sign in with this phone number and complete any required identity verification.',
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            color: Color(0xFF0E4778),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            );
-          }
-        } catch (e) {
-          // Show error with user-friendly message
-          if (mounted) {
-            ScaffoldMessenger.of(context).clearSnackBars();
-
-            final errorMessage = ResidentService.errorMessage(e);
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(errorMessage),
-                backgroundColor: const Color(0xFFEF4444),
-                duration: const Duration(seconds: 5),
-                action: SnackBarAction(
-                  label: 'dismiss'.tr(),
-                  textColor: Colors.white,
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                  },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Clipboard.setData(
+                ClipboardData(
+                  text: 'resident_register_with_phone'.tr(
+                    namedArgs: {'phone': residentData.phone},
+                  ),
                 ),
-              ),
-            );
-          }
-        }
-      },
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('resident_instructions_copied'.tr()),
+                  backgroundColor: Color(0xFF10B981),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            icon: Icon(Icons.copy, size: 18.w),
+            label: Text('copy'.tr()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0E4778),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 12.h),
+            ),
+            child: Text('done'.tr()),
+          ),
+        ],
+      ),
     );
   }
 

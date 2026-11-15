@@ -11,6 +11,11 @@ class PendingResident {
     required this.approvalStatus,
     required this.isActive,
     this.email,
+    this.status,
+    this.identityVerified = false,
+    this.registrationCompleted = false,
+    this.ownerIdentityVerificationRequired = false,
+    this.occupancyStatus,
     this.buildingId,
     this.flatId,
     this.unitId,
@@ -31,8 +36,13 @@ class PendingResident {
   final String buildingReference;
   final String unitReference;
   final String approvalStatus;
-  final bool isActive;
+  final bool? isActive;
   final String? email;
+  final String? status;
+  final bool? identityVerified;
+  final bool registrationCompleted;
+  final bool ownerIdentityVerificationRequired;
+  final String? occupancyStatus;
   final String? buildingId;
   final String? flatId;
   final String? unitId;
@@ -45,10 +55,41 @@ class PendingResident {
   final bool hasIdentityProof;
   final DateTime? registeredAt;
 
+  bool get canApproveRegistration =>
+      approvalStatus == 'pending' &&
+      isActive == false &&
+      creationSource != 'admin_direct' &&
+      status != 'deleted';
+
+  bool get awaitingAdminIdentityApproval =>
+      creationSource == 'admin_direct' &&
+      ['pending', 'approved'].contains(approvalStatus) &&
+      isActive != null &&
+      identityVerified == false &&
+      !registrationCompleted &&
+      [
+        'verification_required',
+        'pending',
+        'rejected',
+      ].contains(identityVerificationStatus) &&
+      !['deleted', 'completed', 'rejected'].contains(status) &&
+      !['moved_out', 'suspended', 'rejected'].contains(occupancyStatus) &&
+      ((residentType ?? declaredResidentType) == 'tenant' ||
+          (residentType ?? declaredResidentType) == 'owner' &&
+              ownerIdentityVerificationRequired);
+
+  bool get canReviewRegistration =>
+      !registrationCompleted &&
+      identityVerified != true &&
+      identityVerificationStatus != 'verified' &&
+      !['deleted', 'completed'].contains(status) &&
+      (canApproveRegistration || awaitingAdminIdentityApproval);
+
   factory PendingResident.fromMap(
     String documentId,
-    Map<String, dynamic> data,
-  ) {
+    Map<String, dynamic> data, {
+    bool ownerIdentityVerificationRequired = false,
+  }) {
     String reference(dynamic value) {
       if (value is String) return value;
       if (value is Map) {
@@ -80,7 +121,14 @@ class PendingResident {
             data['flatId'],
       ),
       approvalStatus: (data['approvalStatus'] ?? '').toString(),
-      isActive: data['isActive'] == true,
+      status: data['status']?.toString(),
+      identityVerified: data['identityVerified'] is bool
+          ? data['identityVerified'] as bool
+          : null,
+      registrationCompleted: data['registrationCompletedAt'] != null,
+      occupancyStatus: data['occupancyStatus']?.toString(),
+      ownerIdentityVerificationRequired: ownerIdentityVerificationRequired,
+      isActive: data['isActive'] is bool ? data['isActive'] as bool : null,
       email: (data['email'] as String?)?.trim().isEmpty == true
           ? null
           : data['email'] as String?,
@@ -94,8 +142,8 @@ class PendingResident {
       declaredResidentType: data['declaredResidentType']?.toString(),
       identityVerificationStatus:
           data['identityVerificationStatus']?.toString() ??
-          (data['identityVerified'] == true
-              ? 'verified'
+          (data['creationSource'] == 'admin_direct'
+              ? ''
               : 'verification_required'),
       hasIdentityProof:
           data['identityProofStoragePath'] is String &&
@@ -110,14 +158,37 @@ class PendingResident {
 }
 
 class ResidentApprovalPolicy {
+  static bool needsReviewForCommunity(
+    Map<String, dynamic> user,
+    String communityId, {
+    bool ownerIdentityVerificationRequired = false,
+  }) {
+    if (!canReview(user, communityId) || user['status'] == 'deleted') {
+      return false;
+    }
+    final resident = PendingResident.fromMap(
+      '',
+      user,
+      ownerIdentityVerificationRequired: ownerIdentityVerificationRequired,
+    );
+    return resident.canApproveRegistration ||
+        resident.canReviewRegistration ||
+        (resident.approvalStatus == 'approved' &&
+            resident.identityVerificationStatus == 'pending' &&
+            resident.hasIdentityProof);
+  }
+
   static bool isPendingForCommunity(
     Map<String, dynamic> user,
-    String communityId,
-  ) =>
-      user['communityId'] == communityId &&
-      user['role'] == 'resident' &&
-      user['approvalStatus'] == 'pending' &&
-      user['isActive'] == false;
+    String communityId, {
+    bool ownerIdentityVerificationRequired = false,
+  }) =>
+      canReview(user, communityId) &&
+      PendingResident.fromMap(
+        '',
+        user,
+        ownerIdentityVerificationRequired: ownerIdentityVerificationRequired,
+      ).canReviewRegistration;
 
   static bool canReview(Map<String, dynamic> user, String communityId) =>
       user['communityId'] == communityId && user['role'] == 'resident';

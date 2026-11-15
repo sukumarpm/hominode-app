@@ -168,6 +168,7 @@ const { resolveVisitorQrCore, transitionVisitorFromQrCore } = require("./visitor
 const { createVisitorInvitationCore, getVisitorCredentialsCore } = require("./visitor_credentials");
 const { dispatchVisitorDecisionCore } = require("./visitor_notifications");
 const { verifyVisitorCredentialCore } = require("./visitor_verification");
+const { getSecurityVisitorSummaryCore } = require("./security_visitor_summary");
 const {
   checkoutVisitorsCore,
   denyVisitorEntryCore,
@@ -263,6 +264,36 @@ exports.getOrCreateResidentAdminChat = onCall(
     }
   }
 );
+
+const { sendModeratedChatMessageCore, ChatSendError } = require('./chat_message_moderation');
+exports.sendModeratedAdminChatMessage = onCall(
+  { region: REGION, enforceAppCheck: true },
+  async (request) => {
+    try {
+      requirePhoneAuth(request.auth);
+      const db = getFirestore();
+      if (!await hasCanonicalPhoneProfile(db, request.auth)) {
+        throw new HttpsError('permission-denied', 'An active Hominode profile is required.');
+      }
+      return await sendModeratedChatMessageCore({
+        db, auth: request.auth, data: request.data,
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error instanceof ChatSendError) throw new HttpsError(error.code, error.message);
+      logger.error('Admin chat send failed', { message: error?.message });
+      throw new HttpsError('internal', 'Could not send chat message.');
+    }
+  }
+);
+
+// Every accepted moderated chat message produces one server-managed inbox entry.
+exports.dispatchAdminChatMessageNotification = onDocumentCreated({
+  region: REGION, document: 'chats/{chatId}/messages/{messageId}', retry: true,
+}, event => require('./chat_message_notifications').dispatchChatMessageNotificationCore({
+  db: getFirestore(), messaging: getMessaging(),
+  chatId: event.params.chatId, messageId: event.params.messageId,
+}));
 
 const moderation = require('./content_moderation');
 exports.reportWallContent = appCheckedCallable(moderation.reportContentCore, 'Content report could not be submitted.');
@@ -567,6 +598,10 @@ exports.listSecurityVisitors = securityWorkflowCallable(
   listSecurityVisitorsCore,
   "Security visitor records could not be loaded."
 );
+exports.getSecurityVisitorSummary = securityWorkflowCallable(
+  getSecurityVisitorSummaryCore,
+  "Security visitor counts could not be loaded."
+);
 exports.denyVisitorEntry = securityWorkflowCallable(
   denyVisitorEntryCore,
   "Visitor entry could not be denied."
@@ -600,7 +635,7 @@ function residentVisitorCallable(core, failureMessage) {
       });
     } catch (error) {
       if (error instanceof HttpsError) throw error;
-      if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message);
+      if (error instanceof RegistrationError) throw new HttpsError(error.code, error.message, error.details);
       logger.error(failureMessage, { code: error?.code || "unknown" });
       throw new HttpsError("internal", failureMessage);
     }
@@ -614,6 +649,30 @@ exports.createVisitorInvitation = residentVisitorCallable(
 exports.getVisitorCredentials = residentVisitorCallable(
   getVisitorCredentialsCore,
   "The visitor credentials are unavailable."
+);
+
+const {
+  getCommunityVisitorPolicyCore, updateCommunityVisitorPolicyCore,
+  decideVisitorInvitationCore, mutateResidentVisitorCore, getVisitorPolicyHistoryCore,
+  getResidentVisitorContextCore,
+} = require("./visitor_policy_management");
+exports.getCommunityVisitorPolicy = appCheckedCallable(
+  getCommunityVisitorPolicyCore, "Visitor policy is unavailable."
+);
+exports.updateCommunityVisitorPolicy = appCheckedCallable(
+  updateCommunityVisitorPolicyCore, "Visitor policy could not be updated."
+);
+exports.decideVisitorInvitation = appCheckedCallable(
+  decideVisitorInvitationCore, "Visitor authorization could not be updated."
+);
+exports.mutateResidentVisitor = residentVisitorCallable(
+  mutateResidentVisitorCore, "Visitor invitation could not be updated."
+);
+exports.getVisitorPolicyHistory = appCheckedCallable(
+  getVisitorPolicyHistoryCore, "Visitor policy history is unavailable."
+);
+exports.getResidentVisitorContext = appCheckedCallable(
+  getResidentVisitorContextCore, "Visitor invitation options are unavailable."
 );
 
 exports.rejectPaymentProof = appCheckedCallable(
@@ -1074,6 +1133,27 @@ const { FieldValue: DeletionFieldValue } = require("firebase-admin/firestore");
 const { handleDeletionRequest, ALLOWED_ORIGINS } = require("./public_deletion_requests");
 const DELETION_TURNSTILE_SECRET = defineSecret("HOMINODE_DELETION_TURNSTILE_SECRET");
 const DELETION_SMTP_PASSWORD = defineSecret("HOMINODE_DELETION_SMTP_APP_PASSWORD");
+const { securityAccountDeletionRequestCore } = require("./security_account_deletion_requests");
+exports.securityAccountDeletionRequest = onCall(
+  { region: REGION, enforceAppCheck: true, secrets: [DELETION_SMTP_PASSWORD], timeoutSeconds: 60 },
+  callableHandler(
+    args => securityAccountDeletionRequestCore({
+      ...args,
+      sendMail: async message => {
+        const transport = require("nodemailer").createTransport({
+          service: "gmail",
+          auth: { user: "hominodecare@gmail.com", pass: DELETION_SMTP_PASSWORD.value() },
+          connectionTimeout: 10000, socketTimeout: 20000,
+        });
+        const result = await transport.sendMail(message);
+        if (!result.accepted?.some(address => String(address).toLowerCase() === message.to)) {
+          throw new Error("Security deletion request recipient not accepted");
+        }
+      },
+    }),
+    "Your Security account deletion request could not be confirmed. Please retry."
+  )
+);
 exports.submitPublicAccountDeletionRequest = deletionOnRequest(
   {
     region: "asia-southeast1",
@@ -1100,6 +1180,29 @@ exports.submitPublicAccountDeletionRequest = deletionOnRequest(
       }
     },
   })
+);
+
+// Authenticated Security support; independent of all deletion workflows.
+const { securitySupportRequestCore } = require("./security_support_requests");
+exports.securitySupportRequest = onCall(
+  { region: REGION, enforceAppCheck: true, secrets: [DELETION_SMTP_PASSWORD], timeoutSeconds: 60 },
+  callableHandler(
+    args => securitySupportRequestCore({
+      ...args,
+      sendMail: async message => {
+        const transport = require("nodemailer").createTransport({
+          service: "gmail",
+          auth: { user: "hominodecare@gmail.com", pass: DELETION_SMTP_PASSWORD.value() },
+          connectionTimeout: 10000, socketTimeout: 20000,
+        });
+        const result = await transport.sendMail(message);
+        if (!result.accepted?.some(address => String(address).toLowerCase() === "hominodecare@gmail.com")) {
+          throw new Error("Support mailbox did not accept request");
+        }
+      },
+    }),
+    "Your support request could not be confirmed. Please retry."
+  )
 );
 
 // PUBLIC HOMINODE CLIENT INQUIRIES (independent of deletion requests)

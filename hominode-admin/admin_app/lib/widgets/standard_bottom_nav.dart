@@ -7,12 +7,18 @@ import '../admin_residents_page_firestore.dart';
 import '../billing_screen.dart';
 import '../manage_buildings_page.dart';
 import '../profile_screen.dart';
+import '../visitor_management_screen.dart';
 import '../theme/hominode_theme.dart';
 
 class StandardBottomNav extends StatefulWidget {
   final int selectedIndex;
 
-  const StandardBottomNav({super.key, required this.selectedIndex});
+  const StandardBottomNav({
+    super.key,
+    required this.selectedIndex,
+    this.visitorsBuilder,
+  });
+  final WidgetBuilder? visitorsBuilder;
 
   @override
   State<StandardBottomNav> createState() => _StandardBottomNavState();
@@ -118,6 +124,13 @@ class _StandardBottomNavState extends State<StandardBottomNav>
                 activeIcon: Icons.receipt_long_rounded,
                 label: 'Billing',
                 index: 3,
+              ),
+              _buildBottomNavItem(
+                context,
+                icon: Icons.badge_outlined,
+                activeIcon: Icons.badge,
+                label: 'Visitors',
+                index: 5,
               ),
               _buildBottomNavItem(
                 context,
@@ -313,6 +326,11 @@ class _StandardBottomNavState extends State<StandardBottomNav>
           break;
         case 4: // Profile
           targetPage = const ProfileScreen();
+          break;
+        case 5: // Visitors (existing indices stay stable across other screens).
+          targetPage =
+              widget.visitorsBuilder?.call(context) ??
+              const VisitorManagementScreen();
           break;
         default:
           // Handle unexpected index

@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
+import 'package:hominode_time/community_time.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/auth_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../models/visitor_model.dart';
 import '../services/visitor_service.dart';
+import '../models/visitor_verification_receipt.dart';
+import '../widgets/visitor_verification_receipt_dialog.dart';
 import '../utils/app_colors.dart';
 import '../widgets/standard_header.dart';
 import 'qr_scanner_screen.dart';
@@ -12,11 +16,13 @@ import 'qr_scanner_screen.dart';
 class VisitorManagementScreen extends StatefulWidget {
   final int initialTab;
   final VisitorWorkflow? visitorWorkflow;
+  final Future<String?> Function()? loadTimeZone;
 
   const VisitorManagementScreen({
     super.key,
     this.initialTab = 0,
     this.visitorWorkflow,
+    this.loadTimeZone,
   });
 
   @override
@@ -62,6 +68,27 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   Object? _expectedError;
 
   bool _isChangingTab = false;
+  String? _timeZone;
+
+  Future<void> _loadTimeZone() async {
+    try {
+      String? zone;
+      if (widget.loadTimeZone != null) {
+        zone = await widget.loadTimeZone!();
+      } else {
+        final profile = await AuthService().requireSecurityProfile();
+        final community = await FirebaseFirestore.instance
+            .collection('communities')
+            .doc(profile.communityId)
+            .get(const GetOptions(source: Source.server));
+        zone = community.data()?['timeZone'] as String?;
+      }
+      final name = CommunityTime.canonical(zone);
+      if (mounted) setState(() => _timeZone = name);
+    } catch (_) {
+      if (mounted) setState(() => _timeZone = null);
+    }
+  }
 
   bool get _isCheckoutBusy => _isCheckoutDialogOpen || _isCheckoutSubmitting;
 
@@ -86,6 +113,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
       _historyLoading = _historyVisitors.isEmpty;
     });
 
+    await _loadTimeZone();
     final results = await Future.wait([
       _loadVisitorCategory('expected'),
       _loadVisitorCategory('inside'),
@@ -586,8 +614,21 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
       ),
     );
     if (!mounted || result == null) return;
+    final receipt = VisitorVerificationReceipt(result);
+    if (!receipt.isFreshEntry) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => VisitorVerificationReceiptDialog(
+          receipt: receipt,
+          onDone: () => Navigator.pop(dialogContext),
+        ),
+      );
+      if (mounted) await _refreshVisitors();
+      return;
+    }
     _showSnackBar(
-      'Entry verified for ${result['visitorName'] ?? 'visitor'}',
+      'Entry verified for ${result['visitorName'] ?? 'visitor'}\n'
+      'Pet declared: ${VisitorModel.describePetDeclaration(result['bringingPet'])}',
       AppColors.successGreen,
       Icons.check_circle,
     );
@@ -643,7 +684,11 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   // ---------------------------------------------------------------------------
 
   bool _isSameDay(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
+    try {
+      return CommunityTime.dayDifference(a, b, _timeZone) == 0;
+    } on FormatException {
+      return false;
+    }
   }
 
   int get _todayEnteredVisitors {
@@ -675,9 +720,9 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
   }
 
   int get _weeklyCompletedVisits {
+    if (_timeZone == null) return 0;
     final now = DateTime.now();
-
-    final startOfToday = DateTime(now.year, now.month, now.day);
+    final startOfToday = CommunityTime.calendarDate(now, _timeZone);
 
     final startOfWeek = startOfToday.subtract(
       Duration(days: startOfToday.weekday - 1),
@@ -692,8 +737,8 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         return false;
       }
 
-      return !departure.isBefore(startOfWeek) &&
-          departure.isBefore(startOfTomorrow);
+      final date = CommunityTime.calendarDate(departure, _timeZone);
+      return !date.isBefore(startOfWeek) && date.isBefore(startOfTomorrow);
     }).length;
   }
 
@@ -1217,6 +1262,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: _ExpectedVisitorCard(
+            timeZone: _timeZone,
             visitor: visitor,
             onDeny: visitor.gateAccessStatus == 'denied'
                 ? null
@@ -1319,6 +1365,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
                   bottom: index < visitors.length - 1 ? 12 : 0,
                 ),
                 child: _ActiveVisitorCard(
+                  timeZone: _timeZone,
                   visitor: visitor,
                   selectionMode: _selectionMode,
                   checkoutInProgress: _isCheckoutBusy,
@@ -1385,7 +1432,7 @@ class _VisitorManagementScreenState extends State<VisitorManagementScreen>
           padding: EdgeInsets.only(
             bottom: index < visitors.length - 1 ? 12 : 0,
           ),
-          child: _HistoryVisitorCard(visitor: visitor),
+          child: _HistoryVisitorCard(visitor: visitor, timeZone: _timeZone),
         );
       },
     );
@@ -1574,7 +1621,12 @@ class _TabButton extends StatelessWidget {
 // Visitor Card Widgets
 
 class _ExpectedVisitorCard extends StatelessWidget {
-  const _ExpectedVisitorCard({required this.visitor, required this.onDeny});
+  const _ExpectedVisitorCard({
+    required this.visitor,
+    required this.onDeny,
+    this.timeZone,
+  });
+  final String? timeZone;
 
   final VisitorModel visitor;
   final VoidCallback? onDeny;
@@ -1584,7 +1636,7 @@ class _ExpectedVisitorCard extends StatelessWidget {
     final denied = visitor.gateAccessStatus == 'denied';
     final arrival = visitor.expectedTime == null
         ? '—'
-        : DateFormat('MMM d, h:mm a').format(visitor.expectedTime!);
+        : CommunityTime.format(visitor.expectedTime, timeZone);
     return Card(
       color: Colors.white,
       shape: RoundedRectangleBorder(
@@ -1633,6 +1685,8 @@ class _ExpectedVisitorCard extends StatelessWidget {
             const SizedBox(height: 6),
             _DetailRow(label: 'Purpose:', value: visitor.purpose),
             const SizedBox(height: 6),
+            _DetailRow(label: 'Pet declared:', value: visitor.petDeclaration),
+            const SizedBox(height: 6),
             _DetailRow(label: 'Expected:', value: arrival),
             if (denied &&
                 (visitor.gateEntryDenialReason?.isNotEmpty ?? false)) ...[
@@ -1661,6 +1715,7 @@ class _ExpectedVisitorCard extends StatelessWidget {
 }
 
 class _ActiveVisitorCard extends StatelessWidget {
+  final String? timeZone;
   final VisitorModel visitor;
   final VoidCallback onMarkExit;
   final bool selectionMode;
@@ -1669,6 +1724,7 @@ class _ActiveVisitorCard extends StatelessWidget {
   final ValueChanged<bool> onSelected;
 
   const _ActiveVisitorCard({
+    this.timeZone,
     required this.visitor,
     required this.onMarkExit,
     required this.selectionMode,
@@ -1679,7 +1735,7 @@ class _ActiveVisitorCard extends StatelessWidget {
 
   String _formatTime(DateTime? dateTime) {
     if (dateTime == null) return '-';
-    return DateFormat('h:mm a').format(dateTime);
+    return CommunityTime.format(dateTime, timeZone);
   }
 
   @override
@@ -1787,6 +1843,8 @@ class _ActiveVisitorCard extends StatelessWidget {
           _DetailRow(label: 'Unit:', value: visitor.flatLabel),
           const SizedBox(height: 8),
           _DetailRow(label: 'Purpose:', value: visitor.purpose),
+          const SizedBox(height: 8),
+          _DetailRow(label: 'Pet declared:', value: visitor.petDeclaration),
           const SizedBox(height: 16),
           // Mark Out Button
           if (!selectionMode)
@@ -1821,16 +1879,17 @@ class _ActiveVisitorCard extends StatelessWidget {
 class _HistoryVisitorCard extends StatelessWidget {
   final VisitorModel visitor;
 
-  const _HistoryVisitorCard({required this.visitor});
+  const _HistoryVisitorCard({required this.visitor, this.timeZone});
+  final String? timeZone;
 
   String _formatTime(DateTime? dateTime) {
     if (dateTime == null) return '-';
-    return DateFormat('h:mm a').format(dateTime);
+    return CommunityTime.format(dateTime, timeZone);
   }
 
   String _formatDenialTime(DateTime? dateTime) {
     if (dateTime == null) return '-';
-    return DateFormat('MMM d, h:mm a').format(dateTime);
+    return CommunityTime.format(dateTime, timeZone);
   }
 
   @override
@@ -1988,6 +2047,8 @@ class _HistoryVisitorCard extends StatelessWidget {
           _DetailRow(label: 'Unit:', value: visitor.flatLabel),
           const SizedBox(height: 8),
           _DetailRow(label: 'Purpose:', value: visitor.purpose),
+          const SizedBox(height: 8),
+          _DetailRow(label: 'Pet declared:', value: visitor.petDeclaration),
         ],
       ),
     );

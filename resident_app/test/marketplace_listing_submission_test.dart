@@ -102,6 +102,40 @@ void main() {
     ]);
     expect(transport.requests.single.keys, isNot(contains('communityId')));
   });
+  test('more than five images fails before reserving or uploading', () async {
+    final result = await service.createListing(
+      title: 'Chair',
+      price: 500,
+      category: 'Furniture',
+      condition: 'Good',
+      description: 'Good condition',
+      imagePaths: List.filled(6, photo.path),
+    );
+    expect(result.success, isFalse);
+    expect(result.message, 'You can add up to 5 images.');
+    expect(transport.drafts, 0);
+    expect(transport.uploads, 0);
+    expect(transport.commits, 0);
+  });
+  test(
+    'unsupported and oversized files have actionable errors and publish nothing',
+    () async {
+      for (final bytes in [
+        <int>[1, 2, 3],
+        List<int>.filled(StorageImageAsset.maxBytes + 1, 0),
+      ]) {
+        await photo.writeAsBytes(bytes);
+        final result = await submit();
+        expect(result.success, isFalse);
+        expect(
+          result.message,
+          'Choose JPEG, PNG or WebP images no larger than 10 MB each.',
+        );
+        expect(transport.uploads, 0);
+        expect(transport.commits, 0);
+      }
+    },
+  );
   test(
     'failed upload creates no partial listing; retry reuses draft',
     () async {

@@ -7,6 +7,30 @@ import 'package:security_app/screens/visitor_management_screen.dart';
 import 'package:security_app/services/visitor_service.dart';
 
 void main() {
+  testWidgets('Security expected arrival uses canonical community time', (
+    tester,
+  ) async {
+    final visitor = VisitorModel.fromSanitizedMap({
+      'visitorId': 'timezone',
+      'visitorName': 'Timezone Guest',
+      'expectedArrival': DateTime.parse(
+        '2036-11-14T17:02:47Z',
+      ).millisecondsSinceEpoch,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisitorManagementScreen(
+          visitorWorkflow: _FakeVisitorWorkflow(expectedVisitors: [visitor]),
+          loadTimeZone: () async => 'Asia/Calcutta',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('14 Nov 2036, 10:32 PM IST (Asia/Kolkata)'),
+      findsOneWidget,
+    );
+  });
   testWidgets(
     'expected list is sanitized and provides no direct Approve action',
     (tester) async {
@@ -31,10 +55,17 @@ void main() {
     },
   );
 
-  testWidgets(
-    'manual code uses unified verification and displays sanitized success',
-    (tester) async {
+  for (final pet in [true, false, null]) {
+    testWidgets('manual code displays server pet declaration ($pet)', (
+      tester,
+    ) async {
       final workflow = _FakeVisitorWorkflow(expectedVisitors: [_visitor()]);
+      workflow.verificationResponse = {
+        'visitorName': 'Guest One',
+        'idempotent': false,
+        'currentStatus': 'inside',
+        if (pet != null) 'bringingPet': pet,
+      };
       await tester.pumpWidget(
         MaterialApp(home: VisitorManagementScreen(visitorWorkflow: workflow)),
       );
@@ -59,9 +90,119 @@ void main() {
 
       expect(workflow.verifiedManualCode, 'ABCD-EFGH-JKLM');
       expect(workflow.operationId, matches(RegExp(r'^[A-Za-z0-9_-]{32}$')));
-      expect(find.text('Entry verified for Guest One'), findsOneWidget);
-    },
-  );
+      expect(
+        find.text(
+          'Entry verified for Guest One\nPet declared: ${pet == null
+              ? 'Not recorded'
+              : pet
+              ? 'Yes'
+              : 'No'}',
+        ),
+        findsOneWidget,
+      );
+    });
+  }
+
+  for (final tab in [0, 1, 2]) {
+    for (final pet in [true, false, null]) {
+      testWidgets('visitor details show pet declaration (tab=$tab, pet=$pet)', (
+        tester,
+      ) async {
+        final visitor = VisitorModel.fromSanitizedMap({
+          'visitorId': 'pet-visitor',
+          'visitorName': 'Pet Guest',
+          'status': ['expected', 'inside', 'completed'][tab],
+          if (pet != null) 'bringingPet': pet,
+          'actualArrival': DateTime.now().millisecondsSinceEpoch,
+          if (tab == 2) 'departure': DateTime.now().millisecondsSinceEpoch,
+        });
+        final workflow = _FakeVisitorWorkflow(
+          expectedVisitors: tab == 0 ? [visitor] : [],
+          insideVisitors: tab == 1 ? [visitor] : [],
+          historyVisitors: tab == 2 ? [visitor] : [],
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: VisitorManagementScreen(
+              initialTab: tab,
+              visitorWorkflow: workflow,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Pet declared:'), findsOneWidget);
+        expect(
+          find.text(
+            pet == null
+                ? 'Not recorded'
+                : pet
+                ? 'Yes'
+                : 'No',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Entry Granted'), findsNothing);
+        expect(find.textContaining('Entry verified'), findsNothing);
+        expect(find.text('Approve'), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  for (final state in ['inside', 'completed', 'cancelled']) {
+    testWidgets(
+      'a historical manual receipt shows current $state without granting entry',
+      (tester) async {
+        final workflow = _FakeVisitorWorkflow(expectedVisitors: [_visitor()])
+          ..verificationResponse = {
+            'visitorName': 'Guest One',
+            'status': 'inside',
+            'idempotent': true,
+            'currentStatus': state,
+            'processedAt': DateTime.utc(
+              2026,
+              11,
+              1,
+              2,
+              3,
+            ).millisecondsSinceEpoch,
+          };
+        await tester.pumpWidget(
+          MaterialApp(home: VisitorManagementScreen(visitorWorkflow: workflow)),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Enter Manual Code'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          ),
+          'ABCD-EFGH-JKLM',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Verify'));
+        await tester.pumpAndSettle();
+        expect(find.text('Previously processed verification'), findsOneWidget);
+        expect(
+          find.textContaining('No new entry was granted.'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('2026-11-01T02:03:00.000Z'), findsOneWidget);
+        expect(
+          find.textContaining(
+            state == 'inside'
+                ? 'Current visit state: Inside'
+                : state == 'completed'
+                ? 'Current visit state: Checked out'
+                : 'Current visit state: Cancelled',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Entry verified for'), findsNothing);
+        expect(find.textContaining('Entry Granted'), findsNothing);
+      },
+    );
+  }
 
   testWidgets('bulk Mark Out displays independent per-visitor outcomes', (
     tester,
@@ -110,7 +251,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Mark Out').first);
+      await Scrollable.ensureVisible(
+        tester.element(find.text('Mark Out').first),
+        alignment: 0.5,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Mark Out'));
       await tester.pumpAndSettle();
 
@@ -153,7 +298,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Mark Out').first);
+    await Scrollable.ensureVisible(
+      tester.element(find.text('Mark Out').first),
+      alignment: 0.5,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Mark Out'));
     await tester.pumpAndSettle();
     await tester.tap(
@@ -248,7 +397,11 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: VisitorManagementScreen(initialTab: 2, visitorWorkflow: workflow),
+        home: VisitorManagementScreen(
+          initialTab: 2,
+          visitorWorkflow: workflow,
+          loadTimeZone: () async => 'Asia/Kolkata',
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -257,7 +410,10 @@ void main() {
     expect(find.text('Entry Denied'), findsOneWidget);
     expect(find.text('No valid ID'), findsOneWidget);
     expect(find.text('Denied:'), findsOneWidget);
-    expect(find.text('Oct 11, 10:59 AM'), findsOneWidget);
+    expect(
+      find.text('11 Oct 2026, 4:29 PM IST (Asia/Kolkata)'),
+      findsOneWidget,
+    );
   });
 }
 
@@ -296,7 +452,7 @@ VisitorModel _deniedVisitor({required bool isApproved}) =>
       'adminApproved': isApproved,
       'gateAccessStatus': 'denied',
       'gateEntryDenialReason': 'No valid ID',
-      'gateEntryDeniedAt': DateTime(
+      'gateEntryDeniedAt': DateTime.utc(
         2026,
         10,
         11,
@@ -316,6 +472,7 @@ class _FakeVisitorWorkflow implements VisitorWorkflow {
   final List<VisitorModel> insideVisitors;
   final List<VisitorModel> historyVisitors;
   String? verifiedManualCode;
+  Map<String, dynamic>? verificationResponse;
   String? operationId;
   List<String> checkedOutIds = [];
   Completer<Map<String, dynamic>>? checkoutCompleter;
@@ -344,10 +501,14 @@ class _FakeVisitorWorkflow implements VisitorWorkflow {
   }) async {
     verifiedManualCode = manualCode;
     this.operationId = operationId;
+    if (verificationResponse != null) return verificationResponse!;
     return {
       'visitorId': 'expected-1',
       'visitorName': 'Guest One',
       'status': 'inside',
+      'idempotent': false,
+      'currentStatus': 'inside',
+      'processedAt': DateTime.utc(2026, 11, 14).millisecondsSinceEpoch,
     };
   }
 

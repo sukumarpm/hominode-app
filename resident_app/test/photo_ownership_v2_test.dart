@@ -43,7 +43,7 @@ void main() {
       'storagePath': 'private_images/A/admin/apartment/$id.jpg',
     },
   };
-  for (final scope in PhotoOwnership.scopes)
+  for (final scope in PhotoOwnership.scopes) {
     test('$scope excludes other scopes, resources and tenants', () {
       final rows = [
         record('COMMUNITY'),
@@ -82,6 +82,7 @@ void main() {
         isEmpty,
       );
     });
+  }
   test(
     'legacy URLs remain separate; malformed private records never use legacy URLs',
     () {

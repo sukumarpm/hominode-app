@@ -28,6 +28,12 @@ class ResidentVisitorCardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Compare displayed text so translated labels follow the same rule.
+    final showSecondary =
+        secondaryStatusLabel != null &&
+        secondaryStatusLabel!.trim().isNotEmpty &&
+        secondaryStatusLabel!.trim().toLowerCase() !=
+            statusLabel?.trim().toLowerCase();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -118,7 +124,7 @@ class ResidentVisitorCardHeader extends StatelessWidget {
             ),
           ),
         ],
-        if (secondaryStatusLabel != null) ...[
+        if (showSecondary) ...[
           SizedBox(height: 4.h),
           Align(
             alignment: AlignmentDirectional.centerEnd,

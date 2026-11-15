@@ -5,6 +5,38 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'identity review queue includes approved active residents only in their community',
+    () {
+      final user = <String, dynamic>{
+        'communityId': 'a',
+        'role': 'resident',
+        'approvalStatus': 'approved',
+        'isActive': true,
+        'identityVerificationStatus': 'pending',
+        'identityProofStoragePath':
+            'residentIdentityProofs/a/resident/proof.png',
+      };
+      expect(ResidentApprovalPolicy.needsReviewForCommunity(user, 'a'), true);
+      expect(ResidentApprovalPolicy.needsReviewForCommunity(user, 'b'), false);
+      for (final status in ['verified', 'verification_required', 'rejected']) {
+        expect(
+          ResidentApprovalPolicy.needsReviewForCommunity({
+            ...user,
+            'identityVerificationStatus': status,
+          }, 'a'),
+          false,
+        );
+      }
+      expect(
+        ResidentApprovalPolicy.needsReviewForCommunity({
+          ...user,
+          'isActive': false,
+        }, 'a'),
+        true,
+      );
+    },
+  );
+  test(
     'flat occupant compatibility reads matching aliases and fails closed',
     () {
       expect(
@@ -64,6 +96,85 @@ void main() {
       isFalse,
     );
   });
+
+  test(
+    'Admin-created required-identity onboarding stays reviewable until completed',
+    () {
+      final user = <String, dynamic>{
+        'role': 'resident',
+        'communityId': 'A',
+        'creationSource': 'admin_direct',
+        'residentType': 'tenant',
+        'approvalStatus': 'pending',
+        'isActive': false,
+        'identityVerified': false,
+      };
+      for (final approval in ['pending', 'approved']) {
+        for (final identity in [
+          'verification_required',
+          'pending',
+          'rejected',
+        ]) {
+          final row = {
+            ...user,
+            'approvalStatus': approval,
+            'identityVerificationStatus': identity,
+          };
+          expect(
+            ResidentApprovalPolicy.needsReviewForCommunity(row, 'A'),
+            true,
+          );
+          expect(ResidentApprovalPolicy.isPendingForCommunity(row, 'A'), true);
+          expect(
+            ResidentApprovalPolicy.needsReviewForCommunity(row, 'B'),
+            false,
+          );
+          expect(
+            PendingResident.fromMap('resident', row).canApproveRegistration,
+            false,
+          );
+        }
+      }
+      final pending = {...user, 'identityVerificationStatus': 'pending'};
+      for (final patch in [
+        {'identityVerified': true},
+        {'identityVerificationStatus': 'verified'},
+        {'registrationCompletedAt': DateTime(2026)},
+        {'status': 'deleted'},
+        {'status': 'completed'},
+        {'occupancyStatus': 'moved_out'},
+        {'occupancyStatus': 'suspended'},
+        {'isActive': null},
+        {'identityVerified': null},
+      ]) {
+        expect(
+          PendingResident.fromMap('resident', {
+            ...pending,
+            ...patch,
+          }).canReviewRegistration,
+          false,
+          reason: '$patch',
+        );
+      }
+      final owner = {...pending, 'residentType': 'owner'};
+      expect(ResidentApprovalPolicy.needsReviewForCommunity(owner, 'A'), false);
+      expect(
+        ResidentApprovalPolicy.needsReviewForCommunity(
+          owner,
+          'A',
+          ownerIdentityVerificationRequired: true,
+        ),
+        true,
+      );
+      expect(
+        ResidentApprovalPolicy.isPendingForCommunity({
+          ...user,
+          'isActive': null,
+        }, 'A'),
+        false,
+      );
+    },
+  );
 
   test('canonical assignment must remain inside building community', () {
     expect(

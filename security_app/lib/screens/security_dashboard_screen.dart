@@ -10,6 +10,7 @@ import '../services/attendance_service.dart';
 import '../services/auth_service.dart';
 import '../services/notification_service.dart';
 import '../utils/app_colors.dart';
+import '../widgets/security_visitor_counters.dart';
 import 'profile_screen.dart';
 import 'qr_scanner_screen.dart';
 import 'staff_attendance_screen.dart';
@@ -25,6 +26,7 @@ class SecurityDashboardScreen extends StatefulWidget {
 
 class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
   int _selectedIndex = 0;
+  int _visitorCounterRefreshVersion = 0;
   final AuthService _authService = AuthService();
   final AttendanceService _attendanceService = AttendanceService();
   final NotificationService _notificationService = NotificationService();
@@ -284,7 +286,7 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const QRScannerScreen()),
-          );
+          ).then(_refreshVisitorCounts);
         },
         backgroundColor: AppColors.primaryTeal,
         foregroundColor: Colors.white,
@@ -781,233 +783,19 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
   }
 
   Widget _buildStatisticsCards() {
-    if (_currentUser == null) {
-      return const SizedBox.shrink();
-    }
-
-    final user = _currentUser!;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('visitors')
-                  .where('communityId', isEqualTo: user.communityId)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                int count = 0;
-
-                if (snapshot.hasData) {
-                  final now = DateTime.now();
-
-                  final startOfToday = DateTime(now.year, now.month, now.day);
-
-                  final startOfTomorrow = startOfToday.add(
-                    const Duration(days: 1),
-                  );
-
-                  for (final doc in snapshot.data!.docs) {
-                    final data = doc.data() as Map<String, dynamic>;
-
-                    final actualArrival = data['actualArrival'] as Timestamp?;
-
-                    if (actualArrival == null) {
-                      continue;
-                    }
-
-                    final arrivalDate = actualArrival.toDate();
-
-                    if (!arrivalDate.isBefore(startOfToday) &&
-                        arrivalDate.isBefore(startOfTomorrow)) {
-                      count++;
-                    }
-                  }
-                }
-
-                return _buildStatCard(
-                  'Total',
-                  '$count',
-                  Icons.people,
-                  AppColors.primaryTeal,
-                  'Today',
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('visitors')
-                  .where('communityId', isEqualTo: user.communityId)
-                  .where('status', isEqualTo: 'inside')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                int count = 0;
-
-                if (snapshot.hasData) {
-                  for (final doc in snapshot.data!.docs) {
-                    final data = doc.data() as Map<String, dynamic>;
-
-                    if (data['actualArrival'] != null &&
-                        data['departure'] == null) {
-                      count++;
-                    }
-                  }
-                }
-
-                return _buildStatCard(
-                  'Active',
-                  '$count',
-                  Icons.login,
-                  AppColors.successGreen,
-                  'Inside',
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('visitors')
-                  .where('communityId', isEqualTo: user.communityId)
-                  .where('status', isEqualTo: 'expected')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                int count = 0;
-
-                if (snapshot.hasData) {
-                  for (final doc in snapshot.data!.docs) {
-                    final data = doc.data() as Map<String, dynamic>;
-
-                    if (data['isApproved'] == false &&
-                        data['actualArrival'] == null &&
-                        data['departure'] == null) {
-                      count++;
-                    }
-                  }
-                }
-
-                return _buildStatCard(
-                  'Pending',
-                  '$count',
-                  Icons.pending,
-                  AppColors.warningOrange,
-                  'Requests',
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('visitors')
-                  .where('communityId', isEqualTo: user.communityId)
-                  .where('status', isEqualTo: 'completed')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                int exitCount = 0;
-
-                if (snapshot.hasData) {
-                  final now = DateTime.now();
-
-                  final startOfToday = DateTime(now.year, now.month, now.day);
-
-                  final startOfTomorrow = startOfToday.add(
-                    const Duration(days: 1),
-                  );
-
-                  for (final doc in snapshot.data!.docs) {
-                    final data = doc.data() as Map<String, dynamic>;
-
-                    final departure = data['departure'] as Timestamp?;
-
-                    if (departure == null) {
-                      continue;
-                    }
-
-                    final departureDate = departure.toDate();
-
-                    if (!departureDate.isBefore(startOfToday) &&
-                        departureDate.isBefore(startOfTomorrow)) {
-                      exitCount++;
-                    }
-                  }
-                }
-
-                return _buildStatCard(
-                  'Exits',
-                  '$exitCount',
-                  Icons.logout,
-                  AppColors.errorRed,
-                  'Today',
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+    final user = _currentUser;
+    if (user == null) return const SizedBox.shrink();
+    return SecurityVisitorCounters(
+      key: ValueKey('${user.uid}/${user.communityId}'),
+      communityId: user.communityId,
+      refreshVersion: _visitorCounterRefreshVersion,
     );
   }
 
-  Widget _buildStatCard(
-    String label,
-    String value,
-    IconData icon,
-    Color color,
-    String subtitle,
-  ) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-      decoration: BoxDecoration(
-        color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.09),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(height: 9),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 21,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textDark,
-            ),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 9, color: AppColors.textGray),
-          ),
-        ],
-      ),
-    );
+  void _refreshVisitorCounts(Object? _) {
+    if (mounted) setState(() => _visitorCounterRefreshVersion++);
   }
+
   // Widget _buildStatCard(
   //   String label,
   //   String value,
@@ -1094,7 +882,7 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
                       MaterialPageRoute(
                         builder: (context) => const QRScannerScreen(),
                       ),
-                    );
+                    ).then(_refreshVisitorCounts);
                   },
                 ),
               ),
@@ -1111,7 +899,7 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
                       MaterialPageRoute(
                         builder: (context) => VisitorManagementScreen(),
                       ),
-                    );
+                    ).then(_refreshVisitorCounts);
                   },
                 ),
               ),
@@ -1414,7 +1202,7 @@ class _SecurityDashboardScreenState extends State<SecurityDashboardScreen> {
                 MaterialPageRoute(
                   builder: (_) => const VisitorManagementScreen(),
                 ),
-              );
+              ).then(_refreshVisitorCounts);
             } else if (index == 2) {
               final user = _currentUser;
 

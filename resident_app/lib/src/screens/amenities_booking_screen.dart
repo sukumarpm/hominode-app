@@ -119,64 +119,86 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
           // Applying the top safe inset again creates a large blank band.
           child: SafeArea(
             top: false,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Available Amenities Section
-                  SizedBox(height: 8.h),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20.w),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'available_amenities'.tr(),
-                          style: TextStyle(
-                            fontSize: 20.sp,
-                            fontWeight: FontWeight.w800,
-                            color: const Color(0xFF0E2247),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final tabletLayout = constraints.maxWidth >= 600;
+                final pagePadding = tabletLayout ? 24.0 : 20.w;
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1120),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Available Amenities Section
+                          SizedBox(height: 8.h),
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: pagePadding,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'available_amenities'.tr(),
+                                  style: TextStyle(
+                                    fontSize: tabletLayout ? 20 : 20.sp,
+                                    fontWeight: FontWeight.w800,
+                                    color: const Color(0xFF0E2247),
+                                  ),
+                                ),
+                                SizedBox(height: 4.h),
+                                Text(
+                                  'explore_facility_booking_options'.tr(),
+                                  style: TextStyle(
+                                    fontSize: tabletLayout ? 12.5 : 12.5.sp,
+                                    color: const Color(0xFF667792),
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        SizedBox(height: 4.h),
-                        Text(
-                          'explore_facility_booking_options'.tr(),
-                          style: TextStyle(
-                            fontSize: 12.5.sp,
-                            color: const Color(0xFF667792),
-                            height: 1.35,
+                          SizedBox(height: 14.h),
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: pagePadding,
+                            ),
+                            child: _buildAmenitiesStream(
+                              tabletLayout: tabletLayout,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 14.h),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20.w),
-                    child: _buildAmenitiesStream(),
-                  ),
 
-                  // My Bookings Section
-                  SizedBox(height: 32.h),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20.w),
-                    child: Text(
-                      'my_bookings'.tr(),
-                      style: TextStyle(
-                        fontSize: 18.sp,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black,
+                          // My Bookings Section
+                          SizedBox(height: 32.h),
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: pagePadding,
+                            ),
+                            child: Text(
+                              'my_bookings'.tr(),
+                              style: TextStyle(
+                                fontSize: tabletLayout ? 18 : 18.sp,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: 16.h),
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: pagePadding,
+                            ),
+                            child: _buildBookingsStream(),
+                          ),
+                          SizedBox(height: 20.h),
+                        ],
                       ),
                     ),
                   ),
-                  SizedBox(height: 16.h),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20.w),
-                    child: _buildBookingsStream(),
-                  ),
-                  SizedBox(height: 20.h),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ),
@@ -184,7 +206,7 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
     );
   }
 
-  Widget _buildAmenitiesStream() {
+  Widget _buildAmenitiesStream({required bool tabletLayout}) {
     return StreamBuilder<List<AmenityModel>>(
       stream: _amenitiesStream,
       builder: (context, snapshot) {
@@ -291,24 +313,47 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final useTwoColumns = constraints.maxWidth >= 700;
-            final spacing = 14.w;
-            final itemWidth = useTwoColumns
-                ? (constraints.maxWidth - spacing) / 2
-                : constraints.maxWidth;
+            final columns = tabletLayout && constraints.maxWidth >= 520 ? 2 : 1;
+            final spacing = tabletLayout ? 20.0 : 14.h;
 
-            return Wrap(
-              spacing: spacing,
-              runSpacing: 14.h,
-              children: amenities.map((amenity) {
-                return SizedBox(
-                  width: itemWidth,
-                  child: AmenityCard(
-                    amenity: amenity,
-                    onTap: () => _handleAmenityTap(amenity),
-                  ),
-                );
-              }).toList(),
+            Widget card(AmenityModel amenity) => AmenityCard(
+              amenity: amenity,
+              tabletLayout: columns == 2,
+              onTap: () => _handleAmenityTap(amenity),
+            );
+
+            // Size each row from its content, including larger text/locales.
+            // Equal row heights align the actions without a fixed aspect ratio.
+            return Column(
+              children: [
+                for (
+                  var index = 0;
+                  index < amenities.length;
+                  index += columns
+                ) ...[
+                  if (index > 0) SizedBox(height: spacing),
+                  if (columns == 1)
+                    SizedBox(
+                      width: double.infinity,
+                      child: card(amenities[index]),
+                    )
+                  else
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: card(amenities[index])),
+                          SizedBox(width: spacing),
+                          Expanded(
+                            child: index + 1 < amenities.length
+                                ? card(amenities[index + 1])
+                                : const SizedBox(),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ],
             );
           },
         );
@@ -568,8 +613,23 @@ class _AmenitiesBookingScreenState extends State<AmenitiesBookingScreen> {
 class AmenityCard extends StatelessWidget {
   final AmenityModel amenity;
   final VoidCallback? onTap;
+  final bool tabletLayout;
 
-  const AmenityCard({super.key, required this.amenity, this.onTap});
+  const AmenityCard({
+    super.key,
+    required this.amenity,
+    this.onTap,
+    this.tabletLayout = false,
+  });
+
+  // A tablet card occupies one column, so full-screen scaling would inflate its
+  // contents. Keep the existing ScreenUtil sizes for single-column phone cards.
+  double _width(double value) => tabletLayout ? value : value.w;
+  double _height(double value) => tabletLayout ? value : value.h;
+  double _radius(double value) => tabletLayout ? value : value.r;
+  double _font(double value) => tabletLayout ? value : value.sp;
+  Widget _expandOnTablet(Widget child) =>
+      tabletLayout ? Expanded(child: child) : child;
 
   Widget _infoChip({
     required IconData icon,
@@ -578,24 +638,29 @@ class AmenityCard extends StatelessWidget {
     Color background = const Color(0xFFF3F6FA),
   }) {
     return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: 260.w),
+      constraints: BoxConstraints(maxWidth: _width(260)),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 6.h),
+        padding: EdgeInsets.symmetric(
+          horizontal: _width(9),
+          vertical: _height(6),
+        ),
         decoration: BoxDecoration(
           color: background,
-          borderRadius: BorderRadius.circular(9.r),
+          borderRadius: BorderRadius.circular(_radius(9)),
         ),
         child: Row(
+          mainAxisSize: tabletLayout ? MainAxisSize.min : MainAxisSize.max,
           children: [
-            Icon(icon, size: 14.w, color: foreground),
-            SizedBox(width: 5.w),
-            Expanded(
+            Icon(icon, size: _width(14), color: foreground),
+            SizedBox(width: _width(5)),
+            Flexible(
+              fit: tabletLayout ? FlexFit.loose : FlexFit.tight,
               child: Text(
                 label,
                 softWrap: true,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 10.5.sp,
+                  fontSize: _font(10.5),
                   fontWeight: FontWeight.w600,
                   color: foreground,
                 ),
@@ -631,11 +696,11 @@ class AmenityCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20.r),
+        borderRadius: BorderRadius.circular(_radius(20)),
         child: Ink(
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.94),
-            borderRadius: BorderRadius.circular(20.r),
+            borderRadius: BorderRadius.circular(_radius(20)),
             border: Border.all(color: Colors.white.withValues(alpha: 0.96)),
             boxShadow: const [
               BoxShadow(
@@ -649,218 +714,235 @@ class AmenityCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20.r)),
-                child: FacilityImage(amenity: amenity, height: 132),
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(_radius(20)),
+                ),
+                child: tabletLayout
+                    ? AspectRatio(
+                        aspectRatio: 2,
+                        child: FacilityImage(amenity: amenity, height: 132),
+                      )
+                    : FacilityImage(amenity: amenity, height: 132),
               ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(16.w, 15.h, 16.w, 16.h),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          amenity.name,
-                          softWrap: true,
-                          style: TextStyle(
-                            fontSize: 18.sp,
-                            height: 1.15,
-                            fontWeight: FontWeight.w800,
-                            color: const Color(0xFF0E2247),
-                          ),
-                        ),
-                        SizedBox(height: 6.h),
-                        Wrap(
-                          spacing: 8.w,
-                          runSpacing: 5.h,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Text(
-                              amenity.type,
-                              style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFF667792),
-                              ),
+              _expandOnTablet(
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    _width(16),
+                    _height(15),
+                    _width(16),
+                    _height(16),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            amenity.name,
+                            softWrap: true,
+                            style: TextStyle(
+                              fontSize: _font(18),
+                              height: 1.15,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF0E2247),
                             ),
-                            if (amenity.buildingName != null) ...[
-                              Icon(
-                                Icons.location_on_outlined,
-                                size: 14.w,
-                                color: const Color(0xFF667792),
-                              ),
+                          ),
+                          SizedBox(height: _height(6)),
+                          Wrap(
+                            spacing: _width(8),
+                            runSpacing: _height(5),
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
                               Text(
-                                amenity.buildingName!,
-                                softWrap: true,
+                                amenity.type,
                                 style: TextStyle(
-                                  fontSize: 12.sp,
+                                  fontSize: _font(12),
+                                  fontWeight: FontWeight.w600,
                                   color: const Color(0xFF667792),
                                 ),
                               ),
+                              if (amenity.buildingName != null) ...[
+                                Icon(
+                                  Icons.location_on_outlined,
+                                  size: _width(14),
+                                  color: const Color(0xFF667792),
+                                ),
+                                Text(
+                                  amenity.buildingName!,
+                                  softWrap: true,
+                                  style: TextStyle(
+                                    fontSize: _font(12),
+                                    color: const Color(0xFF667792),
+                                  ),
+                                ),
+                              ],
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: _width(10),
+                                  vertical: _height(6),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: amenity.isAvailable
+                                      ? const Color(0xFFE7F8EE)
+                                      : const Color(0xFFFFECEC),
+                                  borderRadius: BorderRadius.circular(
+                                    _radius(999),
+                                  ),
+                                ),
+                                child: Text(
+                                  amenity.isAvailable
+                                      ? 'available'.tr()
+                                      : 'unavailable'.tr(),
+                                  style: TextStyle(
+                                    fontSize: _font(9.5),
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.3,
+                                    color: amenity.isAvailable
+                                        ? const Color(0xFF078A49)
+                                        : const Color(0xFFD23D3D),
+                                  ),
+                                ),
+                              ),
                             ],
+                          ),
+                        ],
+                      ),
+
+                      if (amenity.description != null) ...[
+                        SizedBox(height: _height(12)),
+                        Text(
+                          amenity.description!,
+                          softWrap: true,
+                          style: TextStyle(
+                            fontSize: _font(12.5),
+                            height: 1.45,
+                            color: const Color(0xFF53627A),
+                          ),
+                        ),
+                      ],
+
+                      SizedBox(height: _height(14)),
+
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _width(13),
+                          vertical: _height(11),
+                        ),
+                        decoration: BoxDecoration(
+                          color: isFree
+                              ? const Color(0xFFF0FBF5)
+                              : const Color(0xFFF1F4F7),
+                          borderRadius: BorderRadius.circular(_radius(13)),
+                        ),
+                        child: Row(
+                          children: [
                             Container(
                               padding: EdgeInsets.symmetric(
-                                horizontal: 10.w,
-                                vertical: 6.h,
+                                horizontal: _width(8),
+                                vertical: _height(4),
                               ),
                               decoration: BoxDecoration(
-                                color: amenity.isAvailable
-                                    ? const Color(0xFFE7F8EE)
-                                    : const Color(0xFFFFECEC),
-                                borderRadius: BorderRadius.circular(999.r),
+                                color: isFree
+                                    ? const Color(0xFFD9F5E5)
+                                    : const Color(0xFFE5EAF0),
+                                borderRadius: BorderRadius.circular(_radius(7)),
                               ),
                               child: Text(
-                                amenity.isAvailable
-                                    ? 'available'.tr()
-                                    : 'unavailable'.tr(),
+                                feeBadge,
                                 style: TextStyle(
-                                  fontSize: 9.5.sp,
+                                  fontSize: _font(9.5),
                                   fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.3,
-                                  color: amenity.isAvailable
+                                  color: isFree
                                       ? const Color(0xFF078A49)
-                                      : const Color(0xFFD23D3D),
+                                      : const Color(0xFF24364B),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: _width(10)),
+                            Expanded(
+                              child: Text(
+                                displayPrice,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  fontSize: _font(16),
+                                  fontWeight: FontWeight.w800,
+                                  color: isFree
+                                      ? const Color(0xFF078A49)
+                                      : const Color(0xFF24364B),
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
 
-                    if (amenity.description != null) ...[
-                      SizedBox(height: 12.h),
-                      Text(
-                        amenity.description!,
-                        softWrap: true,
-                        style: TextStyle(
-                          fontSize: 12.5.sp,
-                          height: 1.45,
-                          color: const Color(0xFF53627A),
+                      SizedBox(height: _height(12)),
+
+                      Wrap(
+                        spacing: _width(7),
+                        runSpacing: _height(7),
+                        children: [
+                          _infoChip(
+                            icon: Icons.schedule_rounded,
+                            label: _timeSlotsLabel(amenity.timeSlotsDisplay),
+                          ),
+                          _infoChip(
+                            icon: Icons.people_alt_outlined,
+                            label: _capacityLabel(amenity.capacityDisplay),
+                          ),
+                          if (amenity.bookingDurations.isNotEmpty)
+                            _infoChip(
+                              icon: Icons.timelapse_rounded,
+                              label: amenity.bookingDurations.join(' • '),
+                            ),
+                          if (amenity.hasPackages)
+                            _infoChip(
+                              icon: Icons.card_membership_rounded,
+                              label: 'packages_available'.tr(),
+                              foreground: const Color(0xFF078A49),
+                              background: const Color(0xFFEAF9F0),
+                            ),
+                        ],
+                      ),
+
+                      if (tabletLayout) const Spacer(),
+                      SizedBox(height: _height(15)),
+
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(vertical: _height(11)),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF24364B),
+                          borderRadius: BorderRadius.circular(_radius(12)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                'view_details_book'.tr(),
+                                softWrap: true,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: _font(13),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: _width(6)),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              size: _width(18),
+                              color: Colors.white,
+                            ),
+                          ],
                         ),
                       ),
                     ],
-
-                    SizedBox(height: 14.h),
-
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 13.w,
-                        vertical: 11.h,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isFree
-                            ? const Color(0xFFF0FBF5)
-                            : const Color(0xFFF1F4F7),
-                        borderRadius: BorderRadius.circular(13.r),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 8.w,
-                              vertical: 4.h,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isFree
-                                  ? const Color(0xFFD9F5E5)
-                                  : const Color(0xFFE5EAF0),
-                              borderRadius: BorderRadius.circular(7.r),
-                            ),
-                            child: Text(
-                              feeBadge,
-                              style: TextStyle(
-                                fontSize: 9.5.sp,
-                                fontWeight: FontWeight.w800,
-                                color: isFree
-                                    ? const Color(0xFF078A49)
-                                    : const Color(0xFF24364B),
-                              ),
-                            ),
-                          ),
-                          SizedBox(width: 10.w),
-                          Expanded(
-                            child: Text(
-                              displayPrice,
-                              textAlign: TextAlign.right,
-                              style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.w800,
-                                color: isFree
-                                    ? const Color(0xFF078A49)
-                                    : const Color(0xFF24364B),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    SizedBox(height: 12.h),
-
-                    Wrap(
-                      spacing: 7.w,
-                      runSpacing: 7.h,
-                      children: [
-                        _infoChip(
-                          icon: Icons.schedule_rounded,
-                          label: _timeSlotsLabel(amenity.timeSlotsDisplay),
-                        ),
-                        _infoChip(
-                          icon: Icons.people_alt_outlined,
-                          label: _capacityLabel(amenity.capacityDisplay),
-                        ),
-                        if (amenity.bookingDurations.isNotEmpty)
-                          _infoChip(
-                            icon: Icons.timelapse_rounded,
-                            label: amenity.bookingDurations.join(' • '),
-                          ),
-                        if (amenity.hasPackages)
-                          _infoChip(
-                            icon: Icons.card_membership_rounded,
-                            label: 'packages_available'.tr(),
-                            foreground: const Color(0xFF078A49),
-                            background: const Color(0xFFEAF9F0),
-                          ),
-                      ],
-                    ),
-
-                    SizedBox(height: 15.h),
-
-                    Container(
-                      width: double.infinity,
-                      padding: EdgeInsets.symmetric(vertical: 11.h),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF24364B),
-                        borderRadius: BorderRadius.circular(12.r),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              'view_details_book'.tr(),
-                              softWrap: true,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          SizedBox(width: 6.w),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 18.w,
-                            color: Colors.white,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -871,8 +953,9 @@ class AmenityCard extends StatelessWidget {
   }
 
   String _timeSlotsLabel(String value) {
-    if (value == 'No time slots available')
+    if (value == 'No time slots available') {
       return 'no_time_slots_available'.tr();
+    }
     final configured = RegExp(
       r'^(\d+) configured time slots$',
     ).firstMatch(value);

@@ -156,7 +156,7 @@ void main() {
 
     expect(canonicalVisitorStatus(data), 'departed');
     expect(visitorBelongsInActiveQueue(data), isFalse);
-    expect(visitorBelongsInHistoryQueue(data), isFalse);
+    expect(visitorBelongsInHistoryQueue(data), isTrue);
   });
 
   test('visitor terminal status variants normalize consistently', () {

@@ -1,5 +1,6 @@
 import '../widgets/marketplace_access_gate.dart';
 import '../components/marketplace_image_gallery.dart';
+import '../widgets/marketplace_delete_listing_dialog.dart';
 // lib/src/screens/marketplace_your_product_detail_screen.dart
 // Product detail screen for seller's own products
 
@@ -18,22 +19,30 @@ class MarketplaceYourProductDetailScreen extends StatelessWidget {
     super.key,
     required this.listing,
     this.accessLoader,
+    this.listingService,
   });
   final ListingModel listing;
   final MarketplaceAccessLoader? accessLoader;
+  final ListingFirestoreService? listingService;
 
   @override
   Widget build(BuildContext context) => MarketplaceAccessGate(
     loader: accessLoader,
-    builder: (_) =>
-        _MarketplaceYourProductDetailScreenContent(listing: listing),
+    builder: (_) => _MarketplaceYourProductDetailScreenContent(
+      listing: listing,
+      listingService: listingService,
+    ),
   );
 }
 
 class _MarketplaceYourProductDetailScreenContent extends StatefulWidget {
   final ListingModel listing;
 
-  const _MarketplaceYourProductDetailScreenContent({required this.listing});
+  const _MarketplaceYourProductDetailScreenContent({
+    required this.listing,
+    this.listingService,
+  });
+  final ListingFirestoreService? listingService;
 
   @override
   State<_MarketplaceYourProductDetailScreenContent> createState() =>
@@ -42,8 +51,10 @@ class _MarketplaceYourProductDetailScreenContent extends StatefulWidget {
 
 class _MarketplaceYourProductDetailScreenState
     extends State<_MarketplaceYourProductDetailScreenContent> {
-  final ListingFirestoreService _listingService = ListingFirestoreService();
+  late final ListingFirestoreService _listingService =
+      widget.listingService ?? ListingFirestoreService();
   bool _isLoading = false;
+  bool _deleteDialogOpen = false;
 
   @override
   Widget build(BuildContext context) {
@@ -682,41 +693,28 @@ class _MarketplaceYourProductDetailScreenState
   }
 
   Future<void> _deleteProduct() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Product'),
-        content: const Text('Are you sure you want to delete this product?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      setState(() => _isLoading = true);
-
-      final result = await _listingService.deleteListing(widget.listing.id!);
-
-      if (mounted) {
-        setState(() => _isLoading = false);
+    if (_deleteDialogOpen) return;
+    _deleteDialogOpen = true;
+    try {
+      final deleted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => MarketplaceDeleteListingDialog(
+          onDelete: () => _listingService.deleteListing(widget.listing.id!),
+        ),
+      );
+      if (!mounted) return;
+      if (deleted == true) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message ?? 'Product deleted'),
-            backgroundColor: result.success ? Colors.green : Colors.red,
+          const SnackBar(
+            content: Text('Listing deleted successfully'),
+            backgroundColor: Colors.green,
           ),
         );
-        if (result.success) {
-          Navigator.pop(context);
-        }
+        Navigator.pop(context, true);
       }
+    } finally {
+      _deleteDialogOpen = false;
     }
   }
 }

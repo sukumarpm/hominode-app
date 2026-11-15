@@ -1,0 +1,10 @@
+name: hominode_time
+description: Community wall-time conversion and display shared by Hominode clients.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.9.2
+dependencies:
+  timezone: ^0.10.1
+dev_dependencies:
+  test: ^1.25.0

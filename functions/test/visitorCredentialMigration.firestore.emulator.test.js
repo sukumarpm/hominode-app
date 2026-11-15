@@ -10,7 +10,9 @@ const {resolveVisitorQrCore} = require("../src/visitor_gate");
 const {verifyVisitorCredentialCore} = require("../src/visitor_verification");
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
-const projectId = "demo-hominode-sec006";
+// Migration scans the entire collection. Isolate each run from verification
+// fixtures and earlier runs instead of relying on an empty shared project.
+const projectId = `demo-visitor-${randomUUID().slice(0, 8)}`;
 const hmacKey = "synthetic-emulator-migration-key-at-least-32-bytes";
 const residentPhone = "+639170000000";
 const securityPhone = "+639170000001";
@@ -33,6 +35,8 @@ function invokeMigration({apply = false} = {}) {
   if (apply) args.push("--apply");
   const output = execFileSync(process.execPath, args, {
     encoding: "utf8",
+    timeout: 15_000,
+    killSignal: "SIGKILL",
     env: {
       ...process.env,
       GCLOUD_PROJECT: projectId,
@@ -46,6 +50,7 @@ function invokeMigration({apply = false} = {}) {
 
 test("Firestore migration dry-run is sanitized; synthetic apply is idempotent and retires migrated legacy IDs", {
   skip: !enabled,
+  timeout: 60_000,
 }, async () => {
   const suffix = randomUUID();
   const residentUid = `resident-${suffix}`;

@@ -27,11 +27,12 @@ class _Writes {
   bool deny = false;
   Future<void> write(String uid, Map<String, dynamic> data) async {
     expect(uid, 'resident');
-    if (deny)
+    if (deny) {
       throw FirebaseException(
         plugin: 'cloud_firestore',
         code: 'permission-denied',
       );
+    }
     fields = data;
   }
 }
@@ -54,12 +55,13 @@ class _Images extends Fake implements ResidentImageOperations {
     required String imagePath,
   }) async {
     stages.add('upload');
-    if (fail)
+    if (fail) {
       throw FirebaseException(
         plugin: 'firebase_storage',
         code: 'unauthorized',
         message: 'private-token-and-phone-must-not-be-logged',
       );
+    }
     return 'hominode-image:synthetic-reference';
   }
 
