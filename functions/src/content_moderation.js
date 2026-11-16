@@ -1,5 +1,5 @@
 const {createHash} = require('node:crypto');
-const {FieldValue} = require('firebase-admin/firestore');
+const {FieldValue, FieldPath, Timestamp} = require('firebase-admin/firestore');
 const {HttpsError} = require('firebase-functions/v2/https');
 const {hasVerifiedPhoneAuth} = require('./phone_auth');
 const {operationalAccessFailure, requireOperationalAdmin} = require('./resident_identity');
@@ -113,14 +113,86 @@ async function enrichModerationRows(db, communityId, reports, history) {
   return {
     reports: await Promise.all(reports.map(async r=>({...r,authorName:await name('users',r.authorId,'Resident')}))),
     history: await Promise.all(history.map(async h=> {
-      const r=await reportFor(h.reportId);
+      const hasSnapshot = h.targetType && h.contentSnapshot != null && h.reportReason != null && h.authorName;
+      const r=hasSnapshot ? {} : await reportFor(h.reportId);
       return {...h,targetType:h.targetType || r.targetType || 'content',contentSnapshot:h.contentSnapshot ?? r.contentSnapshot ?? '',
         reportReason:h.reportReason ?? r.reason ?? '',authorName:h.authorName || await name('users',r.authorId,'Resident'),
         actorName:h.actorName || await name('admins',h.actorId,'Community Admin')};
     })),
   };
 }
+// Versioned opt-in contract: legacy Flutter callers retain their existing payloads.
+// Cursor values are query positions, not authorization: every request is authorized
+// and all queries always apply the selected community and search filters.
+const SEARCH_FIELDS = ['action', 'reasonCode', 'postId', 'reportId'];
+const stamp = value => [value.seconds, value.nanoseconds];
+function timestamp(value) {
+  if (!Array.isArray(value) || value.length !== 2 || !Number.isSafeInteger(value[0]) || value[0] < 0 || !Number.isInteger(value[1]) || value[1] < 0 || value[1] >= 1e9) fail('invalid-argument', 'Invalid moderation cursor.');
+  return new Timestamp(value[0], value[1]);
+}
+async function listModerationPageCore({db, auth, data}) {
+  exact(data, ['communityId', 'view', 'pageSize', 'cursor', 'searchField', 'search']);
+  if (!id(data.communityId) || !['summary', 'history', 'reports'].includes(data.view)) fail('invalid-argument', 'Invalid moderation view.');
+  const pageSize = data.pageSize ?? (data.view === 'summary' ? 3 : 10);
+  if (pageSize !== (data.view === 'summary' ? 3 : 10)) fail('invalid-argument', 'Invalid moderation page size.');
+  const search = data.search ?? '';
+  const searchField = data.searchField ?? 'action';
+  if (typeof search !== 'string' || search.length > 128 || search !== search.trim() || !SEARCH_FIELDS.includes(searchField) || (data.view !== 'history' && (search || data.searchField))) fail('invalid-argument', 'Invalid moderation search.');
+  if (search && (searchField === 'action' ? !['hide', 'dismiss'].includes(search) : !id(search))) fail('invalid-argument', 'Use an exact decision action, reason code, post ID or report ID.');
+  const context = key(data.communityId, data.view, pageSize, searchField, search);
+  let boundary = Timestamp.now(), after;
+  if (data.cursor != null) {
+    try {
+      if (data.view === 'summary' || typeof data.cursor !== 'string' || data.cursor.length > 2048) throw Error();
+      const cursor = JSON.parse(Buffer.from(data.cursor, 'base64url').toString('utf8'));
+      if (cursor.v !== 1 || cursor.context !== context || (cursor.id !== null && !id(cursor.id))) throw Error();
+      boundary = timestamp(cursor.boundary);
+      after = cursor.id === null ? undefined : [timestamp(cursor.after), cursor.id];
+      if (boundary.toMillis() > Date.now() || (after && after[0].valueOf() > boundary.valueOf())) throw Error();
+    } catch { fail('invalid-argument', 'Invalid moderation cursor. Refresh the list.'); }
+  }
+  // A read-only transaction gives each page and its count the same read snapshot.
+  const result = await db.runTransaction(async tx => {
+    let readTime;
+    await requireOperationalAdmin(db, auth, data.communityId, {get:async ref => {
+      const snapshot = await tx.get(ref);
+      readTime = snapshot.readTime;
+      return snapshot;
+    }});
+    // Use Firestore's clock rather than the function host's clock for the first
+    // page. This also excludes decisions committed after this read snapshot.
+    if (data.cursor == null && readTime) boundary = readTime;
+    const page = async kind => {
+      let base = db.collection(kind === 'reports' ? 'moderationReports' : 'moderationAudit').where('communityId', '==', data.communityId);
+      if (kind === 'reports') base = base.where('status', '==', 'open');
+      if (kind === 'history' && search) base = base.where(searchField, '==', search);
+      const ordered = base.where('createdAt', '<=', boundary).orderBy('createdAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
+      const query = after ? ordered.startAfter(...after) : ordered;
+      const [snapshot, count, allCount] = await Promise.all([tx.get(query.limit(pageSize + 1)), tx.get(ordered.count()), tx.get(base.count())]);
+      const docs = snapshot.docs.slice(0, pageSize);
+      const last = docs.at(-1);
+      const nextCursor = data.view !== 'summary' && snapshot.size > pageSize && last ? Buffer.from(JSON.stringify({v:1, context, boundary:stamp(boundary), after:stamp(last.data().createdAt), id:last.id})).toString('base64url') : null;
+      // Explicit response fields exclude reporter identities and notification recipients.
+      const rows = docs.map(doc => {
+        const r = doc.data();
+        const fields = kind === 'reports'
+          ? ['communityId','postId','commentId','targetType','authorId','reason','contentSnapshot','status']
+          : ['communityId','reportId','postId','commentId','targetType','authorId','authorName','action','actorId','actorName','reasonCode','reasonLabel','publicExplanation','publicReason','internalNote','reportReason','contentSnapshot'];
+        return {id:doc.id, ...Object.fromEntries(fields.filter(field => r[field] !== undefined).map(field => [field, r[field]])), createdAtMs:ms(r.createdAt)};
+      });
+      const pageCursor = Buffer.from(JSON.stringify({v:1, context, boundary:stamp(boundary), after:after ? stamp(after[0]) : null, id:after?.[1] ?? null})).toString('base64url');
+      return {rows, page:{pageCursor, total:count.data().count, totalCurrent:allCount.data().count, nextCursor, snapshotAtMs:boundary.toMillis()}};
+    };
+    const reports = data.view !== 'history' ? await page('reports') : null;
+    const history = data.view !== 'reports' ? await page('history') : null;
+    return {reports, history};
+  }, {readOnly:true});
+  const enriched = await enrichModerationRows(db, data.communityId, result.reports?.rows || [], result.history?.rows || []);
+  return {...enriched, reportsPage:result.reports?.page ?? null, historyPage:result.history?.page ?? null};
+}
+
 async function listModerationReportsCore({db, auth, data}) {
+  if (data?.view != null) return listModerationPageCore({db, auth, data});
   exact(data, ['communityId', 'historyOffset']);
   if (!id(data.communityId)) fail('invalid-argument', 'Community is required.');
   const historyOffset = data.historyOffset ?? 0;
@@ -215,4 +287,4 @@ async function readVisibleWallCore({db, auth, data}) {
   if (posts.size > 1000) fail('resource-exhausted', 'Post limit exceeded.');
   return {posts: [...posts.values()].filter(d => visible(d.data()) && !excluded.has(d.data().authorId)).map(d => { const {createdAt, updatedAt, ...value} = d.data(); return {id:d.id, authorId:value.authorId || '', authorName:value.authorName || '', profileImage:value.profileImage || '', flat:value.flat || '', content:value.content || '', imageUrl:value.imageUrl || null, imageUrls:value.imageUrls || [], likes:value.likes || 0, likedBy:value.likedBy || [], comments:value.comments || 0, createdAtMs:ms(createdAt)}; })};
 }
-module.exports = {reportContentCore, blockContentUserCore, listBlockedContentUsersCore, listModerationReportsCore, resolveModerationReportCore, readVisibleWallCore};
+module.exports = {reportContentCore, blockContentUserCore, listBlockedContentUsersCore, listModerationReportsCore, listModerationPageCore, resolveModerationReportCore, readVisibleWallCore};
