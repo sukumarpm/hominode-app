@@ -108,6 +108,12 @@ class _Db extends Fake implements FirebaseFirestore {
   };
   final changes = <String, StreamController<void>>{};
   final queries = <({String collection, Object field, Object? value})>[];
+  final getCalls = <String, int>{};
+  Duration getDelay = Duration.zero;
+  int activeGetCalls = 0;
+  int maxConcurrentGetCalls = 0;
+  DateTime? firstGetStartedAt;
+  DateTime? lastGetCompletedAt;
   @override
   CollectionReference<Map<String, dynamic>> collection(String path) =>
       _Query(this, path);
@@ -138,9 +144,23 @@ class _Query extends Fake implements CollectionReference<Map<String, dynamic>> {
 
   // Deliberately include foreign rows to test the client's defense-in-depth filter.
   @override
-  Future<QuerySnapshot<Map<String, dynamic>>> get([
-    GetOptions? options,
-  ]) async => _Snapshot(db.rows[name] ?? []);
+  Future<QuerySnapshot<Map<String, dynamic>>> get([GetOptions? options]) async {
+    db.getCalls.update(
+      name,
+      (currentCount) => currentCount + 1,
+      ifAbsent: () => 1,
+    );
+    db.firstGetStartedAt ??= DateTime.now();
+    db.activeGetCalls++;
+    if (db.activeGetCalls > db.maxConcurrentGetCalls) {
+      db.maxConcurrentGetCalls = db.activeGetCalls;
+    }
+    if (db.getDelay > Duration.zero) await Future<void>.delayed(db.getDelay);
+    db.activeGetCalls--;
+    db.lastGetCompletedAt = DateTime.now();
+    return _Snapshot(db.rows[name] ?? []);
+  }
+
   @override
   Stream<QuerySnapshot<Map<String, dynamic>>> snapshots({
     bool includeMetadataChanges = false,
@@ -328,6 +348,124 @@ void main() {
       expect(await dashboard.getPendingVisitorsCount('C1').first, 1);
     },
   );
+
+  test('dashboard preserves totals and avoids rereading visitor snapshots', () async {
+    final db = _Db()..getDelay = const Duration(milliseconds: 10);
+    db.rows['flats'] = [
+      {'communityId': 'C1'},
+      {'communityId': 'C1'},
+    ];
+    db.rows['complaints'] = [
+      {'communityId': 'C1', 'status': 'pending'},
+      {'communityId': 'C1', 'status': 'in-progress'},
+      {'communityId': 'C1', 'status': 'resolved'},
+    ];
+    final now = DateTime.now();
+    db.rows['bills'] = [
+      {
+        'communityId': 'C1',
+        'status': 'paid',
+        'paidAt': Timestamp.fromDate(now),
+        'amount': 100,
+      },
+      {
+        'communityId': 'C1',
+        'status': 'paid',
+        'paidAt': Timestamp.fromDate(now),
+        'amount': 250,
+      },
+      {
+        'communityId': 'C1',
+        'status': 'pending',
+        'paidAt': Timestamp.fromDate(now),
+        'amount': 900,
+      },
+    ];
+    addTearDown(db.close);
+    final dashboard = DashboardService(
+      firestore: db,
+      billingService: _Billing(),
+    );
+    final events = <DashboardStats>[];
+    final subscription = dashboard.getDashboardStats('C1').listen(events.add);
+    addTearDown(subscription.cancel);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    expect(events, isNotEmpty);
+    expect(events.first.totalResidents, 1);
+    expect(events.first.totalFlats, 2);
+    expect(events.first.pendingVisitors, 2);
+    expect(events.first.pendingComplaints, 2);
+    expect(events.first.monthlyCollection, 350);
+    expect(db.getCalls, {'flats': 1, 'complaints': 1, 'bills': 1});
+    expect(db.maxConcurrentGetCalls, 3);
+    for (final collection in [
+      'users',
+      'visitors',
+      'flats',
+      'complaints',
+      'bills',
+    ]) {
+      expect(
+        db.queries.any(
+          (query) =>
+              query.collection == collection &&
+              query.field == 'communityId' &&
+              query.value == 'C1',
+        ),
+        isTrue,
+        reason: '$collection dashboard reads stay community-scoped',
+      );
+    }
+    // Controlled 10 ms per mocked Firestore get; this is a local harness
+    // measurement, not a production latency measurement.
+    // ignore: avoid_print
+    print(
+      'Dashboard initial: reads=${db.getCalls.values.fold<int>(0, (a, b) => a + b)} '
+      'syntheticGetSpanMs=${db.lastGetCompletedAt!.difference(db.firstGetStartedAt!).inMilliseconds} '
+      'maxConcurrentGets=${db.maxConcurrentGetCalls}',
+    );
+
+    db.getCalls.clear();
+    db.firstGetStartedAt = null;
+    db.lastGetCompletedAt = null;
+    db.maxConcurrentGetCalls = 0;
+    db.rows['visitors']![0] = {
+      ...db.rows['visitors']![0],
+      'status': 'approved',
+      'isApproved': true,
+    };
+    db.emit('visitors');
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(events.last.pendingVisitors, 1);
+    expect(events.last.totalFlats, 2);
+    expect(events.last.pendingComplaints, 2);
+    expect(events.last.monthlyCollection, 350);
+    expect(db.getCalls, {'flats': 1, 'complaints': 1, 'bills': 1});
+    expect(db.maxConcurrentGetCalls, 3);
+    // ignore: avoid_print
+    print(
+      'Dashboard visitor refresh: reads=${db.getCalls.values.fold<int>(0, (a, b) => a + b)} '
+      'syntheticGetSpanMs=${db.lastGetCompletedAt!.difference(db.firstGetStartedAt!).inMilliseconds} '
+      'maxConcurrentGets=${db.maxConcurrentGetCalls}',
+    );
+    await subscription.cancel();
+  });
+
+  test('dashboard stats stream is reused until the community changes', () {
+    final createdFor = <String>[];
+    final cache = DashboardStatsStreamCache((communityId) {
+      createdFor.add(communityId);
+      return Stream<DashboardStats>.empty();
+    });
+
+    final first = cache.forCommunity('C1');
+    expect(identical(cache.forCommunity('C1'), first), isTrue);
+    final switched = cache.forCommunity('C2');
+    expect(identical(switched, first), isFalse);
+    expect(identical(cache.forCommunity('C2'), switched), isTrue);
+    expect(createdFor, ['C1', 'C2']);
+  });
 
   Future<void> mount(
     WidgetTester tester,

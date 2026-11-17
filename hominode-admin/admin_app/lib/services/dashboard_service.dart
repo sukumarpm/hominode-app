@@ -3,6 +3,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'billing_service.dart';
 import 'visitor_lifecycle.dart';
 
+class _DashboardSnapshots {
+  const _DashboardSnapshots({required this.users, required this.visitors});
+
+  final QuerySnapshot<Map<String, dynamic>> users;
+  final QuerySnapshot<Map<String, dynamic>> visitors;
+}
+
 class DashboardService {
   DashboardService({
     FirebaseFirestore? firestore,
@@ -14,18 +21,22 @@ class DashboardService {
 
   // Visitor decisions and gate transitions must refresh Home counts even when
   // the resident roster has not changed. Retain the existing financial reads.
-  Stream<QuerySnapshot<Map<String, dynamic>>> _dashboardChanges(
-    String communityId,
-  ) {
-    late StreamController<QuerySnapshot<Map<String, dynamic>>> controller;
+  Stream<_DashboardSnapshots> _dashboardChanges(String communityId) {
+    late StreamController<_DashboardSnapshots> controller;
     final subscriptions = <StreamSubscription<dynamic>>[];
     QuerySnapshot<Map<String, dynamic>>? users;
-    var visitorsReady = false;
+    QuerySnapshot<Map<String, dynamic>>? visitors;
     void refresh() {
-      if (users != null && visitorsReady) controller.add(users!);
+      final currentUsers = users;
+      final currentVisitors = visitors;
+      if (currentUsers != null && currentVisitors != null) {
+        controller.add(
+          _DashboardSnapshots(users: currentUsers, visitors: currentVisitors),
+        );
+      }
     }
 
-    controller = StreamController<QuerySnapshot<Map<String, dynamic>>>(
+    controller = StreamController<_DashboardSnapshots>(
       onListen: () {
         subscriptions.add(
           _firestore
@@ -43,8 +54,8 @@ class DashboardService {
               .collection('visitors')
               .where('communityId', isEqualTo: communityId)
               .snapshots()
-              .listen((_) {
-                visitorsReady = true;
+              .listen((snapshot) {
+                visitors = snapshot;
                 refresh();
               }, onError: controller.addError),
         );
@@ -108,50 +119,39 @@ class DashboardService {
 
   // Get dashboard statistics (combined) filtered by adminId
   Stream<DashboardStats> getDashboardStats(String communityId) {
-    return _dashboardChanges(communityId).asyncMap((usersSnapshot) async {
-      // Filter by adminId in memory
-      final totalResidents = usersSnapshot.docs.length;
+    return _dashboardChanges(communityId).asyncMap((snapshots) async {
+      final totalResidents = snapshots.users.docs.length;
+      final reads = await Future.wait([
+        _firestore
+            .collection('flats')
+            .where('communityId', isEqualTo: communityId)
+            .get(),
+        _firestore
+            .collection('complaints')
+            .where('communityId', isEqualTo: communityId)
+            .get(),
+        _firestore
+            .collection('bills')
+            .where('communityId', isEqualTo: communityId)
+            .get(),
+      ]);
+      final totalFlats = reads[0].docs.length;
+      final complaintsSnapshot = reads[1];
+      final billsSnapshot = reads[2];
 
-      // Get total flats
-      final flatsSnapshot = await _firestore
-          .collection('flats')
-          .where('communityId', isEqualTo: communityId)
-          .get();
-      // Filter by adminId in memory
-      final totalFlats = flatsSnapshot.docs.length;
-
-      // Get pending visitors
-      final visitorsSnapshot = await _firestore
-          .collection('visitors')
-          .where('communityId', isEqualTo: communityId)
-          .get();
-      // Filter by adminId and status in memory
       final pendingVisitors = pendingVisitorCount(
-        visitorsSnapshot.docs.map((doc) => doc.data()),
+        snapshots.visitors.docs.map((doc) => doc.data()),
         communityId,
       );
-
-      // Get pending complaints
-      final complaintsSnapshot = await _firestore
-          .collection('complaints')
-          .where('communityId', isEqualTo: communityId)
-          .get();
-      // Filter by adminId and status in memory
       final pendingComplaints = complaintsSnapshot.docs.where((doc) {
         final data = doc.data();
         final status = data['status'] as String?;
         return status == 'pending' || status == 'in-progress';
       }).length;
 
-      // Get this month's collection
       final now = DateTime.now();
       final startOfMonth = DateTime(now.year, now.month, 1);
       final endOfMonth = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
-
-      final billsSnapshot = await _firestore
-          .collection('bills')
-          .where('communityId', isEqualTo: communityId)
-          .get();
 
       double monthlyCollection = 0;
       for (var doc in billsSnapshot.docs) {
@@ -178,6 +178,24 @@ class DashboardService {
         monthlyCollection: monthlyCollection,
       );
     });
+  }
+}
+
+/// Reuses a dashboard feed across widget rebuilds while switching feeds when
+/// the selected community changes.
+class DashboardStatsStreamCache {
+  DashboardStatsStreamCache(this._createStream);
+
+  final Stream<DashboardStats> Function(String communityId) _createStream;
+  String? _communityId;
+  Stream<DashboardStats>? _stream;
+
+  Stream<DashboardStats> forCommunity(String communityId) {
+    if (_stream == null || _communityId != communityId) {
+      _communityId = communityId;
+      _stream = _createStream(communityId);
+    }
+    return _stream!;
   }
 }
 

@@ -1373,6 +1373,8 @@ class AdminDashboardPage extends StatefulWidget {
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final NotificationService _notificationService = NotificationService();
   final DashboardService _dashboardService = DashboardService();
+  late final DashboardStatsStreamCache _dashboardStatsStreams =
+      DashboardStatsStreamCache(_dashboardService.getDashboardStats);
 
   String _adminName = 'Admin';
   String _adminRole = 'Administrator';
@@ -1839,7 +1841,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Widget _buildDashboardStats() => AdminHomeStatistics(
-    statsStream: _dashboardService.getDashboardStats(_communityId),
+    statsStream: _dashboardStatsStreams.forCommunity(_communityId),
   );
 
   Widget _buildQuickActions() {
