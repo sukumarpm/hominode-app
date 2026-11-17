@@ -21,6 +21,7 @@ import 'events_announcements_screen.dart';
 import 'src/services/apartment_images_service.dart';
 import 'src/widgets/resident_photo_galleries.dart';
 import 'src/services/bill_firestore_service.dart';
+import 'src/services/resident_dashboard_data_loader.dart';
 import 'src/services/recent_activity_flow_function.dart';
 import 'src/services/subscription_entitlement_service.dart';
 import 'src/services/tenant_resolution_service.dart';
@@ -127,25 +128,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
           : '';
 
       final communityId = (userData['communityId'] as String?)?.trim();
-      if (communityId?.isNotEmpty == true) {
-        try {
+      final dashboardData = await loadResidentDashboardSecondaryData(
+        communityId: communityId,
+        initialOrganizationName: organizationName,
+        loadCommunityName: (id) async {
           final communityDoc = await FirebaseFirestore.instance
               .collection('communities')
-              .doc(communityId)
+              .doc(id)
               .get();
-          final communityName = (communityDoc.data()?['name'] as String?)
-              ?.trim();
-          if (communityDoc.exists && communityName?.isNotEmpty == true) {
-            organizationName = communityName!;
-          }
-        } catch (error) {
-          debugPrint(
-            'Dashboard community lookup failed for $communityId: $error',
-          );
-        }
-      }
-
-      final bills = await _billService.getBills();
+          if (!communityDoc.exists) return null;
+          return (communityDoc.data()?['name'] as String?)?.trim();
+        },
+        loadBills: _billService.getBills,
+        loadVisitors: _visitorService.getMyVisitors,
+        onCommunityLookupError: (error) => debugPrint(
+          'Dashboard community lookup failed for $communityId: $error',
+        ),
+      );
+      organizationName = dashboardData.organizationName;
+      final bills = dashboardData.bills;
       final payableBills =
           bills.where((bill) {
             if (BillFirestoreService.isV2Bill(bill)) {
@@ -169,7 +170,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           });
       final currentBill = payableBills.isEmpty ? null : payableBills.first;
 
-      final visitors = await _visitorService.getMyVisitors();
+      final visitors = dashboardData.visitors;
 
       final now = DateTime.now();
 
