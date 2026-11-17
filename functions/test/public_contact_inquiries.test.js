@@ -2,6 +2,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { normalizeInquiry, mailBody, verifyCaptcha, handleInquiry } = require("../src/public_contact_inquiries");
+const {captureConsoleErrors} = require("./helpers/capture_console_errors");
 const base = {
   name: "Sample User", email: "hello@example.com", phone: "+639991234567",
   orgName: "Green Wave", communityType: "Apartment Community", unitCount: "100–250",
@@ -66,6 +67,55 @@ test("SMTP failure records email_failed and does not claim success", async () =>
   const h=harness(base,{ options: { sendMail: async ()=>{ throw new Error("SMTP down"); } } });
   await handleInquiry(h.req,h.res,h.options);
   assert.equal(h.res.statusCode,503); assert.equal(h.records[0].status,"email_failed");
+});
+
+test("provider, persistence, and email exceptions are logged without exception details", async () => {
+  const sensitive = "SYNTHETIC_SMTP_SECRET captcha-token synthetic-phone synthetic-email";
+  const providerError = Object.assign(new Error(`${sensitive} provider response`), {
+    stack: `${sensitive} stack`,
+    cause: {response: {body: `${sensitive} nested response`}},
+  });
+  const captcha = harness(base, {options: {verifyCaptcha: async () => { throw providerError; }}});
+  const captchaResult = await captureConsoleErrors(() => handleInquiry(captcha.req, captcha.res, captcha.options));
+  assert.equal(captcha.res.statusCode, 503);
+  assert.deepEqual(captchaResult.calls[0], ["Operational failure", {
+    category: "captcha_verification_failed", operation: "captcha_verification",
+  }]);
+
+  const persistence = harness(base);
+  persistence.options.db = {collection() { return {doc() { return {create: async () => { throw providerError; }}; }}; }};
+  const persistenceResult = await captureConsoleErrors(() => handleInquiry(persistence.req, persistence.res, persistence.options));
+  assert.equal(persistence.res.statusCode, 503);
+  assert.equal(persistence.emails.length, 0);
+  assert.equal(persistenceResult.calls[0][1].category, "firestore_persistence_failed");
+  assert.match(persistenceResult.calls[0][1].correlationId, /^HD-INQ-\d{8}-[A-F0-9]{10}$/);
+
+  const email = harness(base, {options: {sendMail: async () => { throw providerError; }}});
+  const emailResult = await captureConsoleErrors(() => handleInquiry(email.req, email.res, email.options));
+  assert.equal(email.res.statusCode, 503);
+  assert.equal(email.records[0].status, "email_failed");
+  assert.equal(emailResult.calls[0][1].category, "email_delivery_failed");
+  assert.match(emailResult.calls[0][1].correlationId, /^HD-INQ-\d{8}-[A-F0-9]{10}$/);
+
+  for (const result of [captchaResult, persistenceResult, emailResult]) {
+    assert.doesNotMatch(JSON.stringify(result.calls), /SYNTHETIC_SMTP_SECRET|captcha-token|synthetic-phone|synthetic-email|provider response|nested response/);
+  }
+});
+
+test("post-email status update failures retain success response and log a safe reference", async () => {
+  const h = harness();
+  h.options.db = {collection() { return {doc(id) { return {
+    async create(data) { h.records.push({...data, reference: id}); },
+    async update() { throw Object.assign(new Error("SYNTHETIC_STATUS_FAILURE_SECRET"), {cause: {response: "SYNTHETIC_NESTED_SECRET"}}); },
+  }; }}; }};
+  const result = await captureConsoleErrors(() => handleInquiry(h.req, h.res, h.options));
+  assert.equal(h.res.statusCode, 200);
+  assert.equal(h.emails.length, 1);
+  assert.deepEqual(result.calls[0], ["Operational failure", {
+    category: "email_status_update_failed", operation: "email_status_update",
+    correlationId: h.records[0].reference,
+  }]);
+  assert.doesNotMatch(JSON.stringify(result.calls), /SYNTHETIC_STATUS_FAILURE_SECRET|SYNTHETIC_NESTED_SECRET/);
 });
 test("missing server secrets returns service unavailable", async () => {
   const h=harness(base,{ options: { captchaSecret: "" } });

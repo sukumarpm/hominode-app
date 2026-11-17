@@ -7,6 +7,7 @@ const {
 } = require("../src/resident_bulk_import");
 const {registerResidentCore} = require("../src/register_resident");
 const {residentOnboardingId} = require("../src/resident_import_ids");
+const {captureConsoleErrors} = require("./helpers/capture_console_errors");
 
 function phoneAuth(uid, phone = "+14155550100") {
   return {uid, token: {phone_number: phone, firebase: {sign_in_provider: "phone"}}};
@@ -266,6 +267,25 @@ test("same job and row retry is idempotent", async () => {
   ], {importJobId: "job_20260825_retry"}));
   assert.equal(forgedReplacement.rows[0].code, "idempotency_conflict");
   assert.equal([...db.values.keys()].filter((path) => path.startsWith("residentOnboarding/")).length, 1);
+});
+
+test("bulk row commit failures retain row results and log no exception details", async () => {
+  const db = fakeDb(baseSeed);
+  db.runTransaction = async () => {
+    const error = Object.assign(new Error("SYNTHETIC_SMTP_SECRET synthetic-phone captcha-token"), {
+      code: "SYNTHETIC_CODE_SECRET",
+      stack: "SYNTHETIC_SMTP_SECRET synthetic-email stack",
+      cause: {response: {body: "SYNTHETIC_PROVIDER_PAYLOAD"}},
+    });
+    throw error;
+  };
+  const result = await captureConsoleErrors(() => importResidentsBulkCore(args(db, [row()], {importJobId: "job_safe_log"})));
+  assert.equal(result.value.rows[0].status, "error");
+  assert.equal(result.value.rows[0].code, "SYNTHETIC_CODE_SECRET");
+  assert.deepEqual(result.calls, [["Operational failure", {
+    category: "resident_import_row_failed", operation: "resident_import_row", rowNumber: 2,
+  }]]);
+  assert.doesNotMatch(JSON.stringify(result.calls), /SYNTHETIC_SMTP_SECRET|SYNTHETIC_CODE_SECRET|synthetic-phone|captcha-token|synthetic-email|SYNTHETIC_PROVIDER_PAYLOAD/);
 });
 
 test("retry cannot introduce a row number outside the original job", async () => {

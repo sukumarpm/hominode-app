@@ -2,6 +2,7 @@
 
 // Public product enquiries; completely separate from account deletion records.
 const { randomBytes } = require("node:crypto");
+const { logOperationalFailure } = require("./safe_operational_log");
 const SUPPORT = "hominodecare@gmail.com";
 const MAX_BODY = 8_000;
 const ALLOWED_ORIGINS = new Set([
@@ -93,8 +94,8 @@ async function handleInquiry(req, res, options = {}) {
   try {
     const valid = await (options.verifyCaptcha || verifyCaptcha)(data.captchaToken, options.captchaSecret, req.ip);
     if (!valid) return res.status(400).json({ error: "Verification failed or expired. Please retry." });
-  } catch (error) {
-    console.error("Website inquiry verification unavailable", error);
+  } catch {
+    logOperationalFailure("captcha_verification_failed");
     return res.status(503).json({ error: "Verification is temporarily unavailable." });
   }
   const { captchaToken, ...details } = data;
@@ -102,8 +103,8 @@ async function handleInquiry(req, res, options = {}) {
   const doc = options.db.collection("publicContactInquiries").doc(ref);
   try {
     await doc.create({ ...details, reference: ref, status: "pending_email", submittedAt: options.timestamp() });
-  } catch (error) {
-    console.error("Website inquiry persistence failed", error);
+  } catch {
+    logOperationalFailure("firestore_persistence_failed", {correlationId: ref});
     return res.status(503).json({ error: "Couldn't save your inquiry. Please retry." });
   }
   try {
@@ -112,14 +113,14 @@ async function handleInquiry(req, res, options = {}) {
       subject: `[Hominode] Website inquiry ${ref}`,
       text: mailBody(details, ref),
     }, options.smtpPassword);
-  } catch (error) {
-    console.error("Website inquiry email failed", ref, error);
+  } catch {
+    logOperationalFailure("email_delivery_failed", {correlationId: ref});
     try { await doc.update({ status: "email_failed", updatedAt: options.timestamp() }); }
-    catch (updateError) { console.error(updateError); }
+    catch { logOperationalFailure("email_status_update_failed", {correlationId: ref}); }
     return res.status(503).json({ error: "Inquiry could not be delivered. Please retry later." });
   }
   try { await doc.update({ status: "received", emailSentAt: options.timestamp() }); }
-  catch (error) { console.error("Inquiry email sent but status update failed", ref, error); }
+  catch { logOperationalFailure("email_status_update_failed", {correlationId: ref}); }
   return res.status(200).json({ status: "received", reference: ref });
 }
 module.exports = { BadInput, normalizeInquiry, reference, mailBody, verifyCaptcha, handleInquiry, ALLOWED_ORIGINS };

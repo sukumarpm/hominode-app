@@ -3,6 +3,7 @@ const {FieldValue} = require("firebase-admin/firestore");
 const {parsePhoneNumberFromString, isSupportedCountry} = require("libphonenumber-js/max");
 const {RegistrationError, verifiedPhoneAuth} = require("./register_resident");
 const {importRowId, residentOnboardingId} = require("./resident_import_ids");
+const {logOperationalFailure} = require("./safe_operational_log");
 
 const MAX_ROWS = 500;
 const REQUIRED_ROW_KEYS = ["building", "unit", "residentName", "phoneNumber", "residentType"];
@@ -428,7 +429,7 @@ async function mapLimited(items, limit, action) {
       try {
         output[index] = await action(items[index]);
       } catch (error) {
-        console.error("Resident bulk import row failed.", {rowNumber: items[index].rowNumber, error});
+        logOperationalFailure("resident_import_row_failed", {rowNumber: items[index].rowNumber});
         output[index] = {...publicError(items[index].rowNumber, error.code || "row_write_failed",
           error instanceof RegistrationError ? error.message : "This row could not be imported. It is safe to retry.", items[index]), importRowId: items[index].importRowId};
       }

@@ -2,6 +2,7 @@
 
 // Public, manually reviewed account-deletion requests. Never delete a user here.
 const { randomBytes } = require("node:crypto");
+const { logOperationalFailure } = require("./safe_operational_log");
 const SUPPORT_ADDRESS = "hominodecare@gmail.com";
 const MAX_JSON_LENGTH = 8_000;
 const ALLOWED_HOSTNAMES = new Set([
@@ -104,8 +105,8 @@ async function handleDeletionRequest(req, res, options = {}) {
   try {
     const isHuman = await (options.verifyCaptcha || verifyCaptcha)(input.captchaToken, captchaSecret, req.ip);
     if (!isHuman) return res.status(400).json({ error: "Verification expired or failed. Please retry." });
-  } catch (e) {
-    console.error("Deletion request verification failed", e);
+  } catch {
+    logOperationalFailure("captcha_verification_failed");
     return res.status(503).json({ error: "Verification is temporarily unavailable. Please retry." });
   }
 
@@ -116,8 +117,8 @@ async function handleDeletionRequest(req, res, options = {}) {
   const doc = db.collection("publicAccountDeletionRequests").doc(ref);
   try {
     await doc.create({ ...details, reference: ref, status: "pending_email", requestedAt: options.timestamp() });
-  } catch (e) {
-    console.error("Account deletion request persistence failed", e);
+  } catch {
+    logOperationalFailure("firestore_persistence_failed", {correlationId: ref});
     return res.status(503).json({ error: "Request could not be saved. Please retry." });
   }
 
@@ -129,13 +130,14 @@ async function handleDeletionRequest(req, res, options = {}) {
       subject: `[Hominode] Account deletion request ${ref}`,
       text: emailBody(details, ref),
     }, smtpPassword);
-  } catch (e) {
-    console.error("Account deletion request email delivery failed", ref, e);
-    try { await doc.update({ status: "email_failed", updatedAt: options.timestamp() }); } catch (ignored) { console.error(ignored); }
+  } catch {
+    logOperationalFailure("email_delivery_failed", {correlationId: ref});
+    try { await doc.update({ status: "email_failed", updatedAt: options.timestamp() }); }
+    catch { logOperationalFailure("email_status_update_failed", {correlationId: ref}); }
     return res.status(503).json({ error: "Could not complete submission. Please retry later." });
   }
   try { await doc.update({ status: "received", emailSentAt: options.timestamp() }); }
-  catch (e) { console.error("Email delivered but status update failed", ref, e); }
+  catch { logOperationalFailure("email_status_update_failed", {correlationId: ref}); }
   return res.status(200).json({ status: "received", reference: ref });
 }
 module.exports = { InputError, normalizeRequest, makeReference, emailBody, verifyCaptcha, handleDeletionRequest, ALLOWED_ORIGINS };
