@@ -17,6 +17,7 @@ class MainActivity : FlutterActivity() {
     private val upiRequestCode = 7641
     private var pendingUpiResult: MethodChannel.Result? = null
 
+    @Suppress("DEPRECATION")
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, upiChannel)
@@ -38,7 +39,6 @@ class MainActivity : FlutterActivity() {
                 try {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(paymentUri))
                     pendingUpiResult = result
-                    @Suppress("DEPRECATION")
                     startActivityForResult(intent, upiRequestCode)
                 } catch (_: ActivityNotFoundException) {
                     pendingUpiResult = null
