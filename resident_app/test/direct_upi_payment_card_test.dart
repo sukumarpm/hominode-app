@@ -141,6 +141,75 @@ void main() {
     expect(find.text('Payment paid'), findsNothing);
   });
 
+  testWidgets('V2 manual fallback uses I Have Paid and retains prepared bill data', (
+    tester,
+  ) async {
+    final v2Preparation = DirectUpiPaymentPreparation(
+      billId: 'monthly_v2_test_bill',
+      communityId: 'test-community',
+      residentId: 'test-resident',
+      amount: 1900,
+      amountMinor: 190000,
+      paymentAmountMinor: 190000,
+      outstandingAmountMinor: 190000,
+      schemaVersion: 2,
+      currentRevisionId: 'test-revision',
+      vpa: 'association@upi',
+      payeeName: 'Test Community',
+      paymentUri: Uri(
+        scheme: 'upi',
+        host: 'pay',
+        queryParameters: {
+          'pa': 'association@upi',
+          'pn': 'Test Community',
+          'am': '1900.00',
+          'cu': 'INR',
+          'tn': 'HN Maint Nov26 abc123',
+        },
+      ),
+    );
+    DirectUpiPaymentPreparation? confirmed;
+    var launches = 0;
+    await tester.pumpWidget(
+      withEnglishLocalization(
+        (context) => localizedMaterialApp(
+          context,
+          home: Scaffold(
+            body: DirectUpiPaymentCard(
+              billId: v2Preparation.billId,
+              preparePayment: (_, _, _) async => v2Preparation,
+              launchPayment: (_) async {
+                launches++;
+                return false; // No installed UPI app in the test emulator.
+              },
+              onSubmitProof: () async =>
+                  fail('V2 must submit the prepared payment details'),
+              onSubmitPreparedProof: (preparation) async {
+                confirmed = preparation;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pay via UPI'));
+    await tester.pumpAndSettle();
+    expect(launches, 1);
+    expect(find.text('₹1900.00'), findsOneWidget);
+    expect(find.text('HN Maint Nov26 abc123'), findsOneWidget);
+    expect(find.text('I Have Paid'), findsOneWidget);
+    expect(find.text('Submit payment proof'), findsNothing);
+    expect(confirmed, isNull);
+    await tester.tap(find.text('I Have Paid'));
+    await tester.pumpAndSettle();
+    expect(confirmed, same(v2Preparation));
+    expect(confirmed?.schemaVersion, 2);
+    expect(confirmed?.paymentAmountMinor, 190000);
+    // The onSubmitPreparedProof callback is injected. This test makes no
+    // network call and never creates or settles a real bill.
+  });
+
   testWidgets('does not report on return until resident confirms and warns before retry', (tester) async {
     var launches = 0;
     var reports = 0;
