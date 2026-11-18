@@ -126,8 +126,6 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
     expect(prepareCalls, 1);
@@ -155,8 +153,6 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Pay via UPI'));
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     expect(reports, 0);
     await tester.tap(find.text('Retry payment'));
