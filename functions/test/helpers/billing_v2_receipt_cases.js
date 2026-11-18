@@ -1,13 +1,54 @@
 const assert = require('node:assert/strict');
 const {fixture, now} = require('./payment_v2_cases');
 const {getResidentBillingV2ReceiptCore: getReceipt} = require('../../src/billing_v2_receipt');
-const {rejectPaymentProofV2Core: reject} = require('../../src/payment_v2');
+const {rejectPaymentProofV2Core: reject,
+  reportDirectUpiPaymentV2Core: report,
+  verifyReportedDirectUpiV2Core: verifyBank} = require('../../src/payment_v2');
 const {createMonthlyBillingBatchV2Core: issue} = require('../../src/billing_batch');
 
 const residentAuth = {uid: 'r', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
 const receipt = (f, transactionId, auth = residentAuth) => getReceipt({db: f.db, auth, data: {transactionId}});
 
 function receiptCases(test, environment) {
+  test('screenshot-free UPI report produces an official receipt only after Admin bank confirmation', async () => {
+    const f = await fixture(environment);
+    const bill = await f.get(`bills/${f.bills[0]}`);
+    const reportData = {billId: f.bills[0], submittedAmountMinor: 1000,
+      submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'receipt-bank-report'};
+    const pending = await report({db: f.db, auth: residentAuth, now, data: reportData});
+    assert.equal(pending.status, 'pending');
+    assert.equal(pending.receiptPath, null);
+    assert.equal((await f.rows('paymentTransactions')).length, 0);
+    assert.equal((await f.rows('paymentSettlementsV2')).length, 0);
+    await assert.rejects(receipt(f, pending.paymentId), {code: 'not-found'});
+    await assert.rejects(receipt(f, 'not-settled'), {code: 'not-found'});
+    const confirmData = {paymentId: pending.paymentId, bankCreditReference: 'BANK-RECEIPT-555',
+      bankCreditDate: '2030-01-15', confirmedAmountMinor: 1000, bankCreditConfirmed: true};
+    const adminAuth = {uid: 'a', token: {phone_number: '+639171234567', firebase: {sign_in_provider: 'phone'}}};
+    const settled = await verifyBank({db: f.db, auth: adminAuth, now, data: confirmData});
+    assert.equal(settled.success, true);
+    const before = await f.financialState();
+    const value = await receipt(f, settled.transactionId);
+    assert.equal(value.receiptId, `HOMINODE-V2-${settled.transactionId}`);
+    assert.equal(value.transactionId, settled.transactionId);
+    assert.equal(value.moneyReceivedMinor, 1000);
+    assert.equal(value.confirmedAmountMinor, 1000);
+    assert.equal(value.claimedAmountMinor, 1000);
+    assert.equal(value.amountMismatch, false);
+    assert.equal(value.paymentReference, 'BANK-RECEIPT-555');
+    assert.equal(value.confirmation.status, 'verified');
+    assert.equal(value.confirmation.verifiedBy, 'Community Admin');
+    assert.deepEqual(value.allocations.map(({billId, amountMinor}) => ({billId, amountMinor})),
+      [{billId: f.bills[0], amountMinor: 1000}]);
+    assert.equal(Object.hasOwn(value, 'receiptPath'), false);
+    assert.deepEqual(await f.financialState(), before);
+    const retry = await verifyBank({db: f.db, auth: adminAuth, now, data: confirmData});
+    assert.equal(retry.alreadyCompleted, true);
+    assert.equal(retry.transactionId, settled.transactionId);
+    assert.deepEqual(await receipt(f, settled.transactionId), value);
+    assert.deepEqual(await f.financialState(), before);
+  });
+
   test('partial verified UPI receipt reconciles Admin-confirmed amount and linked bill allocation', async () => {
     const f = await fixture(environment);
     const proof = await f.proof(400, 0, 'partial', 2, 'PARTIAL-REF');
