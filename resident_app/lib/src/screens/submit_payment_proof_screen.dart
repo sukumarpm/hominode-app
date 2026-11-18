@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/bill_firestore_service.dart';
 import '../services/resident_direct_upi_service.dart';
@@ -63,7 +66,12 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
         proof?['submittedAmountMinor'] ??
         widget.bill['outstandingAmountMinor'];
     if (amountMinor is int) _amountController.text = _inrText(amountMinor);
-    if (proof != null) _checkExistingReceipt(proof);
+    if (proof?['evidenceType'] == 'bank_credit_report' &&
+        proof?['status'] == 'pending') {
+      _existingReceiptUploaded = true;
+    } else if (proof != null) {
+      _checkExistingReceipt(proof);
+    }
   }
 
   Future<void> _checkExistingReceipt(Map<String, dynamic> proof) async {
@@ -141,6 +149,86 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
 
     if (source != null) {
       await _pickReceipt(source);
+    }
+  }
+
+  /// Records a resident's claim, not a confirmed bank credit.
+  /// The persistent key makes a retry safe after an ambiguous network failure.
+  Future<void> _reportWithoutReceipt() async {
+    if (_isSubmitting || widget.existingV2Proof != null ||
+        widget.bill['schemaVersion'] != 2) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showMessage('Please sign in again.');
+      return;
+    }
+    final selectedAmount = widget.preparation?.paymentAmountMinor ??
+        parseResidentInrMinorUnits(_amountController.text);
+    if (selectedAmount is! int || selectedAmount <= 0) {
+      _showMessage('A valid payment amount is required.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Report UPI payment'),
+        content: const Text(
+          'Have you completed the payment to your community bank account? '
+          'This only sends a report. Your bill stays unpaid until the '
+          'Community Admin confirms the bank credit.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Not yet'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('I have paid'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isSubmitting = true);
+    try {
+      final billId = widget.bill['id']?.toString() ?? '';
+      final preparation = widget.preparation ??
+          await _service.preparePayment(
+            billId,
+            submittedAmountMinor: selectedAmount,
+            allowFlexibleAmounts: widget.flexibleAmountsEnabled,
+          );
+      if (preparation.paymentAmountMinor != selectedAmount) {
+        throw const ResidentDirectUpiException(
+          ResidentDirectUpiFailure.billRevisionChanged,
+        );
+      }
+      final preferences = await SharedPreferences.getInstance();
+      final keyName = 'hominode_upi_report_v2_${user.uid}_${preparation.communityId}_${preparation.billId}';
+      var idempotencyKey = preferences.getString(keyName);
+      if (idempotencyKey == null) {
+        final random = Random.secure();
+        final bytes = List<int>.generate(24, (_) => random.nextInt(256));
+        idempotencyKey = base64UrlEncode(bytes).replaceAll('=', '');
+        final saved = await preferences.setString(keyName, idempotencyKey);
+        if (!saved) throw StateError('Could not preserve the payment report attempt.');
+      }
+      await _service.reportV2Payment(
+        preparation: preparation,
+        idempotencyKey: idempotencyKey,
+        paymentReference: _referenceController.text,
+      );
+      await preferences.remove(keyName);
+      if (mounted) Navigator.pop(context, true);
+    } on ResidentDirectUpiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Could not report this payment. Please retry the same attempt.');
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -552,6 +640,26 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
                 ),
 
               SizedBox(height: 28.h),
+
+              if (isV2 && widget.existingV2Proof == null) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('report-upi-without-proof'),
+                    onPressed: _isSubmitting || _v2Attempt != null
+                        ? null
+                        : _reportWithoutReceipt,
+                    icon: const Icon(Icons.account_balance_outlined),
+                    label: const Text('I have paid — request bank verification'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Screenshot and UPI reference are optional for bank verification. '
+                  'Your community must confirm the bank credit before the bill is paid.',
+                ),
+                SizedBox(height: 12.h),
+              ],
 
               SizedBox(
                 width: double.infinity,
