@@ -169,6 +169,40 @@ class ResidentV2ProofSubmission {
   final String receiptPath;
 }
 
+/// Human-readable UPI memo. Never rely on the memo for payment confirmation.
+/// The trailing bill-ID suffix helps distinguish bills with the same period.
+String directUpiMemo(String billId, Map<String, dynamic> bill) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final billType = (bill['type'] is String ? bill['type'] as String : '')
+      .toLowerCase().trim();
+  final purpose = billType == 'maintenance' ? 'Maint'
+      : billType == 'electricity' ? 'Electric'
+      : billType == 'water' ? 'Water'
+      : 'Bill';
+  String? period;
+  final rawPeriod = bill['billingPeriod'];
+  if (rawPeriod is String &&
+      RegExp(r'^20\\d{2}-(0[1-9]|1[0-2])$').hasMatch(rawPeriod)) {
+    final month = int.parse(rawPeriod.substring(5, 7));
+    period = '${months[month - 1]}${rawPeriod.substring(2, 4)}';
+  } else {
+    // Legacy bills normally have a dueDate rather than billingPeriod.
+    // Label it as "Due" so we don't mistake it for the billing month.
+    final dueDate = bill['dueDate'];
+    if (dueDate is Timestamp) {
+      final date = dueDate.toDate().toUtc();
+      period = 'Due${months[date.month - 1]}${(date.year % 100).toString().padLeft(2, '0')}';
+    }
+  }
+  // Prefer the bill's trailing characters to the generic recurring prefix.
+  final suffix = billId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+  final ref = suffix.length > 6 ? suffix.substring(suffix.length - 6) : suffix;
+  return ['HN', purpose, if (period != null) period, ref].join(' ');
+}
+
 class DirectUpiPaymentPreparation {
   const DirectUpiPaymentPreparation({
     required this.billId,
@@ -409,7 +443,7 @@ class ResidentDirectUpiService {
         'cu': 'INR',
         // UPI payees may show this memo; it is identification help, not
         // proof of payment or a bank-verified transaction reference.
-        'tn': 'HN Bill ${billId.length > 12 ? billId.substring(0, 12) : billId}',
+        'tn': directUpiMemo(id, bill),
       },
     );
 
