@@ -126,9 +126,15 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       }
       if (!mounted) return;
 
+      // Preparation and app handoff have finished. Do not keep the busy
+      // spinner animating while a user-facing confirmation dialog is open:
+      // the modal itself prevents duplicate taps, and the indefinite
+      // animation prevents widget tests from settling.
+      setState(() => _isBusy = false);
+
       if (launched) {
-        // launchUrl only confirms the app was opened. It is not a payment
-        // result. The dialog remains available when Hominode resumes.
+        // Opening the UPI app is not proof of payment.
+        // Resident must confirm after returning to Hominode.
         await _confirmAfterExternalApp(preparation);
       } else {
         final shouldSubmitProof = await _showManualFallback(preparation);
