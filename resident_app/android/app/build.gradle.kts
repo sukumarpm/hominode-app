@@ -57,6 +57,20 @@ android {
         versionName = flutter.versionName
     }
 
+    // The emulator flavor is a separate installed app with a demo-project
+    // google-services.json, never the production Android Firebase app.
+    flavorDimensions += "environment"
+    productFlavors {
+        create("production") {
+            dimension = "environment"
+        }
+        create("emulator") {
+            dimension = "environment"
+            applicationIdSuffix = ".emulator"
+            versionNameSuffix = "-local"
+        }
+    }
+
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
