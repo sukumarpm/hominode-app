@@ -499,7 +499,7 @@ void main() {
           'pn': 'Community Association',
           'am': '850.00',
           'cu': 'INR',
-          'tn': 'HN Bill $_billId',
+          'tn': 'HN Bill bill123',
         });
         expect(uri.queryParameters.keys.toSet(), {'pa', 'pn', 'am', 'cu', 'tn'});
         expect(uri.toString(), startsWith('upi://pay?'));
@@ -510,6 +510,22 @@ void main() {
         expect(uri.queryParameters.keys, isNot(contains('tr')));
       },
     );
+
+    test('memo identifies maintenance and due month without exposing a long bill ID', () async {
+      final bill = _bill(extra: {
+        'type': 'maintenance',
+        'dueDate': Timestamp.fromDate(DateTime.utc(2026, 10, 31)),
+      });
+      final result = await _service(bill: bill).preparePayment('recurring_7e123456');
+      expect(result.paymentUri.queryParameters['tn'], 'HN Maint DueOct26 123456');
+    });
+
+    test('memo identifies authoritative V2 billing period', () {
+      expect(directUpiMemo('monthly_v2_aabb001122', {
+        'billingPeriod': '2026-10',
+        'type': 'maintenance',
+      }), 'HN Maint Oct26 001122');
+    });
 
     test(
       'URI encodes VPA and payee special characters and uses config values',
