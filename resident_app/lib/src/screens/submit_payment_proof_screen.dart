@@ -66,6 +66,12 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
         proof?['submittedAmountMinor'] ??
         widget.bill['outstandingAmountMinor'];
     if (amountMinor is int) _amountController.text = _inrText(amountMinor);
+    // Android UPI app callback is optional and unverified. Prefill only for
+    // resident review; Admin still confirms the credit in their bank account.
+    final callback = widget.preparation?.callbackReference;
+    if (callback != null && callback.isNotEmpty) {
+      _referenceController.text = callback;
+    }
     if (proof?['evidenceType'] == 'bank_credit_report' &&
         proof?['status'] == 'pending') {
       _existingReceiptUploaded = true;
