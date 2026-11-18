@@ -43,6 +43,7 @@ class DirectUpiPaymentCard extends StatefulWidget {
 
 class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
   bool _isBusy = false;
+  bool _hasAttemptedUpi = false;
   static const _upiChannel = MethodChannel('hominode/upi');
   String? _returnedReference;
   String? _returnedStatus;
@@ -85,6 +86,8 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
 
   Future<void> _payViaUpi() async {
     if (_isBusy) return;
+    if (_hasAttemptedUpi && !await _confirmRetry()) return;
+    if (!mounted) return;
 
     setState(() => _isBusy = true);
     try {
@@ -112,6 +115,9 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       if (!mounted) return;
 
       var launched = false;
+      _hasAttemptedUpi = true;
+      _returnedReference = null;
+      _returnedStatus = null;
       try {
         launched = await _launchUpi(preparation.paymentUri);
       } catch (_) {
