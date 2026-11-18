@@ -102,6 +102,12 @@ dependencies:
 
   mobile_scanner: any
   firebase_storage: ^12.4.10
+# The image 4.11.0 decoder calls ZLibDecoder.decodeLazy(), introduced
+# in archive 4.4.0. Pin the compatible archive API until transitive
+# dependencies align; this does not change app/payment functionality.
+dependency_overrides:
+  archive: 4.4.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
