@@ -487,7 +487,7 @@ void main() {
     });
 
     test(
-      'builds a generic UPI URI with exactly the V1 payment fields',
+      'builds a generic UPI URI including a bill-specific transaction memo',
       () async {
         final result = await _service().preparePayment(_billId);
         final uri = result.paymentUri;
@@ -499,8 +499,9 @@ void main() {
           'pn': 'Community Association',
           'am': '850.00',
           'cu': 'INR',
+          'tn': 'Hominode bill $_billId',
         });
-        expect(uri.queryParameters.keys.toSet(), {'pa', 'pn', 'am', 'cu'});
+        expect(uri.queryParameters.keys.toSet(), {'pa', 'pn', 'am', 'cu', 'tn'});
         expect(uri.toString(), startsWith('upi://pay?'));
         expect(uri.toString(), isNot(contains('gpay')));
         expect(uri.toString(), isNot(contains('phonepe')));
