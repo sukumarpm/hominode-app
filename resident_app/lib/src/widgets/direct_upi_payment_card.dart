@@ -1,4 +1,8 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -39,6 +43,45 @@ class DirectUpiPaymentCard extends StatefulWidget {
 
 class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
   bool _isBusy = false;
+  static const _upiChannel = MethodChannel('hominode/upi');
+  String? _returnedReference;
+  String? _returnedStatus;
+
+  Future<bool> _launchUpi(Uri uri) async {
+    if (widget.launchPayment != null) return widget.launchPayment!(uri);
+    if (!Platform.isAndroid) return _launchExternally(uri);
+    try {
+      final result = await _upiChannel.invokeMapMethod<String, dynamic>(
+        'launchPayment',
+        {'uri': uri.toString()},
+      );
+      // The callback is an untrusted hint; the bank remains the authority.
+      final raw = result?['response']?.toString() ?? '';
+      Map<String, String> fields = {};
+      try {
+        fields = Uri.splitQueryString(raw, encoding: utf8);
+      } catch (_) {
+        // A malformed or absent callback is not evidence of failure.
+      }
+      final normalized = <String, String>{
+        for (final entry in fields.entries) entry.key.toLowerCase(): entry.value,
+      };
+      final explicitRef = result?['reference']?.toString().trim() ?? '';
+      final ref = (explicitRef.isNotEmpty
+          ? explicitRef
+          : (normalized['txnid'] ?? normalized['approvalrefno'] ?? normalized['txnref'] ?? '')).trim();
+      _returnedReference = ref.isNotEmpty && ref.length <= 200 ? ref : null;
+      final explicitStatus = result?['status']?.toString().trim() ?? '';
+      _returnedStatus = (explicitStatus.isNotEmpty
+          ? explicitStatus : normalized['status'])?.trim().toLowerCase();
+      return true;
+    } on PlatformException {
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
 
   Future<void> _payViaUpi() async {
     if (_isBusy) return;
@@ -70,9 +113,7 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
 
       var launched = false;
       try {
-        launched = await (widget.launchPayment ?? _launchExternally)(
-          preparation.paymentUri,
-        );
+        launched = await _launchUpi(preparation.paymentUri);
       } catch (_) {
         // Launcher details are intentionally hidden; the manual fallback is
         // safe for both unsupported URI handlers and platform exceptions.
@@ -137,11 +178,25 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
         barrierDismissible: false,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Check your UPI payment'),
-          content: const Text(
-            'If payment completed, select I Have Paid to request community '
-            'bank verification. No bill is marked paid until the Community '
-            'Admin confirms the bank credit. If it failed or was cancelled, '
-            'check whether money was deducted before trying again.',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'If payment completed, select I Have Paid to request community '
+                'bank verification. The bill remains unpaid until Admin confirms '
+                'the bank credit. If cancelled or uncertain, check for a '
+                'deduction before retrying.',
+              ),
+              if (_returnedStatus != null && _returnedStatus!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('UPI app returned: ${_returnedStatus!} (unverified)'),
+              ],
+              if (_returnedReference != null) ...[
+                const SizedBox(height: 6),
+                SelectableText('UPI app reference: ${_returnedReference!}'),
+              ],
+            ],
           ),
           actions: [
             TextButton(
@@ -161,15 +216,18 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       );
       if (!mounted || action == 'later' || action == null) return;
       if (action == 'paid') {
-        await _submitProof(preparation);
+        final captured = _returnedReference;
+        await _submitProof(captured == null
+            ? preparation
+            : preparation.withCallbackReference(captured));
         return;
       }
       if (action == 'retry') {
         if (!await _confirmRetry() || !mounted) continue;
         try {
-          final opened = await (widget.launchPayment ?? _launchExternally)(
-            preparation.paymentUri,
-          );
+          _returnedReference = null;
+          _returnedStatus = null;
+          final opened = await _launchUpi(preparation.paymentUri);
           if (!mounted) return;
           if (!opened) {
             final manual = await _showManualFallback(preparation);
