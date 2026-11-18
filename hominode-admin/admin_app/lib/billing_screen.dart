@@ -1856,7 +1856,9 @@ class _BillingScreenState extends State<BillingScreen> {
     final paymentId = payment['id']?.toString() ?? '';
     final claimed = payment['submittedAmountMinor'];
     if (paymentId.isEmpty || claimed is! int || claimed <= 0 ||
-        _paymentVerificationBusyIds.contains(paymentId)) return;
+        _paymentVerificationBusyIds.contains(paymentId)) {
+      return;
+    }
     final referenceController = TextEditingController();
     final amountController = TextEditingController(
       text: '${claimed ~/ 100}.${(claimed % 100).toString().padLeft(2, '0')}',
