@@ -286,16 +286,25 @@ class _ResidentBillingStatementScreenState
           if (bill.settlements.isEmpty)
             Padding(
               padding: EdgeInsets.only(top: 8),
-              child: Text('no_payment_allocations'.tr()),
+              child: Text(
+                bill.sourceVersion == 'legacy_v1' && bill.status == 'paid'
+                    ? '${'receipt'.tr()} · ${'payment_history'.tr()}'
+                    : 'no_payment_allocations'.tr(),
+              ),
             )
           else
-            ...bill.settlements.map(_settlement),
+            ...bill.settlements.map(
+              (settlement) => _settlement(settlement, bill.sourceVersion),
+            ),
         ],
       ),
     ),
   );
 
-  Widget _settlement(ResidentStatementSettlement settlement) => Padding(
+  Widget _settlement(
+    ResidentStatementSettlement settlement,
+    String sourceVersion,
+  ) => Padding(
     padding: const EdgeInsets.only(top: 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -313,22 +322,28 @@ class _ResidentBillingStatementScreenState
         if (settlement.reference != null &&
             settlement.reference!.trim().isNotEmpty)
           _detailRow('payment_reference'.tr(), settlement.reference!.trim()),
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: TextButton.icon(
-            key: ValueKey('view-receipt-${settlement.transactionId}'),
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute(
-                builder: (_) => ResidentBillingV2ReceiptScreen(
-                  transactionId: settlement.transactionId,
-                  service: _receiptService,
+        if (sourceVersion == 'billing_v2')
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton.icon(
+              key: ValueKey('view-receipt-${settlement.transactionId}'),
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => ResidentBillingV2ReceiptScreen(
+                    transactionId: settlement.transactionId,
+                    service: _receiptService,
+                  ),
                 ),
               ),
+              icon: const Icon(Icons.receipt_long_outlined),
+              label: Text('view_receipt'.tr()),
             ),
-            icon: const Icon(Icons.receipt_long_outlined),
-            label: Text('view_receipt'.tr()),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('${'receipt'.tr()} · ${'payment_history'.tr()}'),
           ),
-        ),
       ],
     ),
   );

@@ -42,6 +42,7 @@ class ResidentBillingStatementService {
     try {
       final response = await _callable(callableName, {
         'billingPeriod': billingPeriod,
+        'includeLegacy': true,
       });
       return ResidentBillingStatement.fromResponse(response, billingPeriod);
     } catch (_) {
@@ -300,6 +301,7 @@ class ResidentBillingStatementSummary {
 class ResidentStatementBill {
   const ResidentStatementBill({
     required this.billId,
+    required this.sourceVersion,
     required this.billingPeriod,
     required this.amountMinor,
     required this.paidAllocationMinor,
@@ -312,6 +314,7 @@ class ResidentStatementBill {
   });
 
   final String billId;
+  final String sourceVersion;
   final String billingPeriod;
   final int amountMinor;
   final int paidAllocationMinor;
@@ -335,7 +338,7 @@ class ResidentStatementBill {
       'dueDateKey',
       'chargeLines',
       'settlements',
-    });
+    }, optional: {'sourceVersion'});
     final period = ResidentBillingStatementService._period(
       data['billingPeriod'],
     );
@@ -352,7 +355,8 @@ class ResidentStatementBill {
       data['outstandingMinor'],
     );
     final status = ResidentBillingStatementService._string(data['status']);
-    if (!const {
+    final sourceVersion = data['sourceVersion'] ?? 'billing_v2';
+    if (!const {'billing_v2', 'legacy_v1'}.contains(sourceVersion) || !const {
           'pending',
           'partially_paid',
           'paid',
@@ -380,14 +384,17 @@ class ResidentStatementBill {
               lines.map((line) => line.amountMinor),
             ) !=
             BigInt.from(amount) ||
-        ResidentBillingStatementService._safeSum(
+        (sourceVersion == 'billing_v2' && ResidentBillingStatementService._safeSum(
               settlements.map((item) => item.netAppliedMinor),
-            ) !=
-            BigInt.from(paid)) {
+            ) != BigInt.from(paid)) ||
+        (sourceVersion == 'legacy_v1' && ResidentBillingStatementService._safeSum(
+              settlements.map((item) => item.netAppliedMinor),
+            ) > BigInt.from(paid))) {
       ResidentBillingStatementService._invalid();
     }
     return ResidentStatementBill(
       billId: ResidentBillingStatementService._string(data['billId']),
+      sourceVersion: sourceVersion as String,
       billingPeriod: period,
       amountMinor: amount,
       paidAllocationMinor: paid,
@@ -458,7 +465,7 @@ class ResidentStatementSettlement {
       optional: {'reference'},
     );
     final method = ResidentBillingStatementService._string(data['method']);
-    if (!const {'upi', 'cash', 'bank_transfer', 'cheque'}.contains(method)) {
+    if (!const {'upi', 'cash', 'bank_transfer', 'cheque', 'manual', 'external'}.contains(method)) {
       ResidentBillingStatementService._invalid();
     }
     final rawReference = data['reference'];

@@ -59,7 +59,7 @@ Map<String, dynamic> _response({
 };
 
 void main() {
-  test('calls the exact function with only the billing period', () async {
+  test('opts in to the authorized legacy statement response', () async {
     String? name;
     Map<String, dynamic>? payload;
     final service = ResidentBillingStatementService(
@@ -73,7 +73,7 @@ void main() {
     await service.getStatement('2026-08');
 
     expect(name, 'getResidentBillingV2Statement');
-    expect(payload, {'billingPeriod': '2026-08'});
+    expect(payload, {'billingPeriod': '2026-08', 'includeLegacy': true});
   });
 
   test(
@@ -146,7 +146,7 @@ void main() {
         'receivedAt': 1785542400000,
         'netAppliedMinor': 23456,
       },
-    )..['bills'][0]['settlements'][0]['method'] = 'manual';
+    )..['bills'][0]['settlements'][0]['method'] = 'unsupported';
     for (final response in [malformedBill, malformedSettlement]) {
       final service = ResidentBillingStatementService(
         callable: (_, _) async => response,
@@ -156,6 +156,30 @@ void main() {
         throwsA(isA<ResidentBillingStatementException>()),
       );
     }
+  });
+
+  test('accepts a paid legacy bill whose recorded payment details are unavailable', () async {
+    final response = _response(
+      paidAllocationMinor: 123456,
+      creditAppliedMinor: 0,
+      outstandingMinor: 0,
+      settlement: null,
+    )
+      ..['bills'][0]['sourceVersion'] = 'legacy_v1'
+      ..['bills'][0]['status'] = 'paid'
+      ..['summary']['statusCounts'] = {
+        'pending': 0,
+        'partially_paid': 0,
+        'paid': 1,
+        'overdue': 0,
+      };
+    final service = ResidentBillingStatementService(
+      callable: (_, _) async => response,
+    );
+    final result = await service.getStatement('2026-08');
+    expect(result.bills.single.sourceVersion, 'legacy_v1');
+    expect(result.bills.single.paidAllocationMinor, 123456);
+    expect(result.bills.single.settlements, isEmpty);
   });
 
   test('accepts null or absent references without inventing one', () async {

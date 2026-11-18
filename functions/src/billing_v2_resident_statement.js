@@ -22,11 +22,12 @@ function validId(value) {
 function parseInput(auth, data) {
   const identity = verifiedPhoneAuth(auth);
   if (!data || typeof data !== 'object' || Array.isArray(data) ||
-      Object.keys(data).some(key => key !== 'billingPeriod') ||
+      Object.keys(data).some(key => !['billingPeriod', 'includeLegacy'].includes(key)) ||
+      (data.includeLegacy != null && typeof data.includeLegacy !== 'boolean') ||
       typeof data.billingPeriod !== 'string' || !PERIOD_PATTERN.test(data.billingPeriod)) {
     fail('invalid_request', 'invalid-argument');
   }
-  return {residentId: identity.uid, billingPeriod: data.billingPeriod};
+  return {residentId: identity.uid, billingPeriod: data.billingPeriod, includeLegacy: data.includeLegacy === true};
 }
 
 function rootDocs(snapshot, name) {
@@ -166,6 +167,99 @@ async function validateBill(db, doc, scope, nowMs, history) {
   return {bill, billId: doc.id, projection: expected, chargeLines: billLines.chargeLines};
 }
 
+function legacyMinorUnits(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  const minor = Math.round(value * 100);
+  return Number.isSafeInteger(minor) && Math.abs(value * 100 - minor) <= 0.000001 ? minor : null;
+}
+
+function legacyPeriod(bill) {
+  if (typeof bill.billingPeriod === 'string' && PERIOD_PATTERN.test(bill.billingPeriod)) return bill.billingPeriod;
+  if (Number.isInteger(bill.year) && bill.year >= 1000 && bill.year <= 9999 &&
+      Number.isInteger(bill.month) && bill.month >= 1 && bill.month <= 12) {
+    return `${bill.year}-${String(bill.month).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+function legacyMethod(value) {
+  const method = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (METHODS.has(method) || method === 'manual' || method === 'external') return method;
+  return null;
+}
+
+async function legacyStatementBills({db, snapshot, scope, billingPeriod, nowMs, timeZone, v2Bills}) {
+  const rootBillDocs = rootDocs(snapshot, 'bills');
+  check(rootBillDocs.length <= MAX_ACCOUNT_BILLS, 'account_bill_limit');
+  const docs = rootBillDocs.filter(doc => doc.data()?.schemaVersion == null);
+  const eligible = [];
+  const flatIds = new Set();
+  for (const doc of docs) {
+    const bill = doc.data();
+    const period = legacyPeriod(bill);
+    const amountMinor = legacyMinorUnits(bill.amount);
+    if (bill.communityId !== scope.communityId || bill.residentId !== scope.residentId ||
+        (bill.userId != null && bill.userId !== scope.residentId) || bill.billingKind !== 'recurring' ||
+        (bill.id != null && bill.id !== doc.id) || (bill.currency != null && bill.currency !== 'INR') ||
+        !validId(doc.id) || !validId(bill.flatId) || !period || amountMinor == null || amountMinor <= 0 ||
+        !['pending', 'overdue', 'paid'].includes(bill.status) ||
+        !(bill.dueDate instanceof Timestamp) || !(bill.createdAt instanceof Timestamp)) continue;
+    flatIds.add(bill.flatId);
+    eligible.push({doc, bill, period, amountMinor});
+  }
+
+  // A bill's residentId is the historical owner recorded at issuance. Check
+  // that its flat still belongs to this community, but do not require the flat
+  // to still point at this resident: units can be reassigned over time.
+  const flatCommunity = new Map();
+  await Promise.all([...flatIds].map(async flatId => {
+    const snapshot = await db.collection('flats').doc(flatId).get();
+    flatCommunity.set(flatId, snapshot.exists && snapshot.data()?.communityId === scope.communityId
+      ? snapshot.data() : null);
+  }));
+
+  const v2PeriodByFlat = new Set(v2Bills.map(({bill}) => `${bill.flatId}\u0000${bill.billingPeriod}`));
+  const rows = [];
+  for (const {doc, bill, period, amountMinor} of eligible) {
+    const flat = flatCommunity.get(bill.flatId);
+    if (period !== billingPeriod || !flat ||
+        (bill.buildingId != null && bill.buildingId !== flat.buildingId) ||
+        v2PeriodByFlat.has(`${bill.flatId}\u0000${period}`)) continue;
+    const dueDateKey = localDateKey(bill.dueDate.toMillis(), timeZone);
+    const isPaid = bill.status === 'paid';
+    const status = isPaid ? 'paid' : localDateKey(nowMs, timeZone) > dueDateKey ? 'overdue' : 'pending';
+    const chargeType = typeof bill.chargeType === 'string' ? bill.chargeType.trim().toLowerCase() : '';
+    const chargeLabel = ({maintenance: 'Maintenance', water: 'Water', parking: 'Parking',
+      service: 'Service', electricity: 'Electricity', security: 'Security', other: 'Other'})[chargeType] ||
+      (chargeType ? `${chargeType[0].toUpperCase()}${chargeType.slice(1)}` : 'Legacy recurring charge');
+    const method = legacyMethod(bill.paymentMethod);
+    const receivedAt = bill.paidAt instanceof Timestamp ? bill.paidAt.toMillis() : null;
+    const settlements = isPaid && method && receivedAt != null ? [{
+      transactionId: validId(bill.paymentId) ? bill.paymentId : `legacy-bill-${doc.id}`,
+      method,
+      reference: typeof bill.paymentReference === 'string' && bill.paymentReference.trim()
+        ? bill.paymentReference.trim()
+        : null,
+      receivedAt,
+      netAppliedMinor: amountMinor,
+    }] : [];
+    rows.push({
+      billId: doc.id,
+      sourceVersion: 'legacy_v1',
+      billingPeriod: period,
+      amountMinor,
+      paidAllocationMinor: isPaid ? amountMinor : 0,
+      creditAppliedMinor: 0,
+      outstandingMinor: isPaid ? 0 : amountMinor,
+      status,
+      dueDateKey,
+      chargeLines: [{lineId: 'legacy-total', code: 'legacy', label: chargeLabel, amountMinor}],
+      settlements,
+    });
+  }
+  return rows;
+}
+
 function settlementRows(billId, allocations, transactions) {
   const byTransaction = new Map();
   const transactionMap = new Map(transactions.map(transaction => [transaction.id, transaction]));
@@ -207,6 +301,11 @@ async function getResidentBillingV2StatementCore({db, auth, data, now = Date.now
   const billDocs = rootDocs(billSnapshot, 'bills');
   check(billDocs.length <= MAX_ACCOUNT_BILLS, 'account_bill_limit');
 
+  const legacyBillSnapshot = input.includeLegacy
+    ? await db.collection('bills').where('communityId', '==', communityId)
+      .where('residentId', '==', input.residentId).limit(MAX_ACCOUNT_BILLS + 1).get()
+    : null;
+
   const [transactions, accountAllocations, accountCredits] = await Promise.all([
     readHistoryCollection(db, 'paymentTransactions', scope),
     readHistoryCollection(db, 'paymentAllocations', scope),
@@ -245,25 +344,40 @@ async function getResidentBillingV2StatementCore({db, auth, data, now = Date.now
   const history = {payments, credits};
   const validatedBills = [];
   for (const doc of billDocs) validatedBills.push(await validateBill(db, doc, scope, nowMs, history));
-  const statementBills = validatedBills.filter(item => item.bill.billingPeriod === input.billingPeriod)
+  const statementV2Bills = validatedBills.filter(item => item.bill.billingPeriod === input.billingPeriod)
     .sort((a, b) => a.bill.dueDateKey.localeCompare(b.bill.dueDateKey) ||
       a.bill.createdAt.toMillis() - b.bill.createdAt.toMillis() || a.billId.localeCompare(b.billId));
+  const legacyBills = legacyBillSnapshot
+    ? await legacyStatementBills({db, snapshot: legacyBillSnapshot, scope, billingPeriod: input.billingPeriod,
+      nowMs, timeZone: community.timeZone || 'UTC', v2Bills: validatedBills})
+    : [];
+  check(validatedBills.length + legacyBills.length <= MAX_ACCOUNT_BILLS, 'account_bill_limit');
+  const statementBills = [
+    ...statementV2Bills.map(item => ({...item, sourceVersion: input.includeLegacy ? 'billing_v2' : null})),
+    ...legacyBills.map(bill => ({bill, billId: bill.billId, projection: {
+      amountMinor: bill.amountMinor, paidAmountMinor: bill.paidAllocationMinor,
+      creditAppliedMinor: bill.creditAppliedMinor, outstandingAmountMinor: bill.outstandingMinor,
+      status: bill.status,
+    }, chargeLines: bill.chargeLines, sourceVersion: 'legacy_v1'})),
+  ].sort((a, b) => a.bill.dueDateKey.localeCompare(b.bill.dueDateKey) ||
+    (a.bill.createdAt?.toMillis?.() ?? 0) - (b.bill.createdAt?.toMillis?.() ?? 0) || a.billId.localeCompare(b.billId));
 
   const summary = {billsCount: 0, billedMinor: 0n, paidAllocationMinor: 0n, creditAppliedMinor: 0n,
     outstandingMinor: 0n, availableCreditMinor,
     statusCounts: {pending: 0, partially_paid: 0, paid: 0, overdue: 0}};
-  const bills = statementBills.map(({bill, billId, projection, chargeLines}) => {
+  const bills = statementBills.map(({bill, billId, projection, chargeLines, sourceVersion}) => {
     summary.billsCount++;
     summary.billedMinor += BigInt(projection.amountMinor);
     summary.paidAllocationMinor += BigInt(projection.paidAmountMinor);
     summary.creditAppliedMinor += BigInt(projection.creditAppliedMinor);
     summary.outstandingMinor += BigInt(projection.outstandingAmountMinor);
     summary.statusCounts[projection.status]++;
-    return {billId, billingPeriod: bill.billingPeriod, amountMinor: projection.amountMinor,
+    return {billId, ...(sourceVersion ? {sourceVersion} : {}), billingPeriod: bill.billingPeriod, amountMinor: projection.amountMinor,
       paidAllocationMinor: projection.paidAmountMinor, creditAppliedMinor: projection.creditAppliedMinor,
       outstandingMinor: projection.outstandingAmountMinor, status: projection.status,
       dueDateKey: bill.dueDateKey, chargeLines,
-      settlements: settlementRows(billId, payments.remainingAllocations, transactions)};
+      settlements: sourceVersion === 'legacy_v1' ? (bill.settlements || []) :
+        settlementRows(billId, payments.remainingAllocations, transactions)};
   });
   for (const key of ['billedMinor', 'paidAllocationMinor', 'creditAppliedMinor', 'outstandingMinor']) {
     check(summary[key] <= BigInt(Number.MAX_SAFE_INTEGER), 'financial_total_overflow');

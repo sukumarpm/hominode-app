@@ -13,6 +13,9 @@ const period = '2030-01';
 function statement(db, billingPeriod = period, auth = residentAuth, data = {billingPeriod}, overrides = {}) {
   return statementCore({db, auth, data, now, ...overrides});
 }
+function statementWithLegacy(db, billingPeriod = period) {
+  return statement(db, billingPeriod, residentAuth, {billingPeriod, includeLegacy: true});
+}
 
 function assertMinorUnits(value) {
   for (const [key, item] of Object.entries(value)) {
@@ -140,9 +143,101 @@ function billingV2ResidentStatementCases(test, environment) {
     assert.equal(result.summary.billedMinor, 12345);
     assert.equal(result.summary.paidAllocationMinor, 0);
     assert.equal(result.summary.outstandingMinor, 12345);
+    assert.equal(Object.hasOwn(result.bills[0], 'sourceVersion'), false);
     assert.deepEqual(result.summary.statusCounts, {pending: 1, partially_paid: 0, paid: 0, overdue: 0});
     assert.deepEqual(result.bills[0].chargeLines, [{lineId: 'base', code: 'maintenance', label: 'Maintenance', amountMinor: 12345}]);
     assertMinorUnits(result);
+  });
+
+  test('includes an unpaid INR 1,900 legacy recurring bill for its recorded resident', async () => {
+    const f = await fixture(environment, []);
+    await f.ref('bills/legacy-october').set({
+      id: 'legacy-october', communityId: 'C', residentId: 'r', flatId: 'f', buildingId: 'b',
+      billingKind: 'recurring', billingPeriod: period, status: 'pending', amount: 1900,
+      dueDate: Timestamp.fromDate(new Date('2030-02-15T00:00:00Z')),
+      createdAt: Timestamp.fromDate(new Date('2030-01-01T00:00:00Z')), chargeType: 'maintenance',
+    });
+    const result = await statementWithLegacy(f.db);
+    assert.equal(result.summary.billsCount, 1);
+    assert.equal(result.summary.billedMinor, 190000);
+    assert.equal(result.summary.outstandingMinor, 190000);
+    assert.equal(result.bills[0].sourceVersion, 'legacy_v1');
+    assert.equal(result.bills[0].status, 'pending');
+    assert.deepEqual(result.bills[0].chargeLines, [{lineId: 'legacy-total', code: 'legacy', label: 'Maintenance', amountMinor: 190000}]);
+    await f.patch('flats/f', {residentUserId: 'other'});
+    const afterFlatReassignment = await statementWithLegacy(f.db);
+    assert.equal(afterFlatReassignment.bills[0].billId, 'legacy-october');
+  });
+
+  test('includes a paid legacy bill once and preserves its V1 payment details', async () => {
+    const f = await fixture(environment, []);
+    await f.ref('bills/legacy-paid').set({
+      id: 'legacy-paid', communityId: 'C', residentId: 'r', flatId: 'f', buildingId: 'b',
+      billingKind: 'recurring', billingPeriod: period, status: 'paid', amount: 1900,
+      dueDate: Timestamp.fromDate(new Date('2030-02-15T00:00:00Z')),
+      createdAt: Timestamp.fromDate(new Date('2030-01-01T00:00:00Z')),
+      paidAt: Timestamp.fromDate(new Date('2030-02-10T00:00:00Z')),
+      paymentMethod: 'external', paymentReference: 'LEGACY-REF', paymentId: 'legacy-payment',
+    });
+    const result = await statementWithLegacy(f.db);
+    assert.equal(result.summary.billsCount, 1);
+    assert.equal(result.summary.paidAllocationMinor, 190000);
+    assert.equal(result.summary.outstandingMinor, 0);
+    assert.equal(result.bills[0].status, 'paid');
+    assert.deepEqual(result.bills[0].settlements, [{transactionId: 'legacy-payment', method: 'external',
+      reference: 'LEGACY-REF', receivedAt: Date.parse('2030-02-10T00:00:00Z'), netAppliedMinor: 190000}]);
+  });
+
+  test('includes legacy and V2 bills for the same resident across periods without duplication', async () => {
+    const f = await fixture(environment, [500]);
+    await f.pay({amountMinor: 500});
+    await f.ref('bills/legacy-prior-period').set({
+      id: 'legacy-prior-period', communityId: 'C', residentId: 'r', flatId: 'f', buildingId: 'b',
+      billingKind: 'recurring', billingPeriod: '2029-12', status: 'pending', amount: 19,
+      dueDate: Timestamp.fromDate(new Date('2030-01-15T00:00:00Z')),
+      createdAt: Timestamp.fromDate(new Date('2029-12-01T00:00:00Z')),
+    });
+    const v2 = await f.get(`bills/${monthlyBillIdV2('C', 'f', period)}`);
+    await f.ref('bills/legacy-same-period').set({
+      id: 'legacy-same-period', communityId: 'C', residentId: 'r', flatId: 'f', buildingId: 'b',
+      billingKind: 'recurring', billingPeriod: period, status: 'paid', amount: v2.amountMinor / 100,
+      dueDate: v2.dueDate, createdAt: Timestamp.fromDate(new Date('2030-01-01T00:00:00Z')),
+      paidAt: Timestamp.fromDate(new Date('2030-01-10T00:00:00Z')),
+      paymentMethod: 'cash', paymentId: 'legacy-duplicate-payment',
+    });
+    const dec = await statementWithLegacy(f.db, '2029-12');
+    const jan = await statementWithLegacy(f.db, period);
+    assert.equal(dec.summary.billsCount, 1);
+    assert.equal(dec.bills[0].sourceVersion, 'legacy_v1');
+    assert.equal(jan.summary.billsCount, 1);
+    assert.equal(jan.bills[0].sourceVersion, 'billing_v2');
+    assert.equal(jan.summary.billedMinor, 500);
+    assert.equal(jan.summary.paidAllocationMinor, 500);
+    assert.equal(jan.bills[0].settlements.length, 1);
+  });
+
+  test('does not expose another resident legacy bill even when the flat matches', async () => {
+    const f = await fixture(environment, []);
+    await f.ref('users/other').set({uid: 'other', role: 'resident', isActive: true,
+      approvalStatus: 'approved', status: 'active', communityId: 'C', flatId: 'f'});
+    await f.ref('bills/other-resident-legacy').set({
+      id: 'other-resident-legacy', communityId: 'C', residentId: 'other', flatId: 'f', buildingId: 'b',
+      billingKind: 'recurring', billingPeriod: period, status: 'pending', amount: 1900,
+      dueDate: Timestamp.fromDate(new Date('2030-02-15T00:00:00Z')),
+      createdAt: Timestamp.fromDate(new Date('2030-01-01T00:00:00Z')),
+    });
+    const result = await statementWithLegacy(f.db);
+    assert.equal(result.residentId, 'r');
+    assert.equal(result.summary.billsCount, 0);
+    assert.deepEqual(result.bills, []);
+  });
+
+  test('opted-in request keeps a valid empty statement empty', async () => {
+    const f = await fixture(environment, []);
+    const result = await statementWithLegacy(f.db);
+    assert.equal(result.summary.billsCount, 0);
+    assert.equal(result.summary.billedMinor, 0);
+    assert.deepEqual(result.bills, []);
   });
 
   test('computes overdue status from the trusted local due date even if the stored convenience status is stale', async () => {
