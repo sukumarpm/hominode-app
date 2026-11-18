@@ -551,7 +551,11 @@ class _SubmitPaymentProofScreenState extends State<SubmitPaymentProofScreen> {
                     color: const Color(0xFFE9FCEB),
                     borderRadius: BorderRadius.circular(12.r),
                   ),
-                  child: Text('receipt_pending_admin_verification'.tr()),
+                  child: Text(
+                    widget.existingV2Proof?['evidenceType'] == 'bank_credit_report'
+                        ? 'Payment reported. Community Admin bank verification is pending; the bill remains unpaid.'
+                        : 'receipt_pending_admin_verification'.tr(),
+                  ),
                 ),
               ],
 
