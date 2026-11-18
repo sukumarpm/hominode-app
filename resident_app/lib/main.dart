@@ -4,6 +4,10 @@ import 'src/services/notification_preferences_service.dart';
 // import 'package:flutter/services.dart';
 // import 'package:flutter_localizations/flutter_localizations.dart';
 // import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 // import 'package:provider/provider.dart';
 // import 'package:easy_localization/easy_localization.dart';
 // import 'main_navigation.dart';
@@ -258,6 +262,38 @@ Future<void> main() async {
   );
 }
 
+const bool _localPaymentEmulatorMode =
+    bool.fromEnvironment('HOMINODE_LOCAL_EMULATOR', defaultValue: false);
+const String _localPaymentEmulatorHost = '10.0.2.2';
+const String _localPaymentEmulatorProjectId = 'demo-hominode-upi';
+
+Future<void> _initializeLocalPaymentEmulators() async {
+  // Fail closed: this mode is for the Android emulator only and must never
+  // execute against the native production Firebase configuration.
+  if (!kDebugMode || defaultTargetPlatform != TargetPlatform.android) {
+    throw StateError('Local payment emulator requires Android debug mode.');
+  }
+  const options = FirebaseOptions(
+    apiKey: 'demo-emulator-only-not-a-real-api-key',
+    appId: '1:123456789012:android:0000000000000000000000',
+    messagingSenderId: '123456789012',
+    projectId: _localPaymentEmulatorProjectId,
+    storageBucket: 'demo-hominode-upi.appspot.com',
+  );
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(options: options);
+  }
+  if (Firebase.app().options.projectId != _localPaymentEmulatorProjectId) {
+    throw StateError('Refusing payment test outside demo Firebase project.');
+  }
+  await FirebaseAuth.instance.useAuthEmulator(_localPaymentEmulatorHost, 9099);
+  FirebaseFirestore.instance.useFirestoreEmulator(_localPaymentEmulatorHost, 8080);
+  FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+      .useFunctionsEmulator(_localPaymentEmulatorHost, 5001);
+  await FirebaseStorage.instance.useStorageEmulator(_localPaymentEmulatorHost, 9199);
+  debugPrint('LOCAL PAYMENT EMULATOR: Auth/Firestore/Functions/Storage only.');
+}
+
 bool _residentAppCheckActivated = false;
 Future<void>? _residentInitializationInFlight;
 
@@ -275,6 +311,10 @@ Future<void> _initializeResidentServices() {
 }
 
 Future<void> _performResidentInitialization() async {
+  if (_localPaymentEmulatorMode) {
+    await _initializeLocalPaymentEmulators();
+    return;
+  }
   if (Firebase.apps.isEmpty) {
     await Firebase.initializeApp().timeout(const Duration(seconds: 20));
   }
@@ -301,6 +341,7 @@ Future<void> _performResidentInitialization() async {
 }
 
 Future<void> _initializeResidentNotificationsSafely() async {
+  if (_localPaymentEmulatorMode) return; // No production FCM registration.
   try {
     await HominodePushNotifications.instance
         .initialize(
