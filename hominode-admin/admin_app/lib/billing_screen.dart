@@ -1651,6 +1651,7 @@ class _BillingScreenState extends State<BillingScreen> {
         '';
     final viewedReceiptKey = '${bill.isV2 ? 'v2' : 'v1'}:$paymentId';
     final receiptViewed = _viewedPaymentReceiptIds.contains(viewedReceiptKey);
+    final bankReported = bill.isV2 && payment['evidenceType'] == 'bank_credit_report';
     final submittedAmountMinor = payment['submittedAmountMinor'];
     final flexibleAmountProof =
         bill.isV2 && payment['amountContractVersion'] == 2;
@@ -1694,7 +1695,7 @@ class _BillingScreenState extends State<BillingScreen> {
               SizedBox(width: 8.w),
               Expanded(
                 child: Text(
-                  'Payment Proof Submitted',
+                  bankReported ? 'UPI Payment Reported — Bank Verification Needed' : 'Payment Proof Submitted',
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.w700,
@@ -1754,21 +1755,24 @@ class _BillingScreenState extends State<BillingScreen> {
           if (bill.isV2) ...[
             SizedBox(height: 4.h),
             Text(
-              'Evidence: Uploaded receipt',
+              bankReported
+                  ? 'Evidence: Resident report — verify actual bank credit'
+                  : 'Evidence: Uploaded receipt',
               style: TextStyle(fontSize: 13.sp, color: const Color(0xFF374151)),
             ),
           ],
 
           SizedBox(height: 12.h),
 
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _onViewPaymentReceipt(bill, payment),
-              icon: const Icon(Icons.visibility_outlined),
-              label: const Text('View Receipt'),
+          if (!bankReported)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _onViewPaymentReceipt(bill, payment),
+                icon: const Icon(Icons.visibility_outlined),
+                label: const Text('View Receipt'),
+              ),
             ),
-          ),
 
           SizedBox(height: 8.h),
 
@@ -1791,7 +1795,7 @@ class _BillingScreenState extends State<BillingScreen> {
                 onPressed:
                     paymentId.isEmpty ||
                         verificationBusy ||
-                        !receiptViewed ||
+                        (!bankReported && !receiptViewed) ||
                         !submittedAmountAvailable
                     ? null
                     : () => _onVerifyPaymentProof(bill, payment),
@@ -1808,6 +1812,8 @@ class _BillingScreenState extends State<BillingScreen> {
                 label: Text(
                   verificationBusy
                       ? 'Verifying…'
+                      : bankReported
+                      ? 'Verify Bank Credit'
                       : receiptViewed
                       ? 'Verify'
                       : 'View Receipt First',
@@ -1845,10 +1851,125 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
+  /// A reported UPI payment can only settle after a bank-statement check.
+  Future<void> _onVerifyReportedUpi(BillModel bill, Map<String, dynamic> payment) async {
+    final paymentId = payment['id']?.toString() ?? '';
+    final claimed = payment['submittedAmountMinor'];
+    if (paymentId.isEmpty || claimed is! int || claimed <= 0 ||
+        _paymentVerificationBusyIds.contains(paymentId)) return;
+    final referenceController = TextEditingController();
+    final amountController = TextEditingController(
+      text: '${claimed ~/ 100}.${(claimed % 100).toString().padLeft(2, '0')}',
+    );
+    DateTime selectedDate = DateTime.now();
+    bool attested = false;
+    ({String reference, String date, int amount})? result;
+    try {
+      result = await showDialog<({String reference, String date, int amount})>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: const Text('Verify Community Bank Credit'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Resident: ${bill.residentName}'),
+                  Text('Claimed: ${formatInrMinorUnits(claimed)}'),
+                  const SizedBox(height: 12),
+                  const Text('Check the community bank statement. Amount and time alone do not identify the payer.'),
+                  TextField(
+                    controller: referenceController,
+                    onChanged: (_) => setDialogState(() {}),
+                    maxLength: 200,
+                    decoration: const InputDecoration(labelText: 'Bank transaction ID / UTR / RRN'),
+                  ),
+                  TextField(
+                    controller: amountController,
+                    enabled: payment['amountContractVersion'] == 2,
+                    onChanged: (_) => setDialogState(() {}),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Credited amount (INR)'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () async {
+                      final next = await showDatePicker(
+                        context: dialogContext,
+                        initialDate: selectedDate,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now().add(const Duration(days: 1)),
+                      );
+                      if (next != null) setDialogState(() => selectedDate = next);
+                    },
+                    icon: const Icon(Icons.calendar_month),
+                    label: Text('Bank credit date: ${DateFormat('yyyy-MM-dd').format(selectedDate)}'),
+                  ),
+                  CheckboxListTile(
+                    value: attested,
+                    onChanged: (value) => setDialogState(() => attested = value == true),
+                    title: const Text('I verified this exact credit in the community bank account.'),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: !attested || referenceController.text.trim().isEmpty ||
+                        parseInrRupeesToMinorUnits(amountController.text) == null
+                    ? null
+                    : () => Navigator.pop(dialogContext, (
+                        reference: referenceController.text.trim(),
+                        date: DateFormat('yyyy-MM-dd').format(selectedDate),
+                        amount: parseInrRupeesToMinorUnits(amountController.text)!,
+                      )),
+                child: const Text('Confirm Bank Credit'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      referenceController.dispose();
+      amountController.dispose();
+    }
+    if (result == null || !mounted) return;
+    setState(() => _paymentVerificationBusyIds.add(paymentId));
+    try {
+      await _billingService.verifyReportedDirectUpiV2(
+        paymentId: paymentId,
+        bankCreditReference: result.reference,
+        bankCreditDate: result.date,
+        confirmedAmountMinor: result.amount,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Bank credit verified for ${bill.residentName}.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not verify bank credit. Check the bank transaction and retry.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _paymentVerificationBusyIds.remove(paymentId));
+    }
+  }
+
   Future<void> _onVerifyPaymentProof(
     BillModel bill,
     Map<String, dynamic> payment,
   ) async {
+    if (bill.isV2 && payment['evidenceType'] == 'bank_credit_report') {
+      await _onVerifyReportedUpi(bill, payment);
+      return;
+    }
     final paymentId = payment['id']?.toString() ?? '';
 
     if (paymentId.isEmpty) {
