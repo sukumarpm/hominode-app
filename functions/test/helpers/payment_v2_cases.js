@@ -3,8 +3,9 @@ const {createHash} = require('node:crypto');
 const {Timestamp} = require('firebase-admin/firestore');
 const {createMonthlyBillingBatchV2Core: issue, monthlyBillIdV2} = require('../../src/billing_batch');
 const {reviseMonthlyBillingBatchV2Core: revise} = require('../../src/billing_revision');
-const {preparePaymentProofV2Core: prepare, verifyPaymentProofV2Core: verify,
-  rejectPaymentProofV2Core: reject, recordOfflinePaymentV2Core: offline, MAX_ALLOCATIONS} = require('../../src/payment_v2');
+const {preparePaymentProofV2Core: prepare, reportDirectUpiPaymentV2Core: report,
+  verifyPaymentProofV2Core: verify, verifyReportedDirectUpiV2Core: verifyBank, rejectPaymentProofV2Core: reject,
+  recordOfflinePaymentV2Core: offline, MAX_ALLOCATIONS} = require('../../src/payment_v2');
 const {createProofSubmittedNotification, dispatchPaymentV2NotificationCore, EVENT_COLLECTION} = require('../../src/payment_v2_notifications');
 const {notificationAudienceKey} = require('../../src/notifications');
 const ledger = require('../../src/billing_v2_ledger');
@@ -58,6 +59,106 @@ async function fixture(environment, amounts = [1000], timeZone = 'Asia/Manila') 
   return {db, bucket, upload, ref, get, patch, bills, batches, rows, financialState, pay, proof, revision, prepareOnly};
 }
 function paymentCases(test, environment) {
+  test('resident can report direct UPI without screenshot or reference; no money is settled', async () => {
+    const f = await fixture(environment);
+    const bill = await f.get(`bills/${f.bills[0]}`);
+    const data = {billId: f.bills[0], submittedAmountMinor: 1000,
+      submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'bank-report-1'};
+    const reported = await report({db: f.db, auth: {uid: 'r'}, now, data});
+    assert.equal(reported.status, 'pending');
+    assert.equal(reported.receiptPath, null);
+    const proof = await f.get(`paymentProofsV2/${reported.paymentId}`);
+    assert.equal(proof.evidenceType, 'bank_credit_report');
+    assert.equal(proof.paymentReference, null);
+    assert.equal(Object.hasOwn(proof, 'receiptPath'), false);
+    assert((await f.financialState()).every(rows => rows.length === 0));
+    const same = await report({db: f.db, auth: {uid: 'r'}, now: () => now() + 10000, data});
+    assert.deepEqual(same, reported);
+    await assert.rejects(verify({db: f.db, bucket: f.bucket, auth,
+      data: {paymentId: reported.paymentId}, now}), /invalid_v2_proof|Receipt path/);
+    assert((await f.financialState()).every(rows => rows.length === 0));
+  });
+  test('bank report cannot duplicate a pending proof or impersonate another resident', async () => {
+    const f = await fixture(environment);
+    const bill = await f.get(`bills/${f.bills[0]}`);
+    const data = {billId: f.bills[0], submittedAmountMinor: 1000,
+      submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'bank-report-2'};
+    await assert.rejects(report({db: f.db, auth: {uid: 'intruder'}, now, data}), /Bill does not belong/);
+    const first = await report({db: f.db, auth: {uid: 'r'}, now, data});
+    await assert.rejects(report({db: f.db, auth: {uid: 'r'}, now,
+      data: {...data, idempotencyKey: 'other'}}), /payment_proof_already_pending/);
+    await assert.rejects(report({db: f.db, auth: {uid: 'r'}, now,
+      data: {...data, paymentReference: 'DIFFERENT'}}), /idempotency_conflict/);
+    assert.equal((await f.get(`paymentProofsV2/${first.paymentId}`)).status, 'pending');
+    assert((await f.financialState()).every(rows => rows.length === 0));
+  });
+
+  test('Admin bank-verifies reported UPI without image and settles exactly once', async () => {
+    const f = await fixture(environment);
+    const bill = await f.get(`bills/${f.bills[0]}`);
+    const pending = await report({db: f.db, auth: {uid: 'r'}, now,
+      data: {billId: f.bills[0], submittedAmountMinor: 1000,
+        submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'bank-good'}});
+    const data = {paymentId: pending.paymentId, bankCreditReference: ' BANK-UTR-123 ',
+      bankCreditDate: '2030-01-15', confirmedAmountMinor: 1000, bankCreditConfirmed: true};
+    await assert.rejects(verify({db: f.db, bucket: f.bucket, auth, now,
+      data: {paymentId: pending.paymentId}}), /invalid_v2_proof/);
+    await assert.rejects(verifyBank({db: f.db, auth: {uid: 'r'}, now, data}));
+    assert((await f.financialState()).every(rows => rows.length === 0));
+    const result = await verifyBank({db: f.db, auth, now, data});
+    assert.equal(result.success, true);
+    const proof = await f.get(`paymentProofsV2/${pending.paymentId}`);
+    assert.equal(proof.status, 'completed');
+    assert.equal(proof.bankCreditReference, 'BANK-UTR-123');
+    const guards = await f.rows('communityBankCreditGuardsV2');
+    assert.equal(guards.length, 1);
+    assert.equal(guards[0][1].transactionId, result.transactionId);
+    assert.equal((await f.rows('paymentTransactions')).length, 1);
+    const retry = await verifyBank({db: f.db, auth, now, data});
+    assert.equal(retry.alreadyCompleted, true);
+    assert.equal(retry.transactionId, result.transactionId);
+    assert.equal((await f.rows('paymentTransactions')).length, 1);
+    await assert.rejects(verifyBank({db: f.db, auth, now,
+      data: {...data, bankCreditDate: '2030-01-16'}}), /idempotency_conflict/);
+  });
+  test('bank confirmation requires identifier, exact amount and Admin attestation', async () => {
+    const f = await fixture(environment);
+    const bill = await f.get(`bills/${f.bills[0]}`);
+    const pending = await report({db: f.db, auth: {uid: 'r'}, now,
+      data: {billId: f.bills[0], submittedAmountMinor: 1000,
+        submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'bank-invalid'}});
+    const data = {paymentId: pending.paymentId, bankCreditReference: 'BANK-55',
+      bankCreditDate: '2030-01-15', confirmedAmountMinor: 1000, bankCreditConfirmed: true};
+    for (const change of [
+      {bankCreditReference: null}, {bankCreditReference: ''},
+      {bankCreditDate: '2030-02-30'}, {bankCreditConfirmed: false},
+      {confirmedAmountMinor: 0}, {confirmedAmountMinor: 1001},
+    ]) {
+      // A different confirmed amount may be legitimate for flexible V2 reports;
+      // for this legacy-exact claim it is disallowed by the contract below.
+      await assert.rejects(verifyBank({db: f.db, auth, now, data: {...data, ...change}}));
+    }
+    assert((await f.financialState()).every(rows => rows.length === 0));
+    assert.equal((await f.rows('communityBankCreditGuardsV2')).length, 0);
+  });
+  test('same community bank credit cannot settle two reported claims', async () => {
+    const f = await fixture(environment, [1000, 1000]);
+    const firstBill = await f.get(`bills/${f.bills[0]}`);
+    const first = await report({db: f.db, auth: {uid: 'r'}, now,
+      data: {billId: f.bills[0], submittedAmountMinor: 1000,
+        submittedBillRevisionId: firstBill.currentRevisionId, idempotencyKey: 'bank-one'}});
+    const bank = {bankCreditReference: 'SAME-CREDIT-777', bankCreditDate: '2030-01-15',
+      confirmedAmountMinor: 1000, bankCreditConfirmed: true};
+    await verifyBank({db: f.db, auth, now, data: {paymentId: first.paymentId, ...bank}});
+    const secondBill = await f.get(`bills/${f.bills[1]}`);
+    const second = await report({db: f.db, auth: {uid: 'r'}, now,
+      data: {billId: f.bills[1], submittedAmountMinor: 1000,
+        submittedBillRevisionId: secondBill.currentRevisionId, idempotencyKey: 'bank-two'}});
+    await assert.rejects(verifyBank({db: f.db, auth, now,
+      data: {paymentId: second.paymentId, ...bank}}), /duplicate_bank_credit/);
+    assert.equal((await f.rows('paymentTransactions')).length, 1);
+    assert.equal((await f.rows('communityBankCreditGuardsV2')).length, 1);
+  });
   test('same-key preparation retry preserves the original proof after outstanding and revision change', async () => {
     const f = await fixture(environment), first = await f.prepareOnly();
     const before = await f.get(`paymentProofsV2/${first.paymentId}`);

@@ -65,7 +65,9 @@ const {
 
 const {
   preparePaymentProofV2Core,
+  reportDirectUpiPaymentV2Core,
   verifyPaymentProofV2Core,
+  verifyReportedDirectUpiV2Core,
   rejectPaymentProofV2Core,
   recordOfflinePaymentV2Core,
 } = require("./payment_v2");
@@ -475,6 +477,8 @@ exports.verifyPaymentProof = appCheckedCallable(
 );
 
 exports.preparePaymentProofV2 = appCheckedCallable(preparePaymentProofV2Core, 'V2 payment proof could not be prepared.');
+exports.reportDirectUpiPaymentV2 = appCheckedCallable(reportDirectUpiPaymentV2Core, 'Direct UPI payment report could not be recorded.');
+exports.verifyReportedDirectUpiV2 = appCheckedCallable(verifyReportedDirectUpiV2Core, 'Bank credit could not be verified.');
 exports.verifyPaymentProofV2 = appCheckedCallable(verifyPaymentProofV2Core, 'V2 payment proof could not be verified.');
 exports.rejectPaymentProofV2 = appCheckedCallable(rejectPaymentProofV2Core, 'V2 payment proof could not be rejected.');
 exports.recordOfflinePaymentV2 = appCheckedCallable(recordOfflinePaymentV2Core, 'V2 offline payment could not be recorded.');

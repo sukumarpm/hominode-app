@@ -157,22 +157,29 @@ async function receiptEvidence(bucket, proof) {
 
 // Preparation captures the payment intent before the resident uploads evidence.
 // V2 proofs are deliberately outside payments, so V1 review cannot process them.
-async function preparePaymentProofV2Core({db, auth, data, now = Date.now}) {
+async function preparePaymentProofV2Core({db, auth, data, now = Date.now, allowBankReport = false}) {
   const uid = authUid(auth);
-  input(data, ['billId', 'submittedAmountMinor', 'submittedBillRevisionId', 'idempotencyKey', 'receiptExtension', 'paymentReference', 'amountContractVersion']);
+  input(data, ['billId', 'submittedAmountMinor', 'submittedBillRevisionId', 'idempotencyKey', 'receiptExtension', 'paymentReference', 'amountContractVersion', 'reportMode']);
+  // reportMode is set only by the new reportDirectUpiPaymentV2Core wrapper.
+  // A resident's report is NOT confirmation of a bank credit.
+  if (data.reportMode != null && data.reportMode !== 'bank_pending') fail('Unsupported payment report mode.', 'invalid-argument');
+  const bankReport = data.reportMode === 'bank_pending';
+  if (bankReport && !allowBankReport) fail('Payment reports require the dedicated callable.', 'invalid-argument');
   if (data.amountContractVersion != null && data.amountContractVersion !== 2) fail('Unsupported payment amount contract.', 'invalid-argument');
   const request = {billId: id(data.billId), submittedAmountMinor: amount(data.submittedAmountMinor),
     submittedBillRevisionId: id(data.submittedBillRevisionId), idempotencyKey: id(data.idempotencyKey),
-    receiptExtension: data.receiptExtension, paymentReference: reference(data.paymentReference),
+    ...(bankReport ? {reportMode: 'bank_pending'} : {receiptExtension: data.receiptExtension}),
+    paymentReference: reference(data.paymentReference),
     ...(data.amountContractVersion === 2 ? {amountContractVersion: 2} : {})};
-  if (!EXTENSIONS.includes(request.receiptExtension)) fail('Invalid receipt extension.', 'invalid-argument');
+  if (!bankReport && !EXTENSIONS.includes(request.receiptExtension)) fail('Invalid receipt extension.', 'invalid-argument');
+  if (bankReport && data.receiptExtension != null) fail('Bank reports do not accept receipt upload fields.', 'invalid-argument');
   const paymentId = `proof_v2_${hash([uid, request.idempotencyKey])}`;
   const ref = db.collection('paymentProofsV2').doc(paymentId);
   return db.runTransaction(async tx => {
     const existing = (await tx.get(ref)).data();
     if (existing) {
       check(existing.residentId === uid && existing.requestHash === hash(request), 'idempotency_conflict');
-      return {paymentId, receiptPath: existing.receiptPath, status: existing.status};
+      return {paymentId, receiptPath: existing.receiptPath ?? null, status: existing.status};
     }
     const doc = await tx.get(db.collection('bills').doc(request.billId)), bill = doc.data();
     check(bill?.residentId === uid, 'Bill does not belong to this resident.');
@@ -208,16 +215,24 @@ async function preparePaymentProofV2Core({db, auth, data, now = Date.now}) {
       check(request.submittedAmountMinor === checked.outstandingAmountMinor,
         'submitted_amount_mismatch: legacy submittedAmountMinor must equal the current outstandingAmountMinor; refresh before preparing payment');
     }
-    const receiptPath = `payment_receipts/${scope.communityId}/${request.billId}/${uid}/${paymentId}.${request.receiptExtension}`;
+    const receiptPath = bankReport ? null :
+      `payment_receipts/${scope.communityId}/${request.billId}/${uid}/${paymentId}.${request.receiptExtension}`;
     tx.create(ref, {schemaVersion: 2, id: paymentId, ...scope, userId: uid, billId: request.billId,
       submittedAmountMinor: request.submittedAmountMinor, submittedBillRevisionId: request.submittedBillRevisionId,
       ...(request.amountContractVersion === 2 ? {amountContractVersion: 2} : {}),
       submittedAt: Timestamp.fromMillis(nowMs), provider: 'direct_upi', method: 'upi', verificationMode: 'manual',
-      evidenceType: 'receipt', status: 'pending', receiptPath, paymentReference: request.paymentReference, requestHash: hash(request)});
+      evidenceType: bankReport ? 'bank_credit_report' : 'receipt', status: 'pending',
+      ...(receiptPath ? {receiptPath} : {}), paymentReference: request.paymentReference, requestHash: hash(request)});
     tx.set(guardRef, {schemaVersion: 2, communityId: scope.communityId, residentId: uid,
       billId: request.billId, paymentId, updatedAt: stamp()});
     return {paymentId, receiptPath, status: 'pending'};
   });
+}
+// Evidence-free payment reporting. This core only creates a pending claim;
+// existing verification deliberately rejects it until bank-credit confirmation is implemented.
+async function reportDirectUpiPaymentV2Core({db, auth, data, now = Date.now}) {
+  input(data, ['billId', 'submittedAmountMinor', 'submittedBillRevisionId', 'idempotencyKey', 'paymentReference', 'amountContractVersion']);
+  return preparePaymentProofV2Core({db, auth, now, allowBankReport: true, data: {...data, reportMode: 'bank_pending'}});
 }
 function eventWrites(record) {
   return [{collection: 'paymentTransactions', event: record.transaction},
@@ -252,7 +267,7 @@ function audit(uid, scope, transaction, plan, proofVerification) {
     action: transaction.method === 'upi' ? 'payment_v2.verify' : 'payment_v2.offline', targetType: 'paymentTransaction',
     targetId: transaction.id, summary: 'V2 payment settled', metadata});
 }
-async function settle(db, tx, {scope, request, source, entries, history, recordRef, uid, nowMs, proofRef, evidence, priorityBillId}) {
+async function settle(db, tx, {scope, request, source, entries, history, recordRef, uid, nowMs, proofRef, evidence, priorityBillId, bankCreditGuard}) {
   const plan = ledger.planPaymentAllocations({...scope, amountMinor: request.amountMinor,
     ...(priorityBillId ? {priorityBillId} : {}), liabilities: entries.map(entry => ({
     ...scope, billId: entry.billId, schemaVersion: 2, eligible: true, issued: true, outstandingAmountMinor: entry.outstandingAmountMinor,
@@ -273,8 +288,16 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
     createdBy: uid, createdAt: Timestamp.fromMillis(nowMs),
     ...(proofRef ? {claimedAmountMinor: request.claimedAmountMinor ?? request.amountMinor,
       confirmedAmountMinor: request.amountMinor, amountMismatch: (request.claimedAmountMinor ?? request.amountMinor) !== request.amountMinor,
-      amountConfirmationMode: request.amountConfirmationMode || 'legacy_exact_balance_fallback', reviewedBy: uid,
+      amountConfirmationMode: request.amountConfirmationMode || 'legacy_exact_balance_fallback',
+      ...(bankCreditGuard ? {bankCreditReference: bankCreditGuard.bankCreditReference,
+        bankCreditDate: request.bankCreditDate, bankCreditVerifiedBy: uid} : {}), reviewedBy: uid,
       reviewedAt: Timestamp.fromMillis(nowMs), referenceReviewRequired: !normalizedReference(request.paymentReference)} : {})};
+  // Community-level guard prevents one bank credit being approved for two residents.
+  // The guard is in the same Firestore transaction as every financial event.
+  if (bankCreditGuard) {
+    check(!(await tx.get(bankCreditGuard.ref)).exists,
+      'duplicate_bank_credit: bank transaction is already matched in this community');
+  }
   const normalizedPaymentReference = normalizedReference(request.paymentReference);
   const paymentReferenceGuardRef = normalizedPaymentReference
     ? db.collection('paymentReferenceGuardsV2').doc(`payment_reference_v2_${hash([scope.communityId, scope.residentId, normalizedPaymentReference])}`)
@@ -312,6 +335,12 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
   if (paymentReferenceGuardRef) tx.create(paymentReferenceGuardRef, {schemaVersion: 2,
     communityId: scope.communityId, residentId: scope.residentId, referenceHash: hash(normalizedPaymentReference),
     transactionId: transaction.id, createdAt: Timestamp.fromMillis(nowMs)});
+  if (bankCreditGuard) tx.create(bankCreditGuard.ref, {
+    schemaVersion: 2, communityId: scope.communityId,
+    bankCreditReference: bankCreditGuard.bankCreditReference,
+    paymentId: bankCreditGuard.paymentId, transactionId: transaction.id,
+    createdBy: uid, createdAt: Timestamp.fromMillis(nowMs),
+  });
   // Always serialize settlements on the account, even when no excess is issued.
   const account = {...(history.account || ledger.buildResidentFinancialAccount({...scope, createdAt: nowMs})),
     availableCreditMinor: next.credits.availableCreditMinor, version: (history.account?.version || 0) + 1, updatedAt: nowMs};
@@ -376,6 +405,85 @@ async function verifyPaymentProofV2Core({db, bucket, auth, data, now = Date.now}
       entries, history, recordRef, uid, nowMs, proofRef, evidence, priorityBillId: proof.billId});
   });
 }
+// Only the separate Admin callable can settle a resident's evidence-free report.
+// A claimed UPI callback, amount or timestamp alone is never a bank match.
+async function verifyReportedDirectUpiV2Core({db, auth, data, now = Date.now}) {
+  input(data, ['paymentId', 'bankCreditReference', 'bankCreditDate', 'confirmedAmountMinor', 'bankCreditConfirmed']);
+  const paymentId = id(data.paymentId);
+  const bankCreditReference = reference(data.bankCreditReference);
+  check(bankCreditReference != null, 'A bank transaction reference is required.');
+  const bankCreditDate = data.bankCreditDate;
+  if (typeof bankCreditDate !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(bankCreditDate) ||
+      Number.isNaN(Date.parse(`${bankCreditDate}T00:00:00Z`)) ||
+      new Date(`${bankCreditDate}T00:00:00Z`).toISOString().slice(0, 10) !== bankCreditDate) {
+    fail('A valid bank credit date (YYYY-MM-DD) is required.', 'invalid-argument');
+  }
+  if (data.bankCreditConfirmed !== true) fail('Admin must confirm bank statement credit.', 'invalid-argument');
+  const confirmedAmountMinor = amount(data.confirmedAmountMinor);
+  const proofRef = db.collection('paymentProofsV2').doc(paymentId);
+  return db.runTransaction(async tx => {
+    const proof = (await tx.get(proofRef)).data();
+    if (!proof) fail('V2 payment report was not found.', 'not-found');
+    check(proof.schemaVersion === 2 && proof.id === paymentId && proof.provider === 'direct_upi' &&
+      proof.method === 'upi' && proof.verificationMode === 'manual' &&
+      proof.evidenceType === 'bank_credit_report' && proof.status !== 'failed' &&
+      ['pending', 'completed'].includes(proof.status) &&
+      ['billId', 'communityId', 'residentId', 'submittedBillRevisionId'].every(key => validId(proof[key])) &&
+      proof.userId === proof.residentId && proof.currency === 'INR' &&
+      Number.isSafeInteger(proof.submittedAmountMinor) && proof.submittedAmountMinor > 0 &&
+      proof.submittedAt instanceof Timestamp && proof.receiptPath == null,
+      'invalid_v2_bank_report');
+    const {uid} = await requireOperationalAdmin(db, auth, proof.communityId, tx);
+    check(proof.amountContractVersion === 2 || confirmedAmountMinor === proof.submittedAmountMinor,
+      'confirmed_amount_mismatch: the legacy payment claim requires the exact amount');
+    const normalizedBankCredit = normalizedReference(bankCreditReference);
+    const guardRef = db.collection('communityBankCreditGuardsV2')
+      .doc(`bank_credit_v2_${hash([proof.communityId, normalizedBankCredit])}`);
+    const recordRef = db.collection('paymentSettlementsV2').doc(`settlement_v2_${hash(['proof', paymentId])}`);
+    const request = {paymentId, billId: proof.billId, communityId: proof.communityId,
+      residentId: proof.residentId, amountMinor: confirmedAmountMinor,
+      submittedBillRevisionId: proof.submittedBillRevisionId,
+      submittedAt: proof.submittedAt.toMillis(), receiptPath: null,
+      paymentReference: bankCreditReference, claimedAmountMinor: proof.submittedAmountMinor,
+      confirmedAmountMinor, amountConfirmationMode: 'admin_bank_confirmed',
+      bankCreditReference: normalizedBankCredit, bankCreditDate};
+    const existing = (await tx.get(recordRef)).data();
+    if (existing) {
+      check(proof.status === 'completed' && proof.transactionId === existing.transaction.id,
+        'proof_settlement_mismatch');
+      check(existing.bankCreditReference === normalizedBankCredit && existing.bankCreditDate === bankCreditDate,
+        'idempotency_conflict');
+      const guard = (await tx.get(guardRef)).data();
+      check(guard?.paymentId === paymentId && guard?.transactionId === existing.transaction.id &&
+        guard?.communityId === proof.communityId && guard?.bankCreditReference === normalizedBankCredit,
+        'bank_credit_guard_mismatch');
+      return retrySettlement(db, tx, existing, request);
+    }
+    check(proof.status === 'pending', 'Only pending reports can be bank-verified.');
+    const scope = {communityId: proof.communityId, residentId: proof.residentId, currency: 'INR'};
+    const history = await historyFor(db, tx, scope), nowMs = now();
+    const billSnapshot = await tx.get(db.collection('bills').where('schemaVersion', '==', 2)
+      .where('communityId', '==', scope.communityId).where('residentId', '==', scope.residentId)
+      .limit(MAX_ACCOUNT_BILLS + 1));
+    const billDocs = rootDocs(billSnapshot, 'bills');
+    check(billDocs.length <= MAX_ACCOUNT_BILLS, 'account_liability_limit: too many bills for an atomic settlement');
+    const entries = [];
+    for (const doc of billDocs) {
+      const entry = await liability(db, tx, doc, scope);
+      entries.push(await verifyProjection(db, tx, entry, scope, history, nowMs));
+    }
+    check(entries.some(entry => entry.billId === proof.billId), 'The linked bill is no longer an eligible liability.');
+    // No receipt image is required; the Admin attests to this exact bank credit.
+    // A distinct community-wide guard is reserved atomically before settlement.
+    const evidence = {bankCreditReference: normalizedBankCredit, bankCreditDate,
+      bankCreditConfirmedBy: uid, bankCreditConfirmedAt: Timestamp.fromMillis(nowMs)};
+    return settle(db, tx, {scope, request,
+      source: {sourceType: 'direct_upi_proof', sourceId: paymentId, sourceState: 'approved', method: 'upi'},
+      entries, history, recordRef, uid, nowMs, proofRef, evidence,
+      priorityBillId: proof.billId, bankCreditGuard: {ref: guardRef,
+        bankCreditReference: normalizedBankCredit, paymentId}});
+  });
+}
 async function rejectPaymentProofV2Core({db, auth, data}) {
   input(data, ['paymentId', 'rejectionReason']); const paymentId = id(data.paymentId);
   if (typeof data.rejectionReason !== 'string' || !data.rejectionReason.trim() || data.rejectionReason.trim().length > 1000) {
@@ -419,4 +527,4 @@ async function recordOfflinePaymentV2Core({db, auth, data, now = Date.now}) {
       sourceState: 'received', method: request.paymentMethod}, entries, history, recordRef, uid, nowMs});
   });
 }
-module.exports = {preparePaymentProofV2Core, verifyPaymentProofV2Core, rejectPaymentProofV2Core, recordOfflinePaymentV2Core, MAX_ALLOCATIONS};
+module.exports = {preparePaymentProofV2Core, reportDirectUpiPaymentV2Core, verifyPaymentProofV2Core, verifyReportedDirectUpiV2Core, rejectPaymentProofV2Core, recordOfflinePaymentV2Core, MAX_ALLOCATIONS};
