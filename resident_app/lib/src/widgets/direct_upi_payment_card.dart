@@ -374,6 +374,17 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
             const SizedBox(height: 8),
             Text('exact_amount'.tr()),
             Text('₹${preparation.amount.toStringAsFixed(2)}'),
+            const SizedBox(height: 8),
+            const Text('Transaction note / memo'),
+            SelectableText(
+              preparation.paymentUri.queryParameters['tn'] ??
+                  'Hominode bill ${preparation.billId}',
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Only confirm if you have actually paid. Your bill stays unpaid '
+              'until the Community Admin verifies the bank credit.',
+            ),
           ],
         ),
         actions: [
@@ -383,7 +394,9 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text('submit_payment_proof'.tr()),
+            child: Text(
+              preparation.isV2 ? 'I Have Paid' : 'submit_payment_proof'.tr(),
+            ),
           ),
         ],
       ),
