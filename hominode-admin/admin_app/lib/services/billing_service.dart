@@ -475,7 +475,7 @@ class BillingService implements BillingScheduleV2Gateway {
     }
   }
 
-  /// Calls the bank-credit verification route; no resident screenshot is needed.
+  /// Only a community Admin can attest to a matching bank statement credit.
   Future<String> verifyReportedDirectUpiV2({
     required String paymentId,
     required String bankCreditReference,
@@ -484,13 +484,35 @@ class BillingService implements BillingScheduleV2Gateway {
   }) async {
     if (!_isValidFirestoreDocumentId(paymentId) ||
         bankCreditReference.trim().isEmpty ||
-        bankCreditReference.length > 200 ||
-        !RegExp(r'^\\d{4}-\\d{2}-\\d{2}
+        bankCreditReference.trim().length > 200 ||
+        !RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$').hasMatch(bankCreditDate) ||
+        confirmedAmountMinor <= 0 ||
+        confirmedAmountMinor > _safePaymentMinorUnitMax) {
+      throw const FormatException('Invalid bank-credit confirmation details.');
+    }
+    final payload = <String, dynamic>{
+      'paymentId': paymentId,
+      'bankCreditReference': bankCreditReference.trim(),
+      'bankCreditDate': bankCreditDate,
+      'confirmedAmountMinor': confirmedAmountMinor,
+      'bankCreditConfirmed': true,
+    };
+    final response = _paymentProofCallable != null
+        ? await _paymentProofCallable('verifyReportedDirectUpiV2', payload)
+        : (await _functions.httpsCallable('verifyReportedDirectUpiV2').call(payload)).data;
+    if (response is! Map || response['success'] != true ||
+        response['transactionId'] is! String ||
+        !_isValidFirestoreDocumentId(response['transactionId'] as String)) {
+      throw const FormatException('Bank-credit settlement could not be confirmed.');
+    }
+    return response['transactionId'] as String;
+  }
+
+  Future<void> rejectPaymentProof({
     required String paymentId,
     required String rejectionReason,
   }) async {
     final callable = _functions.httpsCallable('rejectPaymentProof');
-
     await callable.call({
       'paymentId': paymentId,
       'rejectionReason': rejectionReason.trim(),
