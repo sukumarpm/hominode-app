@@ -475,7 +475,7 @@ class BillingService implements BillingScheduleV2Gateway {
     }
   }
 
-  /// Only a community Admin can attest to a matching bank statement credit.
+  /// Admin attests to an identified credit in the community's bank account.
   Future<String> verifyReportedDirectUpiV2({
     required String paymentId,
     required String bankCreditReference,
@@ -485,34 +485,12 @@ class BillingService implements BillingScheduleV2Gateway {
     if (!_isValidFirestoreDocumentId(paymentId) ||
         bankCreditReference.trim().isEmpty ||
         bankCreditReference.trim().length > 200 ||
-        !RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$').hasMatch(bankCreditDate) ||
-        confirmedAmountMinor <= 0 ||
-        confirmedAmountMinor > _safePaymentMinorUnitMax) {
-      throw const FormatException('Invalid bank-credit confirmation details.');
-    }
-    final payload = <String, dynamic>{
-      'paymentId': paymentId,
-      'bankCreditReference': bankCreditReference.trim(),
-      'bankCreditDate': bankCreditDate,
-      'confirmedAmountMinor': confirmedAmountMinor,
-      'bankCreditConfirmed': true,
-    };
-    final response = _paymentProofCallable != null
-        ? await _paymentProofCallable('verifyReportedDirectUpiV2', payload)
-        : (await _functions.httpsCallable('verifyReportedDirectUpiV2').call(payload)).data;
-    if (response is! Map || response['success'] != true ||
-        response['transactionId'] is! String ||
-        !_isValidFirestoreDocumentId(response['transactionId'] as String)) {
-      throw const FormatException('Bank-credit settlement could not be confirmed.');
-    }
-    return response['transactionId'] as String;
-  }
-
-  Future<void> rejectPaymentProof({
+        !RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}
     required String paymentId,
     required String rejectionReason,
   }) async {
     final callable = _functions.httpsCallable('rejectPaymentProof');
+
     await callable.call({
       'paymentId': paymentId,
       'rejectionReason': rejectionReason.trim(),
