@@ -134,9 +134,47 @@ void main() {
     expect(launchCalls, 1);
     expect(launchedUri, same(_preparation.paymentUri));
     expect(launchedUri.toString(), _preparation.paymentUri.toString());
+    expect(proofCalls, 0);
+    expect(find.text('Check your UPI payment'), findsOneWidget);
+    await tester.tap(find.text('I Have Paid'));
+    await tester.pumpAndSettle();
     expect(proofCalls, 1);
     expect(find.text('Payment successful'), findsNothing);
     expect(find.text('Payment paid'), findsNothing);
+  });
+
+  testWidgets('does not report on return until resident confirms and warns before retry', (tester) async {
+    var launches = 0;
+    var reports = 0;
+    await tester.pumpWidget(
+      _app(
+        preparePayment: (_, _, _) async => _preparation,
+        launchPayment: (_) async { launches++; return true; },
+        onSubmitProof: () async { reports++; },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pay via UPI'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(reports, 0);
+    await tester.tap(find.text('Retry payment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Check deduction before retrying'), findsOneWidget);
+    expect(launches, 1);
+    await tester.tap(find.text('Do not retry'));
+    await tester.pumpAndSettle();
+    expect(launches, 1);
+    await tester.tap(find.text('Retry payment'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('I checked — retry UPI'));
+    await tester.pumpAndSettle();
+    expect(launches, 2);
+    expect(reports, 0);
+    await tester.tap(find.text('Not paid / Check later'));
+    await tester.pumpAndSettle();
+    expect(reports, 0);
   });
 
   testWidgets('disables duplicate Pay taps while preparing', (tester) async {
@@ -464,6 +502,9 @@ void main() {
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
       expect(calls, [(null, false), (90000, true)]);
+      expect(find.text('Check your UPI payment'), findsOneWidget);
+      await tester.tap(find.text('I Have Paid'));
+      await tester.pumpAndSettle();
       expect(proofPreparation?.paymentAmountMinor, 90000);
       expect(proofPreparation?.amountContractVersion, 2);
     },
