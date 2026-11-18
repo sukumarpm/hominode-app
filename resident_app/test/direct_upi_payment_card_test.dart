@@ -203,8 +203,6 @@ void main() {
     expect(prepareCalls, 1);
 
     preparation.complete(_preparation);
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     expect(prepareCalls, 1);
     expect(launchCalls, 1);
@@ -323,8 +321,6 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Pay via UPI'));
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.tap(find.text('Continue'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
 
@@ -365,8 +361,6 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Pay via UPI'));
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('Continue'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('Submit payment proof'));
