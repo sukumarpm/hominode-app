@@ -184,7 +184,30 @@ class DirectUpiPaymentPreparation {
     this.amountContractVersion,
     this.outstandingAmountMinor,
     this.currentRevisionId,
+    this.callbackReference,
   });
+
+  /// Optional untrusted transaction reference returned by a UPI app.
+  /// It is never sufficient for settlement.
+  final String? callbackReference;
+
+  DirectUpiPaymentPreparation withCallbackReference(String reference) =>
+      DirectUpiPaymentPreparation(
+        billId: billId,
+        communityId: communityId,
+        amount: amount,
+        vpa: vpa,
+        payeeName: payeeName,
+        paymentUri: paymentUri,
+        schemaVersion: schemaVersion,
+        residentId: residentId,
+        amountMinor: amountMinor,
+        paymentAmountMinor: paymentAmountMinor,
+        amountContractVersion: amountContractVersion,
+        outstandingAmountMinor: outstandingAmountMinor,
+        currentRevisionId: currentRevisionId,
+        callbackReference: reference,
+      );
 
   final String billId;
   final String communityId;
