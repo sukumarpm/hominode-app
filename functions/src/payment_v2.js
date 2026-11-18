@@ -292,12 +292,6 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
       ...(bankCreditGuard ? {bankCreditReference: bankCreditGuard.bankCreditReference,
         bankCreditDate: request.bankCreditDate, bankCreditVerifiedBy: uid} : {}), reviewedBy: uid,
       reviewedAt: Timestamp.fromMillis(nowMs), referenceReviewRequired: !normalizedReference(request.paymentReference)} : {})};
-  // Community-level guard prevents one bank credit being approved for two residents.
-  // The guard is in the same Firestore transaction as every financial event.
-  if (bankCreditGuard) {
-    check(!(await tx.get(bankCreditGuard.ref)).exists,
-      'duplicate_bank_credit: bank transaction is already matched in this community');
-  }
   const normalizedPaymentReference = normalizedReference(request.paymentReference);
   const paymentReferenceGuardRef = normalizedPaymentReference
     ? db.collection('paymentReferenceGuardsV2').doc(`payment_reference_v2_${hash([scope.communityId, scope.residentId, normalizedPaymentReference])}`)
@@ -307,6 +301,18 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
       'duplicate_payment_reference: this reference is already recorded for the resident account');
     check(!(await tx.get(paymentReferenceGuardRef)).exists,
       'duplicate_payment_reference: this reference is already recorded for the resident account');
+  }
+  // Use the same community-wide bank transaction guard for both screenshot-backed
+  // and bank-reported UPI proofs whenever a reference is available. Without a
+  // reference, manual review remains mandatory and automatic deduplication is
+  // inherently impossible; the legacy no-reference approval path is unchanged.
+  const sharedBankGuardRef = bankCreditGuard?.ref || (proofRef && normalizedPaymentReference
+    ? db.collection('communityBankCreditGuardsV2')
+      .doc(`bank_credit_v2_${hash([scope.communityId, normalizedPaymentReference])}`)
+    : null);
+  if (sharedBankGuardRef) {
+    check(!(await tx.get(sharedBankGuardRef)).exists,
+      'duplicate_bank_credit: bank transaction is already matched in this community');
   }
   // Every deterministic document is checked before any write. An orphan record
   // cannot be imported as a fresh receipt of money or applied a second time.
@@ -335,10 +341,10 @@ async function settle(db, tx, {scope, request, source, entries, history, recordR
   if (paymentReferenceGuardRef) tx.create(paymentReferenceGuardRef, {schemaVersion: 2,
     communityId: scope.communityId, residentId: scope.residentId, referenceHash: hash(normalizedPaymentReference),
     transactionId: transaction.id, createdAt: Timestamp.fromMillis(nowMs)});
-  if (bankCreditGuard) tx.create(bankCreditGuard.ref, {
+  if (sharedBankGuardRef) tx.create(sharedBankGuardRef, {
     schemaVersion: 2, communityId: scope.communityId,
-    bankCreditReference: bankCreditGuard.bankCreditReference,
-    paymentId: bankCreditGuard.paymentId, transactionId: transaction.id,
+    bankCreditReference: bankCreditGuard?.bankCreditReference || normalizedPaymentReference,
+    paymentId: bankCreditGuard?.paymentId || proofRef.id, transactionId: transaction.id,
     createdBy: uid, createdAt: Timestamp.fromMillis(nowMs),
   });
   // Always serialize settlements on the account, even when no excess is issued.
