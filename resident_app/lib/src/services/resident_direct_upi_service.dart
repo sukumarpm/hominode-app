@@ -409,7 +409,7 @@ class ResidentDirectUpiService {
         'cu': 'INR',
         // UPI payees may show this memo; it is identification help, not
         // proof of payment or a bank-verified transaction reference.
-        'tn': 'Hominode bill ${billId.length > 48 ? billId.substring(billId.length - 48) : billId}',
+        'tn': 'HN Bill ${billId.length > 12 ? billId.substring(0, 12) : billId}',
       },
     );
 
