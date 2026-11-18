@@ -185,7 +185,7 @@ String directUpiMemo(String billId, Map<String, dynamic> bill) {
   String? period;
   final rawPeriod = bill['billingPeriod'];
   if (rawPeriod is String &&
-      RegExp(r'^20\\d{2}-(0[1-9]|1[0-2])$').hasMatch(rawPeriod)) {
+      RegExp(r'^20\d{2}-(0[1-9]|1[0-2])$').hasMatch(rawPeriod)) {
     final month = int.parse(rawPeriod.substring(5, 7));
     period = '${months[month - 1]}${rawPeriod.substring(2, 4)}';
   } else {
