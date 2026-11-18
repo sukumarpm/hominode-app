@@ -80,7 +80,9 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       if (!mounted) return;
 
       if (launched) {
-        await _submitProof(preparation);
+        // launchUrl only confirms the app was opened. It is not a payment
+        // result. The dialog remains available when Hominode resumes.
+        await _confirmAfterExternalApp(preparation);
       } else {
         final shouldSubmitProof = await _showManualFallback(preparation);
         if (shouldSubmitProof && mounted) {
@@ -95,6 +97,92 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
       }
     } finally {
       if (mounted) setState(() => _isBusy = false);
+    }
+  }
+
+  static const _retrySafety =
+      'Before retrying, check your UPI app and bank account to confirm '
+      'that no amount was deducted. If the status is uncertain, do not '
+      'pay again until you confirm.';
+
+  Future<bool> _confirmRetry() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Check deduction before retrying'),
+        content: const Text(_retrySafety),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Do not retry'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('I checked — retry UPI'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _confirmAfterExternalApp(
+    DirectUpiPaymentPreparation preparation,
+  ) async {
+    while (mounted) {
+      // Some UPI apps cannot return a transaction status via url_launcher.
+      // Never infer success from a successful launch or app resume.
+      final action = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Check your UPI payment'),
+          content: const Text(
+            'If payment completed, select I Have Paid to request community '
+            'bank verification. No bill is marked paid until the Community '
+            'Admin confirms the bank credit. If it failed or was cancelled, '
+            'check whether money was deducted before trying again.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'later'),
+              child: const Text('Not paid / Check later'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'retry'),
+              child: const Text('Retry payment'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'paid'),
+              child: const Text('I Have Paid'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || action == 'later' || action == null) return;
+      if (action == 'paid') {
+        await _submitProof(preparation);
+        return;
+      }
+      if (action == 'retry') {
+        if (!await _confirmRetry() || !mounted) continue;
+        try {
+          final opened = await (widget.launchPayment ?? _launchExternally)(
+            preparation.paymentUri,
+          );
+          if (!mounted) return;
+          if (!opened) {
+            final manual = await _showManualFallback(preparation);
+            if (manual && mounted) await _submitProof(preparation);
+            return;
+          }
+        } catch (_) {
+          if (!mounted) return;
+          final manual = await _showManualFallback(preparation);
+          if (manual && mounted) await _submitProof(preparation);
+          return;
+        }
+      }
     }
   }
 
