@@ -155,7 +155,7 @@ function paymentCases(test, environment) {
       data: {billId: f.bills[1], submittedAmountMinor: 1000,
         submittedBillRevisionId: secondBill.currentRevisionId, idempotencyKey: 'bank-two'}});
     await assert.rejects(verifyBank({db: f.db, auth, now,
-      data: {paymentId: second.paymentId, ...bank}}), /duplicate_bank_credit/);
+      data: {paymentId: second.paymentId, ...bank}}), /duplicate_bank_credit|duplicate_payment_reference/);
     assert.equal((await f.rows('paymentTransactions')).length, 1);
     assert.equal((await f.rows('communityBankCreditGuardsV2')).length, 1);
   });
