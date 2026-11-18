@@ -1,0 +1,23 @@
+{
+  "project_info": {
+    "project_number": "123456789012",
+    "project_id": "demo-hominode-upi",
+    "storage_bucket": "demo-hominode-upi.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:123456789012:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "com.marantrix.hominode.resident.emulator"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "demo-emulator-only-not-a-real-api-key"
+        }
+      ]
+    }
+  ],
+  "configuration_version": "1"
+}
