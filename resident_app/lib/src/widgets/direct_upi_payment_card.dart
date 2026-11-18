@@ -101,17 +101,20 @@ class _DirectUpiPaymentCardState extends State<DirectUpiPaymentCard> {
               );
       final initial = await prepare(widget.billId, null, false);
       if (!mounted) return;
-      final selectedAmount = await _selectAmount(initial);
-      if (selectedAmount == null || !mounted) return;
-      final preparation =
-          selectedAmount == initial.paymentAmountMinor &&
-              !widget.flexibleAmountsEnabled
-          ? initial
-          : await prepare(
-              widget.billId,
-              selectedAmount,
-              widget.flexibleAmountsEnabled,
-            );
+      // Standard UPI payments always use the prepared bill amount. Legacy
+      // bills do not expose outstandingAmountMinor; showing that null value
+      // as ₹0.00 incorrectly prompted residents for a zero-value payment.
+      // Only flexible-payment mode should present an amount selector.
+      final DirectUpiPaymentPreparation preparation;
+      if (!widget.flexibleAmountsEnabled) {
+        preparation = initial;
+      } else {
+        final selectedAmount = await _selectAmount(initial);
+        if (selectedAmount == null || !mounted) return;
+        preparation = selectedAmount == initial.paymentAmountMinor
+            ? initial
+            : await prepare(widget.billId, selectedAmount, true);
+      }
       if (!mounted) return;
 
       var launched = false;
