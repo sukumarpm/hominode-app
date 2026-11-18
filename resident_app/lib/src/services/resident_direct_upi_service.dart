@@ -133,6 +133,9 @@ typedef ResidentDirectUpiReceiptUploader =
       required String contentType,
       required Map<String, String> customMetadata,
     });
+typedef ResidentDirectUpiReportCallable =
+    Future<Object?> Function(Map<String, dynamic> payload);
+
 typedef ResidentDirectUpiReceiptMetadataLoader =
     Future<Map<String, dynamic>?> Function(String receiptPath);
 
@@ -211,6 +214,7 @@ class ResidentDirectUpiService {
     ResidentDirectUpiPrepareProof? prepareProof,
     ResidentDirectUpiReceiptUploader? receiptUploader,
     ResidentDirectUpiReceiptMetadataLoader? receiptMetadataLoader,
+    ResidentDirectUpiReportCallable? reportCallable,
     FirebaseFunctions? functions,
     FirebaseStorage? storage,
   }) : _auth = auth,
@@ -223,6 +227,7 @@ class ResidentDirectUpiService {
        _prepareProof = prepareProof,
        _receiptUploader = receiptUploader,
        _receiptMetadataLoader = receiptMetadataLoader,
+       _reportCallable = reportCallable,
        _functions = functions,
        _storage = storage;
 
@@ -236,8 +241,72 @@ class ResidentDirectUpiService {
   final ResidentDirectUpiPrepareProof? _prepareProof;
   final ResidentDirectUpiReceiptUploader? _receiptUploader;
   final ResidentDirectUpiReceiptMetadataLoader? _receiptMetadataLoader;
+  final ResidentDirectUpiReportCallable? _reportCallable;
   final FirebaseFunctions? _functions;
   final FirebaseStorage? _storage;
+
+  /// A report is only a resident claim, never bank confirmation or settlement.
+  /// Keep the same key on retries after an ambiguous network response.
+  Future<String> reportV2Payment({
+    required DirectUpiPaymentPreparation preparation,
+    required String idempotencyKey,
+    String? paymentReference,
+  }) async {
+    if (!preparation.isV2 ||
+        !_validId(preparation.billId) ||
+        !_validId(preparation.communityId) ||
+        !_validId(preparation.residentId) ||
+        !_validId(preparation.currentRevisionId) ||
+        !_safeMinor(preparation.paymentAmountMinor) ||
+        preparation.paymentAmountMinor == 0 ||
+        !_validId(idempotencyKey)) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofPreparationFailed,
+      );
+    }
+    final scope = await _loadScope();
+    if (scope.uid != preparation.residentId ||
+        scope.communityId != preparation.communityId) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.billOwnershipMismatch,
+      );
+    }
+    final reference = paymentReference?.trim();
+    if (reference != null && reference.length > 200) {
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofPreparationFailed,
+      );
+    }
+    final payload = <String, dynamic>{
+      'billId': preparation.billId,
+      'submittedAmountMinor': preparation.paymentAmountMinor,
+      'submittedBillRevisionId': preparation.currentRevisionId,
+      'idempotencyKey': idempotencyKey,
+      'paymentReference': reference == null || reference.isEmpty ? null : reference,
+      if (preparation.amountContractVersion == 2) 'amountContractVersion': 2,
+    };
+    try {
+      final response = _reportCallable != null
+          ? await _reportCallable(payload)
+          : (await (_functions ??
+                  FirebaseFunctions.instanceFor(region: 'asia-southeast1'))
+              .httpsCallable('reportDirectUpiPaymentV2')
+              .call<dynamic>(payload))
+              .data;
+      if (response is! Map ||
+          !_validId(response['paymentId']) ||
+          response['status'] != 'pending' ||
+          response['receiptPath'] != null) {
+        throw const FormatException('Unexpected payment report response');
+      }
+      return response['paymentId'] as String;
+    } catch (_) {
+      // Retry with the SAME key; the backend may have recorded the claim.
+      throw const ResidentDirectUpiException(
+        ResidentDirectUpiFailure.proofPreparationFailed,
+      );
+    }
+  }
 
   Future<DirectUpiPaymentPreparation> preparePayment(
     String billId, {
