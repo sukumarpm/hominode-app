@@ -159,6 +159,43 @@ function paymentCases(test, environment) {
     assert.equal((await f.rows('paymentTransactions')).length, 1);
     assert.equal((await f.rows('communityBankCreditGuardsV2')).length, 1);
   });
+  test('screenshot-approved UPI reserves the same community bank reference guard as bank reports', async () => {
+    const f = await fixture(environment, [1000, 1000]);
+    const uploaded = await f.proof(1000, 0, 'shared-guard-image', 2, ' CROSS-ROUTE-UTR ');
+    const approved = await uploaded.approve({confirmedAmountMinor: 1000});
+    const guardRows = await f.rows('communityBankCreditGuardsV2');
+    assert.equal(guardRows.length, 1);
+    assert.equal(guardRows[0][1].bankCreditReference, 'CROSS-ROUTE-UTR');
+    assert.equal(guardRows[0][1].transactionId, approved.transactionId);
+
+    const bill = await f.get(`bills/${f.bills[1]}`);
+    const reported = await report({db: f.db, auth: {uid: 'r'}, now,
+      data: {billId: f.bills[1], submittedAmountMinor: 1000,
+        submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'shared-guard-report'}});
+    await assert.rejects(verifyBank({db: f.db, auth, now,
+      data: {paymentId: reported.paymentId, bankCreditReference: 'cross-route-utr',
+        bankCreditDate: '2030-01-15', confirmedAmountMinor: 1000, bankCreditConfirmed: true}}),
+    /duplicate_payment_reference|duplicate_bank_credit/);
+    assert.equal((await f.rows('paymentTransactions')).length, 1);
+    assert.equal((await f.rows('communityBankCreditGuardsV2')).length, 1);
+    assert.equal((await f.get(`paymentProofsV2/${reported.paymentId}`)).status, 'pending');
+  });
+  test('bank-approved UPI rejects later screenshot approval of the same bank reference', async () => {
+    const f = await fixture(environment, [1000, 1000]);
+    const bill = await f.get(`bills/${f.bills[0]}`);
+    const reported = await report({db: f.db, auth: {uid: 'r'}, now,
+      data: {billId: f.bills[0], submittedAmountMinor: 1000,
+        submittedBillRevisionId: bill.currentRevisionId, idempotencyKey: 'bank-before-image'}});
+    const accepted = await verifyBank({db: f.db, auth, now,
+      data: {paymentId: reported.paymentId, bankCreditReference: 'SHARED-CREDIT-123',
+        bankCreditDate: '2030-01-15', confirmedAmountMinor: 1000, bankCreditConfirmed: true}});
+    assert.equal(accepted.success, true);
+    const screenshot = await f.proof(1000, 1, 'image-after-bank', 2, 'shared-credit-123');
+    await assert.rejects(screenshot.approve({confirmedAmountMinor: 1000}),
+      /duplicate_payment_reference|duplicate_bank_credit/);
+    assert.equal((await f.rows('paymentTransactions')).length, 1);
+    assert.equal((await f.rows('communityBankCreditGuardsV2')).length, 1);
+  });
   test('same-key preparation retry preserves the original proof after outstanding and revision change', async () => {
     const f = await fixture(environment), first = await f.prepareOnly();
     const before = await f.get(`paymentProofsV2/${first.paymentId}`);
