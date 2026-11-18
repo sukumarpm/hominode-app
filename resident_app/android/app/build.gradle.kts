@@ -15,6 +15,25 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// The isolated test worktree may not have private release signing credentials.
+// Configure release signing only when the full set is available. Debug builds
+// must not depend on a developer's private key.properties file.
+val hasReleaseSigning = listOf("keyAlias", "keyPassword", "storeFile", "storePassword")
+    .all { !keystoreProperties.getProperty(it).isNullOrBlank() }
+
+// Fail closed for requested release artifacts; never silently sign with the
+// debug certificate or produce an apparently releasable unsigned artifact.
+gradle.taskGraph.whenReady {
+    val releaseTaskRequested = allTasks.any { task ->
+        task.project == project &&
+            (task.name.contains("Release", ignoreCase = true) ||
+                task.name.equals("bundle", ignoreCase = true))
+    }
+    if (releaseTaskRequested && !hasReleaseSigning) {
+        throw GradleException("Release signing is not configured. Supply android/key.properties before building a release.")
+    }
+}
+
 android {
     namespace = "com.marantrix.hominode.resident"
     compileSdk = flutter.compileSdkVersion
@@ -39,17 +58,21 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["storePassword"] as String
+        if (hasReleaseSigning) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
