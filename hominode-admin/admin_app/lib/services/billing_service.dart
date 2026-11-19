@@ -981,6 +981,7 @@ class BillModel {
   final String? adminPhone;
   final String communityId;
   final String? organization;
+  final String? invoiceNumber;
   final String flatId;
   final String flatLabel;
   final String residentId;
@@ -1017,6 +1018,7 @@ class BillModel {
     this.adminPhone,
     required this.communityId,
     this.organization,
+    this.invoiceNumber,
     required this.flatId,
     required this.flatLabel,
     required this.residentId,
@@ -1096,6 +1098,7 @@ class BillModel {
       adminPhone: data['adminPhone'],
       communityId: data['communityId'] ?? '',
       organization: data['organization'],
+      invoiceNumber: data['invoiceNumber'] is String ? data['invoiceNumber'] as String : null,
       flatId: data['flatId'] ?? '',
       flatLabel: data['flatLabel'] ?? '',
       residentId: data['residentId'] ?? '',
@@ -1156,6 +1159,7 @@ class BillModel {
       'adminPhone': adminPhone,
       'communityId': communityId,
       'organization': organization,
+      if (invoiceNumber != null) 'invoiceNumber': invoiceNumber,
       'flatId': flatId,
       'flatLabel': flatLabel,
       'residentId': residentId,
