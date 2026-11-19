@@ -5,6 +5,8 @@
 library;
 
 import 'dart:io';
+
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
@@ -20,6 +22,12 @@ class InvoiceGeneratorService {
 
   /// Generate PDF invoice for a bill
   Future<File> generateInvoice(BillModel bill) async {
+    // The report logo is an explicitly packaged Flutter asset, not an
+    // external URL or the icon for a particular Hominode application.
+    final logoData = await rootBundle.load(
+      'assets/images/hominode-report-logo.png',
+    );
+    final reportLogo = pw.MemoryImage(logoData.buffer.asUint8List());
     final pdf = pw.Document();
 
     pdf.addPage(
@@ -30,7 +38,7 @@ class InvoiceGeneratorService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              _buildHeader(),
+              _buildHeader(reportLogo),
               pw.SizedBox(height: 30),
               _buildInvoiceTitle(bill),
               pw.SizedBox(height: 20),
@@ -51,7 +59,7 @@ class InvoiceGeneratorService {
   }
 
   /// Build invoice header with society details
-  pw.Widget _buildHeader() {
+  pw.Widget _buildHeader(pw.ImageProvider reportLogo) {
     return pw.Container(
       padding: const pw.EdgeInsets.only(bottom: 20),
       decoration: const pw.BoxDecoration(
@@ -63,9 +71,11 @@ class InvoiceGeneratorService {
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
             children: [
+              pw.Image(reportLogo, width: 54, height: 54, fit: pw.BoxFit.contain),
+              pw.SizedBox(width: 12),
               pw.Text(
                 societyName,
                 style: pw.TextStyle(
