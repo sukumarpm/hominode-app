@@ -120,6 +120,7 @@ flutter:
     - assets/
     - assets/Admin_New.png
     - assets/images/admin_login_background.png
+    - assets/images/hominode-report-logo.png
     - assets/translations/
 
   # An image asset can refer to one or more resolution-specific "variants", see
