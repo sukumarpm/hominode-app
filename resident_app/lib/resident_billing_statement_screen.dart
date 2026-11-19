@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 
 import 'receipt_screen.dart';
+import 'resident_bill_invoice_screen.dart';
 import 'src/services/bill_firestore_service.dart';
 import 'src/services/resident_billing_statement_service.dart';
 import 'src/services/resident_billing_v2_receipt_service.dart';
@@ -270,6 +271,29 @@ class _ResidentBillingStatementScreenState
           _moneyRow('credit_applied'.tr(), bill.creditAppliedMinor),
           _moneyRow('outstanding'.tr(), bill.outstandingMinor),
           _detailRow('due_date'.tr(), _formatDateKey(bill.dueDateKey)),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton.icon(
+              key: ValueKey('view-bill-${bill.billId}'),
+              onPressed: () {
+                final statement = _statement;
+                if (statement == null) return;
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => ResidentBillInvoiceScreen(
+                      bill: bill,
+                      communityId: statement.communityId,
+                      residentId: statement.residentId,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.description_outlined),
+              label: Text(bill.invoiceNumber == null
+                  ? 'View Bill PDF'
+                  : 'View Invoice'),
+            ),
+          ),
           const Divider(height: 24),
           Text(
             'charge_lines'.tr(),
