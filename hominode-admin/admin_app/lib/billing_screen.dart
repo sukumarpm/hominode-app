@@ -4745,12 +4745,12 @@ class _BillingScreenState extends State<BillingScreen> {
         children: [
           Expanded(
             child: Semantics(
-              label: 'Download bill button',
+              label: 'View invoice button',
               button: true,
               child: OutlinedButton.icon(
                 onPressed: () => _onDownloadBill(bill),
-                icon: Icon(Icons.download_outlined, size: 18.w),
-                label: const Text('Download'),
+                icon: Icon(Icons.visibility_outlined, size: 18.w),
+                label: const Text('View Invoice'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF374151),
                   side: const BorderSide(color: Color(0xFFD1D5DB), width: 1),
