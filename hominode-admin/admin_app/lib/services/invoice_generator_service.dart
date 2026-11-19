@@ -132,7 +132,9 @@ class InvoiceGeneratorService {
             ),
             pw.SizedBox(height: 4),
             pw.Text(
-              bill.id.substring(0, 12).toUpperCase(),
+              bill.invoiceNumber?.trim().isNotEmpty == true
+                  ? bill.invoiceNumber!.trim()
+                  : bill.id,
               style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
             ),
           ],
