@@ -127,7 +127,7 @@ class InvoiceGeneratorService {
             pw.Text(hasNumber ? 'Invoice Number' : 'Invoice Number (legacy bill)',
               style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
             pw.SizedBox(height: 4),
-            pw.Text(hasNumber ? number! : 'Not assigned',
+            pw.Text(number ?? 'Not assigned',
               style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
           ],
         )),
