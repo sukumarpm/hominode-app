@@ -42,18 +42,28 @@ android {
         versionName = flutter.versionName
     }
 
+    // Debug builds (including emulators) must not require release secrets.
+    // An actual release still requires the configured signing credentials.
+    val hasReleaseSigning = listOf(
+        "keyAlias", "keyPassword", "storeFile", "storePassword"
+    ).all { !keystoreProperties.getProperty(it).isNullOrBlank() }
+
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["storePassword"] as String
+        if (hasReleaseSigning) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
