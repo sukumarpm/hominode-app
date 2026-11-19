@@ -38,7 +38,7 @@ class InvoiceGeneratorService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              _buildHeader(reportLogo),
+              _buildHeader(reportLogo, hasNumber: bill.invoiceNumber?.trim().isNotEmpty == true),
               pw.SizedBox(height: 30),
               _buildInvoiceTitle(bill),
               pw.SizedBox(height: 20),
@@ -59,7 +59,7 @@ class InvoiceGeneratorService {
   }
 
   /// Build invoice header with society details
-  pw.Widget _buildHeader(pw.ImageProvider reportLogo) {
+  pw.Widget _buildHeader(pw.ImageProvider reportLogo, {required bool hasNumber}) {
     return pw.Container(
       padding: const pw.EdgeInsets.only(bottom: 20),
       decoration: const pw.BoxDecoration(
@@ -99,9 +99,9 @@ class InvoiceGeneratorService {
                   borderRadius: pw.BorderRadius.circular(4),
                 ),
                 child: pw.Text(
-                  'INVOICE',
+                  hasNumber ? 'INVOICE' : 'BILL STATEMENT',
                   style: pw.TextStyle(
-                    fontSize: 20,
+                    fontSize: hasNumber ? 20 : 13,
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.white,
                   ),
@@ -114,51 +114,32 @@ class InvoiceGeneratorService {
     );
   }
 
-  /// Build invoice title with invoice number and date
+  /// Firestore IDs are not official invoice numbers.
   pw.Widget _buildInvoiceTitle(BillModel bill) {
+    final number = bill.invoiceNumber?.trim();
+    final hasNumber = number != null && number.isNotEmpty;
     return pw.Row(
-      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Column(
+        pw.Expanded(child: pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text(
-              'Invoice Number',
-              style: pw.TextStyle(
-                fontSize: 10,
-                fontWeight: pw.FontWeight.bold,
-                color: PdfColors.grey700,
-              ),
-            ),
+            pw.Text(hasNumber ? 'Invoice Number' : 'Invoice Number (legacy bill)',
+              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
             pw.SizedBox(height: 4),
-            pw.Text(
-              bill.invoiceNumber?.trim().isNotEmpty == true
-                  ? bill.invoiceNumber!.trim()
-                  : bill.id,
-              style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-            ),
+            pw.Text(hasNumber ? number : 'Not assigned',
+              style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
           ],
-        ),
-        pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.end,
-          children: [
-            pw.Text(
-              'Invoice Date',
-              style: pw.TextStyle(
-                fontSize: 10,
-                fontWeight: pw.FontWeight.bold,
-                color: PdfColors.grey700,
-              ),
-            ),
-            pw.SizedBox(height: 4),
-            pw.Text(
-              DateFormat(
-                'dd MMM yyyy',
-              ).format(bill.createdAt ?? DateTime.now()),
-              style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-            ),
-          ],
-        ),
+        )),
+        pw.SizedBox(width: 18),
+        pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
+          pw.Text(hasNumber ? 'Invoice Date' : 'Bill Date',
+            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
+          pw.SizedBox(height: 4),
+          pw.Text(bill.createdAt == null ? 'Not available'
+              : DateFormat('dd MMM yyyy').format(bill.createdAt!),
+            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+        ]),
       ],
     );
   }
@@ -369,6 +350,11 @@ class InvoiceGeneratorService {
       children: [
         pw.Divider(color: PdfColors.grey300),
         pw.SizedBox(height: 12),
+        if (bill.invoiceNumber?.trim().isNotEmpty != true) ...[
+          pw.Text('Internal bill reference:', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+          pw.Text(_wrapReference(bill.id), style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+          pw.SizedBox(height: 8),
+        ],
         pw.Text(
           'For billing questions, please contact your community office.',
           style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
@@ -389,12 +375,21 @@ class InvoiceGeneratorService {
         pw.SizedBox(height: 8),
         pw.Center(
           child: pw.Text(
-            'This is a computer-generated invoice and does not require a signature.',
+            'This is a computer-generated document and does not require a signature.',
             style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
           ),
         ),
       ],
     );
+  }
+
+  // Add explicit line breaks for long opaque IDs so they stay inside the page.
+  String _wrapReference(String value) {
+    final parts = <String>[];
+    for (var i = 0; i < value.length; i += 40) {
+      parts.add(value.substring(i, i + 40 < value.length ? i + 40 : value.length));
+    }
+    return parts.join('\n');
   }
 
   /// Helper: Build table cell
