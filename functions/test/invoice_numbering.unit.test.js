@@ -29,8 +29,11 @@ test('reserves next number inside caller transaction', async () => {
     set: (ref, payload) => changes.push({ref, payload}),
   };
   const result = await reserveInvoiceNumber({db, transaction, communityId: 'GREEN-WAVE', communityCode: 'GW', year: 2026});
-  assert.deepEqual(result, {number: 'HN-GW-2026-000009', sequence: 9});
-  assert.equal(changes.length, 1);
+  assert.equal(result.number, 'HN-GW-2026-000009');
+  assert.equal(result.sequence, 9);
+  assert.equal(result.counterData.lastSequence, 9);
+  assert.equal(changes.length, 0); // caller writes only after all transaction reads
+  transaction.set(result.counterRef, result.counterData);
   assert.equal(changes[0].payload.lastSequence, 9);
 });
 test('rejects counter scope mismatch without a write', async () => {
