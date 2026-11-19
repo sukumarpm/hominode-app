@@ -40,7 +40,7 @@ class InvoiceGeneratorService {
               pw.SizedBox(height: 30),
               _buildPaymentInfo(bill),
               pw.Spacer(),
-              _buildFooter(),
+              _buildFooter(bill),
             ],
           );
         },
@@ -351,27 +351,22 @@ class InvoiceGeneratorService {
   }
 
   /// Build footer with terms and thank you message
-  pw.Widget _buildFooter() {
+  pw.Widget _buildFooter(BillModel bill) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Divider(color: PdfColors.grey300),
         pw.SizedBox(height: 12),
         pw.Text(
-          'Terms & Conditions',
-          style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
-        ),
-        pw.SizedBox(height: 6),
-        pw.Text(
-          '• Payment should be made within the due date mentioned above.\n'
-          '• Late payment may attract penalty charges.\n'
-          '• For any queries, please contact the society office.',
+          'For billing questions, please contact your community office.',
           style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
         ),
         pw.SizedBox(height: 16),
         pw.Center(
           child: pw.Text(
-            'Thank you for your payment!',
+            bill.status == 'paid'
+                ? 'Payment recorded'
+                : 'Please refer to your community for payment instructions',
             style: pw.TextStyle(
               fontSize: 12,
               fontWeight: pw.FontWeight.bold,
