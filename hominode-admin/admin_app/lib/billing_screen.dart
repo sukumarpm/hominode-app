@@ -2956,273 +2956,111 @@ class _BillingScreenState extends State<BillingScreen> {
     }
   }
 
-  void _onDownloadBill(BillModel bill) async {
-    try {
-      // Show loading indicator
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => Center(
-          child: Container(
+  Future<void> _onDownloadBill(BillModel bill) async {
+    // Generating a PDF in the app's temporary directory is not a user
+    // download. Only the explicit Download action saves it to Downloads.
+    var loadingDialogOpen = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(
+        child: Card(
+          child: Padding(
             padding: EdgeInsets.all(24.w),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16.r),
-            ),
-            child: Column(
+            child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 CircularProgressIndicator(),
-                SizedBox(height: 16.h),
-                Text(
-                  'Generating Invoice...',
-                  style: TextStyle(
-                    fontSize: 16.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                SizedBox(width: 16),
+                Text('Preparing invoice preview…'),
               ],
             ),
           ),
         ),
-      );
+      ),
+    );
 
-      // Generate PDF invoice
+    try {
       final invoiceService = InvoiceGeneratorService();
       final pdfFile = await invoiceService.generateInvoice(bill);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      loadingDialogOpen = false;
 
-      // Automatically download to device storage
-      final savedPath = await invoiceService.downloadInvoice(pdfFile);
-
-      // Close loading dialog
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-
-      // Show success dialog with options
-      if (mounted) {
-        _showDownloadSuccessDialog(pdfFile, bill, savedPath, invoiceService);
-      }
-    } catch (e) {
-      // Close loading dialog if open
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.white, size: 20.w),
-                SizedBox(width: 12.w),
-                Expanded(child: Text('Failed to generate invoice: $e')),
-              ],
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (previewContext) => Scaffold(
+            appBar: AppBar(title: const Text('Invoice Preview')),
+            body: PdfPreview(
+              build: (_) => pdfFile.readAsBytes(),
+              allowPrinting: false,
+              allowSharing: false,
+              canChangeOrientation: false,
+              canChangePageFormat: false,
+              useActions: false,
             ),
-            backgroundColor: const Color(0xFFEF4444),
-            duration: const Duration(seconds: 4),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10.r),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  void _showDownloadSuccessDialog(
-    File pdfFile,
-    BillModel bill,
-    String savedPath,
-    InvoiceGeneratorService invoiceService,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20.r),
-        ),
-        child: Container(
-          constraints: BoxConstraints(maxWidth: 400.w),
-          padding: EdgeInsets.all(24.w),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Success icon
-              Container(
-                width: 72.w,
-                height: 72.h,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFDCFCE7),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.check_circle,
-                  color: Color(0xFF10B981),
-                  size: 40.w,
-                ),
-              ),
-              SizedBox(height: 20.h),
-
-              // Title
-              Text(
-                'Invoice Downloaded',
-                style: TextStyle(
-                  fontSize: 20.sp,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF111111),
-                ),
-              ),
-              SizedBox(height: 8.h),
-
-              // Subtitle
-              Text(
-                'Invoice for ${bill.residentName}',
-                style: TextStyle(fontSize: 14.sp, color: Color(0xFF6B7280)),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: 4.h),
-              Text(
-                'Flat ${bill.flatLabel} • ${bill.month} ${bill.year}',
-                style: TextStyle(
-                  fontSize: 13.sp,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFF374151),
-                ),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: 16.h),
-
-              // File location info
-              Container(
-                padding: EdgeInsets.all(12.w),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(10.r),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.folder_outlined,
-                      color: Color(0xFF6B7280),
-                      size: 20.w,
-                    ),
-                    SizedBox(width: 10.w),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Saved to Downloads',
-                            style: TextStyle(
-                              fontSize: 12.sp,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF374151),
-                            ),
-                          ),
-                          SizedBox(height: 2.h),
-                          Text(
-                            pdfFile.path.split('/').last,
-                            style: TextStyle(
-                              fontSize: 11.sp,
-                              color: Color(0xFF6B7280),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(height: 24.h),
-
-              // Action buttons
-              Row(
+            bottomNavigationBar: SafeArea(
+              minimum: const EdgeInsets.all(16),
+              child: Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () async {
                         try {
                           await invoiceService.shareInvoice(pdfFile, bill);
-                          if (mounted) {
-                            Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
+                        } catch (e) {
+                          if (previewContext.mounted) {
+                            ScaffoldMessenger.of(previewContext).showSnackBar(
+                              SnackBar(content: Text('Unable to share invoice: $e')),
+                            );
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.share_outlined),
+                      label: const Text('Share'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        try {
+                          final savedPath =
+                              await invoiceService.downloadInvoice(pdfFile);
+                          if (previewContext.mounted) {
+                            ScaffoldMessenger.of(previewContext).showSnackBar(
                               SnackBar(
-                                content: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.share,
-                                      color: Colors.white,
-                                      size: 20.w,
-                                    ),
-                                    SizedBox(width: 12.w),
-                                    Text('Invoice shared successfully'),
-                                  ],
-                                ),
-                                backgroundColor: const Color(0xFF10B981),
-                                duration: const Duration(seconds: 2),
-                                behavior: SnackBarBehavior.floating,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10.r),
+                                content: Text(
+                                  'Invoice saved: ${savedPath.split('/').last}',
                                 ),
                               ),
                             );
                           }
                         } catch (e) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Failed to share: $e'),
-                                backgroundColor: const Color(0xFFEF4444),
-                              ),
+                          if (previewContext.mounted) {
+                            ScaffoldMessenger.of(previewContext).showSnackBar(
+                              SnackBar(content: Text('Unable to download invoice: $e')),
                             );
                           }
                         }
                       },
-                      icon: Icon(Icons.share_outlined, size: 20.w),
-                      label: const Text('Share'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF0E4778),
-                        side: const BorderSide(
-                          color: Color(0xFF0E4778),
-                          width: 1.5,
-                        ),
-                        padding: EdgeInsets.symmetric(vertical: 14.h),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12.r),
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 12.w),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                      },
-                      icon: Icon(Icons.done, size: 20.w),
-                      label: const Text('Done'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: 14.h),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12.r),
-                        ),
-                      ),
+                      icon: const Icon(Icons.download_outlined),
+                      label: const Text('Download'),
                     ),
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      if (loadingDialogOpen) Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to prepare invoice: $e')),
+      );
+    }
   }
 
   Future<void> _onDeleteBill(BillModel bill) async {
