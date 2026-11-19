@@ -5,7 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-import 'receipt_screen.dart' show saveAndOpenPdf, sharePdf;
+import 'receipt_screen.dart' show saveAndOpenPdf;
 import 'src/services/resident_billing_statement_service.dart';
 
 /// A read-only bill preview backed by the resident's authorized statement.
@@ -137,7 +137,7 @@ class _ResidentBillInvoiceScreenState extends State<ResidentBillInvoiceScreen> {
       child: Row(children: [
         Expanded(child: OutlinedButton.icon(
           onPressed: _busy ? null : () => _action(
-            (bytes) => sharePdf(bytes, _filename)),
+            (bytes) => Printing.sharePdf(bytes: bytes, filename: _filename)),
           icon: const Icon(Icons.share_outlined), label: const Text('Share'),
         )),
         const SizedBox(width: 12),
@@ -145,7 +145,7 @@ class _ResidentBillInvoiceScreenState extends State<ResidentBillInvoiceScreen> {
           onPressed: _busy ? null : () => _action(
             (bytes) => saveAndOpenPdf(bytes, _filename)),
           icon: const Icon(Icons.download_outlined),
-          label: const Text('Download'),
+          label: const Text('Save / Print'),
         )),
       ]),
     ),
