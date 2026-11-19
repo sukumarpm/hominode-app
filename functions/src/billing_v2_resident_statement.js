@@ -372,7 +372,9 @@ async function getResidentBillingV2StatementCore({db, auth, data, now = Date.now
     summary.creditAppliedMinor += BigInt(projection.creditAppliedMinor);
     summary.outstandingMinor += BigInt(projection.outstandingAmountMinor);
     summary.statusCounts[projection.status]++;
-    return {billId, ...(sourceVersion ? {sourceVersion} : {}), billingPeriod: bill.billingPeriod, amountMinor: projection.amountMinor,
+    return {billId, ...(sourceVersion ? {sourceVersion} : {}),
+      ...(typeof bill.invoiceNumber === 'string' && bill.invoiceNumber.trim() ? {invoiceNumber: bill.invoiceNumber} : {}),
+      billingPeriod: bill.billingPeriod, amountMinor: projection.amountMinor,
       paidAllocationMinor: projection.paidAmountMinor, creditAppliedMinor: projection.creditAppliedMinor,
       outstandingMinor: projection.outstandingAmountMinor, status: projection.status,
       dueDateKey: bill.dueDateKey, chargeLines,
