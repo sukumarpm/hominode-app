@@ -301,6 +301,7 @@ class ResidentBillingStatementSummary {
 class ResidentStatementBill {
   const ResidentStatementBill({
     required this.billId,
+    this.invoiceNumber,
     required this.sourceVersion,
     required this.billingPeriod,
     required this.amountMinor,
@@ -314,6 +315,7 @@ class ResidentStatementBill {
   });
 
   final String billId;
+  final String? invoiceNumber;
   final String sourceVersion;
   final String billingPeriod;
   final int amountMinor;
@@ -338,7 +340,7 @@ class ResidentStatementBill {
       'dueDateKey',
       'chargeLines',
       'settlements',
-    }, optional: {'sourceVersion'});
+    }, optional: {'sourceVersion', 'invoiceNumber'});
     final period = ResidentBillingStatementService._period(
       data['billingPeriod'],
     );
@@ -394,6 +396,9 @@ class ResidentStatementBill {
     }
     return ResidentStatementBill(
       billId: ResidentBillingStatementService._string(data['billId']),
+      invoiceNumber: data['invoiceNumber'] == null
+          ? null
+          : ResidentBillingStatementService._string(data['invoiceNumber']),
       sourceVersion: sourceVersion as String,
       billingPeriod: period,
       amountMinor: amount,
