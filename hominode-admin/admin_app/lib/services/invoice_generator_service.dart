@@ -473,10 +473,12 @@ class InvoiceGeneratorService {
   /// Share invoice PDF
   Future<void> shareInvoice(File pdfFile, BillModel bill) async {
     try {
-      await Share.shareXFiles(
-        [XFile(pdfFile.path)],
-        subject: 'Invoice - ${bill.month} ${bill.year}',
-        text: 'Invoice for ${bill.residentName} - Flat ${bill.flatLabel}',
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(pdfFile.path)],
+          subject: 'Invoice - ${bill.month} ${bill.year}',
+          text: 'Invoice for ${bill.residentName} - Flat ${bill.flatLabel}',
+        ),
       );
     } catch (e) {
       throw Exception('Failed to share invoice: $e');
