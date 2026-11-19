@@ -14,13 +14,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'billing_service.dart';
 
 class InvoiceGeneratorService {
-  // Society/Company details - Update these with actual details
-  static const String societyName = 'HOMINODE Society Management';
-  static const String societyAddress = 'Your Society Address';
-  static const String societyCity = 'City, State - PIN';
-  static const String societyPhone = '+91 XXXXX XXXXX';
-  static const String societyEmail = 'admin@lyvo.com';
-  static const String societyGSTIN = 'GSTIN: XXXXXXXXXXXXX';
+  // Never fabricate society registration, address, tax, or contact details.
+  // The actual issuer's verified details will be wired through community data.
+  static const String societyName = 'HOMINODE';
 
   /// Generate PDF invoice for a bill
   Future<File> generateInvoice(BillModel bill) async {
@@ -78,36 +74,6 @@ class InvoiceGeneratorService {
                   color: PdfColors.blue700,
                 ),
               ),
-              pw.SizedBox(height: 8),
-              pw.Text(
-                societyAddress,
-                style: const pw.TextStyle(
-                  fontSize: 10,
-                  color: PdfColors.grey700,
-                ),
-              ),
-              pw.Text(
-                societyCity,
-                style: const pw.TextStyle(
-                  fontSize: 10,
-                  color: PdfColors.grey700,
-                ),
-              ),
-              pw.SizedBox(height: 4),
-              pw.Text(
-                'Phone: $societyPhone',
-                style: const pw.TextStyle(
-                  fontSize: 10,
-                  color: PdfColors.grey700,
-                ),
-              ),
-              pw.Text(
-                'Email: $societyEmail',
-                style: const pw.TextStyle(
-                  fontSize: 10,
-                  color: PdfColors.grey700,
-                ),
-              ),
             ],
           ),
           pw.Column(
@@ -129,14 +95,6 @@ class InvoiceGeneratorService {
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.white,
                   ),
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Text(
-                societyGSTIN,
-                style: const pw.TextStyle(
-                  fontSize: 9,
-                  color: PdfColors.grey700,
                 ),
               ),
             ],
@@ -262,7 +220,7 @@ class InvoiceGeneratorService {
               padding: const pw.EdgeInsets.all(12),
             ),
             _buildTableCell(
-              '₹${_formatAmount(bill.amount)}',
+              'INR ${_formatAmount(bill.amount)}',
               padding: const pw.EdgeInsets.all(12),
               align: pw.TextAlign.right,
             ),
@@ -279,7 +237,7 @@ class InvoiceGeneratorService {
               isBold: true,
             ),
             _buildTableCell(
-              '₹${_formatAmount(bill.amount)}',
+              'INR ${_formatAmount(bill.amount)}',
               padding: const pw.EdgeInsets.all(8),
               align: pw.TextAlign.right,
               isBold: true,
@@ -298,7 +256,7 @@ class InvoiceGeneratorService {
               fontSize: 14,
             ),
             _buildTableCell(
-              '₹${_formatAmount(bill.amount)}',
+              'INR ${_formatAmount(bill.amount)}',
               padding: const pw.EdgeInsets.all(12),
               align: pw.TextAlign.right,
               isBold: true,
@@ -486,9 +444,21 @@ class InvoiceGeneratorService {
 
   /// Helper: Get payment method display text
   String _getPaymentMethodDisplay(BillModel bill) {
-    // This would come from bill.paymentMethod field
-    // For now, return a default
-    return 'Online Payment';
+    final value = bill.paymentMethod?.trim();
+    if (value == null || value.isEmpty) return 'Not recorded';
+    switch (value.toLowerCase()) {
+      case 'upi':
+      case 'direct_upi':
+        return 'UPI';
+      case 'cash':
+        return 'Cash';
+      case 'bank_transfer':
+        return 'Bank transfer';
+      case 'cheque':
+        return 'Cheque';
+      default:
+        return value.replaceAll('_', ' ');
+    }
   }
 
   /// Save PDF to device and return file
