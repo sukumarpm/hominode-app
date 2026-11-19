@@ -30,7 +30,7 @@ function invoiceCounterId(communityId, year) {
 }
 
 // Execute inside the *same Firestore transaction* that creates the issued bill.
-// All calls must be before the transaction's first write, per Firestore rules.
+// All caller transaction reads must complete before writing the counter or bill.
 // The caller must verify that communityCode is a trusted, unique, immutable
 // registered identifier, not a guess derived from a display name.
 // This helper intentionally does not mutate or renumber existing invoices.
@@ -48,8 +48,9 @@ async function reserveInvoiceNumber({db, transaction, communityId, communityCode
   }
   const sequence = previousSequence + 1;
   const number = invoiceNumber({communityCode, year, sequence});
-  transaction.set(counterRef, {communityId, communityCode, year, lastSequence: sequence});
-  return {number, sequence};
+  // The caller commits this counter update with bill issuance after ALL reads.
+  return {number, sequence, counterRef,
+    counterData: {communityId, communityCode, year, lastSequence: sequence}};
 }
 
 module.exports = {invoiceNumber, invoiceCounterId, reserveInvoiceNumber};
