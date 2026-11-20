@@ -866,12 +866,16 @@ class BillingService implements BillingScheduleV2Gateway {
       }
     }
     final conflicts = result['conflicts'] as List? ?? const [];
-    if (conflicts.isNotEmpty) {
+    final existing = (result['existing'] as num?)?.toInt() ?? 0;
+    final created = (result['created'] as num?)?.toInt() ?? 0;
+    if (conflicts.isNotEmpty || existing > 0) {
       throw StateError(
-        '${result['created']} bills created; ${conflicts.length} existing bills have different terms and were left unchanged.',
+        'Existing bill for this unit and billing month: '
+        '$existing already issued, ${conflicts.length} with different terms. '
+        '$created new bill(s) created; existing bills were not duplicated.',
       );
     }
-    return (result['created'] as num).toInt();
+    return created;
   }
 
   // Record an Admin-attested offline payment through the trusted callable.
