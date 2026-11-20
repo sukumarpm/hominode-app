@@ -2154,12 +2154,16 @@ class _BillingScreenState extends State<BillingScreen> {
           }
         } catch (e) {
           if (mounted) {
+            final isExistingBill = e.toString().contains('Existing bill for this unit');
+            final message = e.toString().replaceFirst('Bad state: ', '');
             ScaffoldMessenger.of(context).clearSnackBars();
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Failed to generate bills: $e'),
-                backgroundColor: const Color(0xFFEF4444),
-                duration: const Duration(seconds: 4),
+                content: Text(isExistingBill ? message : 'Failed to generate bills: $e'),
+                backgroundColor: isExistingBill
+                    ? const Color(0xFFD97706)
+                    : const Color(0xFFEF4444),
+                duration: const Duration(seconds: 7),
               ),
             );
           }
