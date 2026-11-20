@@ -45,6 +45,7 @@ class CreateMonthlyBillModal extends StatefulWidget {
     BuildContext context, {
     required void Function(MonthlyBillConfig config) onGenerate,
   }) {
+    FocusManager.instance.primaryFocus?.unfocus();
     return showGeneralDialog(
       context: context,
       barrierDismissible: true,
@@ -104,6 +105,8 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   String? _flatsError;
   int _flatLoadVersion = 0;
   final _flatChanges = ValueNotifier<int>(0);
+  final _unitSearchController = TextEditingController();
+  String _unitSearch = '';
 
   final List<String> _scopeOptions = ['All Residents', 'Specific Units'];
 
@@ -116,6 +119,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   @override
   void dispose() {
     _flatChanges.dispose();
+    _unitSearchController.dispose();
     _maintenanceController.dispose();
     _waterController.dispose();
     _parkingController.dispose();
@@ -207,6 +211,8 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
       _selectedFlatIds = [];
     });
 
+    _unitSearchController.clear();
+    _unitSearch = '';
     _flatChanges.value++;
     final communityId = AdminTenantContext.instance.communityId;
     try {
@@ -233,9 +239,15 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
             .get()
             .timeout(const Duration(seconds: 20));
 
-        final residentNames = usersSnapshot.docs
-            .map((doc) => doc.data()['name']?.toString() ?? '')
+        final residents = usersSnapshot.docs.map((doc) => doc.data()).toList();
+        final residentNames = residents
+            .map((user) => (user['name'] ?? user['fullName'] ?? '').toString())
             .where((name) => name.trim().isNotEmpty)
+            .toList();
+        final residentPhones = residents
+            .expand((user) => [user['phone'], user['phoneNumber'], user['mobileNumber']])
+            .whereType<String>()
+            .where((phone) => phone.trim().isNotEmpty)
             .toList();
 
         flats.add({
@@ -247,6 +259,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
               flatData['flatNumber'] ??
               flatId,
           'status': flatData['status'] ?? 'vacant',
+          'residentPhones': residentPhones,
           'residentNames': residentNames,
           'residentCount': residentNames.length,
         });
@@ -341,6 +354,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   }
 
   Future<void> _handleGenerate() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!_formKey.currentState!.validate() || !_isFormValid) {
       return;
     }
@@ -403,6 +417,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   }
 
   void _showMonthPicker() {
+    FocusManager.instance.primaryFocus?.unfocus();
     final monthYearOptions = _generateMonthYearOptions();
 
     showModalBottomSheet(
@@ -704,8 +719,24 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
     );
   }
 
+  List<Map<String, dynamic>> get _filteredFlats => _flats.where((flat) {
+    if (_unitSearch.isEmpty) return true;
+    final values = [flat['flatNumber'],
+      ...(flat['residentNames'] as List<dynamic>),
+      ...(flat['residentPhones'] as List<dynamic>)];
+    return values.any((value) => value.toString().toLowerCase().contains(_unitSearch));
+  }).toList();
+
+  String _unitLabel(String flatId) {
+    for (final flat in _flats) {
+      if (flat['id'] == flatId) return flat['flatNumber'].toString();
+    }
+    return 'Unit unavailable';
+  }
+
   void _showUnitPicker() {
     if (_selectedBuildingId == null) return;
+    FocusManager.instance.primaryFocus?.unfocus();
 
     showModalBottomSheet(
       context: context,
@@ -753,6 +784,22 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                       ),
                     ),
                     SizedBox(height: 16.h),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 18.w),
+                      child: TextField(
+                        controller: _unitSearchController,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Search unit, resident name or phone',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (query) {
+                          _unitSearch = query.trim().toLowerCase();
+                          _flatChanges.value++;
+                        },
+                      ),
+                    ),
+                    SizedBox(height: 12.h),
                     if (_loadingFlats)
                       Padding(
                         padding: EdgeInsets.all(32.w),
@@ -790,9 +837,9 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                       Flexible(
                         child: ListView.builder(
                           shrinkWrap: true,
-                          itemCount: _flats.length,
+                          itemCount: _filteredFlats.length,
                           itemBuilder: (context, index) {
-                            final flat = _flats[index];
+                            final flat = _filteredFlats[index];
                             final flatId = flat['id'] as String;
                             final status = flat['status'] as String;
                             final residentNames =
@@ -801,10 +848,10 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                             final isSelected = _selectedFlatIds.contains(
                               flatId,
                             );
-                            final hasResidents = residentCount > 0;
+                            final hasResidents = status.toLowerCase() == 'occupied' && residentCount > 0;
 
                             return InkWell(
-                              onTap: () {
+                              onTap: hasResidents ? () {
                                 setState(() {
                                   if (isSelected) {
                                     _selectedFlatIds.remove(flatId);
@@ -813,7 +860,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                                   }
                                 });
                                 _flatChanges.value++;
-                              },
+                              } : null,
                               child: Container(
                                 padding: EdgeInsets.symmetric(
                                   horizontal: 24.w,
@@ -840,7 +887,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                                           Row(
                                             children: [
                                               Text(
-                                                flatId,
+                                                flat['flatNumber'].toString(),
                                                 style: TextStyle(
                                                   fontSize: 16.sp,
                                                   fontWeight: isSelected
@@ -1039,7 +1086,10 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
     final screenHeight = MediaQuery.of(context).size.height;
     final keyboardInsets = MediaQuery.of(context).viewInsets;
 
-    return Center(
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: Center(
       child: Container(
         constraints: BoxConstraints(
           maxWidth: screenWidth > 720 ? 720 : screenWidth * 0.92,
@@ -1103,6 +1153,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
           ),
         ),
       ),
+      ),
     );
   }
 
@@ -1144,7 +1195,10 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
               label: 'Close',
               button: true,
               child: InkWell(
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.of(context).pop();
+                },
                 borderRadius: BorderRadius.circular(20.r),
                 child: Container(
                   width: 40.w,
@@ -1661,7 +1715,7 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                       _selectedFlatIds.isEmpty
                           ? 'Select units'
                           : _selectedFlatIds.length == 1
-                          ? _selectedFlatIds[0]
+                          ? _unitLabel(_selectedFlatIds[0])
                           : '${_selectedFlatIds.length} units selected',
                       style: TextStyle(
                         fontSize: 15.sp,
