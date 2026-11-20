@@ -722,6 +722,8 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
   }
 
   List<Map<String, dynamic>> get _filteredFlats => _flats.where((flat) {
+    if (flat['status'].toString().toLowerCase() != 'occupied' ||
+        (flat['residentCount'] as int) == 0) return false;
     if (_unitSearch.isEmpty) return true;
     final values = [flat['flatNumber'],
       ...(flat['residentNames'] as List<dynamic>),
@@ -837,7 +839,9 @@ class _CreateMonthlyBillModalState extends State<CreateMonthlyBillModal> {
                       )
                     else
                       Flexible(
-                        child: ListView.builder(
+                        child: _filteredFlats.isEmpty
+                            ? const Center(child: Text('No eligible occupied units match your search.'))
+                            : ListView.builder(
                           shrinkWrap: true,
                           itemCount: _filteredFlats.length,
                           itemBuilder: (context, index) {
