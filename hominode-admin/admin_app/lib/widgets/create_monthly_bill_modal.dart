@@ -44,9 +44,9 @@ class CreateMonthlyBillModal extends StatefulWidget {
   static Future<void> show(
     BuildContext context, {
     required void Function(MonthlyBillConfig config) onGenerate,
-  }) {
+  }) async {
     FocusManager.instance.primaryFocus?.unfocus();
-    return showGeneralDialog(
+    await showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Close',
@@ -67,6 +67,8 @@ class CreateMonthlyBillModal extends StatefulWidget {
         );
       },
     );
+    // Also release keyboard focus if the dialog was dismissed via its barrier.
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   @override
